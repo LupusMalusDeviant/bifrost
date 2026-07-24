@@ -6,9 +6,9 @@
 //! einer reinen, testbaren [`Session`]; der Loop macht nur IO.
 //!
 //! Kommandos: `hello` (Versionsverhandlung), `load` (Signaturprüfung gegen gepinnte Publisher +
-//! Grants, fail-closed), `discover` (Exports des geladenen Components), `invoke` (Aufruf eines
-//! Exports mit Limits und Truncation-Metadaten), `health`, `shutdown`. Fehler sind strukturiert
-//! (`code` + `message`) und beenden den Host nicht.
+//! Grants, fail-closed), `discover` (typisierte Beschreibung der aufrufbaren Exports), `invoke`
+//! (Aufruf eines Exports mit Limits und Truncation-Metadaten), `health`, `shutdown`. Fehler sind
+//! strukturiert (`code` + `message`) und beenden den Host nicht.
 
 use std::io::{self, Read, Write};
 
@@ -20,12 +20,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     CapabilityGrants, ExecutionLimits, GrantAuditRecord, InvocationOutcome, RUNTIME_VERSION,
-    discover_component_tools, grant_audit_record, invoke_component_tool, pinned_publisher,
-    verify_component_signature,
+    ToolDescriptor, describe_component_tools, grant_audit_record, invoke_component_tool,
+    pinned_publisher, verify_component_signature,
 };
 
 /// Protokollversion des IPC-Vertrags. Inkompatible Versionen werden beim Handshake abgewiesen.
-pub const PROTOCOL_VERSION: &str = "1";
+///
+/// `2` (WP6.1): `discover` liefert typisierte Tool-Beschreibungen statt einer Namensliste — der
+/// Aufrufer kann daraus ein echtes Schema erzeugen. Bewusst ein Bruch statt eines Zusatzfelds:
+/// Ein Client, der die alte Namensliste erwartet, soll am Handshake scheitern und nicht an einem
+/// stillschweigend anders geformten `tools`-Feld.
+pub const PROTOCOL_VERSION: &str = "2";
 
 /// Obergrenze für einen einzelnen Frame (Schutz gegen Memory-DoS über ein riesiges Längenpräfix).
 const MAX_FRAME_BYTES: u32 = 64 * 1024 * 1024;
@@ -86,7 +91,7 @@ pub enum Response {
         audit: GrantAuditRecord,
     },
     Discovered {
-        tools: Vec<String>,
+        tools: Vec<ToolDescriptor>,
     },
     Invoked {
         #[serde(flatten)]
@@ -178,7 +183,7 @@ impl Session {
                 let Some(loaded) = self.loaded.as_ref() else {
                     return error("not-loaded", "kein Component geladen — load zuerst senden");
                 };
-                match discover_component_tools(&loaded.bytes) {
+                match describe_component_tools(&loaded.bytes) {
                     Ok(tools) => (Response::Discovered { tools }, Control::Continue),
                     Err(failure) => error("discover-failed", failure.to_string()),
                 }
@@ -532,10 +537,20 @@ mod tests {
         assert_eq!(control, Control::Continue);
         match response {
             Response::Discovered { tools } => {
-                assert!(
-                    tools.iter().any(|tool| crate::is_wasi_command_export(tool)),
-                    "erwarteter Kommando-Export fehlt in {tools:?}"
+                // Genau EIN Eintrag für den Kommando-Einstiegspunkt (WP6.1) — vor der
+                // Normalisierung standen hier zusätzlich seine innere `run`-Funktion.
+                let commands: Vec<_> = tools
+                    .iter()
+                    .filter(|tool| crate::is_wasi_command_export(&tool.name))
+                    .collect();
+                assert_eq!(
+                    commands.len(),
+                    1,
+                    "erwartet genau ein Kommando-Tool: {tools:?}"
                 );
+                assert_eq!(commands[0].kind, crate::ToolKind::Command);
+                assert!(commands[0].supported);
+                assert!(commands[0].params.is_empty());
             }
             other => panic!("expected discovered, got {other:?}"),
         }
@@ -564,7 +579,7 @@ mod tests {
 
     #[test]
     fn serve_frames_a_hello_response_then_ends_on_eof() {
-        let input = frame(br#"{"type":"hello","protocolVersion":"1"}"#);
+        let input = frame(br#"{"type":"hello","protocolVersion":"2"}"#);
         assert!(matches!(first_response(&input), Response::Hello { .. }));
     }
 
@@ -586,7 +601,7 @@ mod tests {
 
     #[test]
     fn framing_survives_partial_reads() {
-        let input = frame(br#"{"type":"hello","protocolVersion":"1"}"#);
+        let input = frame(br#"{"type":"hello","protocolVersion":"2"}"#);
         let mut reader = ChunkedReader {
             data: &input,
             chunk: 1, // ein Byte pro read — der härteste Fall

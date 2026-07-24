@@ -29,9 +29,7 @@ public sealed class WasiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAsync
 
     private const string Slug = "wasi1";
     private const string DoubleTool = Slug + "__double";
-
-    /// <summary>Argument des typisierten Exports; der Stub verdoppelt es.</summary>
-    private static readonly int[] DoubleArgument = [21];
+    private const string LeakTool = Slug + "__leak";
 
     private readonly GatewayFixture _gw;
     private string _componentPath = string.Empty;
@@ -88,14 +86,14 @@ public sealed class WasiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAsync
         await using var mcp = await _gw.ConnectClientAsync(apiKey);
         var tools = await mcp.ListToolsAsync();
         var overMcp = await mcp.CallToolAsync(
-            DoubleTool, new Dictionary<string, object?> { ["args"] = DoubleArgument });
+            DoubleTool, new Dictionary<string, object?> { ["value"] = 21 });
 
         using var rest = _gw.CreateDefaultClient();
         rest.DefaultRequestHeaders.Authorization = new("Bearer", apiKey);
         var restTools = await rest.GetFromJsonAsync<JsonElement>("/api/v1/tools", TestContext.Current.CancellationToken);
         var overRest = await rest.PostAsync(
             $"/api/v1/tools/{DoubleTool}/invoke",
-            new StringContent("""{"args":[21]}""", Encoding.UTF8, "application/json"),
+            new StringContent("""{"value":21}""", Encoding.UTF8, "application/json"),
             TestContext.Current.CancellationToken);
 
         tools.Select(tool => tool.Name).Should().Contain(DoubleTool,
@@ -114,7 +112,7 @@ public sealed class WasiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAsync
     {
         var (identity, _) = await _gw.SeedIdentityAsync("wasi-verboten", grants: []);
 
-        var result = await InvokeAsync(identity, DoubleTool, """{"args":[21]}""");
+        var result = await InvokeAsync(identity, DoubleTool, """{"value":21}""");
 
         result.Status.Should().Be(InvocationStatus.Denied,
             "RBAC greift vor dem Transport — der WASI-Host bekommt den Aufruf nie zu sehen");
@@ -126,17 +124,29 @@ public sealed class WasiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAsync
     }
 
     [Fact]
-    public async Task The_outbound_guardrail_blocks_a_secret_in_wasi_arguments()
+    public async Task The_inbound_guardrail_holds_back_a_secret_the_component_printed()
     {
         var (identity, _) = await _gw.SeedAdminAsync("wasi-guardrail");
 
-        // Zusätzliches Feld statt args: Das Tool-Schema verbietet es nicht, und der Guardrail
-        // prüft die Argumente als Ganzes — der Aufruf darf den Host nicht erreichen.
-        var result = await InvokeAsync(identity, DoubleTool, $$"""{"args":[1],"note":"{{FakeAwsKey}}"}""");
+        // Ein Guest darf alles auf stdout schreiben; genau dort greift die eingehende Prüfung.
+        var result = await InvokeAsync(identity, LeakTool, """{"value":1}""");
 
-        result.Status.Should().Be(InvocationStatus.Denied,
-            "der Guardrail läuft ausgehend VOR dem Upstream (ADR-0011) — auch für WASI");
+        result.Status.Should().Be(InvocationStatus.GuardBlocked,
+            "der Guardrail prüft auch Ergebnisse von WASI-Tools (ADR-0011)");
+        result.Content.Should().BeNull("das Ergebnis wird zurückgehalten, nicht durchgereicht");
         result.ErrorMessage.Should().NotContain(FakeAwsKey, "die Meldung darf das Secret nicht wiederholen");
+    }
+
+    [Fact]
+    public async Task The_generated_schema_is_enforced_before_the_call_leaves_the_gateway()
+    {
+        var (identity, _) = await _gw.SeedAdminAsync("wasi-schema");
+
+        // Das Schema kommt aus der typisierten Discovery (WP6.1) und ist strikt — ein unbekanntes
+        // Feld fällt hier auf und nicht erst im Guest.
+        var result = await InvokeAsync(identity, DoubleTool, $$"""{"value":1,"note":"{{FakeAwsKey}}"}""");
+
+        result.Status.Should().Be(InvocationStatus.ValidationFailed);
     }
 
     [Fact]
@@ -148,7 +158,7 @@ public sealed class WasiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAsync
 
         try
         {
-            var result = await InvokeAsync(identity, DoubleTool, """{"args":[21]}""");
+            var result = await InvokeAsync(identity, DoubleTool, """{"value":21}""");
 
             result.Status.Should().Be(InvocationStatus.ApprovalRequired,
                 "Freigabepflicht gilt auch für WASI-Tools (FR-32, ADR-0012)");
@@ -165,7 +175,7 @@ public sealed class WasiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAsync
     {
         var (identity, _) = await _gw.SeedAdminAsync("wasi-audit");
 
-        var result = await InvokeAsync(identity, DoubleTool, """{"args":[4]}""");
+        var result = await InvokeAsync(identity, DoubleTool, """{"value":4}""");
 
         result.Status.Should().Be(InvocationStatus.Success);
         await IntegrationSupport.WaitUntilAsync(
@@ -192,7 +202,7 @@ public sealed class WasiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAsync
 
         await _gw.Supervisor.RemoveAsync(id, DrainPolicy.Immediate, TestContext.Current.CancellationToken);
 
-        var result = await InvokeAsync(identity, "wasi-temp__double", """{"args":[1]}""");
+        var result = await InvokeAsync(identity, "wasi-temp__double", """{"value":1}""");
         result.Status.Should().Be(InvocationStatus.ToolNotFound);
     }
 

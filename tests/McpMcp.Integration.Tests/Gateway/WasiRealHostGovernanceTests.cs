@@ -79,10 +79,11 @@ public sealed class WasiRealHostGovernanceTests : IClassFixture<GatewayFixture>
             () => _gw.Supervisor.GetStatus(id)?.State == UpstreamState.Healthy,
             because: $"der signierte Upstream muss Healthy werden (Fehler: {_gw.Supervisor.GetStatus(id)?.LastError})");
 
+        // Ein einziger, normalisierter Katalogeintrag für den Kommando-Einstiegspunkt (WP6.1).
         var inventory = _gw.Supervisor.GetInventory(id);
-        var command = inventory!.Tools.Select(descriptor => descriptor.Name)
-            .First(name => name.StartsWith("wasi:cli/run", StringComparison.Ordinal));
-        return NamespacedToolName.Create(Slug, command);
+        var command = inventory!.Tools.Single();
+        command.Name.Should().Be("wasi_cli_run");
+        return NamespacedToolName.Create(Slug, command.Name);
     }
 
     private Task<ToolInvocationResult> InvokeAsync(IdentityId caller, NamespacedToolName tool, CancellationToken ct)

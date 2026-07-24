@@ -42,7 +42,7 @@ while (true)
         "hello" => new
         {
             type = "hello",
-            protocolVersion = mode == "--bad-protocol" ? "999" : "1",
+            protocolVersion = mode == "--bad-protocol" ? "999" : "2",
             runtime = "stub",
             host = "wasi-host-stub/0.1.0",
         },
@@ -54,7 +54,8 @@ while (true)
         },
         "load" => Load(request.RootElement, ref loaded),
         "discover" when !loaded => NotLoaded(),
-        "discover" => new { type = "discovered", tools = new[] { "wasi:cli/run@0.2.6", "double" } },
+        "discover" when mode == "--odd-names" => new { type = "discovered", tools = OddlyNamedTools() },
+        "discover" => new { type = "discovered", tools = Tools() },
         "invoke" when !loaded => NotLoaded(),
         "invoke" => Invoke(request.RootElement),
         "health" => new { type = "health", status = "ok", loaded },
@@ -77,6 +78,66 @@ while (true)
 
 static object NotLoaded()
     => new { type = "error", code = "not-loaded", message = "kein Component geladen" };
+
+// Typisierte Discovery wie im echten Host (Vertrag v2, WP6.1): ein Kommando-Einstiegspunkt, zwei
+// typisierte Funktionen und ein Export, den der Host nicht aufrufen kann — letzterer darf im
+// Katalog nicht erscheinen.
+static object[] Tools() =>
+[
+    new
+    {
+        name = "wasi:cli/run@0.2.6",
+        kind = "command",
+        @params = Array.Empty<object>(),
+        results = Array.Empty<string>(),
+        supported = true,
+    },
+    new
+    {
+        name = "double",
+        kind = "function",
+        @params = new[] { new { name = "value", type = "s32" } },
+        results = new[] { "s32" },
+        supported = true,
+    },
+    // Gibt ein Secret auf stdout aus — Prüfpunkt für die eingehende Guardrail.
+    new
+    {
+        name = "leak",
+        kind = "function",
+        @params = new[] { new { name = "value", type = "s32" } },
+        results = new[] { "s32" },
+        supported = true,
+    },
+    new
+    {
+        name = "grow",
+        kind = "function",
+        @params = new[] { new { name = "pages", type = "u32" } },
+        results = new[] { "s32" },
+        supported = false,
+        unsupportedReason = "nur (s32) -> s32 wird aufgerufen, dieser Export ist (u32) -> (s32)",
+    },
+];
+
+// Export-Namen, die ein Component tragen darf, ein Katalogname aber nicht: Sonderzeichen,
+// Versionsanhänge und zwei Interfaces, die sich nach der Normalisierung überschneiden.
+static object[] OddlyNamedTools() =>
+[
+    Named("ns:pkg/iface@1.0.0"),
+    Named("ns:pkg/iface@2.0.0"),
+    Named("weird name!!"),
+    Named("@1.0.0"),
+];
+
+static object Named(string name) => new
+{
+    name,
+    kind = "command",
+    @params = Array.Empty<object>(),
+    results = Array.Empty<string>(),
+    supported = true,
+};
 
 static object Load(JsonElement request, ref bool loaded)
 {
@@ -132,6 +193,15 @@ static object Invoke(JsonElement request)
             stdout = string.Empty,
             truncated = false,
             result = (int?)(arguments.Length > 0 ? arguments[0] * 2 : 0),
+        },
+        // Ein Guest darf alles auf stdout schreiben — auch ein Secret. Der Beispielschlüssel
+        // stammt aus der AWS-Dokumentation und ist keiner.
+        "leak" => new
+        {
+            type = "invoked",
+            stdout = "token=AKIAIOSFODNN7EXAMPLE",
+            truncated = false,
+            result = (int?)null,
         },
         _ => new
         {

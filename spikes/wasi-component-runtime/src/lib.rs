@@ -349,6 +349,170 @@ pub fn discover_component_tools(component_bytes: &[u8]) -> Result<Vec<String>> {
     Ok(component_exports(&engine, &component))
 }
 
+/// Art eines Exports, wie ihn [`invoke_component_tool`] behandelt.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolKind {
+    /// WASI-Kommando-Einstiegspunkt (`wasi:cli/run`) — wird als Kommando ausgeführt.
+    Command,
+    /// Typisierter Funktions-Export.
+    Function,
+}
+
+/// Ein Parameter eines Funktions-Exports. Der Name kommt aus dem Component-Typ, nicht geraten.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolParameter {
+    pub name: String,
+    /// Component-Model-Typname, z. B. `s32`.
+    #[serde(rename = "type")]
+    pub type_name: String,
+}
+
+/// Beschreibung eines Exports für die Discovery (WP6.1). Trägt genug Typinformation, dass der
+/// Aufrufer ein echtes Schema erzeugen kann, statt für jedes Tool dasselbe Platzhalter-Schema zu
+/// verwenden.
+///
+/// `supported` sagt, ob **dieser** Host den Export heute tatsächlich aufrufen kann. Nicht
+/// unterstützte Exports werden mitgeliefert statt verschwiegen: Ein Betreiber, dessen Tool nicht
+/// im Katalog auftaucht, soll den Grund sehen können und nicht raten müssen.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolDescriptor {
+    /// Roher Export-Name — genau diesen erwartet [`invoke_component_tool`].
+    pub name: String,
+    pub kind: ToolKind,
+    pub params: Vec<ToolParameter>,
+    /// Ergebnistypen in Component-Model-Schreibweise.
+    pub results: Vec<String>,
+    pub supported: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsupported_reason: Option<String>,
+}
+
+/// Beschreibt die Exports eines Components typisiert (WP6.1). Reine Reflexion, keine Ausführung.
+///
+/// Gelistet wird genau das, was adressierbar ist: der WASI-Kommando-Einstiegspunkt als **ein**
+/// Tool (seine innere `run`-Funktion ist derselbe Einstiegspunkt und erschiene sonst doppelt),
+/// Top-Level-Funktionen als typisierte Tools, und Funktionen in anderen Instanzen als nicht
+/// unterstützt — ihr punktierter Name lässt sich beim Aufruf heute nicht auflösen.
+pub fn describe_component_tools(component_bytes: &[u8]) -> Result<Vec<ToolDescriptor>> {
+    let mut config = Config::new();
+    config.wasm_component_model(true);
+    let engine = Engine::new(&config)?;
+    let component = Component::from_binary(&engine, component_bytes)?;
+
+    let mut tools = Vec::new();
+    for (name, item) in component.component_type().exports(&engine) {
+        match item.ty {
+            ComponentItem::ComponentFunc(func) => {
+                let params: Vec<ToolParameter> = func
+                    .params()
+                    .map(|(param, ty)| ToolParameter {
+                        name: param.to_owned(),
+                        type_name: type_name(&ty),
+                    })
+                    .collect();
+                let results: Vec<String> = func.results().map(|ty| type_name(&ty)).collect();
+                let unsupported_reason = unsupported_function_reason(&params, &results);
+                tools.push(ToolDescriptor {
+                    name: name.to_owned(),
+                    kind: ToolKind::Function,
+                    params,
+                    results,
+                    supported: unsupported_reason.is_none(),
+                    unsupported_reason,
+                });
+            }
+            ComponentItem::ComponentInstance(instance) if is_wasi_command_export(name) => {
+                // Der Kommando-Einstiegspunkt ist EIN Tool. Ohne diesen Zweig erschiene zusätzlich
+                // seine innere `run`-Funktion — zwei Katalogeinträge für denselben Aufruf.
+                let _ = instance;
+                tools.push(ToolDescriptor {
+                    name: name.to_owned(),
+                    kind: ToolKind::Command,
+                    params: Vec::new(),
+                    results: Vec::new(),
+                    supported: true,
+                    unsupported_reason: None,
+                });
+            }
+            ComponentItem::ComponentInstance(instance) => {
+                for (child, _) in instance.exports(&engine) {
+                    tools.push(ToolDescriptor {
+                        name: format!("{name}.{child}"),
+                        kind: ToolKind::Function,
+                        params: Vec::new(),
+                        results: Vec::new(),
+                        supported: false,
+                        unsupported_reason: Some(
+                            "Exports in Instanzen sind über ihren punktierten Namen noch nicht aufrufbar"
+                                .to_owned(),
+                        ),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    tools.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(tools)
+}
+
+/// Warum ein Funktions-Export heute nicht aufrufbar ist — `None`, wenn er es ist. Die Bedingung
+/// spiegelt exakt den typisierten Pfad in [`invoke_component_tool`]: eine `s32`-Eingabe, eine
+/// `s32`-Ausgabe. Sie muss mitwandern, wenn dieser Pfad erweitert wird.
+fn unsupported_function_reason(params: &[ToolParameter], results: &[String]) -> Option<String> {
+    let signature = format!(
+        "({}) -> ({})",
+        params
+            .iter()
+            .map(|param| param.type_name.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+        results.join(", ")
+    );
+    if params.len() == 1 && params[0].type_name == "s32" && results == ["s32"] {
+        None
+    } else {
+        Some(format!(
+            "nur (s32) -> s32 wird aufgerufen, dieser Export ist {signature}"
+        ))
+    }
+}
+
+/// Component-Model-Typname. Zusammengesetzte Typen bekommen ihren Sortennamen — für die
+/// Schema-Erzeugung reicht das, denn aufrufbar sind ohnehin nur die skalaren Fälle.
+fn type_name(ty: &wasmtime::component::Type) -> String {
+    use wasmtime::component::Type;
+    match ty {
+        Type::Bool => "bool",
+        Type::S8 => "s8",
+        Type::U8 => "u8",
+        Type::S16 => "s16",
+        Type::U16 => "u16",
+        Type::S32 => "s32",
+        Type::U32 => "u32",
+        Type::S64 => "s64",
+        Type::U64 => "u64",
+        Type::Float32 => "f32",
+        Type::Float64 => "f64",
+        Type::Char => "char",
+        Type::String => "string",
+        Type::List(_) => "list",
+        Type::Record(_) => "record",
+        Type::Tuple(_) => "tuple",
+        Type::Variant(_) => "variant",
+        Type::Enum(_) => "enum",
+        Type::Option(_) => "option",
+        Type::Result(_) => "result",
+        Type::Flags(_) => "flags",
+        _ => "unknown",
+    }
+    .to_owned()
+}
+
 /// Führt die eingebaute Fixture-Guest-Component aus (bequemer Wrapper für Tests).
 pub fn run_wasi_guest(grants: &CapabilityGrants) -> Result<String> {
     let tool = wasi_command_export(WASI_GUEST_COMPONENT)?;
@@ -1257,6 +1421,82 @@ mod tests {
         assert!(
             guest_tools.iter().any(|tool| is_wasi_command_export(tool)),
             "kein WASI-Kommando-Export gefunden in {guest_tools:?}"
+        );
+        Ok(())
+    }
+
+    /// WP6.1: Discovery liefert Typen, nicht nur Namen — daraus entsteht im Gateway ein echtes
+    /// Schema statt eines Platzhalters für jedes Tool.
+    #[test]
+    fn describe_reports_parameter_names_and_types() -> Result<()> {
+        let engine = hardened_engine(false, false)?;
+        let (bytes, _) = compile_component(&engine, NO_IMPORT_COMPONENT)?;
+
+        let tools = describe_component_tools(&bytes)?;
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "run");
+        assert_eq!(tools[0].kind, ToolKind::Function);
+        // Der Parametername kommt aus dem Component-Typ ("value"), nicht aus einer Konvention.
+        assert_eq!(
+            tools[0].params,
+            [ToolParameter {
+                name: "value".to_owned(),
+                type_name: "s32".to_owned(),
+            }]
+        );
+        assert_eq!(tools[0].results, ["s32"]);
+        assert!(tools[0].supported);
+        Ok(())
+    }
+
+    /// Der Kommando-Einstiegspunkt ist genau EIN Tool. Vorher stand seine innere `run`-Funktion
+    /// zusätzlich in der Liste — zwei Katalogeinträge, die denselben Aufruf auslösen.
+    #[test]
+    fn describe_collapses_the_command_entry_point_to_one_tool() -> Result<()> {
+        let tools = describe_component_tools(WASI_GUEST_COMPONENT)?;
+
+        let commands: Vec<_> = tools
+            .iter()
+            .filter(|tool| is_wasi_command_export(&tool.name))
+            .collect();
+        assert_eq!(
+            commands.len(),
+            1,
+            "erwartet genau ein Kommando-Tool: {tools:?}"
+        );
+        assert_eq!(commands[0].kind, ToolKind::Command);
+        assert!(commands[0].supported);
+        assert!(
+            !tools.iter().any(|tool| tool.name.ends_with(".run")),
+            "die innere run-Funktion darf nicht zusätzlich erscheinen: {tools:?}"
+        );
+        Ok(())
+    }
+
+    /// Eine Signatur, die der typisierte Aufrufpfad nicht bedienen kann, wird als solche gemeldet
+    /// — sonst stünde im Katalog ein Tool, das bei jedem Aufruf scheitert.
+    #[test]
+    fn describe_marks_an_uncallable_signature_as_unsupported() -> Result<()> {
+        let engine = hardened_engine(false, false)?;
+        let (bytes, _) = compile_component(&engine, MEMORY_GROWTH_COMPONENT)?;
+
+        let tools = describe_component_tools(&bytes)?;
+
+        let grow = tools.iter().find(|tool| tool.name == "grow").unwrap();
+        assert_eq!(grow.params[0].type_name, "u32");
+        assert!(!grow.supported);
+        assert!(grow.unsupported_reason.as_ref().unwrap().contains("u32"));
+        // Und der Befund stimmt: der Aufruf scheitert tatsächlich.
+        assert!(
+            invoke_component_tool(
+                &bytes,
+                &CapabilityGrants::default(),
+                "grow",
+                &[1],
+                &ExecutionLimits::default()
+            )
+            .is_err()
         );
         Ok(())
     }

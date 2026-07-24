@@ -164,15 +164,17 @@ Belegt, jeweils an einen benannten Test gebunden — nicht an ein Plan-Häkchen:
 |-------|----------|
 | WP1 (IPC-Vertrag, Rust-Host) | `spikes/wasi-component-runtime/src/host.rs` — 44 Rust-Tests inkl. Framing, partielle Reads, Frame-Limits |
 | WP2 (.NET-Connector) | `WasiRuntimeConnectorTests` gegen den Stub-Host; `UpstreamConfigValidatorTests` für die fail-closed Validierung |
-| WP6.2 (Vertragskompatibilität) | `WasiRealHostCompatibilityTests` — .NET gegen das **echte** Binary: Handshake, signierter Load, Discovery, Invoke, Default-Deny, Versionsverhandlung mit „0"/„2" |
+| WP6.1 (Namens- und Schema-Normalisierung) | Vertrag **v2**: `discover` liefert typisierte Beschreibungen (`describe_component_tools`), der Kommando-Einstiegspunkt ist genau ein Tool, nicht aufrufbare Signaturen sind als solche markiert. Gateway-seitig `WasiToolNormalizer` — katalog- und URL-taugliche Namen plus ein Schema **pro** Tool. Tests: 3 Rust-Tests, `WasiRuntimeConnectorTests` (Normalisierung, Kollisionen, Schema, gefilterte Exports) |
+| WP6.2 (Vertragskompatibilität) | `WasiRealHostCompatibilityTests` — .NET gegen das **echte** Binary: Handshake, signierter Load, Discovery, Invoke, Default-Deny, Versionsverhandlung mit „1" (der echte Bruch) und „3" |
 | **M2** (signiertes Component durch die volle Pipeline) | `WasiRealHostGovernanceTests` (echter Host, signiertes Fixture) + `WasiUpstreamE2ETests` (RBAC, Guardrail, Approval, Audit, MCP + REST) |
 
 Offen und ausdrücklich **nicht** behauptet:
 
-- **WP6.1** — Namens-/Schema-Normalisierung. Der echte Host meldet Instanz *und* Funktion
-  (`wasi:cli/run@0.2.6` und `wasi:cli/run@0.2.6.run`), der Katalog bekäme also zwei identische
-  Tools; Export-Namen sind zudem nicht URL-sicher. `WasiRealHostCompatibilityTests` hält diesen
-  Ist-Zustand fest, damit die Normalisierung eine bewusste Änderung wird.
+- **WP6.1, Rest** — der Vertrag deckt Namen, Schemata, Discovery, Invoke, Health und
+  Fehlersemantik ab; **Cancellation, Readiness, Lifecycle-Phasen und Capability-Flags** nach
+  ADR-0016 fehlen weiterhin. Ebenso die Aufrufbreite: Der Host führt heute nur
+  `(s32) -> s32`-Funktionen und den Kommando-Einstiegspunkt aus — alles andere meldet die
+  Discovery ehrlich als nicht unterstützt, statt es im Katalog zu zeigen.
 - **WP3/WP4/WP5** — feingranulare Grants, persistierter Trust-Store, Modul-Cache. Die Grants sind
   bisher kategorieweit (ein nicht-leeres Feld erlaubt die WASI-Kategorie), die gepinnten Publisher
   kommen aus der Upstream-Konfiguration statt aus einem verwalteten Store.

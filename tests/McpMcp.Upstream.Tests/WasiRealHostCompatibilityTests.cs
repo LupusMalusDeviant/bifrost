@@ -111,14 +111,15 @@ public sealed class WasiRealHostCompatibilityTests
         await using var connection = await new WasiRuntimeConnector()
             .ConnectAsync(new ServerId(Guid.NewGuid()), config, ct);
         var inventory = await connection.DiscoverAsync(ct);
-        var result = await connection.CallToolAsync("wasi:cli/run@0.2.6", NoArgs, ct);
+        var result = await connection.CallToolAsync("wasi_cli_run", NoArgs, ct);
 
-        // Der echte Host meldet Instanz UND deren Funktion — beide Namen zeigen auf denselben
-        // Einstiegspunkt, der Katalog bekäme also zwei identische Tools. Das ist der Ist-Zustand
-        // des Vertrags, nicht die Zielform: die Schema-/Namensnormalisierung ist WP6.1. Der Test
-        // hält den Ist-Zustand fest, damit eine Normalisierung nicht unbemerkt passiert.
-        inventory.Tools.Select(tool => tool.Name)
-            .Should().Equal("wasi:cli/run@0.2.6", "wasi:cli/run@0.2.6.run");
+        // Genau ein Katalogeintrag für den Kommando-Einstiegspunkt, unter normalisiertem Namen
+        // (WP6.1). Vorher standen hier zwei Einträge — Instanz und ihre innere run-Funktion.
+        inventory.Tools.Select(tool => tool.Name).Should().Equal("wasi_cli_run");
+        inventory.Tools[0].Description.Should().Contain("wasi:cli/run@0.2.6",
+            "der rohe Export-Name muss auffindbar bleiben");
+        inventory.Tools[0].InputSchema.GetProperty("properties").EnumerateObject()
+            .Should().BeEmpty("ein Kommando-Export nimmt keine Argumente");
         result.GetProperty("isError").GetBoolean().Should().BeFalse();
         result.GetProperty("content")[0].GetProperty("text").GetString()
             .Should().Contain("mcpmcp-guest-ok", "das echte Component schreibt diese Marke auf stdout");
@@ -171,8 +172,8 @@ public sealed class WasiRealHostCompatibilityTests
     }
 
     [Theory]
-    [InlineData("0")] // älterer Client trifft neueren Host
-    [InlineData("2")] // neuerer Client trifft älteren Host
+    [InlineData("1")] // älterer Client trifft neueren Host — genau der Bruch aus WP6.1
+    [InlineData("3")] // neuerer Client trifft älteren Host
     public async Task An_incompatible_contract_version_is_rejected_without_killing_the_host(string version)
     {
         using var wire = new HostWire(RequireHost());

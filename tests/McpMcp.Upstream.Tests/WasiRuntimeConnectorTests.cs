@@ -25,7 +25,7 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
     private static readonly JsonElement NoArgs = JsonSerializer.Deserialize<JsonElement>("{}");
 
     private static readonly JsonElement TypedArguments =
-        JsonSerializer.Deserialize<JsonElement>("""{"args":[21]}""");
+        JsonSerializer.Deserialize<JsonElement>("""{"value":21}""");
 
     private string _componentPath = string.Empty;
     private string _signaturePath = string.Empty;
@@ -71,11 +71,59 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
 
         var inventory = await connection.DiscoverAsync(TestContext.Current.CancellationToken);
 
-        inventory.Tools.Select(tool => tool.Name).Should().Contain(["wasi:cli/run@0.2.6", "double"]);
-        inventory.Tools[0].InputSchema.GetProperty("properties").TryGetProperty("args", out _)
-            .Should().BeTrue();
+        // Katalognamen sind normalisiert (WP6.1) — der rohe Export steht in der Beschreibung.
+        inventory.Tools.Select(tool => tool.Name).Should().Contain(["wasi_cli_run", "double"]);
+        inventory.Tools.Single(tool => tool.Name == "wasi_cli_run").Description
+            .Should().Contain("wasi:cli/run@0.2.6");
         inventory.Resources.Should().BeEmpty();
         inventory.Prompts.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Each_tool_carries_its_own_schema_and_unsupported_exports_stay_out()
+    {
+        await using var connection = await ConnectAsync();
+
+        var inventory = await connection.DiscoverAsync(TestContext.Current.CancellationToken);
+
+        // Kommando-Export: keine Argumente.
+        var command = inventory.Tools.Single(tool => tool.Name == "wasi_cli_run");
+        command.InputSchema.GetProperty("properties").EnumerateObject().Should().BeEmpty();
+
+        // Typisierter Export: der echte Parametername mit passendem JSON-Typ, strikt geschlossen.
+        var typed = inventory.Tools.Single(tool => tool.Name == "double");
+        typed.InputSchema.GetProperty("properties").GetProperty("value").GetProperty("type")
+            .GetString().Should().Be("integer");
+        typed.InputSchema.GetProperty("required").EnumerateArray()
+            .Select(item => item.GetString()).Should().Equal("value");
+        typed.InputSchema.GetProperty("additionalProperties").GetBoolean().Should().BeFalse();
+
+        // Was der Host nicht aufrufen kann, gehört nicht in den Katalog.
+        inventory.Tools.Select(tool => tool.Name).Should().NotContain("grow");
+    }
+
+    [Fact]
+    public async Task Export_names_become_catalog_safe_names_without_losing_the_mapping()
+    {
+        await using var connection = await ConnectAsync("--odd-names");
+
+        var inventory = await connection.DiscoverAsync(TestContext.Current.CancellationToken);
+
+        // Versionsanhang weg, Sonderzeichen zu '_', Kollision deterministisch entschärft,
+        // ein rein zerfallender Name bekommt einen Ersatz.
+        inventory.Tools.Select(tool => tool.Name).Should().Equal(
+            "ns_pkg_iface", "ns_pkg_iface_2", "weird_name", "tool");
+        inventory.Tools.Select(tool => tool.Name).Should().OnlyContain(
+            name => name.All(character => char.IsAsciiLetterOrDigit(character) || character == '_'),
+            "Katalognamen landen in MCP-Tool-Namen und REST-Pfaden");
+
+        // Aufrufbar bleibt es trotzdem: der Connector kennt den rohen Export dahinter.
+        var result = await connection.CallToolAsync(
+            "ns_pkg_iface_2", NoArgs, TestContext.Current.CancellationToken);
+        result.GetProperty("isError").GetBoolean().Should().BeTrue(
+            "der Stub kennt diesen Export beim Aufruf nicht — entscheidend ist, dass der rohe Name gesendet wurde");
+        result.GetProperty("content")[0].GetProperty("text").GetString()
+            .Should().Contain("ns:pkg/iface@2.0.0");
     }
 
     [Fact]
@@ -84,11 +132,22 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
         await using var connection = await ConnectAsync();
 
         var result = await connection.CallToolAsync(
-            "wasi:cli/run@0.2.6", NoArgs, TestContext.Current.CancellationToken);
+            "wasi_cli_run", NoArgs, TestContext.Current.CancellationToken);
 
         result.GetProperty("isError").GetBoolean().Should().BeFalse();
         result.GetProperty("content")[0].GetProperty("text").GetString()
             .Should().Contain("stub-guest-ok");
+    }
+
+    [Fact]
+    public async Task A_missing_argument_is_an_error_result_instead_of_a_silent_default()
+    {
+        await using var connection = await ConnectAsync();
+
+        var result = await connection.CallToolAsync("double", NoArgs, TestContext.Current.CancellationToken);
+
+        result.GetProperty("isError").GetBoolean().Should().BeTrue();
+        result.GetProperty("content")[0].GetProperty("text").GetString().Should().Contain("value");
     }
 
     [Fact]

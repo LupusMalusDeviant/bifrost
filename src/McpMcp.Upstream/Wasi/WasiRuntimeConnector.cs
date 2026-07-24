@@ -18,8 +18,11 @@ namespace McpMcp.Upstream.Wasi;
 /// </summary>
 public sealed class WasiRuntimeConnector : IUpstreamConnector
 {
-    /// <summary>Protokollversion, die dieser Client spricht. Muss zum Host passen.</summary>
-    public const string ProtocolVersion = "1";
+    /// <summary>
+    /// Protokollversion, die dieser Client spricht. Muss zum Host passen — <c>2</c> liefert
+    /// typisierte Tool-Beschreibungen bei <c>discover</c> (Plan 0003, WP6.1).
+    /// </summary>
+    public const string ProtocolVersion = "2";
 
     public UpstreamTransportKind Kind => UpstreamTransportKind.Wasi;
 
@@ -86,7 +89,7 @@ internal sealed class WasiUpstreamConnection : IUpstreamConnection
     private readonly Process _process;
     private readonly WasiTransportOptions _options;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly List<string> _tools = [];
+    private readonly List<WasiTool> _tools = [];
     private bool _disposed;
 
     public WasiUpstreamConnection(ServerId id, Process process, WasiTransportOptions options)
@@ -139,29 +142,34 @@ internal sealed class WasiUpstreamConnection : IUpstreamConnection
 
         var discovered = await RequestAsync(new { type = "discover" }, ct).ConfigureAwait(false);
         _tools.Clear();
-        foreach (var tool in discovered.GetProperty("tools").EnumerateArray())
-        {
-            if (tool.GetString() is { } name)
-            {
-                _tools.Add(name);
-            }
-        }
+        _tools.AddRange(WasiToolNormalizer.Normalize(discovered.GetProperty("tools")));
     }
 
     public Task<UpstreamInventory> DiscoverAsync(CancellationToken ct)
         => Task.FromResult(new UpstreamInventory(
-            [.. _tools.Select(tool => new ToolDescriptor(tool, $"WASI-Export '{tool}'.", ToolSchema()))],
+            [.. _tools.Select(tool => new ToolDescriptor(tool.Name, tool.Description, tool.InputSchema))],
             [],
             []));
 
     public async Task<JsonElement> CallToolAsync(string toolName, JsonElement args, CancellationToken ct)
     {
+        // Der Katalogname ist die normalisierte Form; der Host kennt nur den rohen Export-Namen.
+        if (_tools.FirstOrDefault(tool => tool.Name == toolName) is not { } target)
+        {
+            return Result($"WASI-Upstream kennt kein Tool '{toolName}'.", isError: true);
+        }
+
+        if (!target.TryBindArguments(args, out var positional, out var bindingError))
+        {
+            return Result(bindingError, isError: true);
+        }
+
         var limits = _options.Limits ?? new WasiExecutionLimits();
         var request = new
         {
             type = "invoke",
-            tool = toolName,
-            args = ReadIntArguments(args),
+            tool = target.Export,
+            args = positional,
             limits = new
             {
                 fuel = limits.Fuel,
@@ -247,36 +255,6 @@ internal sealed class WasiUpstreamConnection : IUpstreamConnection
 
         _process.Dispose();
         _gate.Dispose();
-    }
-
-    /// <summary>Schema der WASI-Tools: optionale ganzzahlige Argumente für typisierte Exports.</summary>
-    private static JsonElement ToolSchema()
-        => JsonSerializer.SerializeToElement(new
-        {
-            type = "object",
-            properties = new
-            {
-                args = new
-                {
-                    type = "array",
-                    items = new { type = "integer" },
-                    description = "Argumente für typisierte Exports; Kommando-Exports brauchen keine.",
-                },
-            },
-        });
-
-    private static int[] ReadIntArguments(JsonElement args)
-    {
-        if (args.ValueKind is not JsonValueKind.Object
-            || !args.TryGetProperty("args", out var array)
-            || array.ValueKind is not JsonValueKind.Array)
-        {
-            return [];
-        }
-
-        return [.. array.EnumerateArray()
-            .Where(item => item.ValueKind is JsonValueKind.Number)
-            .Select(item => item.GetInt32())];
     }
 
     private static JsonElement Result(string text, bool isError)
