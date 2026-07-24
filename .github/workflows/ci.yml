@@ -31,10 +31,10 @@ jobs:
           # Auf Linux ist Docker da — ein nicht startbarer Postgres-Container ist dort ein
           # echter Fehler und darf nicht zum stillen Skip werden.
           MCPMCP_REQUIRE_POSTGRES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
-        # WasiRealHostCompatibilityTests brauchen das gebaute Rust-Binary und laufen deshalb im
-        # Job wasi-component-spike (dort mit MCPMCP_REQUIRE_WASI_HOST=1, also ohne Skip-Option).
+        # Alle WasiRealHost*-Tests brauchen das gebaute Rust-Binary und laufen deshalb im Job
+        # wasi-component-spike (dort mit MCPMCP_REQUIRE_WASI_HOST=1, also ohne Skip-Option).
         # Hier ausgeschlossen statt übersprungen: sonst reißt das Skip-Gate unten.
-        run: dotnet test --configuration Release --no-build --filter "FullyQualifiedName!~WasiRealHostCompatibilityTests" --collect:"XPlat Code Coverage" --results-directory ./coverage --logger "trx;LogFileName=results.trx"
+        run: dotnet test --configuration Release --no-build --filter "FullyQualifiedName!~WasiRealHost" --collect:"XPlat Code Coverage" --results-directory ./coverage --logger "trx;LogFileName=results.trx"
 
       # Der Postgres-Nachweis läuft über Testcontainers und skippt, wenn kein Docker da ist.
       # Auf Ubuntu ist Docker vorhanden — ein Skip bedeutet dort also einen echten Fehler
@@ -123,9 +123,10 @@ jobs:
       - name: WIT discovery and deny-by-default runtime tests
         run: cargo test --locked
 
-      # Plan 0003, WP6.2: Bis hierhin ist nur die Rust-Seite belegt. Der IPC-Vertrag hat aber zwei
-      # Implementierungen — ohne einen Lauf des .NET-Connectors gegen dieses Binary bleibt die
-      # Wire-Kompatibilität eine Behauptung (der Stub-Host in der .NET-Suite beweist sie nicht).
+      # Plan 0003, WP6.2 + M2: Bis hierhin ist nur die Rust-Seite belegt. Der IPC-Vertrag hat aber
+      # zwei Implementierungen — ohne einen Lauf der .NET-Seite gegen dieses Binary bleiben
+      # Wire-Kompatibilität und "signiertes Component durch die Governance-Pipeline" Behauptungen,
+      # die der Stub-Host in der .NET-Suite nicht trägt.
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
@@ -133,12 +134,20 @@ jobs:
       - name: Build the host binary the contract tests drive
         run: cargo build --locked --release
 
-      - name: .NET ↔ Rust-Host Vertragskompatibilität (WP6.2)
+      # Getrennte Steps statt zwei Zeilen in einem: auf dem Windows-Runner zählt sonst nur der
+      # Exit-Code des letzten Befehls, ein Fehlschlag im ersten ginge unter.
+      - name: .NET ↔ Rust-Host — IPC-Vertrag (WP6.2)
         working-directory: ${{ github.workspace }}
         env:
           # Das Binary ist hier garantiert da — ein Skip wäre ein stiller Ausfall des Nachweises.
           MCPMCP_REQUIRE_WASI_HOST: "1"
-        run: dotnet test tests/McpMcp.Upstream.Tests --configuration Release --filter "FullyQualifiedName~WasiRealHostCompatibilityTests" --logger "console;verbosity=normal"
+        run: dotnet test tests/McpMcp.Upstream.Tests --configuration Release --filter "FullyQualifiedName~WasiRealHost" --logger "console;verbosity=normal"
+
+      - name: Signiertes Component durch die Governance-Pipeline (M2)
+        working-directory: ${{ github.workspace }}
+        env:
+          MCPMCP_REQUIRE_WASI_HOST: "1"
+        run: dotnet test tests/McpMcp.Integration.Tests --configuration Release --filter "FullyQualifiedName~WasiRealHost" --logger "console;verbosity=normal"
 
   isolation-comparison:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

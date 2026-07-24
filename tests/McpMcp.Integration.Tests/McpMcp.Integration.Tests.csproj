@@ -15,6 +15,7 @@
     <ProjectReference Include="..\McpMcp.TestServers\SlowServer\McpMcp.TestServers.SlowServer.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\McpMcp.TestServers\HttpServer\McpMcp.TestServers.HttpServer.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\McpMcp.TestServers\BulkServer\McpMcp.TestServers.BulkServer.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\McpMcp.TestServers\WasiHostStub\McpMcp.TestServers.WasiHostStub.csproj" ReferenceOutputAssembly="false" />
     <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Testcontainers.PostgreSql" />

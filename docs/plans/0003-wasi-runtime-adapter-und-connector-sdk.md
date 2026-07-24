@@ -156,6 +156,29 @@ WP3/WP4/WP5 laufen nach WP2 weitgehend parallel — der kritische Pfad ist WP1 �
 - **M3 (~2026-09-12):** WP3 + WP4 + WP5 fertig — feingranulare Grants, persistierter Trust-Store + Load-Signaturprüfung, Modul-Cache/Rollback.
 - **M4 (~2026-09-30):** WP6 + WP7 fertig — Connector-Vertrag formalisiert, Packaging + CI + Security-Review; ADR-0017 neu bewertet.
 
+## Stand (2026-07-24)
+
+Belegt, jeweils an einen benannten Test gebunden — nicht an ein Plan-Häkchen:
+
+| Punkt | Nachweis |
+|-------|----------|
+| WP1 (IPC-Vertrag, Rust-Host) | `spikes/wasi-component-runtime/src/host.rs` — 44 Rust-Tests inkl. Framing, partielle Reads, Frame-Limits |
+| WP2 (.NET-Connector) | `WasiRuntimeConnectorTests` gegen den Stub-Host; `UpstreamConfigValidatorTests` für die fail-closed Validierung |
+| WP6.2 (Vertragskompatibilität) | `WasiRealHostCompatibilityTests` — .NET gegen das **echte** Binary: Handshake, signierter Load, Discovery, Invoke, Default-Deny, Versionsverhandlung mit „0"/„2" |
+| **M2** (signiertes Component durch die volle Pipeline) | `WasiRealHostGovernanceTests` (echter Host, signiertes Fixture) + `WasiUpstreamE2ETests` (RBAC, Guardrail, Approval, Audit, MCP + REST) |
+
+Offen und ausdrücklich **nicht** behauptet:
+
+- **WP6.1** — Namens-/Schema-Normalisierung. Der echte Host meldet Instanz *und* Funktion
+  (`wasi:cli/run@0.2.6` und `wasi:cli/run@0.2.6.run`), der Katalog bekäme also zwei identische
+  Tools; Export-Namen sind zudem nicht URL-sicher. `WasiRealHostCompatibilityTests` hält diesen
+  Ist-Zustand fest, damit die Normalisierung eine bewusste Änderung wird.
+- **WP3/WP4/WP5** — feingranulare Grants, persistierter Trust-Store, Modul-Cache. Die Grants sind
+  bisher kategorieweit (ein nicht-leeres Feld erlaubt die WASI-Kategorie), die gepinnten Publisher
+  kommen aus der Upstream-Konfiguration statt aus einem verwalteten Store.
+- **WP7** — Packaging und Security-Review. Der Host wird in CI gebaut, aber nicht ausgeliefert;
+  das Container-Image enthält ihn nicht.
+
 ## Erfolgskriterien
 
 - Ein signiertes WASI-P2-Component ist über MCP **und** REST aufrufbar, durch RBAC/Guardrail/Approval/Audit — im Integrationstest belegt.
