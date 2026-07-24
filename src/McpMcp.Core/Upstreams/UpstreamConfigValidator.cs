@@ -187,6 +187,54 @@ public static partial class UpstreamConfigValidator
                     nameof(config));
             }
         }
+
+        if (wasi.Grants is { } grants)
+        {
+            ValidateWasiGrants(grants, config);
+        }
+    }
+
+    /// <summary>
+    /// Prüft die Grants, die der Host pro Interface durchsetzt (Plan 0003, WP3). Ein unbrauchbarer
+    /// Grant soll hier auffallen und nicht erst beim Laden: Der Host lehnt eine nicht auflösbare
+    /// Preopen-Wurzel oder ein Netzwerkziel ohne Port fail-closed ab, und dann steht der Upstream
+    /// mit einem Fehler da, dessen Ursache in der Konfiguration liegt.
+    /// </summary>
+    private static void ValidateWasiGrants(WasiCapabilityGrants grants, UpstreamServerConfig config)
+    {
+        foreach (var preopen in grants.FilesystemPreopens ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(preopen) || !Path.IsPathFullyQualified(preopen))
+            {
+                throw new ArgumentException(
+                    $"Wasi.Grants.FilesystemPreopens: '{preopen}' muss ein absoluter Pfad sein — "
+                    + "ein relativer Pfad zeigt je nach Arbeitsverzeichnis des Hosts woanders hin.",
+                    nameof(config));
+            }
+        }
+
+        foreach (var target in grants.NetworkAllow ?? [])
+        {
+            // Der Host löst die Allowlist einmalig zu Socket-Adressen auf; ohne Port geht das nicht.
+            var separator = target?.LastIndexOf(':') ?? -1;
+            if (string.IsNullOrWhiteSpace(target) || separator <= 0
+                || !ushort.TryParse(target[(separator + 1)..], System.Globalization.CultureInfo.InvariantCulture, out var port)
+                || port == 0)
+            {
+                throw new ArgumentException(
+                    $"Wasi.Grants.NetworkAllow: '{target}' muss die Form host:port haben.",
+                    nameof(config));
+            }
+        }
+
+        if (grants.Secrets is { Count: > 0 })
+        {
+            // Ehrlich statt stillschweigend: Der Host kennt heute keine Secret-Capability, ein
+            // solcher Grant wäre wirkungslos. Secret-Injection kommt mit dem Trust-Store (WP4).
+            throw new ArgumentException(
+                "Wasi.Grants.Secrets wird noch nicht durchgesetzt — der Host injiziert keine Secrets (Plan 0003, WP4).",
+                nameof(config));
+        }
     }
 
     private static void ValidateCli(CliTransportOptions cli, UpstreamServerConfig config)

@@ -15,11 +15,13 @@ public class UpstreamConfigValidatorTests
 
     private static UpstreamServerConfig Wasi(
         IReadOnlyList<string>? pinned = null,
-        WasiExecutionLimits? limits = null) => new(
+        WasiExecutionLimits? limits = null,
+        WasiCapabilityGrants? grants = null) => new(
         "wasi", "WASI", UpstreamTransportKind.Wasi, Enabled: true,
         Wasi: new WasiTransportOptions(
             "host.exe", "component.wasm", "component.sig",
             pinned ?? [PublisherKey],
+            Grants: grants,
             Limits: limits));
 
     [Fact]
@@ -54,6 +56,37 @@ public class UpstreamConfigValidatorTests
             Wasi(limits: new WasiExecutionLimits(MaxOutputBytes: 0)));
 
         act.Should().Throw<ArgumentException>().WithMessage("*MaxOutputBytes*");
+    }
+
+    [Fact]
+    public void Wasi_grants_that_the_host_cannot_enforce_are_rejected_at_configuration_time()
+    {
+        // Relativer Preopen: zeigt je nach Arbeitsverzeichnis des Host-Prozesses woanders hin.
+        var relativePreopen = () => UpstreamConfigValidator.Validate(
+            Wasi(grants: new WasiCapabilityGrants(FilesystemPreopens: ["daten"])));
+        // Netzwerkziel ohne Port lässt sich nicht zu einer Socket-Adresse auflösen.
+        var portless = () => UpstreamConfigValidator.Validate(
+            Wasi(grants: new WasiCapabilityGrants(NetworkAllow: ["api.example.com"])));
+        // Secrets sind im Host noch nicht implementiert — ein solcher Grant wäre wirkungslos.
+        var secrets = () => UpstreamConfigValidator.Validate(
+            Wasi(grants: new WasiCapabilityGrants(Secrets: ["db-password"])));
+
+        relativePreopen.Should().Throw<ArgumentException>().WithMessage("*absoluter Pfad*");
+        portless.Should().Throw<ArgumentException>().WithMessage("*host:port*");
+        secrets.Should().Throw<ArgumentException>().WithMessage("*WP4*");
+    }
+
+    [Fact]
+    public void Wasi_accepts_grants_the_host_enforces()
+    {
+        var act = () => UpstreamConfigValidator.Validate(Wasi(grants: new WasiCapabilityGrants(
+            FilesystemPreopens: [Path.GetTempPath()],
+            NetworkAllow: ["127.0.0.1:8080"],
+            Environment: ["MCPMCP_SPIKE"],
+            Clock: true,
+            Random: true)));
+
+        act.Should().NotThrow();
     }
 
     [Fact]

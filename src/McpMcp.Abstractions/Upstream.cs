@@ -191,8 +191,16 @@ public sealed record WasiTransportOptions(
 
 /// <summary>
 /// Die Host-Capabilities, die ein Component erhält — Spiegel des Grant-Modells im Rust-Host.
-/// Alles leer/false = default-deny; nicht gewährte Imports werden vor der Instanziierung
-/// abgewiesen.
+/// Alles leer/false = default-deny: Der Host linkt nur die gewährten WASI-Interfaces, ein
+/// Component mit einem nicht gewährten Import scheitert schon beim Instanziieren (Plan 0003, WP3).
+/// <para>
+/// <see cref="FilesystemPreopens"/> sind absolute Pfade und werden **lesend** eingehängt; der Host
+/// löst sie vorher auf, ein Symlink verschiebt den Grant also nicht. <see cref="NetworkAllow"/>
+/// sind <c>host:port</c>-Ziele, die der Host einmalig zu Socket-Adressen auflöst — alles andere
+/// wird abgewiesen, Namensauflösung im Guest bleibt aus. <see cref="Secrets"/> ist noch nicht
+/// implementiert: Der Host injiziert keine Secrets, deshalb weist der Validator einen solchen
+/// Grant ab, statt ihn wirkungslos durchzulassen (kommt mit dem Trust-Store, WP4).
+/// </para>
 /// </summary>
 public sealed record WasiCapabilityGrants(
     IReadOnlyList<string>? FilesystemPreopens = null,

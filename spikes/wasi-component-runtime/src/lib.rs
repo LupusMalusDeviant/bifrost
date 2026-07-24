@@ -19,6 +19,10 @@ const NO_IMPORT_COMPONENT: &str = include_str!("../fixtures/no-import.component.
 const DENIED_IMPORT_COMPONENT: &str = include_str!("../fixtures/denied-import.component.wat");
 const INFINITE_COMPONENT: &str = include_str!("../fixtures/infinite.component.wat");
 const MEMORY_GROWTH_COMPONENT: &str = include_str!("../fixtures/memory-growth.component.wat");
+#[cfg(test)]
+const NEEDS_RANDOM_COMPONENT: &str = include_str!("../fixtures/needs-random.component.wat");
+#[cfg(test)]
+const NEEDS_CLOCK_COMPONENT: &str = include_str!("../fixtures/needs-clock.component.wat");
 const CONTROL_PLANE_WIT: &str = include_str!("../../../docs/spikes/fixtures/control-plane.wit");
 pub const RUNTIME_VERSION: &str = "wasmtime-47.0.2";
 const WASI_GUEST_COMPONENT: &[u8] = include_bytes!("../fixtures/wasi-p2-guest.component.wasm");
@@ -102,7 +106,10 @@ pub struct CapabilityGrants {
     pub network_allow: BTreeSet<String>,
     /// Freigegebene Environment-Variablennamen; leer = kein Environment.
     pub environment: BTreeSet<String>,
-    /// Freigegebene Secret-Capability-Namen; leer = keine Secrets.
+    /// Freigegebene Secret-Capability-Namen. **Noch ohne Wirkung**: Der Host kennt keine
+    /// Secret-Quelle und injiziert nichts — das kommt mit dem Trust-Store (Plan 0003, WP4). Das
+    /// Feld bleibt im Vertrag, damit die Wire-Form stabil ist; das Gateway weist einen solchen
+    /// Grant vorher ab, statt ihn wirkungslos zu senden.
     pub secrets: BTreeSet<String>,
     /// Uhr-Capability.
     pub clock: bool,
@@ -279,6 +286,161 @@ struct WasiGuestHost {
     ctx: wasmtime_wasi::WasiCtx,
     table: wasmtime::component::ResourceTable,
     limits: StoreLimits,
+}
+
+/// `HasData`-Marker für die WASI-I/O-Interfaces, die nur die Resource-Table brauchen.
+/// wasmtime-wasi hält sein eigenes Äquivalent privat, deshalb hier eins.
+struct HasResourceTable;
+
+impl wasmtime::component::HasData for HasResourceTable {
+    type Data<'a> = &'a mut wasmtime::component::ResourceTable;
+}
+
+/// Verdrahtet **nur die gewährten** WASI-Interfaces in den Linker (WP3.1). Was nicht gewährt ist,
+/// wird gar nicht erst gelinkt: Ein Component, das ein solches Interface importiert, scheitert
+/// dadurch schon beim Instanziieren — vor jeder Ausführung, ohne dass ein Aufruf abgefangen
+/// werden müsste (deny-before-instantiation).
+///
+/// Immer verdrahtet ist nur das I/O-Gerüst samt stdio: Diese Streams gehören dem Host — stdout
+/// hängt an einem begrenzten Puffer, stdin ist leer, stderr verwirft. Sie sind der Rückkanal des
+/// Aufrufs, kein Zugang zur Außenwelt. Alles, was nach draußen führt — Dateisystem, Netzwerk,
+/// Environment, Uhr, Zufall — hängt an seinem Grant.
+fn add_granted_wasi_to_linker(
+    linker: &mut Linker<WasiGuestHost>,
+    grants: &CapabilityGrants,
+) -> Result<()> {
+    use wasmtime_wasi::cli::{WasiCli, WasiCliView as _};
+    use wasmtime_wasi::clocks::{WasiClocks, WasiClocksView as _};
+    use wasmtime_wasi::filesystem::{WasiFilesystem, WasiFilesystemView as _};
+    use wasmtime_wasi::p2::bindings::{cli, clocks, filesystem, random, sockets, sync};
+    use wasmtime_wasi::random::{WasiRandom, WasiRandomView as _};
+    use wasmtime_wasi::sockets::{WasiSockets, WasiSocketsView as _};
+
+    // Als `fn` statt Closure: Die Lebensdauer der Ausleihe lässt sich sonst nicht ausdrücken.
+    fn table(host: &mut WasiGuestHost) -> &mut wasmtime::component::ResourceTable {
+        &mut host.table
+    }
+
+    sync::io::error::add_to_linker::<_, HasResourceTable>(linker, table)?;
+    sync::io::poll::add_to_linker::<_, HasResourceTable>(linker, table)?;
+    sync::io::streams::add_to_linker::<_, HasResourceTable>(linker, table)?;
+    cli::stdin::add_to_linker::<_, WasiCli>(linker, WasiGuestHost::cli)?;
+    cli::stdout::add_to_linker::<_, WasiCli>(linker, WasiGuestHost::cli)?;
+    cli::stderr::add_to_linker::<_, WasiCli>(linker, WasiGuestHost::cli)?;
+    cli::exit::add_to_linker::<_, WasiCli>(linker, WasiGuestHost::cli)?;
+    cli::terminal_input::add_to_linker::<_, WasiCli>(linker, WasiGuestHost::cli)?;
+    cli::terminal_output::add_to_linker::<_, WasiCli>(linker, WasiGuestHost::cli)?;
+    cli::terminal_stdin::add_to_linker::<_, WasiCli>(linker, WasiGuestHost::cli)?;
+    cli::terminal_stdout::add_to_linker::<_, WasiCli>(linker, WasiGuestHost::cli)?;
+    cli::terminal_stderr::add_to_linker::<_, WasiCli>(linker, WasiGuestHost::cli)?;
+
+    if !grants.environment.is_empty() {
+        cli::environment::add_to_linker::<_, WasiCli>(linker, WasiGuestHost::cli)?;
+    }
+
+    if grants.clock {
+        clocks::wall_clock::add_to_linker::<_, WasiClocks>(linker, WasiGuestHost::clocks)?;
+        clocks::monotonic_clock::add_to_linker::<_, WasiClocks>(linker, WasiGuestHost::clocks)?;
+    }
+
+    if grants.random {
+        random::random::add_to_linker::<_, WasiRandom>(linker, WasiGuestHost::random)?;
+        random::insecure::add_to_linker::<_, WasiRandom>(linker, WasiGuestHost::random)?;
+        random::insecure_seed::add_to_linker::<_, WasiRandom>(linker, WasiGuestHost::random)?;
+    }
+
+    if !grants.filesystem_preopens.is_empty() {
+        filesystem::preopens::add_to_linker::<_, WasiFilesystem>(
+            linker,
+            WasiGuestHost::filesystem,
+        )?;
+        sync::filesystem::types::add_to_linker::<_, WasiFilesystem>(
+            linker,
+            WasiGuestHost::filesystem,
+        )?;
+    }
+
+    if !grants.network_allow.is_empty() {
+        sockets::instance_network::add_to_linker::<_, WasiSockets>(linker, WasiGuestHost::sockets)?;
+        sockets::network::add_to_linker::<_, WasiSockets>(
+            linker,
+            &sockets::network::LinkOptions::default(),
+            WasiGuestHost::sockets,
+        )?;
+        sockets::tcp_create_socket::add_to_linker::<_, WasiSockets>(
+            linker,
+            WasiGuestHost::sockets,
+        )?;
+        sockets::udp_create_socket::add_to_linker::<_, WasiSockets>(
+            linker,
+            WasiGuestHost::sockets,
+        )?;
+        sockets::ip_name_lookup::add_to_linker::<_, WasiSockets>(linker, WasiGuestHost::sockets)?;
+        sync::sockets::tcp::add_to_linker::<_, WasiSockets>(linker, WasiGuestHost::sockets)?;
+        sync::sockets::udp::add_to_linker::<_, WasiSockets>(linker, WasiGuestHost::sockets)?;
+    }
+
+    Ok(())
+}
+
+/// Füllt den WASI-Kontext mit genau den gewährten Ressourcen (WP3.1). Das Linken oben entscheidet,
+/// **ob** eine Kategorie überhaupt existiert; hier wird festgelegt, **worauf** sie zeigt.
+fn apply_grants_to_context(
+    builder: &mut wasmtime_wasi::WasiCtxBuilder,
+    grants: &CapabilityGrants,
+) -> Result<()> {
+    for key in &grants.environment {
+        builder.env(key, "granted");
+    }
+
+    for root in &grants.filesystem_preopens {
+        // Kanonisch auflösen: Ein Preopen auf einen Symlink würde sonst außerhalb der gewährten
+        // Wurzel landen, ohne dass der Grant das hergibt.
+        let canonical = std::fs::canonicalize(root)
+            .with_context(|| format!("Preopen-Wurzel '{root}' ist nicht auflösbar"))?;
+        // Nur lesend: Schreibrechte sind im Grant-Modell noch nicht ausdrückbar und werden
+        // deshalb nicht stillschweigend vergeben.
+        builder.preopened_dir(
+            &canonical,
+            root,
+            wasmtime_wasi::DirPerms::READ,
+            wasmtime_wasi::FilePerms::READ,
+        )?;
+    }
+
+    if !grants.network_allow.is_empty() {
+        let allowed = resolve_network_allowlist(&grants.network_allow)?;
+        // Die Prüfung läuft pro Socket-Adresse: Ein nicht gelistetes Ziel wird abgewiesen, auch
+        // wenn das Netzwerk-Interface selbst gewährt ist.
+        builder.socket_addr_check(move |address, _use| {
+            let allowed = allowed.clone();
+            Box::pin(async move { allowed.contains(&address) })
+        });
+        // Namensauflösung ist eine eigene Fähigkeit und in der Allowlist nicht ausdrückbar.
+        builder.allow_ip_name_lookup(false);
+    }
+
+    Ok(())
+}
+
+/// Aufgelöste Netzwerkziele, geteilt mit der Adressprüfung im WASI-Kontext.
+type NetworkAllowlist = std::sync::Arc<std::collections::HashSet<std::net::SocketAddr>>;
+
+/// Löst die `host:port`-Allowlist zu konkreten Socket-Adressen auf. Auflösung passiert **einmal**
+/// beim Aufbau des Kontexts, nicht pro Verbindung: Sonst entschiede ein DNS-Server zur Laufzeit
+/// darüber, wohin ein Grant zeigt.
+fn resolve_network_allowlist(allow: &BTreeSet<String>) -> Result<NetworkAllowlist> {
+    use std::net::ToSocketAddrs;
+
+    let mut resolved = std::collections::HashSet::new();
+    for target in allow {
+        let addresses = target
+            .to_socket_addrs()
+            .with_context(|| format!("Netzwerkziel '{target}' ist nicht auflösbar (host:port)"))?;
+        resolved.extend(addresses);
+    }
+
+    Ok(std::sync::Arc::new(resolved))
 }
 
 impl wasmtime_wasi::WasiView for WasiGuestHost {
@@ -561,16 +723,12 @@ pub fn invoke_component_tool(
     }
 
     let mut linker = Linker::<WasiGuestHost>::new(&engine);
-    if !grants.environment.is_empty() {
-        wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
-    }
+    add_granted_wasi_to_linker(&mut linker, grants)?;
 
     let stdout = wasmtime_wasi::p2::pipe::MemoryOutputPipe::new(limits.max_output_bytes);
     let mut builder = wasmtime_wasi::WasiCtxBuilder::new();
     builder.stdout(stdout.clone());
-    for key in &grants.environment {
-        builder.env(key, "granted");
-    }
+    apply_grants_to_context(&mut builder, grants)?;
 
     let mut store_limits = StoreLimitsBuilder::new();
     if let Some(max_memory) = limits.max_memory_bytes {
@@ -1498,6 +1656,157 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
+    }
+
+    /// WP3.2: Jede Kategorie einzeln — ein Component, das genau ein Interface importiert, läuft
+    /// nur mit dem passenden Grant. Ohne ihn ist das Interface gar nicht gelinkt und die
+    /// Instanziierung scheitert **vor** jeder Ausführung.
+    #[test]
+    fn each_category_is_gated_by_its_own_grant() -> Result<()> {
+        /// Setzt genau den Grant, den das jeweilige Fixture braucht.
+        type SetGrant = fn(&mut CapabilityGrants);
+
+        let engine = hardened_engine(false, false)?;
+        let cases: [(&str, SetGrant); 2] = [
+            (NEEDS_RANDOM_COMPONENT, |grants| grants.random = true),
+            (NEEDS_CLOCK_COMPONENT, |grants| grants.clock = true),
+        ];
+
+        for (source, grant) in cases {
+            let (bytes, _) = compile_component(&engine, source)?;
+
+            let denied = invoke_component_tool(
+                &bytes,
+                &CapabilityGrants::default(),
+                "run",
+                &[7],
+                &ExecutionLimits::default(),
+            );
+            assert!(
+                denied.is_err(),
+                "ohne Grant darf nichts instanziiert werden"
+            );
+
+            // Ein anderer Grant hilft nicht — die Kategorien sind getrennt.
+            let mut wrong = CapabilityGrants::default();
+            wrong.environment.insert("MCPMCP_SPIKE".to_owned());
+            assert!(
+                invoke_component_tool(&bytes, &wrong, "run", &[7], &ExecutionLimits::default())
+                    .is_err(),
+                "ein fremder Grant darf keine andere Kategorie freischalten"
+            );
+
+            let mut granted = CapabilityGrants::default();
+            grant(&mut granted);
+            let outcome =
+                invoke_component_tool(&bytes, &granted, "run", &[7], &ExecutionLimits::default())?;
+            assert_eq!(outcome.result, Some(7));
+        }
+        Ok(())
+    }
+
+    /// Welche Interfaces der Linker anbietet, ist die eigentliche Durchsetzung. `Linker::instance`
+    /// schlägt bei einem bereits definierten Namen fehl — damit lässt sich die Politik für
+    /// Kategorien prüfen, deren Schnittstellen zu groß sind, um sie als WAT-Fixture zu bauen.
+    #[test]
+    fn only_granted_interfaces_are_linked() -> Result<()> {
+        fn is_linked(grants: &CapabilityGrants, interface: &str) -> Result<bool> {
+            let engine = hardened_engine(false, false)?;
+            let mut linker = Linker::<WasiGuestHost>::new(&engine);
+            add_granted_wasi_to_linker(&mut linker, grants)?;
+            Ok(linker.instance(interface).is_err())
+        }
+
+        // Die Namen tragen die WASI-Version der gepinnten wasmtime-wasi-Bindings (0.2.12);
+        // Gast-Imports älterer Patch-Stände bedient wasmtime semver-kompatibel. Ändert sich die
+        // Runtime-Version, schlägt dieser Test an — genau so soll es sein.
+        let nothing = CapabilityGrants::default();
+        // Basis: der Rückkanal des Aufrufs ist immer da.
+        assert!(is_linked(&nothing, "wasi:cli/stdout@0.2.12")?);
+        assert!(is_linked(&nothing, "wasi:io/streams@0.2.12")?);
+        // Alles, was nach draußen führt, ist ohne Grant nicht vorhanden.
+        for interface in [
+            "wasi:cli/environment@0.2.12",
+            "wasi:filesystem/types@0.2.12",
+            "wasi:filesystem/preopens@0.2.12",
+            "wasi:sockets/tcp@0.2.12",
+            "wasi:sockets/ip-name-lookup@0.2.12",
+            "wasi:clocks/wall-clock@0.2.12",
+            "wasi:random/random@0.2.12",
+        ] {
+            assert!(
+                !is_linked(&nothing, interface)?,
+                "{interface} darf ohne Grant nicht gelinkt sein"
+            );
+        }
+
+        // Ein Preopen schaltet Dateisystem frei — und sonst nichts.
+        let mut filesystem = CapabilityGrants::default();
+        filesystem
+            .filesystem_preopens
+            .insert(std::env::temp_dir().to_string_lossy().into_owned());
+        assert!(is_linked(&filesystem, "wasi:filesystem/types@0.2.12")?);
+        assert!(is_linked(&filesystem, "wasi:filesystem/preopens@0.2.12")?);
+        assert!(!is_linked(&filesystem, "wasi:sockets/tcp@0.2.12")?);
+        assert!(!is_linked(&filesystem, "wasi:random/random@0.2.12")?);
+
+        // Ein Netzwerkziel schaltet Sockets frei — und sonst nichts.
+        let mut network = CapabilityGrants::default();
+        network.network_allow.insert("127.0.0.1:9".to_owned());
+        assert!(is_linked(&network, "wasi:sockets/tcp@0.2.12")?);
+        assert!(!is_linked(&network, "wasi:filesystem/types@0.2.12")?);
+        Ok(())
+    }
+
+    /// Die Preopen-Wurzel wird aufgelöst, bevor sie geöffnet wird: Ein Pfad mit `..` landet dort,
+    /// wohin er zeigt, und eine nicht existierende Wurzel ist ein Fehler statt einer stillen
+    /// Auslassung — sonst liefe ein Component mit weniger Zugriff als gewährt und niemand merkte
+    /// den Konfigurationsfehler.
+    #[test]
+    fn preopen_roots_are_resolved_and_missing_ones_fail_closed() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("mcpmcp-preopen-{}", std::process::id()));
+        std::fs::create_dir_all(&root)?;
+        let uncanonical = root.join("..").join(root.file_name().unwrap());
+
+        {
+            let mut grants = CapabilityGrants::default();
+            grants
+                .filesystem_preopens
+                .insert(uncanonical.to_string_lossy().into_owned());
+            let mut builder = wasmtime_wasi::WasiCtxBuilder::new();
+            // Ohne Auflösung würde `open_ambient_dir` an dem `..` scheitern.
+            apply_grants_to_context(&mut builder, &grants)?;
+
+            let mut missing = CapabilityGrants::default();
+            missing
+                .filesystem_preopens
+                .insert(root.join("gibt-es-nicht").to_string_lossy().into_owned());
+            let mut second = wasmtime_wasi::WasiCtxBuilder::new();
+            let failure = apply_grants_to_context(&mut second, &missing).unwrap_err();
+            assert!(failure.to_string().contains("nicht auflösbar"));
+        }
+
+        // Erst nach dem Verwerfen der Builder ist das Verzeichnis-Handle wieder frei.
+        std::fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    /// Die Netzwerk-Allowlist wird beim Aufbau des Kontexts aufgelöst, nicht pro Verbindung —
+    /// sonst entschiede DNS zur Laufzeit, wohin ein Grant zeigt.
+    #[test]
+    fn the_network_allowlist_resolves_once_and_rejects_unlistable_targets() -> Result<()> {
+        let mut allow = BTreeSet::new();
+        allow.insert("127.0.0.1:8080".to_owned());
+
+        let resolved = resolve_network_allowlist(&allow)?;
+
+        assert!(resolved.contains(&"127.0.0.1:8080".parse().unwrap()));
+        assert!(!resolved.contains(&"127.0.0.1:8081".parse().unwrap()));
+
+        let mut broken = BTreeSet::new();
+        broken.insert("kein-port".to_owned());
+        assert!(resolve_network_allowlist(&broken).is_err());
         Ok(())
     }
 

@@ -162,8 +162,9 @@ Belegt, jeweils an einen benannten Test gebunden — nicht an ein Plan-Häkchen:
 
 | Punkt | Nachweis |
 |-------|----------|
-| WP1 (IPC-Vertrag, Rust-Host) | `spikes/wasi-component-runtime/src/host.rs` — 44 Rust-Tests inkl. Framing, partielle Reads, Frame-Limits |
+| WP1 (IPC-Vertrag, Rust-Host) | `spikes/wasi-component-runtime/src/host.rs` — Framing, partielle Reads, Frame-Limits; insgesamt 51 Rust-Tests |
 | WP2 (.NET-Connector) | `WasiRuntimeConnectorTests` gegen den Stub-Host; `UpstreamConfigValidatorTests` für die fail-closed Validierung |
+| WP3 (feingranulares Grant-Mapping) | Der Host linkt **nur die gewährten** WASI-Interfaces (`add_granted_wasi_to_linker`); Preopens werden aufgelöst und lesend eingehängt, die Netzwerk-Allowlist einmalig zu Socket-Adressen aufgelöst (`apply_grants_to_context`). Tests: Kategorie-Gating end-to-end an zwei WAT-Fixtures, Linker-Politik über alle Kategorien, Preopen-Auflösung/fail-closed, Allowlist-Auflösung; `UpstreamConfigValidatorTests` weist nicht durchsetzbare Grants schon in der Konfiguration ab |
 | WP6.1 (Namens- und Schema-Normalisierung) | Vertrag **v2**: `discover` liefert typisierte Beschreibungen (`describe_component_tools`), der Kommando-Einstiegspunkt ist genau ein Tool, nicht aufrufbare Signaturen sind als solche markiert. Gateway-seitig `WasiToolNormalizer` — katalog- und URL-taugliche Namen plus ein Schema **pro** Tool. Tests: 3 Rust-Tests, `WasiRuntimeConnectorTests` (Normalisierung, Kollisionen, Schema, gefilterte Exports) |
 | WP6.2 (Vertragskompatibilität) | `WasiRealHostCompatibilityTests` — .NET gegen das **echte** Binary: Handshake, signierter Load, Discovery, Invoke, Default-Deny, Versionsverhandlung mit „1" (der echte Bruch) und „3" |
 | **M2** (signiertes Component durch die volle Pipeline) | `WasiRealHostGovernanceTests` (echter Host, signiertes Fixture) + `WasiUpstreamE2ETests` (RBAC, Guardrail, Approval, Audit, MCP + REST) |
@@ -175,9 +176,13 @@ Offen und ausdrücklich **nicht** behauptet:
   ADR-0016 fehlen weiterhin. Ebenso die Aufrufbreite: Der Host führt heute nur
   `(s32) -> s32`-Funktionen und den Kommando-Einstiegspunkt aus — alles andere meldet die
   Discovery ehrlich als nicht unterstützt, statt es im Katalog zu zeigen.
-- **WP3/WP4/WP5** — feingranulare Grants, persistierter Trust-Store, Modul-Cache. Die Grants sind
-  bisher kategorieweit (ein nicht-leeres Feld erlaubt die WASI-Kategorie), die gepinnten Publisher
-  kommen aus der Upstream-Konfiguration statt aus einem verwalteten Store.
+- **WP3, Rest** — **Secret-Injection** fehlt: Der Host kennt keine Secret-Quelle, deshalb weist
+  das Gateway einen `Secrets`-Grant ab, statt ihn wirkungslos zu senden. Er gehört zum
+  Trust-Store (WP4), weil dort erst geklärt wird, woher Werte kommen und wie sie auditiert über
+  die IPC-Leitung gehen. Ebenfalls offen: Preopens sind **nur lesend** — Schreibrechte sind im
+  Grant-Modell noch nicht ausdrückbar und werden nicht stillschweigend vergeben.
+- **WP4/WP5** — persistierter Trust-Store und Modul-Cache. Die gepinnten Publisher kommen aus der
+  Upstream-Konfiguration statt aus einem verwalteten Store; jeder Load kompiliert neu.
 - **WP7** — Packaging und Security-Review. Der Host wird in CI gebaut, aber nicht ausgeliefert;
   das Container-Image enthält ihn nicht.
 
