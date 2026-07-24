@@ -6,7 +6,8 @@ using System.Text.Json;
 //
 // Zweck: den .NET-Connector deterministisch und ohne Rust-Toolchain testbar machen. Die echte
 // Runtime-Semantik (Signaturprüfung, Grants, Limits) ist auf der Rust-Seite getestet; die
-// Wire-Kompatibilität zwischen beiden Seiten ist ein eigener Punkt (Plan 0003, WP6.2).
+// Wire-Kompatibilität zwischen beiden Seiten belegen die WasiRealHostCompatibilityTests gegen das
+// gebaute Rust-Binary (Plan 0003, WP6.2) — dieser Stub beweist sie ausdrücklich NICHT.
 //
 // Verhalten wird über das erste Argument gesteuert:
 //   host              — normaler Vertragsablauf

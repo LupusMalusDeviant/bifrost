@@ -433,6 +433,32 @@ mod tests {
         );
     }
 
+    /// Die committeten Fixture-Dateien (Component, detached Signatur, Publisher-Key) müssen
+    /// zusammenpassen — dieselben drei Dateien fährt der .NET-Kompatibilitätstest (Plan 0003,
+    /// WP6.2) über die echte IPC-Leitung. Bricht dieser Test, wurde eine der Dateien ohne die
+    /// anderen erneuert; regenerieren mit:
+    /// `mcpmcp-wasi-component-spike sign fixtures/wasi-p2-guest.component.wasm <seed-hex>`
+    /// (Dev-Testvektor-Seed: 0x03 × 32 — kein Geheimnis, nur ein reproduzierbarer Testschlüssel).
+    #[test]
+    fn the_committed_signature_fixture_loads() {
+        let signature = include_bytes!("../fixtures/wasi-p2-guest.component.sig");
+        let publisher = include_str!("../fixtures/wasi-p2-guest.publisher.pub");
+
+        let (response, _) = negotiated().handle(Request::Load {
+            component: BASE64.encode(GUEST),
+            signature: BASE64.encode(signature),
+            pinned_publishers: vec![publisher.trim().to_owned()],
+            grants: CapabilityGrants::default(),
+        });
+
+        match response {
+            Response::Loaded { audit } => {
+                assert_eq!(audit.module_sha256, crate::sha256_hex(GUEST));
+            }
+            other => panic!("committed fixture triple no longer loads: {other:?}"),
+        }
+    }
+
     #[test]
     fn load_is_rejected_for_an_unpinned_publisher() {
         let trusted = SigningKey::from_bytes(&[1u8; 32]);

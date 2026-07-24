@@ -11,7 +11,8 @@ namespace McpMcp.Upstream.Tests;
 /// IPC-Vertrag spricht. Das prüft die .NET-Seite — Framing, Handshake, Load, Discovery,
 /// Argumentübergabe und Fehlerabbildung — deterministisch und ohne Rust-Toolchain. Die
 /// Runtime-Semantik selbst (Signaturprüfung, Grants, Limits) ist auf der Rust-Seite getestet;
-/// die Wire-Kompatibilität beider Seiten ist ein eigener Punkt (Plan 0003, WP6.2).
+/// die Wire-Kompatibilität beider Seiten belegt <see cref="WasiRealHostCompatibilityTests"/>
+/// gegen das echte Binary (Plan 0003, WP6.2).
 /// </summary>
 public class WasiRuntimeConnectorTests : IAsyncLifetime
 {
