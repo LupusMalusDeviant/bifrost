@@ -33,12 +33,14 @@ public class UpstreamConfigValidatorTests
     }
 
     [Fact]
-    public void Wasi_without_a_pinned_publisher_is_rejected()
+    public void Wasi_without_a_configured_publisher_is_allowed_since_the_trust_store_supplies_them()
     {
-        // Fail-closed: eine leere Liste heißt NICHT "jeder Publisher ist ok".
+        // Ab WP4 ist der Trust-Store die Vertrauensquelle; das Config-Feld ist nur noch der
+        // Migrationspfad. Fail-closed bleibt es trotzdem — nur eine Ebene tiefer: Ist auch der
+        // Store leer, gehen null Schlüssel an den Host und der lädt nichts.
         var act = () => UpstreamConfigValidator.Validate(Wasi(pinned: []));
 
-        act.Should().Throw<ArgumentException>().WithMessage("*PinnedPublishers*");
+        act.Should().NotThrow();
     }
 
     [Fact]

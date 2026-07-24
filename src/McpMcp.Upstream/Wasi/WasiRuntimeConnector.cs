@@ -24,6 +24,16 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
     /// </summary>
     public const string ProtocolVersion = "2";
 
+    private readonly IPublisherTrustStore _trust;
+    private readonly IAuditSink? _audit;
+
+    public WasiRuntimeConnector(IPublisherTrustStore trust, IAuditSink? audit = null)
+    {
+        ArgumentNullException.ThrowIfNull(trust);
+        _trust = trust;
+        _audit = audit;
+    }
+
     public UpstreamTransportKind Kind => UpstreamTransportKind.Wasi;
 
     public async Task<IUpstreamConnection> ConnectAsync(
@@ -32,6 +42,10 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
         ArgumentNullException.ThrowIfNull(config);
         var options = config.Wasi
             ?? throw new ArgumentException($"Config '{config.Slug}' hat keine Wasi-Optionen.", nameof(config));
+
+        // Vertrauensquelle ist ab WP4 ausschließlich der Trust-Store — nicht die Konfiguration.
+        // Ist er leer, gehen null Schlüssel an den Host, und der lehnt fail-closed ab.
+        var pinned = _trust.ActivePublicKeys;
 
         // Component und Signatur werden hier gelesen, aber NICHT hier geprüft: die Verifikation
         // gegen die gepinnten Publisher passiert im Host, direkt vor dem Instanziieren.
@@ -67,8 +81,10 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
         {
             using var startupCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             startupCts.CancelAfter(TimeSpan.FromSeconds(options.StartupTimeoutSeconds));
-            await connection.HandshakeAndLoadAsync(component, signature, startupCts.Token)
+            var audit = await connection
+                .HandshakeAndLoadAsync(component, signature, pinned, startupCts.Token)
                 .ConfigureAwait(false);
+            RecordGrantAudit(id, config, options, audit);
         }
         catch
         {
@@ -78,13 +94,75 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
 
         return connection;
     }
+
+    /// <summary>
+    /// Schreibt den Grant-Audit-Datensatz des Hosts in den Audit-Pfad (WP4.3): welches Modul,
+    /// welcher Publisher, welche Runtime, welche Grants. Ohne diese Zeile wüsste hinterher
+    /// niemand, mit welchen Rechten ein Component tatsächlich gelaufen ist — der Host protokolliert
+    /// nicht selbst, und die Konfiguration sagt nur, was gewünscht war.
+    /// </summary>
+    private void RecordGrantAudit(
+        ServerId id, UpstreamServerConfig config, WasiTransportOptions options, JsonElement audit)
+    {
+        if (_audit is null)
+        {
+            return;
+        }
+
+        string? Text(string name) => audit.TryGetProperty(name, out var value) ? value.GetString() : null;
+        string List(string name) => audit.TryGetProperty(name, out var value)
+            && value.ValueKind is JsonValueKind.Array
+            ? string.Join(", ", value.EnumerateArray().Select(item => item.GetString()))
+            : string.Empty;
+
+        var granted = new List<string>();
+        foreach (var (label, name) in new[]
+        {
+            ("Preopens", "grantedFilesystemPreopens"),
+            ("Netz", "grantedNetworkAllow"),
+            ("Env", "grantedEnvironment"),
+            ("Secrets", "grantedSecrets"),
+        })
+        {
+            if (List(name) is { Length: > 0 } values)
+            {
+                granted.Add($"{label}: {values}");
+            }
+        }
+
+        if (audit.TryGetProperty("grantedClock", out var clock) && clock.ValueKind is JsonValueKind.True)
+        {
+            granted.Add("Clock");
+        }
+
+        if (audit.TryGetProperty("grantedRandom", out var random) && random.ValueKind is JsonValueKind.True)
+        {
+            granted.Add("Random");
+        }
+
+        _audit.Record(new AuditEvent(
+            DateTimeOffset.UtcNow,
+            Caller: null,
+            CallOrigin.System,
+            AuditEventKind.ServerLifecycle,
+            Server: id,
+            Tool: null,
+            Status: null,
+            RedactedArguments: null,
+            RequestBytes: null,
+            ResponseBytes: null,
+            Duration: null,
+            Detail: $"WASI-Component geladen: Upstream '{config.Slug}', Datei '{Path.GetFileName(options.ComponentPath)}', "
+                + $"Modul-SHA256 {Text("moduleSha256")}, Publisher {Text("publisherKeyId")}, Runtime {Text("runtime")}, "
+                + $"Grants [{(granted.Count > 0 ? string.Join("; ", granted) : "keine")}]"));
+    }
 }
 
 /// <summary>
 /// Eine laufende Host-Sitzung. Alle Anfragen laufen serialisiert über stdin/stdout des
 /// Kindprozesses — der Vertrag ist request/response, ein Frame nach dem anderen.
 /// </summary>
-internal sealed class WasiUpstreamConnection : IUpstreamConnection
+internal sealed class WasiUpstreamConnection : IUpstreamConnection, ISignedUpstreamConnection
 {
     private readonly Process _process;
     private readonly WasiTransportOptions _options;
@@ -101,6 +179,9 @@ internal sealed class WasiUpstreamConnection : IUpstreamConnection
 
     public ServerId Id { get; }
 
+    /// <summary>Publisher, dessen Signatur der Host akzeptiert hat — Ziel des Entzugs (WP4).</summary>
+    public string PublisherKeyId { get; private set; } = string.Empty;
+
     // Der Host pusht keine Notifications — das Event bleibt bewusst leer verdrahtet.
     public event EventHandler<UpstreamNotificationEventArgs>? NotificationReceived
     {
@@ -108,8 +189,12 @@ internal sealed class WasiUpstreamConnection : IUpstreamConnection
         remove { }
     }
 
-    /// <summary>Handshake, Component laden und die Tool-Liste holen — der Startup-Pfad.</summary>
-    public async Task HandshakeAndLoadAsync(byte[] component, byte[] signature, CancellationToken ct)
+    /// <summary>
+    /// Handshake, Component laden und die Tool-Liste holen — der Startup-Pfad. Liefert den
+    /// Grant-Audit-Datensatz des Hosts zurück; der gehört ins Audit und nicht ins Nichts.
+    /// </summary>
+    public async Task<JsonElement> HandshakeAndLoadAsync(
+        byte[] component, byte[] signature, IReadOnlyList<string> pinnedPublishers, CancellationToken ct)
     {
         var hello = await RequestAsync(
             new { type = "hello", protocolVersion = WasiRuntimeConnector.ProtocolVersion },
@@ -127,7 +212,7 @@ internal sealed class WasiUpstreamConnection : IUpstreamConnection
             type = "load",
             component = Convert.ToBase64String(component),
             signature = Convert.ToBase64String(signature),
-            pinnedPublishers = _options.PinnedPublishers,
+            pinnedPublishers = pinnedPublishers,
             grants = new
             {
                 filesystemPreopens = grants.FilesystemPreopens ?? [],
@@ -138,11 +223,16 @@ internal sealed class WasiUpstreamConnection : IUpstreamConnection
                 random = grants.Random,
             },
         };
-        await RequestAsync(loadRequest, ct).ConfigureAwait(false);
+        var loaded = await RequestAsync(loadRequest, ct).ConfigureAwait(false);
+        var audit = loaded.GetProperty("audit");
+        PublisherKeyId = audit.TryGetProperty("publisherKeyId", out var publisher)
+            ? publisher.GetString() ?? string.Empty
+            : string.Empty;
 
         var discovered = await RequestAsync(new { type = "discover" }, ct).ConfigureAwait(false);
         _tools.Clear();
         _tools.AddRange(WasiToolNormalizer.Normalize(discovered.GetProperty("tools")));
+        return audit;
     }
 
     public Task<UpstreamInventory> DiscoverAsync(CancellationToken ct)

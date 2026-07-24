@@ -322,10 +322,66 @@ internal static class ApiEndpoints
             return Results.NoContent();
         });
 
+        MapPublisherManagement(api);
         MapWebhookManagement(api);
     }
 
     private sealed record ApprovalToolToggle(string Tool, bool Required);
+
+    /// <summary>
+    /// Verwaltung der vertrauenswürdigen Publisher für WASI-Components (Plan 0003, WP4).
+    /// Nur Admins — wer hier schreibt, entscheidet, welcher fremde Code im Gateway laufen darf.
+    /// </summary>
+    private static void MapPublisherManagement(RouteGroupBuilder api)
+    {
+        var publishers = api.MapGroup("/publishers").AddEndpointFilter(RequireAdminAsync);
+
+        publishers.MapGet("/", (IPublisherTrustStore trust) => Results.Ok(trust.All));
+
+        publishers.MapPost("/", async (
+            PinPublisherRequest body, HttpContext ctx, IPublisherTrustStore trust, IAuditSink audit,
+            TimeProvider time, CancellationToken ct) =>
+        {
+            PublisherKey key;
+            try
+            {
+                key = await trust.PinAsync(body.PublicKey, body.Label ?? string.Empty, ct);
+            }
+            catch (Exception ex) when (ex is FormatException or ArgumentException)
+            {
+                // Ein unbrauchbarer Schlüssel ist ein Eingabefehler, kein Serverfehler — und er
+                // darf nicht als "gepinnt" durchgehen.
+                return Results.BadRequest(new { error = "Ed25519-Public-Key erwartet: Base64, 32 Byte." });
+            }
+
+            AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null,
+                $"publisher-pinned:{key.KeyId}");
+            return Results.Ok(key);
+        });
+
+        publishers.MapPost("/{keyId}/revoke", async (
+            string keyId, HttpContext ctx, IPublisherTrustStore trust, IAuditSink audit,
+            TimeProvider time, CancellationToken ct) =>
+        {
+            await trust.RevokeAsync(keyId, ct);
+            // Der Entzug wirkt sofort: laufende Upstreams dieses Publishers werden gestoppt.
+            AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null,
+                $"publisher-revoked:{keyId}");
+            return Results.NoContent();
+        });
+
+        publishers.MapPost("/{keyId}/reinstate", async (
+            string keyId, HttpContext ctx, IPublisherTrustStore trust, IAuditSink audit,
+            TimeProvider time, CancellationToken ct) =>
+        {
+            await trust.ReinstateAsync(keyId, ct);
+            AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null,
+                $"publisher-reinstated:{keyId}");
+            return Results.NoContent();
+        });
+    }
+
+    private sealed record PinPublisherRequest(string PublicKey, string? Label);
 
     private static void MapWebhookManagement(RouteGroupBuilder api)
     {

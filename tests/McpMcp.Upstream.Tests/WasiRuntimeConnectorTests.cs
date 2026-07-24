@@ -46,23 +46,28 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
         return ValueTask.CompletedTask;
     }
 
+    /// <summary>Der Stub prüft die Signatur nicht — entscheidend ist, dass überhaupt ein Schlüssel
+    /// aus dem Trust-Store kommt (WP4); das Config-Feld ist nur noch Migrationsballast.</summary>
+    private static readonly IPublisherTrustStore Trust =
+        new FakePublisherTrustStore(Convert.ToBase64String(new byte[32]));
+
     private UpstreamServerConfig Config(params string[] hostArguments) => new(
         "wasi", "WASI", UpstreamTransportKind.Wasi, Enabled: true,
         Wasi: new WasiTransportOptions(
             StubHost,
             _componentPath,
             _signaturePath,
-            [Convert.ToBase64String(new byte[32])],
+            [],
             Grants: new WasiCapabilityGrants(Environment: ["MCPMCP_SPIKE"]),
             HostArguments: hostArguments));
 
     private Task<IUpstreamConnection> ConnectAsync(params string[] hostArguments)
-        => new WasiRuntimeConnector().ConnectAsync(
+        => new WasiRuntimeConnector(Trust).ConnectAsync(
             new ServerId(Guid.NewGuid()), Config(hostArguments), TestContext.Current.CancellationToken);
 
     [Fact]
     public void Connector_declares_the_wasi_transport()
-        => new WasiRuntimeConnector().Kind.Should().Be(UpstreamTransportKind.Wasi);
+        => new WasiRuntimeConnector(Trust).Kind.Should().Be(UpstreamTransportKind.Wasi);
 
     [Fact]
     public async Task Connect_performs_the_handshake_and_lists_the_components_tools()

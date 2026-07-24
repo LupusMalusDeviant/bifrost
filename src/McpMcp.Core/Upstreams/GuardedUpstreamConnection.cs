@@ -8,7 +8,7 @@ namespace McpMcp.Core.Upstreams;
 /// In-Flight-Calls für die Drain-Semantik (WP1.4). Der Supervisor gibt ausschließlich
 /// diese Hülle nach außen — nie die rohe Verbindung.
 /// </summary>
-public sealed class GuardedUpstreamConnection : IUpstreamConnection
+public sealed class GuardedUpstreamConnection : IUpstreamConnection, ISignedUpstreamConnection
 {
     private readonly IUpstreamConnection _inner;
     private readonly TimeSpan _callTimeout;
@@ -27,6 +27,15 @@ public sealed class GuardedUpstreamConnection : IUpstreamConnection
     public ServerId Id => _inner.Id;
 
     public int InFlightCount => Volatile.Read(ref _inFlight);
+
+    /// <summary>
+    /// Reicht die Publisher-Bindung der inneren Verbindung durch (Plan 0003, WP4). Der Supervisor
+    /// gibt nur diese Hülle heraus — verschluckte sie das Merkmal, fände ein Schlüssel-Entzug die
+    /// betroffenen Upstreams nicht mehr, und der Decorator hätte still eine Sicherheitsfunktion
+    /// abgeschaltet.
+    /// </summary>
+    public string PublisherKeyId =>
+        _inner is ISignedUpstreamConnection signed ? signed.PublisherKeyId : string.Empty;
 
     public event EventHandler<UpstreamNotificationEventArgs>? NotificationReceived
     {

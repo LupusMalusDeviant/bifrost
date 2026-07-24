@@ -144,14 +144,10 @@ public static partial class UpstreamConfigValidator
                 nameof(config));
         }
 
-        if (wasi.PinnedPublishers is null || wasi.PinnedPublishers.Count == 0)
-        {
-            throw new ArgumentException(
-                "Wasi.PinnedPublishers darf nicht leer sein (fail-closed: ohne gepinnten Publisher lädt der Host nichts).",
-                nameof(config));
-        }
-
-        foreach (var publisher in wasi.PinnedPublishers)
+        // Seit WP4 ist der Trust-Store die Vertrauensquelle; das Feld hier ist nur noch der
+        // Migrationspfad und darf leer sein. Fail-closed bleibt es trotzdem: Der Host bekommt
+        // dann die Schlüssel aus dem Store, und ist auch der leer, lädt er nichts.
+        foreach (var publisher in wasi.PinnedPublishers ?? [])
         {
             if (string.IsNullOrWhiteSpace(publisher)
                 || !Convert.TryFromBase64String(publisher, new byte[64], out var written)

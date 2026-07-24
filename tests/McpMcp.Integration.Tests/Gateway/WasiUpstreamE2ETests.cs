@@ -47,6 +47,11 @@ public sealed class WasiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAsync
         await File.WriteAllBytesAsync(_signaturePath, new byte[64], ct);
 
         // Die Fixture ist klassenweit — der Upstream wird nur beim ersten Test angelegt.
+        // Ab WP4 kommt das Vertrauen aus dem Trust-Store, nicht aus der Konfiguration: Ohne
+        // gepinnten Schlüssel käme der Upstream gar nicht erst hoch.
+        await _gw.Services.GetRequiredService<PublisherTrustStore>()
+            .PinAsync(Convert.ToBase64String(new byte[32]), "e2e-stub", ct);
+
         if (_gw.Supervisor.Statuses.Any(status => status.Slug == Slug))
         {
             return;
@@ -59,7 +64,7 @@ public sealed class WasiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAsync
                     TestPaths.Executable("WasiHostStub"),
                     _componentPath,
                     _signaturePath,
-                    [Convert.ToBase64String(new byte[32])],
+                    PinnedPublishers: [],
                     Grants: new WasiCapabilityGrants(Environment: ["MCPMCP_SPIKE"]))),
             ct);
         await IntegrationSupport.WaitUntilAsync(
@@ -194,7 +199,7 @@ public sealed class WasiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAsync
                 "wasi-temp", "WASI (temporär)", UpstreamTransportKind.Wasi, Enabled: true,
                 Wasi: new WasiTransportOptions(
                     TestPaths.Executable("WasiHostStub"), _componentPath, _signaturePath,
-                    [Convert.ToBase64String(new byte[32])])),
+                    PinnedPublishers: [])),
             TestContext.Current.CancellationToken);
         await IntegrationSupport.WaitUntilAsync(
             () => _gw.Supervisor.GetStatus(id)?.State == UpstreamState.Healthy);

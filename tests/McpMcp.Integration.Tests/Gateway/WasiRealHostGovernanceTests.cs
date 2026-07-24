@@ -1,6 +1,8 @@
 using System.Text.Json;
 using AwesomeAssertions;
 using McpMcp.Abstractions;
+using McpMcp.Persistence;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace McpMcp.Integration.Tests.Gateway;
@@ -65,6 +67,11 @@ public sealed class WasiRealHostGovernanceTests : IClassFixture<GatewayFixture>
         var host = WasiHostPaths.RequireHost();
         var publisher = (await File.ReadAllTextAsync(WasiHostPaths.PublisherPath, ct)).Trim();
 
+        // WP4: Der Publisher muss im Trust-Store stehen — die Konfiguration ist keine
+        // Vertrauensquelle mehr.
+        await _gw.Services.GetRequiredService<PublisherTrustStore>()
+            .PinAsync(publisher, "fixture-publisher", ct);
+
         var id = await _gw.Supervisor.AddAsync(
             new UpstreamServerConfig(
                 Slug, "Signiertes WASI-Component", UpstreamTransportKind.Wasi, Enabled: true,
@@ -72,7 +79,7 @@ public sealed class WasiRealHostGovernanceTests : IClassFixture<GatewayFixture>
                     host,
                     WasiHostPaths.ComponentPath,
                     WasiHostPaths.SignaturePath,
-                    [publisher],
+                    PinnedPublishers: [],
                     Grants: new WasiCapabilityGrants(Environment: EnvironmentGrant))),
             ct);
         await IntegrationSupport.WaitUntilAsync(

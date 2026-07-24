@@ -303,6 +303,33 @@ namespace McpMcp.Persistence.Migrations.Sqlite.Migrations
                     b.ToTable("Profiles");
                 });
 
+            modelBuilder.Entity("McpMcp.Persistence.PublisherKeyRow", b =>
+                {
+                    b.Property<string>("KeyId")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("AddedAtTicks")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PublicKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("RevokedAtTicks")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("KeyId");
+
+                    b.ToTable("PublisherKeys");
+                });
+
             modelBuilder.Entity("McpMcp.Persistence.RedactionRuleRow", b =>
                 {
                     b.Property<string>("Tool")

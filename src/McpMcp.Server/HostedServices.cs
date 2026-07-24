@@ -23,6 +23,8 @@ public sealed partial class GatewayStartupService : IHostedService
     private readonly RedactionRuleStore _redactionRules;
     private readonly GuardRuleStore _guardRules;
     private readonly ApprovalPolicyStore _approvalPolicy;
+    private readonly PublisherTrustStore _publisherTrust;
+    private readonly IAuditSink _audit;
     private readonly IApiKeyService _apiKeys;
     private readonly IUiUserService _uiUsers;
     private readonly McpMcp.Web.UiInternalIdentity _uiInternal;
@@ -38,6 +40,8 @@ public sealed partial class GatewayStartupService : IHostedService
         RedactionRuleStore redactionRules,
         GuardRuleStore guardRules,
         ApprovalPolicyStore approvalPolicy,
+        PublisherTrustStore publisherTrust,
+        IAuditSink audit,
         IApiKeyService apiKeys,
         IUiUserService uiUsers,
         McpMcp.Web.UiInternalIdentity uiInternal,
@@ -52,6 +56,8 @@ public sealed partial class GatewayStartupService : IHostedService
         _redactionRules = redactionRules;
         _guardRules = guardRules;
         _approvalPolicy = approvalPolicy;
+        _publisherTrust = publisherTrust;
+        _audit = audit;
         _apiKeys = apiKeys;
         _uiUsers = uiUsers;
         _uiInternal = uiInternal;
@@ -72,11 +78,22 @@ public sealed partial class GatewayStartupService : IHostedService
         // damit ein abgeschaltetes Muster abgeschaltet bleibt (ADR-0011).
         await _guardRules.LoadAsync(BuiltInGuardRules.All, cancellationToken);
         await _approvalPolicy.LoadAsync(cancellationToken);
+        await _publisherTrust.LoadAsync(cancellationToken);
         await BootstrapAdminIfEmptyAsync(cancellationToken);
         await EnsureUiInternalIdentityAsync(cancellationToken);
         await BootstrapUiAdminIfEmptyAsync(cancellationToken);
 
         var persisted = await _configStore.GetAllLatestAsync(cancellationToken);
+
+        // WP4: Schluessel aus alten WASI-Konfigurationen einmalig in den Trust-Store uebernehmen,
+        // BEVOR Upstreams starten — sonst faende ein bestehender WASI-Upstream beim ersten Start
+        // nach dem Update keinen gepinnten Publisher mehr und bliebe fail-closed unten.
+        await ImportConfiguredPublishersAsync(persisted, cancellationToken);
+
+        // Ein Entzug wirkt sofort (Plan 0003, festgelegte Entscheidung 2): betroffene Upstreams
+        // werden gestoppt, nicht erst beim naechsten Laden.
+        _publisherTrust.Revoked += OnPublisherRevoked;
+
         foreach (var (id, version) in persisted)
         {
             try
@@ -92,7 +109,75 @@ public sealed partial class GatewayStartupService : IHostedService
         Log.Started(_logger, persisted.Count);
     }
 
-    public async Task StopAsync(CancellationToken cancellationToken) => await _supervisor.DisposeAsync();
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        _publisherTrust.Revoked -= OnPublisherRevoked;
+        await _supervisor.DisposeAsync();
+    }
+
+    /// <summary>
+    /// Uebernimmt <c>Wasi.PinnedPublishers</c> aus vorhandenen Konfigurationen einmalig in den
+    /// Trust-Store (WP4). Danach ist der Store die einzige Vertrauensquelle; das Config-Feld wird
+    /// beim Laden nicht mehr gelesen. Nur tatsaechlich neu aufgenommene Schluessel werden
+    /// auditiert — sonst stuende bei jedem Start dieselbe Zeile im Log.
+    /// </summary>
+    private async Task ImportConfiguredPublishersAsync(
+        IReadOnlyDictionary<ServerId, UpstreamConfigVersion> persisted, CancellationToken ct)
+    {
+        var configured = persisted.Values
+            .Where(version => version.Config.Wasi is not null)
+            .SelectMany(version => (version.Config.Wasi!.PinnedPublishers ?? [])
+                .Select(key => (PublicKeyBase64: key, Label: $"importiert aus '{version.Config.Slug}'")))
+            .ToList();
+        if (configured.Count == 0)
+        {
+            return;
+        }
+
+        var imported = await _publisherTrust.ImportAsync(configured, ct);
+        foreach (var key in imported)
+        {
+            _audit.Record(new AuditEvent(
+                DateTimeOffset.UtcNow, Caller: null, CallOrigin.System, AuditEventKind.ConfigChanged,
+                Server: null, Tool: null, Status: null, RedactedArguments: null,
+                RequestBytes: null, ResponseBytes: null, Duration: null,
+                Detail: $"Publisher-Schluessel {key.KeyId} aus der Upstream-Konfiguration in den Trust-Store uebernommen ({key.Label})."));
+            Log.PublisherImported(_logger, key.KeyId, key.Label);
+        }
+    }
+
+    /// <summary>
+    /// Stoppt jeden Upstream, dessen geladenes Component von dem entzogenen Publisher signiert
+    /// war. Laeuft bewusst als Fire-and-Forget: Der Entzug selbst darf nicht daran haengen, wie
+    /// schnell ein Kindprozess beendet ist.
+    /// </summary>
+    private void OnPublisherRevoked(object? sender, PublisherRevokedEventArgs args)
+        => _ = Task.Run(async () =>
+        {
+            foreach (var status in _supervisor.Statuses)
+            {
+                if (_supervisor.GetConnection(status.Id) is not ISignedUpstreamConnection signed
+                    || !string.Equals(signed.PublisherKeyId, args.KeyId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    await _supervisor.RemoveAsync(status.Id, DrainPolicy.Immediate, CancellationToken.None);
+                    _audit.Record(new AuditEvent(
+                        DateTimeOffset.UtcNow, Caller: null, CallOrigin.System, AuditEventKind.ServerLifecycle,
+                        Server: status.Id, Tool: null, Status: null, RedactedArguments: null,
+                        RequestBytes: null, ResponseBytes: null, Duration: null,
+                        Detail: $"Upstream '{status.Slug}' gestoppt: Publisher {args.KeyId} wurde entzogen."));
+                    Log.RevokedUpstreamStopped(_logger, status.Slug, args.KeyId);
+                }
+                catch (Exception ex)
+                {
+                    Log.RevokeStopFailed(_logger, ex, status.Slug);
+                }
+            }
+        });
 
     private async Task BootstrapAdminIfEmptyAsync(CancellationToken ct)
     {
@@ -165,6 +250,18 @@ public sealed partial class GatewayStartupService : IHostedService
         [LoggerMessage(Level = LogLevel.Warning,
             Message = "ERSTSTART: UI-Admin 'admin' angelegt. Passwort (wird NIE wieder angezeigt): {Password}")]
         public static partial void BootstrapUiPassword(ILogger logger, string password);
+
+        [LoggerMessage(Level = LogLevel.Information,
+            Message = "Publisher-Schlüssel {KeyId} aus der Upstream-Konfiguration übernommen ({Label}).")]
+        public static partial void PublisherImported(ILogger logger, string keyId, string label);
+
+        [LoggerMessage(Level = LogLevel.Warning,
+            Message = "Upstream {Slug} gestoppt — Publisher {KeyId} wurde entzogen.")]
+        public static partial void RevokedUpstreamStopped(ILogger logger, string slug, string keyId);
+
+        [LoggerMessage(Level = LogLevel.Error,
+            Message = "Upstream {Slug} liess sich nach dem Entzug seines Publishers nicht stoppen.")]
+        public static partial void RevokeStopFailed(ILogger logger, Exception ex, string slug);
     }
 }
 

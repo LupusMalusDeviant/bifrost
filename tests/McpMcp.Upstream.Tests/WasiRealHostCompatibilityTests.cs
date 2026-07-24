@@ -95,9 +95,13 @@ public sealed class WasiRealHostCompatibilityTests
     private static async Task<string> PinnedPublisherAsync(CancellationToken ct)
         => (await File.ReadAllTextAsync(PublisherPath, ct).ConfigureAwait(false)).Trim();
 
-    private static UpstreamServerConfig Config(string host, string publisher, WasiCapabilityGrants grants) => new(
+    // Die gepinnten Publisher kommen ab WP4 aus dem Trust-Store, nicht aus der Konfiguration.
+    private static UpstreamServerConfig Config(string host, WasiCapabilityGrants grants) => new(
         "wasi-real", "WASI (echter Host)", UpstreamTransportKind.Wasi, Enabled: true,
-        Wasi: new WasiTransportOptions(host, ComponentPath, SignaturePath, [publisher], Grants: grants));
+        Wasi: new WasiTransportOptions(host, ComponentPath, SignaturePath, [], Grants: grants));
+
+    private static WasiRuntimeConnector ConnectorFor(string publisher)
+        => new(new FakePublisherTrustStore(publisher));
 
     [Fact]
     public async Task Handshake_load_discover_and_invoke_work_against_the_real_host()
@@ -106,10 +110,10 @@ public sealed class WasiRealHostCompatibilityTests
         var ct = TestContext.Current.CancellationToken;
         // Der Guest importiert wasi:cli/environment — ohne diesen Grant würde er gar nicht erst
         // instanziiert (deny-before-instantiation, siehe Negativtest unten).
-        var config = Config(host, await PinnedPublisherAsync(ct), new WasiCapabilityGrants(Environment: EnvironmentGrant));
+        var connector = ConnectorFor(await PinnedPublisherAsync(ct));
+        var config = Config(host, new WasiCapabilityGrants(Environment: EnvironmentGrant));
 
-        await using var connection = await new WasiRuntimeConnector()
-            .ConnectAsync(new ServerId(Guid.NewGuid()), config, ct);
+        await using var connection = await connector.ConnectAsync(new ServerId(Guid.NewGuid()), config, ct);
         var inventory = await connection.DiscoverAsync(ct);
         var result = await connection.CallToolAsync("wasi_cli_run", NoArgs, ct);
 
@@ -132,10 +136,10 @@ public sealed class WasiRealHostCompatibilityTests
         var ct = TestContext.Current.CancellationToken;
         // Ohne Grants: derselbe Aufruf muss scheitern — nicht als Transportfehler, sondern als
         // Fehlerergebnis, das die Governance-Schicht sauber weiterreichen kann.
-        var config = Config(host, await PinnedPublisherAsync(ct), new WasiCapabilityGrants());
+        var connector = ConnectorFor(await PinnedPublisherAsync(ct));
+        var config = Config(host, new WasiCapabilityGrants());
 
-        await using var connection = await new WasiRuntimeConnector()
-            .ConnectAsync(new ServerId(Guid.NewGuid()), config, ct);
+        await using var connection = await connector.ConnectAsync(new ServerId(Guid.NewGuid()), config, ct);
         var inventory = await connection.DiscoverAsync(ct);
         var result = await connection.CallToolAsync(inventory.Tools[0].Name, NoArgs, ct);
 
@@ -149,8 +153,8 @@ public sealed class WasiRealHostCompatibilityTests
         var ct = TestContext.Current.CancellationToken;
         var stranger = Convert.ToBase64String(new byte[32]); // gültige Länge, falscher Schlüssel.
 
-        var act = () => new WasiRuntimeConnector().ConnectAsync(
-            new ServerId(Guid.NewGuid()), Config(host, stranger, new WasiCapabilityGrants()), ct);
+        var act = () => ConnectorFor(stranger).ConnectAsync(
+            new ServerId(Guid.NewGuid()), Config(host, new WasiCapabilityGrants()), ct);
 
         // Fail-closed: der Upstream darf gar nicht erst hochkommen.
         await act.Should().ThrowAsync<WasiHostException>().WithMessage("*load-rejected*");

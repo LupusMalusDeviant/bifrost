@@ -175,7 +175,10 @@ static object Load(JsonElement request, ref bool loaded, ref string? loadedSha25
         audit = new
         {
             moduleSha256 = sha256,
-            publisherKeyId = "stub-publisher",
+            // Wie der echte Host: der SHA-256 des akzeptierenden Public Keys. Daran hängt der
+            // Entzug — ein Platzhalter würde die Zuordnung im Gateway unbemerkt kaputt machen.
+            publisherKeyId = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+                Convert.FromBase64String(pinned[0].GetString()!))),
             runtime = "stub",
             grantedFilesystemPreopens = ToArray(grants, "filesystemPreopens"),
             grantedNetworkAllow = ToArray(grants, "networkAllow"),

@@ -43,6 +43,8 @@ public sealed class McpMcpDbContext : DbContext
 
     public DbSet<WebhookRow> Webhooks => Set<WebhookRow>();
 
+    public DbSet<PublisherKeyRow> PublisherKeys => Set<PublisherKeyRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<ConfigVersionRow>(e =>
@@ -143,6 +145,16 @@ public sealed class McpMcpDbContext : DbContext
         {
             e.HasKey(r => r.Tool);
             e.Property(r => r.Tool).HasMaxLength(300);
+        });
+
+        modelBuilder.Entity<PublisherKeyRow>(e =>
+        {
+            // Der SHA-256-Fingerprint ist der Schlüssel: derselbe Public Key kann nicht zweimal
+            // mit unterschiedlichem Vertrauensstand dastehen.
+            e.HasKey(r => r.KeyId);
+            e.Property(r => r.KeyId).HasMaxLength(64);
+            e.Property(r => r.PublicKey).IsRequired().HasMaxLength(64);
+            e.Property(r => r.Label).IsRequired().HasMaxLength(200);
         });
 
         modelBuilder.Entity<WebhookRow>(e =>
@@ -386,6 +398,28 @@ public sealed class WebhookRow
     public bool Enabled { get; set; } = true;
 
     public long CreatedAtTicks { get; set; }
+}
+
+/// <summary>
+/// Ein gepinnter Publisher-Schlüssel für WASI-Components (Plan 0003, WP4, ADR-0020). Der Public
+/// Key ist kein Geheimnis und liegt deshalb im Klartext (Base64) — geschützt werden muss nicht
+/// seine Vertraulichkeit, sondern seine Integrität, und die hängt am Schreibzugriff auf die DB.
+/// Entzogene Schlüssel bleiben stehen, damit ältere Audit-Zeilen zuordenbar bleiben.
+/// </summary>
+public sealed class PublisherKeyRow
+{
+    /// <summary>SHA-256-Fingerprint des Public Keys, hex — dieselbe Id wie im Host-Audit.</summary>
+    public string KeyId { get; set; } = string.Empty;
+
+    /// <summary>Ed25519-Public-Key, Base64 (32 Byte).</summary>
+    public string PublicKey { get; set; } = string.Empty;
+
+    public string Label { get; set; } = string.Empty;
+
+    public long AddedAtTicks { get; set; }
+
+    /// <summary>Gesetzt = entzogen. Null = vertrauenswürdig.</summary>
+    public long? RevokedAtTicks { get; set; }
 }
 
 /// <summary>Versioniertes Text-Asset (Skill/Prompt/Instruction, FR-40, WP6.4). Append-only pro Version.</summary>

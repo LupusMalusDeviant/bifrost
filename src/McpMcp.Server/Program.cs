@@ -125,7 +125,10 @@ builder.Services.AddSingleton<IUpstreamConnector, StdioUpstreamConnector>();
 builder.Services.AddSingleton<IUpstreamConnector, StreamableHttpUpstreamConnector>();
 builder.Services.AddSingleton<IUpstreamConnector, McpMcp.Upstream.OpenApi.OpenApiUpstreamConnector>();
 builder.Services.AddSingleton<IUpstreamConnector, McpMcp.Upstream.Cli.CliUpstreamConnector>(); // ADR-0014
-builder.Services.AddSingleton<IUpstreamConnector, McpMcp.Upstream.Wasi.WasiRuntimeConnector>(); // ADR-0020
+// Der WASI-Connector holt die gepinnten Publisher aus dem Trust-Store (WP4) und schreibt den
+// Grant-Audit-Datensatz jedes Loads in den Audit-Pfad.
+builder.Services.AddSingleton<IUpstreamConnector>(sp => new McpMcp.Upstream.Wasi.WasiRuntimeConnector(
+    sp.GetRequiredService<IPublisherTrustStore>(), sp.GetRequiredService<IAuditSink>())); // ADR-0020
 builder.Services.AddSingleton<IUpstreamConfigStore, EfUpstreamConfigStore>();
 builder.Services.AddSingleton<IUpstreamConnectionTester, UpstreamConnectionTester>();
 builder.Services.AddSingleton(new SupervisorOptions());
@@ -181,6 +184,11 @@ builder.Services.AddSingleton(sp =>
     return guard;
 });
 builder.Services.AddSingleton<IContentGuard>(sp => sp.GetRequiredService<SecretGuard>());
+
+// ── Publisher-Trust-Store für WASI-Components (Plan 0003/WP4, ADR-0020) ──────
+builder.Services.AddSingleton<PublisherTrustStore>(sp => new PublisherTrustStore(
+    sp.GetRequiredService<IDbContextFactory<McpMcpDbContext>>(), sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton<IPublisherTrustStore>(sp => sp.GetRequiredService<PublisherTrustStore>());
 
 // ── Freigabe-Flows (FR-32, ADR-0012) ─────────────────────────────────────────
 builder.Services.AddSingleton<ApprovalPolicyStore>();
