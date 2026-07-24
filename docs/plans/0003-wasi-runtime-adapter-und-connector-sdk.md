@@ -190,6 +190,26 @@ Offen und ausdrücklich **nicht** behauptet:
 - **WP7** — Packaging und Security-Review. Der Host wird in CI gebaut, aber nicht ausgeliefert;
   das Container-Image enthält ihn nicht.
 
+## Festgelegte Entscheidungen für WP4 (2026-07-24, Product Owner)
+
+Diese vier Punkte sind entschieden und nicht mehr offen — die Umsetzung folgt ihnen, statt sie
+neu abzuwägen:
+
+1. **Quelle der gepinnten Publisher-Keys:** Der Trust-Store ist die einzige maßgebliche Quelle.
+   Vorhandene `Wasi.PinnedPublishers` aus der Upstream-Konfiguration werden beim Start **einmalig**
+   in den Store übernommen (mit Audit-Eintrag) und danach ignoriert. Bestehende Konfigurationen
+   laufen weiter; die Governance hat trotzdem genau eine Quelle.
+2. **Key-Entzug:** wirkt **sofort**. Der Supervisor beendet jeden Upstream, dessen geladenes
+   Component von diesem Publisher signiert war, mit Audit-Eintrag. Ein Entzug, der erst beim
+   nächsten Neustart greift, ist kein Entzug.
+3. **Secret-Injektion** (offener Rest aus WP3): über den bestehenden verschlüsselten Secret-Store.
+   Der Grant nennt Namen, das Gateway löst sie auf und schickt die Werte beim `load` mit, der Host
+   injiziert sie als Environment-Einträge. **Werte gehen nie ins Audit**, nur die Namen. Keine
+   eigene WASI-Secret-Schnittstelle.
+4. **Platten-Cache** (offener Rest aus WP5): erst messen. Kompiliert ein realistisch großes
+   Component unter ~500 ms, wird der Punkt bewusst geschlossen statt gebaut — die Signaturkette
+   deckt cwasm-Artefakte nicht ab, und der Gewinn wäre eine Kompilierung pro Upstream-Start.
+
 ## Erfolgskriterien
 
 - Ein signiertes WASI-P2-Component ist über MCP **und** REST aufrufbar, durch RBAC/Guardrail/Approval/Audit — im Integrationstest belegt.
