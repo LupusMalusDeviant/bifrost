@@ -18,6 +18,7 @@ var mode = args.Length > 1 ? args[1] : string.Empty;
 var stdin = Console.OpenStandardInput();
 var stdout = Console.OpenStandardOutput();
 var loaded = false;
+string? moduleSha256 = null;
 
 while (true)
 {
@@ -52,13 +53,21 @@ while (true)
             code = "load-rejected",
             message = "component signature matches no pinned publisher",
         },
-        "load" => Load(request.RootElement, ref loaded),
+        "load" => Load(request.RootElement, ref loaded, ref moduleSha256),
         "discover" when !loaded => NotLoaded(),
         "discover" when mode == "--odd-names" => new { type = "discovered", tools = OddlyNamedTools() },
         "discover" => new { type = "discovered", tools = Tools() },
         "invoke" when !loaded => NotLoaded(),
         "invoke" => Invoke(request.RootElement),
-        "health" => new { type = "health", status = "ok", loaded },
+        "health" => new
+        {
+            type = "health",
+            status = "ok",
+            loaded,
+            moduleSha256 = moduleSha256,
+            // Der Stub kompiliert nichts; die Felder existieren, damit die Wire-Form stimmt.
+            cache = new { entries = loaded ? 1 : 0, hits = 0, misses = loaded ? 1 : 0, lastCompileMs = 0.0, totalCompileMs = 0.0 },
+        },
         "shutdown" => new { type = "bye" },
         _ => new { type = "error", code = "bad-request", message = $"unbekannter Typ '{type}'" },
     };
@@ -139,25 +148,33 @@ static object Named(string name) => new
     supported = true,
 };
 
-static object Load(JsonElement request, ref bool loaded)
+static object Load(JsonElement request, ref bool loaded, ref string? loadedSha256)
 {
     // Fail-closed wie der echte Host: ohne gepinnten Publisher wird nichts geladen.
     if (!request.TryGetProperty("pinnedPublishers", out var pinned)
         || pinned.ValueKind is not JsonValueKind.Array
         || pinned.GetArrayLength() == 0)
     {
-        return new { type = "error", code = "load-rejected", message = "kein gepinnter Publisher" };
+        // Wie der echte Host: mit bereits geladenem Component ist ein Fehlschlag ein Rollback.
+        return loaded
+            ? new { type = "error", code = "load-rolled-back", message = "kein gepinnter Publisher" }
+            : new { type = "error", code = "load-rejected", message = "kein gepinnter Publisher" };
     }
 
     loaded = true;
     var component = Convert.FromBase64String(request.GetProperty("component").GetString()!);
+    var sha256 = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(component));
+    var cached = loadedSha256 == sha256;
+    loadedSha256 = sha256;
     var grants = request.GetProperty("grants");
     return new
     {
         type = "loaded",
+        compileMs = cached ? 0.0 : 1.0,
+        cached,
         audit = new
         {
-            moduleSha256 = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(component)),
+            moduleSha256 = sha256,
             publisherKeyId = "stub-publisher",
             runtime = "stub",
             grantedFilesystemPreopens = ToArray(grants, "filesystemPreopens"),

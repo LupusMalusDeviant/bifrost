@@ -237,6 +237,72 @@ public sealed class WasiRealHostCompatibilityTests
             .Should().Equal("MCPMCP_SPIKE");
     }
 
+    [Fact]
+    public async Task The_second_load_of_a_component_reuses_the_compilation()
+    {
+        using var wire = new HostWire(RequireHost());
+        var ct = TestContext.Current.CancellationToken;
+        await wire.RequestAsync(new { type = "hello", protocolVersion = WasiRuntimeConnector.ProtocolVersion }, ct);
+        var load = await LoadRequestAsync(await PinnedPublisherAsync(ct), ct);
+
+        var first = await wire.RequestAsync(load, ct);
+        var second = await wire.RequestAsync(load, ct);
+        var health = await wire.RequestAsync(new { type = "health" }, ct);
+
+        // Ohne Cache zahlte jeder Aufruf die Kompilierung erneut (gemessen: ~75 ms gegen ~0,4 ms).
+        first.GetProperty("cached").GetBoolean().Should().BeFalse();
+        first.GetProperty("compileMs").GetDouble().Should().BeGreaterThan(0);
+        second.GetProperty("cached").GetBoolean().Should().BeTrue();
+        second.GetProperty("compileMs").GetDouble().Should().Be(0);
+
+        var cache = health.GetProperty("cache");
+        cache.GetProperty("entries").GetInt32().Should().Be(1, "gleicher Inhalt, gleicher Schlüssel");
+        cache.GetProperty("hits").GetInt32().Should().BeGreaterThan(0);
+        cache.GetProperty("totalCompileMs").GetDouble().Should().BeGreaterThan(0,
+            "die eingesparte Kompilierzeit ist im Betrieb ablesbar");
+    }
+
+    [Fact]
+    public async Task A_failed_load_keeps_the_previous_component_active()
+    {
+        using var wire = new HostWire(RequireHost());
+        var ct = TestContext.Current.CancellationToken;
+        var component = await File.ReadAllBytesAsync(ComponentPath, ct);
+        await wire.RequestAsync(new { type = "hello", protocolVersion = WasiRuntimeConnector.ProtocolVersion }, ct);
+        await wire.RequestAsync(await LoadRequestAsync(await PinnedPublisherAsync(ct), ct), ct);
+
+        // Zweiter Load mit fremdem Publisher — der Host lehnt ab.
+        var rejected = await wire.RequestAsync(
+            await LoadRequestAsync(Convert.ToBase64String(new byte[32]), ct), ct);
+        var health = await wire.RequestAsync(new { type = "health" }, ct);
+        var stillCallable = await wire.RequestAsync(new { type = "discover" }, ct);
+
+        // Eigener Code: "abgewiesen" und "abgewiesen, alter Stand läuft weiter" sind für den
+        // Betreiber zwei verschiedene Lagen.
+        rejected.GetProperty("code").GetString().Should().Be("load-rolled-back");
+        health.GetProperty("moduleSha256").GetString().Should().Be(
+            Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(component)),
+            "das zuvor geladene Component ist weiterhin aktiv");
+        stillCallable.GetProperty("type").GetString().Should().Be("discovered");
+    }
+
+    private static async Task<object> LoadRequestAsync(string publisher, CancellationToken ct) => new
+    {
+        type = "load",
+        component = Convert.ToBase64String(await File.ReadAllBytesAsync(ComponentPath, ct)),
+        signature = Convert.ToBase64String(await File.ReadAllBytesAsync(SignaturePath, ct)),
+        pinnedPublishers = new[] { publisher },
+        grants = new
+        {
+            filesystemPreopens = Array.Empty<string>(),
+            networkAllow = Array.Empty<string>(),
+            environment = EnvironmentGrant,
+            secrets = Array.Empty<string>(),
+            clock = false,
+            random = false,
+        },
+    };
+
     /// <summary>
     /// Minimaler Rohleitungs-Client für den Host: derselbe Rahmen wie im Connector (4-Byte-Big-
     /// Endian-Länge + JSON), aber ohne dessen Versionsprüfung — nur so lassen sich inkompatible

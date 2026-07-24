@@ -6,9 +6,13 @@
 //! einer reinen, testbaren [`Session`]; der Loop macht nur IO.
 //!
 //! Kommandos: `hello` (Versionsverhandlung), `load` (Signaturprüfung gegen gepinnte Publisher +
-//! Grants, fail-closed), `discover` (typisierte Beschreibung der aufrufbaren Exports), `invoke`
-//! (Aufruf eines Exports mit Limits und Truncation-Metadaten), `health`, `shutdown`. Fehler sind
-//! strukturiert (`code` + `message`) und beenden den Host nicht.
+//! Grants + Kompilierung als Gesundheitstest, fail-closed), `discover` (typisierte Beschreibung
+//! der aufrufbaren Exports), `invoke` (Aufruf eines Exports mit Limits und Truncation-Metadaten),
+//! `health` (aktives Modul und Cache-Kennzahlen), `shutdown`. Fehler sind strukturiert
+//! (`code` + `message`) und beenden den Host nicht.
+//!
+//! Die Sitzung hält den Modul-Cache: Kompiliert wird einmal pro Inhalt, Grant-Satz und
+//! Engine-Profil, nicht pro Aufruf (WP5).
 
 use std::io::{self, Read, Write};
 
@@ -19,9 +23,9 @@ use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CapabilityGrants, ExecutionLimits, GrantAuditRecord, InvocationOutcome, RUNTIME_VERSION,
-    ToolDescriptor, describe_component_tools, grant_audit_record, invoke_component_tool,
-    pinned_publisher, verify_component_signature,
+    CachedModule, CapabilityGrants, ExecutionLimits, GrantAuditRecord, InvocationOutcome,
+    ModuleCache, ModuleCacheStats, RUNTIME_VERSION, ToolDescriptor, describe_cached_module,
+    grant_audit_record, invoke_cached_module, pinned_publisher, verify_component_signature,
 };
 
 /// Protokollversion des IPC-Vertrags. Inkompatible Versionen werden beim Handshake abgewiesen.
@@ -89,6 +93,11 @@ pub enum Response {
     },
     Loaded {
         audit: GrantAuditRecord,
+        /// Kompilierdauer dieses Loads — 0, wenn das Kompilat aus dem Cache kam (WP5.2).
+        #[serde(rename = "compileMs")]
+        compile_ms: f64,
+        /// True, wenn das Component schon kompiliert vorlag.
+        cached: bool,
     },
     Discovered {
         tools: Vec<ToolDescriptor>,
@@ -100,6 +109,10 @@ pub enum Response {
     Health {
         status: String,
         loaded: bool,
+        /// SHA-256 des aktiven Components — macht einen Rollback von außen nachprüfbar.
+        #[serde(rename = "moduleSha256")]
+        module_sha256: Option<String>,
+        cache: ModuleCacheStats,
     },
     Bye,
     Error {
@@ -120,12 +133,18 @@ pub enum Control {
 pub struct Session {
     negotiated: bool,
     loaded: Option<LoadedComponent>,
+    cache: ModuleCache,
 }
 
-/// Ein verifiziertes, geladenes Component samt den dafür erteilten Grants.
+/// Ein verifiziertes, geladenes und kompiliertes Component samt den dafür erteilten Grants.
+/// Die Bytes bleiben liegen, damit ein Aufruf mit anderem Limit-Profil neu kompilieren kann,
+/// ohne dass das Gateway das Component erneut schicken muss. `Arc`, weil sie pro Aufruf nur
+/// weitergereicht werden.
 #[derive(Debug)]
 struct LoadedComponent {
-    bytes: Vec<u8>,
+    bytes: std::sync::Arc<Vec<u8>>,
+    module: CachedModule,
+    module_sha256: String,
     grants: CapabilityGrants,
 }
 
@@ -175,7 +194,14 @@ impl Session {
                     return error("handshake-required", "hello muss vor load gesendet werden");
                 }
                 match self.load(&component, &signature, &pinned_publishers, grants) {
-                    Ok(audit) => (Response::Loaded { audit }, Control::Continue),
+                    Ok(loaded) => (loaded, Control::Continue),
+                    // Rollback (WP5.2): Ein fehlgeschlagener Load lässt das vorherige Component
+                    // aktiv. Der eigene Code sagt das auch — sonst müsste der Betreiber raten,
+                    // ob der Upstream jetzt tot oder auf dem alten Stand ist.
+                    Err(failure) if self.loaded.is_some() => error(
+                        "load-rolled-back",
+                        format!("{failure} — das zuvor geladene Component bleibt aktiv"),
+                    ),
                     Err(failure) => error("load-rejected", failure.to_string()),
                 }
             }
@@ -183,16 +209,27 @@ impl Session {
                 let Some(loaded) = self.loaded.as_ref() else {
                     return error("not-loaded", "kein Component geladen — load zuerst senden");
                 };
-                match describe_component_tools(&loaded.bytes) {
-                    Ok(tools) => (Response::Discovered { tools }, Control::Continue),
-                    Err(failure) => error("discover-failed", failure.to_string()),
-                }
+                (
+                    Response::Discovered {
+                        tools: describe_cached_module(&loaded.module),
+                    },
+                    Control::Continue,
+                )
             }
             Request::Invoke { tool, args, limits } => {
                 let Some(loaded) = self.loaded.as_ref() else {
                     return error("not-loaded", "kein Component geladen — load zuerst senden");
                 };
-                match invoke_component_tool(&loaded.bytes, &loaded.grants, &tool, &args, &limits) {
+                // Der Aufruf darf andere Limit-Kategorien mitbringen als der Load; die stecken im
+                // Engine-Profil und damit im Cache-Schlüssel. Der Cache liefert das passende
+                // Kompilat — im Normalfall das vom Laden, sonst einmalig ein neues.
+                let bytes = std::sync::Arc::clone(&loaded.bytes);
+                let grants = loaded.grants.clone();
+                let module = match self.cache.compile(&bytes, &grants, &limits) {
+                    Ok(module) => module,
+                    Err(failure) => return error("invoke-failed", failure.to_string()),
+                };
+                match invoke_cached_module(&module, &grants, &tool, &args, &limits) {
                     Ok(outcome) => (Response::Invoked { outcome }, Control::Continue),
                     Err(failure) => error("invoke-failed", failure.to_string()),
                 }
@@ -201,6 +238,11 @@ impl Session {
                 Response::Health {
                     status: "ok".to_owned(),
                     loaded: self.loaded.is_some(),
+                    module_sha256: self
+                        .loaded
+                        .as_ref()
+                        .map(|loaded| loaded.module_sha256.clone()),
+                    cache: self.cache.stats().clone(),
                 },
                 Control::Continue,
             ),
@@ -208,15 +250,20 @@ impl Session {
         }
     }
 
-    /// Dekodiert, verifiziert und übernimmt ein Component. Fail-closed: ohne gültige Signatur
-    /// eines gepinnten Publishers wird nichts geladen und der bisherige Zustand bleibt unberührt.
+    /// Dekodiert, verifiziert, **kompiliert** und übernimmt ein Component. Fail-closed: ohne
+    /// gültige Signatur eines gepinnten Publishers wird nichts geladen, und der bisherige Zustand
+    /// bleibt unberührt.
+    ///
+    /// Die Kompilierung ist hier der Gesundheitstest (WP5.2): Ein signiertes, aber kaputtes
+    /// Component fällt beim Laden auf statt beim ersten Aufruf — und weil der bisherige Stand
+    /// erst danach ersetzt wird, bleibt er in diesem Fall aktiv.
     fn load(
         &mut self,
         component_b64: &str,
         signature_b64: &str,
         pinned_b64: &[String],
         grants: CapabilityGrants,
-    ) -> Result<GrantAuditRecord> {
+    ) -> Result<Response> {
         let component = BASE64.decode(component_b64)?;
         let signature: [u8; 64] = BASE64
             .decode(signature_b64)?
@@ -237,11 +284,29 @@ impl Session {
 
         let publisher_key_id = verify_component_signature(&component, &signature, &pinned)?;
         let audit = grant_audit_record(&component, &publisher_key_id, &grants);
+
+        // Kompilieren, BEVOR der bisherige Stand ersetzt wird.
+        let hits_before = self.cache.stats().hits;
+        let module = self
+            .cache
+            .compile(&component, &grants, &ExecutionLimits::default())?;
+        let cached = self.cache.stats().hits > hits_before;
+
         self.loaded = Some(LoadedComponent {
-            bytes: component,
+            bytes: std::sync::Arc::new(component),
+            module_sha256: audit.module_sha256.clone(),
+            module,
             grants,
         });
-        Ok(audit)
+        Ok(Response::Loaded {
+            compile_ms: if cached {
+                0.0
+            } else {
+                self.cache.stats().last_compile_ms
+            },
+            cached,
+            audit,
+        })
     }
 }
 
@@ -398,6 +463,8 @@ mod tests {
             Response::Health {
                 status: "ok".to_owned(),
                 loaded: false,
+                module_sha256: None,
+                cache: ModuleCacheStats::default(),
             }
         );
     }
@@ -420,22 +487,32 @@ mod tests {
 
         assert_eq!(control, Control::Continue);
         match response {
-            Response::Loaded { audit } => {
+            Response::Loaded { audit, cached, .. } => {
                 assert_eq!(audit.module_sha256, crate::sha256_hex(GUEST));
                 assert_eq!(audit.runtime, RUNTIME_VERSION);
                 assert!(audit.granted_filesystem_preopens.is_empty());
+                assert!(!cached, "der erste Load kompiliert");
             }
             other => panic!("expected loaded, got {other:?}"),
         }
         // health spiegelt den Ladezustand.
         let (health, _) = session.handle(Request::Health);
-        assert_eq!(
-            health,
+        match health {
             Response::Health {
-                status: "ok".to_owned(),
-                loaded: true,
+                loaded,
+                module_sha256,
+                cache,
+                ..
+            } => {
+                assert!(loaded);
+                assert_eq!(
+                    module_sha256.as_deref(),
+                    Some(crate::sha256_hex(GUEST).as_str())
+                );
+                assert_eq!(cache.entries, 1, "der Load hat genau ein Kompilat erzeugt");
             }
-        );
+            other => panic!("expected health, got {other:?}"),
+        }
     }
 
     /// Die committeten Fixture-Dateien (Component, detached Signatur, Publisher-Key) müssen
@@ -457,10 +534,97 @@ mod tests {
         });
 
         match response {
-            Response::Loaded { audit } => {
+            Response::Loaded { audit, .. } => {
                 assert_eq!(audit.module_sha256, crate::sha256_hex(GUEST));
             }
             other => panic!("committed fixture triple no longer loads: {other:?}"),
+        }
+    }
+
+    /// WP5.2: Ein fehlgeschlagener Load lässt den bisherigen Stand aktiv — und sagt das auch.
+    /// Der Fall ist nicht theoretisch: Ein signiertes, aber kaputtes Component käme sonst durch
+    /// den Load und fiele erst beim ersten Aufruf auf, mit dem Upstream längst im Katalog.
+    #[test]
+    fn a_broken_component_rolls_back_to_the_previous_one() {
+        let signing = SigningKey::from_bytes(&[3u8; 32]);
+        let mut session = negotiated();
+        session.handle(load_request(&signing, CapabilityGrants::default()));
+
+        // Korrekt signiert, aber kein gültiges Component: Die Signatur allein sagt nichts über
+        // die Ladbarkeit.
+        let broken = b"kein wasm".to_vec();
+        let (response, control) = session.handle(Request::Load {
+            component: BASE64.encode(&broken),
+            signature: BASE64.encode(signing.sign(&broken).to_bytes()),
+            pinned_publishers: vec![BASE64.encode(signing.verifying_key().as_bytes())],
+            grants: CapabilityGrants::default(),
+        });
+
+        assert_eq!(control, Control::Continue, "der Host lebt weiter");
+        assert!(
+            matches!(&response, Response::Error { code, .. } if code == "load-rolled-back"),
+            "erwartet load-rolled-back, bekam {response:?}"
+        );
+
+        // Der alte Stand ist noch aktiv und aufrufbar.
+        match session.handle(Request::Health).0 {
+            Response::Health { module_sha256, .. } => {
+                assert_eq!(
+                    module_sha256.as_deref(),
+                    Some(crate::sha256_hex(GUEST).as_str())
+                );
+            }
+            other => panic!("expected health, got {other:?}"),
+        }
+        assert!(matches!(
+            session.handle(Request::Discover).0,
+            Response::Discovered { .. }
+        ));
+    }
+
+    /// Ohne vorher geladenes Component gibt es nichts zurückzurollen — dann bleibt es beim
+    /// gewöhnlichen `load-rejected`, damit der Aufrufer die beiden Lagen unterscheiden kann.
+    #[test]
+    fn a_first_failed_load_is_a_plain_rejection() {
+        let signing = SigningKey::from_bytes(&[3u8; 32]);
+        let broken = b"kein wasm".to_vec();
+
+        let (response, _) = negotiated().handle(Request::Load {
+            component: BASE64.encode(&broken),
+            signature: BASE64.encode(signing.sign(&broken).to_bytes()),
+            pinned_publishers: vec![BASE64.encode(signing.verifying_key().as_bytes())],
+            grants: CapabilityGrants::default(),
+        });
+
+        assert!(matches!(response, Response::Error { code, .. } if code == "load-rejected"));
+    }
+
+    /// WP5.1 über den Sitzungszustand: Der zweite Load desselben Components kompiliert nicht
+    /// erneut, und `health` weist das nach.
+    #[test]
+    fn a_second_load_of_the_same_component_reuses_the_compilation() {
+        let signing = SigningKey::from_bytes(&[3u8; 32]);
+        let mut session = negotiated();
+
+        session.handle(load_request(&signing, CapabilityGrants::default()));
+        let (second, _) = session.handle(load_request(&signing, CapabilityGrants::default()));
+
+        match second {
+            Response::Loaded {
+                cached, compile_ms, ..
+            } => {
+                assert!(cached, "das Kompilat lag schon vor");
+                assert_eq!(compile_ms, 0.0, "ein Treffer kostet keine Kompilierzeit");
+            }
+            other => panic!("expected loaded, got {other:?}"),
+        }
+        match session.handle(Request::Health).0 {
+            Response::Health { cache, .. } => {
+                assert_eq!(cache.entries, 1);
+                assert_eq!(cache.hits, 1);
+                assert_eq!(cache.misses, 1);
+            }
+            other => panic!("expected health, got {other:?}"),
         }
     }
 

@@ -165,6 +165,7 @@ Belegt, jeweils an einen benannten Test gebunden — nicht an ein Plan-Häkchen:
 | WP1 (IPC-Vertrag, Rust-Host) | `spikes/wasi-component-runtime/src/host.rs` — Framing, partielle Reads, Frame-Limits; insgesamt 51 Rust-Tests |
 | WP2 (.NET-Connector) | `WasiRuntimeConnectorTests` gegen den Stub-Host; `UpstreamConfigValidatorTests` für die fail-closed Validierung |
 | WP3 (feingranulares Grant-Mapping) | Der Host linkt **nur die gewährten** WASI-Interfaces (`add_granted_wasi_to_linker`); Preopens werden aufgelöst und lesend eingehängt, die Netzwerk-Allowlist einmalig zu Socket-Adressen aufgelöst (`apply_grants_to_context`). Tests: Kategorie-Gating end-to-end an zwei WAT-Fixtures, Linker-Politik über alle Kategorien, Preopen-Auflösung/fail-closed, Allowlist-Auflösung; `UpstreamConfigValidatorTests` weist nicht durchsetzbare Grants schon in der Konfiguration ab |
+| WP5 (Modul-Cache + Rollback) | `ModuleCache` — Schlüssel aus Modulhash, Runtime-Version, Engine-Profil und Grant-Fingerabdruck; `load` kompiliert als Gesundheitstest, ein Fehlschlag lässt den bisherigen Stand aktiv (`load-rolled-back`). `health` meldet aktives Modul und Cache-Kennzahlen. **Gemessen** am echten Host (Release, Fixture-Guest): kalter Aufruf ~75 ms, warmer ~0,4 ms — vorher zahlte *jeder* Aufruf den kalten Weg. Tests: 3 Rust-Tests zum Cache, 3 zu Rollback/Wiederverwendung, 2 `WasiRealHostCompatibilityTests` über die Leitung |
 | WP6.1 (Namens- und Schema-Normalisierung) | Vertrag **v2**: `discover` liefert typisierte Beschreibungen (`describe_component_tools`), der Kommando-Einstiegspunkt ist genau ein Tool, nicht aufrufbare Signaturen sind als solche markiert. Gateway-seitig `WasiToolNormalizer` — katalog- und URL-taugliche Namen plus ein Schema **pro** Tool. Tests: 3 Rust-Tests, `WasiRuntimeConnectorTests` (Normalisierung, Kollisionen, Schema, gefilterte Exports) |
 | WP6.2 (Vertragskompatibilität) | `WasiRealHostCompatibilityTests` — .NET gegen das **echte** Binary: Handshake, signierter Load, Discovery, Invoke, Default-Deny, Versionsverhandlung mit „1" (der echte Bruch) und „3" |
 | **M2** (signiertes Component durch die volle Pipeline) | `WasiRealHostGovernanceTests` (echter Host, signiertes Fixture) + `WasiUpstreamE2ETests` (RBAC, Guardrail, Approval, Audit, MCP + REST) |
@@ -181,8 +182,11 @@ Offen und ausdrücklich **nicht** behauptet:
   Trust-Store (WP4), weil dort erst geklärt wird, woher Werte kommen und wie sie auditiert über
   die IPC-Leitung gehen. Ebenfalls offen: Preopens sind **nur lesend** — Schreibrechte sind im
   Grant-Modell noch nicht ausdrückbar und werden nicht stillschweigend vergeben.
-- **WP4/WP5** — persistierter Trust-Store und Modul-Cache. Die gepinnten Publisher kommen aus der
-  Upstream-Konfiguration statt aus einem verwalteten Store; jeder Load kompiliert neu.
+- **WP5, Rest** — der Cache ist **prozesslokal**: Ein Neustart des Hosts kompiliert erneut. Ein
+  Kompilat auf Platte (`Component::serialize`) hieße, ausführbaren Code aus einer Datei zu
+  vertrauen; das gehört hinter den Trust-Store (WP4) und ist bewusst nicht vorweggenommen.
+- **WP4** — persistierter Trust-Store. Die gepinnten Publisher kommen weiterhin aus der
+  Upstream-Konfiguration statt aus einem verwalteten Store; damit hängt auch die Secret-Injektion.
 - **WP7** — Packaging und Security-Review. Der Host wird in CI gebaut, aber nicht ausgeliefert;
   das Container-Image enthält ihn nicht.
 

@@ -489,6 +489,115 @@ impl Default for ExecutionLimits {
     }
 }
 
+/// Ein kompiliertes Component samt der Engine, zu der es gehört (WP5). Beide sind intern
+/// referenzgezählt, das Klonen kostet also nichts — der teure Teil ist die Kompilierung.
+#[derive(Clone)]
+pub struct CachedModule {
+    engine: Engine,
+    component: Component,
+    /// Wie lange die Kompilierung gedauert hat, die diesen Eintrag erzeugt hat.
+    pub compile: Duration,
+}
+
+/// Kennzahlen des Modul-Caches. Sie gehen über `health` an das Gateway: Ohne sie wäre die Zusage
+/// „warme Starts" eine Behauptung, die im Betrieb niemand nachprüfen kann.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModuleCacheStats {
+    pub entries: usize,
+    pub hits: u64,
+    pub misses: u64,
+    /// Dauer der letzten Kompilierung.
+    pub last_compile_ms: f64,
+    /// Summe aller Kompilierungen — die Kosten, die der Cache seither einspart.
+    pub total_compile_ms: f64,
+}
+
+/// Content-adressierter Cache kompilierter Components (WP5.1).
+///
+/// Der Schlüssel ist `Modul-SHA-256 + Runtime-Version + Engine-Profil + Grant-Fingerabdruck`:
+///
+/// - **Modulhash** — anderer Inhalt, anderes Kompilat. Der Name des Components taugt nicht als
+///   Schlüssel, ein Update unter gleichem Namen bekäme sonst das alte Kompilat.
+/// - **Runtime-Version** — ein Wasmtime-Wechsel macht Kompilate ungültig.
+/// - **Engine-Profil** — Fuel- und Epoch-Instrumentierung sind in den Code einkompiliert; ein
+///   Aufruf mit anderen Limit-Kategorien braucht ein anderes Kompilat.
+/// - **Grant-Fingerabdruck** — heute beeinflussen Grants nur das Linken, nicht die Kompilierung.
+///   Er steht trotzdem im Schlüssel: Ein Eintrag soll nie über eine Grant-Änderung hinweg
+///   weiterverwendet werden, falls das Linken einmal ins Kompilat wandert.
+#[derive(Debug, Default)]
+pub struct ModuleCache {
+    entries: std::collections::HashMap<String, CachedModule>,
+    stats: ModuleCacheStats,
+}
+
+impl std::fmt::Debug for CachedModule {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CachedModule")
+            .field("compile", &self.compile)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ModuleCache {
+    /// Liefert das Kompilat aus dem Cache oder erzeugt es. Ein Fehlschlag hinterlässt keinen
+    /// Eintrag — ein kaputtes Component soll nicht als vermeintlich gültiges Kompilat hängen
+    /// bleiben.
+    pub fn compile(
+        &mut self,
+        component_bytes: &[u8],
+        grants: &CapabilityGrants,
+        limits: &ExecutionLimits,
+    ) -> Result<CachedModule> {
+        let key = Self::key(component_bytes, grants, limits);
+        if let Some(cached) = self.entries.get(&key) {
+            self.stats.hits += 1;
+            return Ok(cached.clone());
+        }
+
+        let mut config = Config::new();
+        config.wasm_component_model(true);
+        config.consume_fuel(limits.fuel.is_some());
+        config.epoch_interruption(limits.timeout_ms.is_some());
+        let engine = Engine::new(&config)?;
+
+        let started = Instant::now();
+        let component = Component::from_binary(&engine, component_bytes)?;
+        let compile = started.elapsed();
+
+        let module = CachedModule {
+            engine,
+            component,
+            compile,
+        };
+        self.entries.insert(key, module.clone());
+        self.stats.misses += 1;
+        self.stats.entries = self.entries.len();
+        self.stats.last_compile_ms = compile.as_secs_f64() * 1_000.0;
+        self.stats.total_compile_ms += self.stats.last_compile_ms;
+        Ok(module)
+    }
+
+    pub fn stats(&self) -> &ModuleCacheStats {
+        &self.stats
+    }
+
+    fn key(component_bytes: &[u8], grants: &CapabilityGrants, limits: &ExecutionLimits) -> String {
+        let grants_fingerprint = sha256_hex(
+            serde_json::to_vec(grants)
+                .expect("Grants sind immer serialisierbar")
+                .as_slice(),
+        );
+        format!(
+            "{}:{RUNTIME_VERSION}:fuel={}:epoch={}:{grants_fingerprint}",
+            sha256_hex(component_bytes),
+            limits.fuel.is_some(),
+            limits.timeout_ms.is_some(),
+        )
+    }
+}
+
 /// Ergebnis eines Aufrufs samt maschinenlesbaren Truncation-Metadaten.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -559,13 +668,23 @@ pub struct ToolDescriptor {
 /// Top-Level-Funktionen als typisierte Tools, und Funktionen in anderen Instanzen als nicht
 /// unterstützt — ihr punktierter Name lässt sich beim Aufruf heute nicht auflösen.
 pub fn describe_component_tools(component_bytes: &[u8]) -> Result<Vec<ToolDescriptor>> {
-    let mut config = Config::new();
-    config.wasm_component_model(true);
-    let engine = Engine::new(&config)?;
-    let component = Component::from_binary(&engine, component_bytes)?;
+    let mut cache = ModuleCache::default();
+    let module = cache.compile(
+        component_bytes,
+        &CapabilityGrants::default(),
+        &ExecutionLimits::default(),
+    )?;
+    Ok(describe_cached_module(&module))
+}
+
+/// Wie [`describe_component_tools`], aber auf einem bereits kompilierten Modul (WP5): Discovery
+/// soll nicht erneut kompilieren, nur weil sie nach dem Laden kommt.
+pub fn describe_cached_module(module: &CachedModule) -> Vec<ToolDescriptor> {
+    let engine = &module.engine;
+    let component = &module.component;
 
     let mut tools = Vec::new();
-    for (name, item) in component.component_type().exports(&engine) {
+    for (name, item) in component.component_type().exports(engine) {
         match item.ty {
             ComponentItem::ComponentFunc(func) => {
                 let params: Vec<ToolParameter> = func
@@ -600,7 +719,7 @@ pub fn describe_component_tools(component_bytes: &[u8]) -> Result<Vec<ToolDescri
                 });
             }
             ComponentItem::ComponentInstance(instance) => {
-                for (child, _) in instance.exports(&engine) {
+                for (child, _) in instance.exports(engine) {
                     tools.push(ToolDescriptor {
                         name: format!("{name}.{child}"),
                         kind: ToolKind::Function,
@@ -619,7 +738,7 @@ pub fn describe_component_tools(component_bytes: &[u8]) -> Result<Vec<ToolDescri
     }
 
     tools.sort_by(|left, right| left.name.cmp(&right.name));
-    Ok(tools)
+    tools
 }
 
 /// Warum ein Funktions-Export heute nicht aufrufbar ist — `None`, wenn er es ist. Die Bedingung
@@ -710,19 +829,31 @@ pub fn invoke_component_tool(
     args: &[i32],
     limits: &ExecutionLimits,
 ) -> Result<InvocationOutcome> {
-    let mut config = Config::new();
-    config.wasm_component_model(true);
-    config.consume_fuel(limits.fuel.is_some());
-    config.epoch_interruption(limits.timeout_ms.is_some());
-    let engine = Engine::new(&config)?;
-    let component = Component::from_binary(&engine, component_bytes)?;
+    // Ohne Cache: kompiliert jedes Mal neu. Der Host nutzt den Cache-Pfad; diese Form bleibt für
+    // Aufrufer, die keinen Zustand halten wollen (Tests, Einmal-Läufe).
+    let mut cache = ModuleCache::default();
+    let module = cache.compile(component_bytes, grants, limits)?;
+    invoke_cached_module(&module, grants, tool, args, limits)
+}
 
-    let exports = component_exports(&engine, &component);
+/// Ruft ein Tool eines bereits kompilierten Components auf (WP5). Die Grants werden hier erneut
+/// angewandt — sie hängen am Aufruf, nicht am Kompilat.
+pub fn invoke_cached_module(
+    module: &CachedModule,
+    grants: &CapabilityGrants,
+    tool: &str,
+    args: &[i32],
+    limits: &ExecutionLimits,
+) -> Result<InvocationOutcome> {
+    let engine = &module.engine;
+    let component = &module.component;
+
+    let exports = component_exports(engine, component);
     if !exports.iter().any(|export| export == tool) {
         bail!("tool '{tool}' is not exported by this component");
     }
 
-    let mut linker = Linker::<WasiGuestHost>::new(&engine);
+    let mut linker = Linker::<WasiGuestHost>::new(engine);
     add_granted_wasi_to_linker(&mut linker, grants)?;
 
     let stdout = wasmtime_wasi::p2::pipe::MemoryOutputPipe::new(limits.max_output_bytes);
@@ -741,7 +872,7 @@ pub fn invoke_component_tool(
         table: wasmtime::component::ResourceTable::new(),
         limits: store_limits.build(),
     };
-    let mut store = Store::new(&engine, host);
+    let mut store = Store::new(engine, host);
     store.limiter(|state: &mut WasiGuestHost| &mut state.limits);
     if let Some(fuel) = limits.fuel {
         store.set_fuel(fuel)?;
@@ -766,7 +897,7 @@ pub fn invoke_component_tool(
     let outcome = (|| -> Result<Option<i32>> {
         if is_wasi_command_export(tool) {
             let command = wasmtime_wasi::p2::bindings::sync::Command::instantiate(
-                &mut store, &component, &linker,
+                &mut store, component, &linker,
             )?;
             command
                 .wasi_cli_run()
@@ -774,7 +905,7 @@ pub fn invoke_component_tool(
                 .map_err(|()| anyhow::anyhow!("guest run returned an error"))?;
             Ok(None)
         } else {
-            let instance = linker.instantiate(&mut store, &component)?;
+            let instance = linker.instantiate(&mut store, component)?;
             let func = instance
                 .get_typed_func::<(i32,), (i32,)>(&mut store, tool)
                 .map_err(|error| {
@@ -1657,6 +1788,82 @@ mod tests {
             .is_err()
         );
         Ok(())
+    }
+
+    /// WP5.1: Derselbe Inhalt wird genau einmal kompiliert — und der zweite Zugriff ist messbar
+    /// billiger. Ohne diese Prüfung wäre „warme Starts" nur eine Zusage im Plan.
+    #[test]
+    fn the_cache_compiles_identical_content_once() -> Result<()> {
+        let mut cache = ModuleCache::default();
+        let grants = CapabilityGrants::default();
+        let limits = ExecutionLimits::default();
+
+        let first = cache.compile(WASI_GUEST_COMPONENT, &grants, &limits)?;
+        let second = cache.compile(WASI_GUEST_COMPONENT, &grants, &limits)?;
+
+        assert_eq!(cache.stats().entries, 1);
+        assert_eq!(cache.stats().misses, 1);
+        assert_eq!(cache.stats().hits, 1);
+        assert!(
+            cache.stats().last_compile_ms > 0.0,
+            "die Kompilierdauer wird gemessen — sie ist die Zahl, die der Cache einspart"
+        );
+        // Der Treffer liefert dasselbe Kompilat, nicht ein zweites mit gleichem Inhalt.
+        assert_eq!(first.compile, second.compile);
+        Ok(())
+    }
+
+    /// WP5.1: Der Schlüssel trägt Inhalt, Grants und Engine-Profil. Ändert sich eines davon, darf
+    /// der alte Eintrag nicht weiterverwendet werden.
+    #[test]
+    fn the_cache_key_invalidates_on_content_grants_and_engine_profile() -> Result<()> {
+        let engine = hardened_engine(false, false)?;
+        let (other_bytes, _) = compile_component(&engine, NO_IMPORT_COMPONENT)?;
+        let mut cache = ModuleCache::default();
+        let limits = ExecutionLimits::default();
+
+        cache.compile(WASI_GUEST_COMPONENT, &CapabilityGrants::default(), &limits)?;
+
+        // Anderer Inhalt.
+        cache.compile(&other_bytes, &CapabilityGrants::default(), &limits)?;
+        assert_eq!(cache.stats().entries, 2);
+
+        // Andere Grants.
+        let mut grants = CapabilityGrants::default();
+        grants.environment.insert("MCPMCP_SPIKE".to_owned());
+        cache.compile(WASI_GUEST_COMPONENT, &grants, &limits)?;
+        assert_eq!(cache.stats().entries, 3);
+
+        // Anderes Engine-Profil: ohne Fuel wird anderer Code erzeugt.
+        let without_fuel = ExecutionLimits {
+            fuel: None,
+            ..ExecutionLimits::default()
+        };
+        cache.compile(WASI_GUEST_COMPONENT, &grants, &without_fuel)?;
+        assert_eq!(cache.stats().entries, 4);
+        assert_eq!(
+            cache.stats().hits,
+            0,
+            "keiner dieser Fälle darf ein Treffer sein"
+        );
+        Ok(())
+    }
+
+    /// Ein kaputtes Component hinterlässt keinen Eintrag — sonst hinge ein „Kompilat" im Cache,
+    /// das nie eines war.
+    #[test]
+    fn a_failed_compilation_leaves_no_entry() {
+        let mut cache = ModuleCache::default();
+
+        let failure = cache.compile(
+            b"kein wasm",
+            &CapabilityGrants::default(),
+            &ExecutionLimits::default(),
+        );
+
+        assert!(failure.is_err());
+        assert_eq!(cache.stats().entries, 0);
+        assert_eq!(cache.stats().misses, 0);
     }
 
     /// WP3.2: Jede Kategorie einzeln — ein Component, das genau ein Interface importiert, läuft
