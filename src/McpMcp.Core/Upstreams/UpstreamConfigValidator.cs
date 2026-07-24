@@ -188,6 +188,34 @@ public static partial class UpstreamConfigValidator
         {
             ValidateWasiGrants(grants, config);
         }
+
+        ValidateWasiSecrets(wasi, config);
+    }
+
+    /// <summary>
+    /// Gewährte Secret-Namen und hinterlegte Werte müssen sich decken (Plan 0003, WP4). Ein Name
+    /// ohne Wert lässt den Host fail-closed abweisen — das soll hier auffallen und nicht erst,
+    /// wenn der Upstream nicht hochkommt. Ein Wert ohne Grant ist totes Konfigurationsgewicht:
+    /// Der Betreiber hat ein Geheimnis hinterlegt in der Annahme, es käme an.
+    /// </summary>
+    private static void ValidateWasiSecrets(WasiTransportOptions wasi, UpstreamServerConfig config)
+    {
+        var granted = new HashSet<string>(wasi.Grants?.Secrets ?? [], StringComparer.Ordinal);
+        var provided = wasi.Secrets ?? new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var name in granted.Where(name => !provided.ContainsKey(name)))
+        {
+            throw new ArgumentException(
+                $"Wasi.Grants.Secrets nennt '{name}', aber Wasi.Secrets enthält keinen Wert dafür.",
+                nameof(config));
+        }
+
+        foreach (var name in provided.Keys.Where(name => !granted.Contains(name)))
+        {
+            throw new ArgumentException(
+                $"Wasi.Secrets enthält '{name}', aber der Grant erlaubt es nicht — der Wert käme nie an.",
+                nameof(config));
+        }
     }
 
     /// <summary>
@@ -223,13 +251,13 @@ public static partial class UpstreamConfigValidator
             }
         }
 
-        if (grants.Secrets is { Count: > 0 })
+        foreach (var secret in grants.Secrets ?? [])
         {
-            // Ehrlich statt stillschweigend: Der Host kennt heute keine Secret-Capability, ein
-            // solcher Grant wäre wirkungslos. Secret-Injection kommt mit dem Trust-Store (WP4).
-            throw new ArgumentException(
-                "Wasi.Grants.Secrets wird noch nicht durchgesetzt — der Host injiziert keine Secrets (Plan 0003, WP4).",
-                nameof(config));
+            if (string.IsNullOrWhiteSpace(secret))
+            {
+                throw new ArgumentException(
+                    "Wasi.Grants.Secrets darf keinen leeren Namen enthalten.", nameof(config));
+            }
         }
     }
 

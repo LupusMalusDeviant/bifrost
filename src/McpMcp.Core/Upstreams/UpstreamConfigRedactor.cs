@@ -28,6 +28,11 @@ public static class UpstreamConfigRedactor
             Cli = config.Cli is { EnvironmentVariables: { Count: > 0 } cliEnv } cli
                 ? cli with { EnvironmentVariables = RedactValues(cliEnv) }
                 : config.Cli,
+            // WASI-Secrets sind Werte wie Header oder Credentials und gehören nicht in eine
+            // Ausgabe (Plan 0003, WP4).
+            Wasi = config.Wasi is { Secrets: { Count: > 0 } wasiSecrets } wasi
+                ? wasi with { Secrets = RedactValues(wasiSecrets) }
+                : config.Wasi,
         };
     }
 

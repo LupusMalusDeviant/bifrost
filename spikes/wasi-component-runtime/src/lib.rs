@@ -334,7 +334,10 @@ fn add_granted_wasi_to_linker(
     cli::terminal_stdout::add_to_linker::<_, WasiCli>(linker, WasiGuestHost::cli)?;
     cli::terminal_stderr::add_to_linker::<_, WasiCli>(linker, WasiGuestHost::cli)?;
 
-    if !grants.environment.is_empty() {
+    // Auch Secrets werden als Environment-Einträge injiziert (festgelegte Entscheidung 3), also
+    // muss die Schnittstelle dafür ebenfalls existieren. Der Preis dieser Entscheidung steht im
+    // Doc-Kommentar von `apply_grants_to_context`.
+    if !grants.environment.is_empty() || !grants.secrets.is_empty() {
         cli::environment::add_to_linker::<_, WasiCli>(linker, WasiGuestHost::cli)?;
     }
 
@@ -385,12 +388,27 @@ fn add_granted_wasi_to_linker(
 
 /// Füllt den WASI-Kontext mit genau den gewährten Ressourcen (WP3.1). Das Linken oben entscheidet,
 /// **ob** eine Kategorie überhaupt existiert; hier wird festgelegt, **worauf** sie zeigt.
+///
+/// Secrets kommen als Environment-Einträge herein (WP4, festgelegte Entscheidung 3). Das hat einen
+/// Preis, der benannt gehört: Wer Secrets gewährt, gewährt damit `wasi:cli/environment` — das
+/// Component kann also **alle** gesetzten Variablen auflisten, nicht nur die, die es erwartet.
+/// Eine eigene Secret-Schnittstelle wäre enger, war aber ausdrücklich nicht gewollt.
+/// Fail-closed: Ein gewährter Name ohne Wert ist ein Fehler, kein leerer String — sonst liefe ein
+/// Component mit einem Secret, das es für gesetzt hält.
 fn apply_grants_to_context(
     builder: &mut wasmtime_wasi::WasiCtxBuilder,
     grants: &CapabilityGrants,
+    secret_values: &std::collections::BTreeMap<String, String>,
 ) -> Result<()> {
     for key in &grants.environment {
         builder.env(key, "granted");
+    }
+
+    for name in &grants.secrets {
+        let value = secret_values.get(name).with_context(|| {
+            format!("Secret '{name}' ist gewährt, aber es wurde kein Wert übergeben")
+        })?;
+        builder.env(name, value);
     }
 
     for root in &grants.filesystem_preopens {
@@ -833,7 +851,7 @@ pub fn invoke_component_tool(
     // Aufrufer, die keinen Zustand halten wollen (Tests, Einmal-Läufe).
     let mut cache = ModuleCache::default();
     let module = cache.compile(component_bytes, grants, limits)?;
-    invoke_cached_module(&module, grants, tool, args, limits)
+    invoke_cached_module(&module, grants, &Default::default(), tool, args, limits)
 }
 
 /// Ruft ein Tool eines bereits kompilierten Components auf (WP5). Die Grants werden hier erneut
@@ -841,6 +859,7 @@ pub fn invoke_component_tool(
 pub fn invoke_cached_module(
     module: &CachedModule,
     grants: &CapabilityGrants,
+    secret_values: &std::collections::BTreeMap<String, String>,
     tool: &str,
     args: &[i32],
     limits: &ExecutionLimits,
@@ -859,7 +878,7 @@ pub fn invoke_cached_module(
     let stdout = wasmtime_wasi::p2::pipe::MemoryOutputPipe::new(limits.max_output_bytes);
     let mut builder = wasmtime_wasi::WasiCtxBuilder::new();
     builder.stdout(stdout.clone());
-    apply_grants_to_context(&mut builder, grants)?;
+    apply_grants_to_context(&mut builder, grants, secret_values)?;
 
     let mut store_limits = StoreLimitsBuilder::new();
     if let Some(max_memory) = limits.max_memory_bytes {
@@ -1866,6 +1885,49 @@ mod tests {
         assert_eq!(cache.stats().misses, 0);
     }
 
+    /// Entscheidungsgrundlage für den Platten-Cache (Plan 0003, festgelegte Entscheidung 4):
+    /// Was kostet die Kompilierung bei realistischer Modulgröße? Diese Kosten fallen einmal pro
+    /// Host-Start an — der prozesslokale Cache deckt alles danach ab.
+    ///
+    /// Bewusst `#[ignore]`: eine Messung, kein Gate. Reproduzieren mit
+    /// `cargo test --release -- --ignored --nocapture compilation_cost`.
+    #[test]
+    #[ignore = "Messung, kein Gate"]
+    fn compilation_cost_by_module_size() -> Result<()> {
+        let engine = hardened_engine(true, true)?;
+        println!("Modulgröße -> Kompilierdauer");
+        for functions in [0usize, 5_000, 20_000, 60_000] {
+            let (bytes, _) = compile_component(&engine, &synthetic_component(functions))?;
+            let mut cache = ModuleCache::default();
+            cache.compile(
+                &bytes,
+                &CapabilityGrants::default(),
+                &ExecutionLimits::default(),
+            )?;
+            println!(
+                "{:>8.1} KiB -> {:>8.1} ms",
+                bytes.len() as f64 / 1024.0,
+                cache.stats().last_compile_ms
+            );
+        }
+        Ok(())
+    }
+
+    /// Erzeugt ein Component mit vielen Kernfunktionen — grob so, wie ein größeres Plugin aussieht.
+    fn synthetic_component(functions: usize) -> String {
+        let mut wat = String::from("(component\n  (core module $m\n");
+        wat.push_str("    (func (export \"run\") (param i32) (result i32) local.get 0)\n");
+        for index in 0..functions {
+            wat.push_str(&format!(
+                "    (func $f{index} (param i32) (result i32) local.get 0 i32.const {index} i32.add i32.const 3 i32.mul)\n"
+            ));
+        }
+        wat.push_str("  )\n  (core instance $i (instantiate $m))\n");
+        wat.push_str("  (func $run (param \"value\" s32) (result s32) (canon lift (core func $i \"run\")))\n");
+        wat.push_str("  (export \"run\" (func $run)))\n");
+        wat
+    }
+
     /// WP3.2: Jede Kategorie einzeln — ein Component, das genau ein Interface importiert, läuft
     /// nur mit dem passenden Grant. Ohne ihn ist das Interface gar nicht gelinkt und die
     /// Instanziierung scheitert **vor** jeder Ausführung.
@@ -1983,14 +2045,15 @@ mod tests {
                 .insert(uncanonical.to_string_lossy().into_owned());
             let mut builder = wasmtime_wasi::WasiCtxBuilder::new();
             // Ohne Auflösung würde `open_ambient_dir` an dem `..` scheitern.
-            apply_grants_to_context(&mut builder, &grants)?;
+            apply_grants_to_context(&mut builder, &grants, &Default::default())?;
 
             let mut missing = CapabilityGrants::default();
             missing
                 .filesystem_preopens
                 .insert(root.join("gibt-es-nicht").to_string_lossy().into_owned());
             let mut second = wasmtime_wasi::WasiCtxBuilder::new();
-            let failure = apply_grants_to_context(&mut second, &missing).unwrap_err();
+            let failure =
+                apply_grants_to_context(&mut second, &missing, &Default::default()).unwrap_err();
             assert!(failure.to_string().contains("nicht auflösbar"));
         }
 

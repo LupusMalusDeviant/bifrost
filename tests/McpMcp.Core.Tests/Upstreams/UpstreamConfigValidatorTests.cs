@@ -16,13 +16,15 @@ public class UpstreamConfigValidatorTests
     private static UpstreamServerConfig Wasi(
         IReadOnlyList<string>? pinned = null,
         WasiExecutionLimits? limits = null,
-        WasiCapabilityGrants? grants = null) => new(
+        WasiCapabilityGrants? grants = null,
+        IReadOnlyDictionary<string, string>? secrets = null) => new(
         "wasi", "WASI", UpstreamTransportKind.Wasi, Enabled: true,
         Wasi: new WasiTransportOptions(
             "host.exe", "component.wasm", "component.sig",
             pinned ?? [PublisherKey],
             Grants: grants,
-            Limits: limits));
+            Limits: limits,
+            Secrets: secrets));
 
     [Fact]
     public void Valid_wasi_config_passes()
@@ -69,13 +71,28 @@ public class UpstreamConfigValidatorTests
         // Netzwerkziel ohne Port lässt sich nicht zu einer Socket-Adresse auflösen.
         var portless = () => UpstreamConfigValidator.Validate(
             Wasi(grants: new WasiCapabilityGrants(NetworkAllow: ["api.example.com"])));
-        // Secrets sind im Host noch nicht implementiert — ein solcher Grant wäre wirkungslos.
-        var secrets = () => UpstreamConfigValidator.Validate(
-            Wasi(grants: new WasiCapabilityGrants(Secrets: ["db-password"])));
 
         relativePreopen.Should().Throw<ArgumentException>().WithMessage("*absoluter Pfad*");
         portless.Should().Throw<ArgumentException>().WithMessage("*host:port*");
-        secrets.Should().Throw<ArgumentException>().WithMessage("*WP4*");
+    }
+
+    [Fact]
+    public void Wasi_secret_names_and_values_must_match()
+    {
+        // Ein gewährter Name ohne Wert laesst den Host fail-closed abweisen — das soll hier
+        // auffallen und nicht erst, wenn der Upstream nicht hochkommt.
+        var missingValue = () => UpstreamConfigValidator.Validate(
+            Wasi(grants: new WasiCapabilityGrants(Secrets: ["db-password"])));
+        // Ein Wert ohne Grant kaeme nie an — der Betreiber hat ihn in falscher Annahme hinterlegt.
+        var ungranted = () => UpstreamConfigValidator.Validate(
+            Wasi(secrets: new Dictionary<string, string> { ["db-password"] = "geheim" }));
+        var matching = () => UpstreamConfigValidator.Validate(
+            Wasi(grants: new WasiCapabilityGrants(Secrets: ["db-password"]),
+                secrets: new Dictionary<string, string> { ["db-password"] = "geheim" }));
+
+        missingValue.Should().Throw<ArgumentException>().WithMessage("*keinen Wert*");
+        ungranted.Should().Throw<ArgumentException>().WithMessage("*nie an*");
+        matching.Should().NotThrow();
     }
 
     [Fact]

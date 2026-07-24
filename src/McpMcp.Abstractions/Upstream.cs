@@ -187,7 +187,14 @@ public sealed record WasiTransportOptions(
     WasiCapabilityGrants? Grants = null,
     WasiExecutionLimits? Limits = null,
     int StartupTimeoutSeconds = 30,
-    IReadOnlyList<string>? HostArguments = null);
+    IReadOnlyList<string>? HostArguments = null,
+    /// <summary>
+    /// Werte zu den in <c>Grants.Secrets</c> genannten Namen (Plan 0003, WP4). Sie liegen als Teil
+    /// der Upstream-Konfiguration DataProtection-verschlüsselt (NFR-04) wie Header und
+    /// Credentials, werden in Ausgaben maskiert und erreichen den Host nur beim Laden. Jeder
+    /// gewährte Name braucht genau einen Wert — sonst lehnt der Host fail-closed ab.
+    /// </summary>
+    IReadOnlyDictionary<string, string>? Secrets = null);
 
 /// <summary>
 /// Die Host-Capabilities, die ein Component erhält — Spiegel des Grant-Modells im Rust-Host.
@@ -197,9 +204,10 @@ public sealed record WasiTransportOptions(
 /// <see cref="FilesystemPreopens"/> sind absolute Pfade und werden **lesend** eingehängt; der Host
 /// löst sie vorher auf, ein Symlink verschiebt den Grant also nicht. <see cref="NetworkAllow"/>
 /// sind <c>host:port</c>-Ziele, die der Host einmalig zu Socket-Adressen auflöst — alles andere
-/// wird abgewiesen, Namensauflösung im Guest bleibt aus. <see cref="Secrets"/> ist noch nicht
-/// implementiert: Der Host injiziert keine Secrets, deshalb weist der Validator einen solchen
-/// Grant ab, statt ihn wirkungslos durchzulassen (kommt mit dem Trust-Store, WP4).
+/// wird abgewiesen, Namensauflösung im Guest bleibt aus. <see cref="Secrets"/> nennt die Namen,
+/// deren Werte der Host als Environment-Einträge injiziert (WP4); die Werte selbst stehen in
+/// <see cref="WasiTransportOptions.Secrets"/>. Wer Secrets gewährt, gewährt damit auch
+/// <c>wasi:cli/environment</c> — das Component kann dann alle gesetzten Variablen auflisten.
 /// </para>
 /// </summary>
 public sealed record WasiCapabilityGrants(

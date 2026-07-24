@@ -222,6 +222,9 @@ internal sealed class WasiUpstreamConnection : IUpstreamConnection, ISignedUpstr
                 clock = grants.Clock,
                 random = grants.Random,
             },
+            // Getrennt von den Grants: Der Grant nennt die Namen, dieses Feld trägt die Werte.
+            // Sie gehen nur hier über die Leitung und stehen in keiner Antwort und keinem Audit.
+            secretValues = _options.Secrets ?? new Dictionary<string, string>(StringComparer.Ordinal),
         };
         var loaded = await RequestAsync(loadRequest, ct).ConfigureAwait(false);
         var audit = loaded.GetProperty("audit");

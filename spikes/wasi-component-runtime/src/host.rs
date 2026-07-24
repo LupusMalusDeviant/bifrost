@@ -61,6 +61,11 @@ pub enum Request {
         /// Erteilte Host-Grants; fehlend = default-deny.
         #[serde(default)]
         grants: CapabilityGrants,
+        /// Werte zu den in `grants.secrets` genannten Namen (WP4). Fehlend = keine Secrets.
+        /// Bewusst getrennt von den Grants: Der Grant sagt, **was** ein Component sehen darf,
+        /// dieses Feld liefert den Inhalt — und nur dieses Feld trägt Geheimnisse.
+        #[serde(default, rename = "secretValues")]
+        secret_values: std::collections::BTreeMap<String, String>,
     },
     /// Listet die aufrufbaren Tools (Exports) des geladenen Components.
     Discover,
@@ -146,6 +151,9 @@ struct LoadedComponent {
     module: CachedModule,
     module_sha256: String,
     grants: CapabilityGrants,
+    /// Werte zu den gewährten Secret-Namen. Bleiben im Prozess und gehen nie in eine Antwort:
+    /// Der Audit-Datensatz nennt nur Namen.
+    secret_values: std::sync::Arc<std::collections::BTreeMap<String, String>>,
 }
 
 fn error(code: &str, message: impl Into<String>) -> (Response, Control) {
@@ -189,11 +197,18 @@ impl Session {
                 signature,
                 pinned_publishers,
                 grants,
+                secret_values,
             } => {
                 if !self.negotiated {
                     return error("handshake-required", "hello muss vor load gesendet werden");
                 }
-                match self.load(&component, &signature, &pinned_publishers, grants) {
+                match self.load(
+                    &component,
+                    &signature,
+                    &pinned_publishers,
+                    grants,
+                    secret_values,
+                ) {
                     Ok(loaded) => (loaded, Control::Continue),
                     // Rollback (WP5.2): Ein fehlgeschlagener Load lässt das vorherige Component
                     // aktiv. Der eigene Code sagt das auch — sonst müsste der Betreiber raten,
@@ -225,11 +240,12 @@ impl Session {
                 // Kompilat — im Normalfall das vom Laden, sonst einmalig ein neues.
                 let bytes = std::sync::Arc::clone(&loaded.bytes);
                 let grants = loaded.grants.clone();
+                let secrets = std::sync::Arc::clone(&loaded.secret_values);
                 let module = match self.cache.compile(&bytes, &grants, &limits) {
                     Ok(module) => module,
                     Err(failure) => return error("invoke-failed", failure.to_string()),
                 };
-                match invoke_cached_module(&module, &grants, &tool, &args, &limits) {
+                match invoke_cached_module(&module, &grants, &secrets, &tool, &args, &limits) {
                     Ok(outcome) => (Response::Invoked { outcome }, Control::Continue),
                     Err(failure) => error("invoke-failed", failure.to_string()),
                 }
@@ -263,6 +279,7 @@ impl Session {
         signature_b64: &str,
         pinned_b64: &[String],
         grants: CapabilityGrants,
+        secret_values: std::collections::BTreeMap<String, String>,
     ) -> Result<Response> {
         let component = BASE64.decode(component_b64)?;
         let signature: [u8; 64] = BASE64
@@ -283,6 +300,13 @@ impl Session {
         }
 
         let publisher_key_id = verify_component_signature(&component, &signature, &pinned)?;
+        // Fail-closed vor dem Laden: Ein gewährtes Secret ohne Wert wäre sonst erst beim ersten
+        // Aufruf aufgefallen — mit dem Upstream längst im Katalog.
+        for name in &grants.secrets {
+            if !secret_values.contains_key(name) {
+                bail!("Secret '{name}' ist gewährt, aber es wurde kein Wert übergeben");
+            }
+        }
         let audit = grant_audit_record(&component, &publisher_key_id, &grants);
 
         // Kompilieren, BEVOR der bisherige Stand ersetzt wird.
@@ -297,6 +321,7 @@ impl Session {
             module_sha256: audit.module_sha256.clone(),
             module,
             grants,
+            secret_values: std::sync::Arc::new(secret_values),
         });
         Ok(Response::Loaded {
             compile_ms: if cached {
@@ -399,6 +424,7 @@ mod tests {
             signature: BASE64.encode(signing.sign(GUEST).to_bytes()),
             pinned_publishers: vec![BASE64.encode(signing.verifying_key().as_bytes())],
             grants,
+            secret_values: Default::default(),
         }
     }
 
@@ -531,6 +557,7 @@ mod tests {
             signature: BASE64.encode(signature),
             pinned_publishers: vec![publisher.trim().to_owned()],
             grants: CapabilityGrants::default(),
+            secret_values: Default::default(),
         });
 
         match response {
@@ -539,6 +566,70 @@ mod tests {
             }
             other => panic!("committed fixture triple no longer loads: {other:?}"),
         }
+    }
+
+    /// WP4: Ein gewährtes Secret erreicht den Guest tatsächlich — die Fixture-Component gibt den
+    /// Wert von `MCPMCP_SPIKE` aus, hier also den injizierten Secret-Wert statt des Platzhalters
+    /// „granted". Ohne diesen Test wäre die Injektion nur behauptet.
+    #[test]
+    fn a_granted_secret_reaches_the_guest() {
+        let signing = SigningKey::from_bytes(&[3u8; 32]);
+        let mut grants = CapabilityGrants::default();
+        grants.secrets.insert("MCPMCP_SPIKE".to_owned());
+        let mut session = negotiated();
+
+        let (loaded, _) = session.handle(Request::Load {
+            component: BASE64.encode(GUEST),
+            signature: BASE64.encode(signing.sign(GUEST).to_bytes()),
+            pinned_publishers: vec![BASE64.encode(signing.verifying_key().as_bytes())],
+            grants,
+            secret_values: [("MCPMCP_SPIKE".to_owned(), "s3hr-geheim".to_owned())]
+                .into_iter()
+                .collect(),
+        });
+        let (invoked, _) = session.handle(run_request());
+
+        match loaded {
+            // Der Audit-Datensatz nennt den Namen, nie den Wert.
+            Response::Loaded { audit, .. } => {
+                assert_eq!(audit.granted_secrets, ["MCPMCP_SPIKE"]);
+                let serialized = serde_json::to_string(&audit).unwrap();
+                assert!(
+                    !serialized.contains("s3hr-geheim"),
+                    "der Secret-Wert darf nirgends in einer Antwort auftauchen: {serialized}"
+                );
+            }
+            other => panic!("expected loaded, got {other:?}"),
+        }
+        match invoked {
+            Response::Invoked { outcome } => {
+                assert!(
+                    outcome.stdout.contains("mcpmcp-guest-ok:s3hr-geheim"),
+                    "der Guest sah den Secret-Wert nicht: {}",
+                    outcome.stdout
+                );
+            }
+            other => panic!("expected invoked, got {other:?}"),
+        }
+    }
+
+    /// Fail-closed: Ein gewährter Secret-Name ohne Wert ist ein Ladefehler. Sonst liefe das
+    /// Component mit einem Secret, das es für gesetzt hält.
+    #[test]
+    fn a_granted_secret_without_a_value_fails_the_load() {
+        let signing = SigningKey::from_bytes(&[3u8; 32]);
+        let mut grants = CapabilityGrants::default();
+        grants.secrets.insert("MCPMCP_SPIKE".to_owned());
+
+        let (response, _) = negotiated().handle(Request::Load {
+            component: BASE64.encode(GUEST),
+            signature: BASE64.encode(signing.sign(GUEST).to_bytes()),
+            pinned_publishers: vec![BASE64.encode(signing.verifying_key().as_bytes())],
+            grants,
+            secret_values: Default::default(),
+        });
+
+        assert!(matches!(response, Response::Error { code, .. } if code == "load-rejected"));
     }
 
     /// WP5.2: Ein fehlgeschlagener Load lässt den bisherigen Stand aktiv — und sagt das auch.
@@ -558,6 +649,7 @@ mod tests {
             signature: BASE64.encode(signing.sign(&broken).to_bytes()),
             pinned_publishers: vec![BASE64.encode(signing.verifying_key().as_bytes())],
             grants: CapabilityGrants::default(),
+            secret_values: Default::default(),
         });
 
         assert_eq!(control, Control::Continue, "der Host lebt weiter");
@@ -594,6 +686,7 @@ mod tests {
             signature: BASE64.encode(signing.sign(&broken).to_bytes()),
             pinned_publishers: vec![BASE64.encode(signing.verifying_key().as_bytes())],
             grants: CapabilityGrants::default(),
+            secret_values: Default::default(),
         });
 
         assert!(matches!(response, Response::Error { code, .. } if code == "load-rejected"));
@@ -639,6 +732,7 @@ mod tests {
             signature: BASE64.encode(rogue.sign(GUEST).to_bytes()),
             pinned_publishers: vec![BASE64.encode(trusted.verifying_key().as_bytes())],
             grants: CapabilityGrants::default(),
+            secret_values: Default::default(),
         });
 
         assert!(matches!(response, Response::Error { code, .. } if code == "load-rejected"));
@@ -654,6 +748,7 @@ mod tests {
             signature: BASE64.encode(signing.sign(GUEST).to_bytes()),
             pinned_publishers: vec![],
             grants: CapabilityGrants::default(),
+            secret_values: Default::default(),
         });
 
         assert!(matches!(response, Response::Error { code, .. } if code == "load-rejected"));

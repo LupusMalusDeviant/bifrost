@@ -130,6 +130,29 @@ public sealed class WasiRealHostCompatibilityTests
     }
 
     [Fact]
+    public async Task A_granted_secret_reaches_the_component_without_appearing_in_the_audit()
+    {
+        var host = RequireHost();
+        var ct = TestContext.Current.CancellationToken;
+        var connector = ConnectorFor(await PinnedPublisherAsync(ct));
+        // Der Fixture-Guest gibt den Wert von MCPMCP_SPIKE aus — hier also den Secret-Wert statt
+        // des Platzhalters, den ein blosser Environment-Grant setzt.
+        var config = Config(host, new WasiCapabilityGrants(Secrets: ["MCPMCP_SPIKE"])) with
+        {
+            Wasi = new WasiTransportOptions(
+                host, ComponentPath, SignaturePath, PinnedPublishers: [],
+                Grants: new WasiCapabilityGrants(Secrets: ["MCPMCP_SPIKE"]),
+                Secrets: new Dictionary<string, string> { ["MCPMCP_SPIKE"] = "s3hr-geheim" }),
+        };
+
+        await using var connection = await connector.ConnectAsync(new ServerId(Guid.NewGuid()), config, ct);
+        var result = await connection.CallToolAsync("wasi_cli_run", NoArgs, ct);
+
+        result.GetProperty("content")[0].GetProperty("text").GetString()
+            .Should().Contain("mcpmcp-guest-ok:s3hr-geheim", "der Secret-Wert muss im Guest ankommen");
+    }
+
+    [Fact]
     public async Task The_real_host_enforces_default_deny_across_the_wire()
     {
         var host = RequireHost();
