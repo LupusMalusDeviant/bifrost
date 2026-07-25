@@ -39,6 +39,25 @@ Der Gateway ist der zentrale Vertrauensanker (ADR-0001): Er terminiert jeden Cal
 |---|---|---|
 | 7 | **Klartext-Secrets im Audit-Log über den Meta-Tool-Pfad.** `MetaToolService` schrieb die Argumente ungefiltert; bei `invoke_tool` enthält `args.arguments` die kompletten Ziel-Argumente. Ein Call über den Lazy-Pfad persistierte damit Passwörter/Tokens im Klartext, während derselbe Call über `tools/call` korrekt maskiert wurde. Gefunden bei einem unabhängigen Abgleich aller Muss-FRs gegen den Code, nicht durch den ursprünglichen Security-Audit. | Der Meta-Pfad läuft durch denselben `IRedactionService`; Regressionstest hält die Invariante. Betroffen sind Bestands-Logs aus v1.0/v1.1 — wer den Lazy-Pfad genutzt hat, sollte die Audit-Tabelle prüfen und ggf. betroffene Zeilen löschen sowie die dort sichtbar gewordenen Credentials rotieren. |
 
+## WASI-Pluginpfad (Review 2026-07-25)
+
+Der out-of-process laufende WASI-Host ([ADR-0020](../adr/0020-wasi-runtime-out-of-process-rust-host.md))
+ist eine eigene Vertrauensgrenze: Das Gateway hält Component-Bytes, Signatur und Secrets, der Host
+prüft die Signatur, setzt Grants durch und führt aus. Vollständiger Review:
+[wasi-runtime-security-review.md](wasi-runtime-security-review.md).
+
+**Bestätigt sauber:**
+
+- **Kein Governance-Bypass.** Rate-Limit ist die erste Schranke im `ToolInvoker`, noch vor dem
+  Katalog-Lookup, danach RBAC, Schema, Guardrail, Approval, Audit — transportunabhängig, also auch
+  für WASI. Es gibt keinen Weg zum Host daran vorbei; der Host spricht nie mit DB oder Stores.
+- **Default-deny je Interface, vor der Instanziierung.** Nicht gewährte WASI-Interfaces werden gar
+  nicht erst in den Linker gehängt; ein Component, das eines importiert, startet nicht.
+- **Nur signierte Components.** Ed25519 gegen den persistierten Trust-Store; leerer Store lädt
+  nichts; ein Entzug stoppt laufende Upstreams sofort und wird auditiert.
+- **Limits je Aufruf** (Fuel, Epoch-Deadline, Linear-Memory, Output) und **Grant-Audit je Load**
+  (Modulhash, Publisher, Runtime, erteilte Grants).
+
 ## Akzeptierte / dokumentierte Restrisiken
 
 - **stdio-Upstreams ohne Sandbox** (ADR-0005): Admin-kontrollierter Command/Args/Env läuft ungesandboxt als Kindprozess mit Gateway-Rechten. Trust-Boundary: **nur vertrauenswürdige Server anschließen**; nur Admins dürfen Upstreams anlegen. Container-Isolation pro Upstream ist v2-Kandidat.
@@ -60,6 +79,27 @@ Der Gateway ist der zentrale Vertrauensanker (ADR-0001): Er terminiert jeden Cal
   ein zyklischer Verbund läuft in Timeouts statt in unbegrenzte Rekursion, und die Fehlerquote im
   Dashboard wird sofort auffällig. **Betriebsregel:** Gateway-Verbünde azyklisch konfigurieren.
   Echte transitive Erkennung bräuchte Call-Metadaten statt Verbindungs-Header — v2-Kandidat.
+- **WASI: ein Aufruf pro Upstream gleichzeitig.** Der IPC-Vertrag ist strikt request/response, die
+  Verbindung serialisiert. Ein langsames Component blockiert weitere Aufrufe **desselben**
+  Upstreams; begrenzt wird der Schaden durch den Per-Call-Timeout und Fuel/Epoch im Host. Das ist
+  eine Kapazitäts-, keine Sicherheitsgrenze — sie steht in [operations.md](../operations.md).
+  Nebenläufigkeit bräuchte Korrelations-Ids im Vertrag und ist damit eine Versionsfrage.
+- **WASI: Secrets liegen im Host-Prozessspeicher** über dessen Laufzeit, und ein Secret-Grant zieht
+  `wasi:cli/environment` nach sich — das Component kann damit **alle** gesetzten Variablen
+  auflisten, nicht nur die eigenen. Bewusste Folge der gewählten Injektionsform; eine eigene
+  WASI-Secret-Schnittstelle wäre enger, war aber nicht gewollt. Werte stehen in keiner Antwort und
+  keinem Audit.
+- **WASI: Platten-Cache schützt nicht gegen „gleicher Benutzer".** Kompilate sind ausführbarer
+  Code, den die Publisher-Signatur nicht abdeckt; sie tragen deshalb einen HMAC unter einem
+  host-lokalen Schlüssel. Das schützt gegen fremden Schreibzugriff und Bitfehler — wer als der
+  Host-Benutzer läuft, liest den Schlüssel und könnte ohnehin das Binary austauschen.
+  **Betriebsauflage:** Cache-Verzeichnis gehört dem Host-Benutzer, für andere nicht schreibbar.
+- **WASI: Trust-Store-Integrität hängt am DB-Schreibzugriff.** Wer in die Datenbank schreibt, kann
+  einen Publisher hinzufügen. Das galt vorher genauso (Config-Blob), ist jetzt aber zentralisiert
+  und auditiert.
+- **WASI: Speichergrenze zählt Einträge, nicht Byte.** Der Modul-Cache hält höchstens 8 Kompilate;
+  wasmtime gibt den Speicherbedarf eines fertigen `Component` nicht her. Bei sehr großen Modulen
+  bleibt der Verbrauch damit nach oben offen.
 - ~~**PBKDF2 100k < OWASP-Empfehlung (600k)**~~ ✅ **in v1.1 behoben:** neue Hashes nutzen 600 000 Iterationen. Bestandshashes tragen ihre Iterationszahl im Format und bleiben verifizierbar (per Test belegt), ein Upgrade sperrt also niemanden aus.
 
 ## Reporting

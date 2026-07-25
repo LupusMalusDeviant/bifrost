@@ -145,6 +145,16 @@ curl -X POST http://localhost:8080/api/v1/publishers \
   Component kann also alle gesetzten Variablen lesen.
 - Jeder Load steht im Audit: Modulhash, Publisher, Runtime und die tatsächlich erteilten Grants.
 
+### Kapazität: ein Aufruf pro Upstream gleichzeitig
+
+Der IPC-Vertrag ist strikt request/response, die Verbindung zum Host serialisiert. Ein langsames
+Component blockiert damit weitere Aufrufe **desselben** WASI-Upstreams; andere Upstreams sind nicht
+betroffen. Der Per-Call-Timeout (FR-09) und Fuel/Epoch-Limits begrenzen, wie lange das dauern kann.
+
+Wer mehrere gleichzeitige Aufrufe eines Components braucht, legt ihn heute als mehrere Upstreams
+an — jeder bekommt seinen eigenen Host-Prozess. Echte Nebenläufigkeit in einer Verbindung bräuchte
+Korrelations-Ids im Vertrag und wäre damit eine Versionsänderung.
+
 ### Platten-Cache für Kompilate
 
 Ohne `Wasi.ModuleCacheDirectory` kompiliert **jeder Host-Start** neu — gemessen rund 2,3 ms je KiB,

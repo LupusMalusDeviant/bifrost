@@ -156,7 +156,7 @@ WP3/WP4/WP5 laufen nach WP2 weitgehend parallel — der kritische Pfad ist WP1 �
 - **M3 (~2026-09-12):** WP3 + WP4 + WP5 fertig — feingranulare Grants, persistierter Trust-Store + Load-Signaturprüfung, Modul-Cache/Rollback.
 - **M4 (~2026-09-30):** WP6 + WP7 fertig — Connector-Vertrag formalisiert, Packaging + CI + Security-Review; ADR-0017 neu bewertet.
 
-## Stand (2026-07-24)
+## Stand (2026-07-25)
 
 Belegt, jeweils an einen benannten Test gebunden — nicht an ein Plan-Häkchen:
 
@@ -170,23 +170,19 @@ Belegt, jeweils an einen benannten Test gebunden — nicht an ein Plan-Häkchen:
 | WP6.1 (Namens- und Schema-Normalisierung) | Vertrag **v2**: `discover` liefert typisierte Beschreibungen (`describe_component_tools`), der Kommando-Einstiegspunkt ist genau ein Tool, nicht aufrufbare Signaturen sind als solche markiert. Gateway-seitig `WasiToolNormalizer` — katalog- und URL-taugliche Namen plus ein Schema **pro** Tool. Tests: 3 Rust-Tests, `WasiRuntimeConnectorTests` (Normalisierung, Kollisionen, Schema, gefilterte Exports) |
 | WP6.2 (Vertragskompatibilität) | `WasiRealHostCompatibilityTests` — .NET gegen das **echte** Binary: Handshake, signierter Load, Discovery, Invoke, Default-Deny, Versionsverhandlung mit „1" (der echte Bruch) und „3" |
 | WP7.1/7.2 (Packaging, CI) | Der Host wird **mit** dem Gateway ausgeliefert (ein Image = ein Vertragsstand): eigene Rust-Stage im Dockerfile, die von der Bau-Architektur aus kreuzkompiliert statt unter QEMU zu emulieren. Gemessen: Image 121 MB amd64 / 117 MB arm64 (Grenze 300 MB), Host-Binary 30 MB unter `/usr/local/bin/mcpmcp-wasi-host`. **Beide Architekturen lokal belegt** — im arm64-Image ist das Binary echtes AArch64 (`e_machine 0xB7`) und beantwortet den Handshake unter Emulation; die Cross-Kompilierung von wasmtime dauert 1 m 12 s statt einer QEMU-Ewigkeit. CI prüft Handshake im Image und non-root (UID 1654) |
+| WP7.3/7.4 (Security-Review, ADR-0017) | Review am 2026-07-25 mit dem Product Owner durchgeführt: [`wasi-runtime-security-review.md`](../security/wasi-runtime-security-review.md), Ergebnis angenommen mit benannten Restrisiken. Sicherheitsstand und Restrisiken stehen im [Threat-Model](../security/threat-model.md). ADR-0017 auf **akzeptiert** — als Isolations- und Grant-Modell, mit ausdrücklichem Vorbehalt für den Vorrang bei beliebigen Connectoren |
 | **M2** (signiertes Component durch die volle Pipeline) | `WasiRealHostGovernanceTests` (echter Host, signiertes Fixture) + `WasiUpstreamE2ETests` (RBAC, Guardrail, Approval, Audit, MCP + REST) |
 
 Offen und ausdrücklich **nicht** behauptet:
 
 - **WP6.1, Rest** — der Vertrag deckt Namen, Schemata, Discovery, Invoke, Health und
   Fehlersemantik ab; **Cancellation, Readiness, Lifecycle-Phasen und Capability-Flags** nach
-  ADR-0016 fehlen weiterhin. Ebenso die Aufrufbreite: Der Host führt heute nur
-  `(s32) -> s32`-Funktionen und den Kommando-Einstiegspunkt aus — alles andere meldet die
-  Discovery ehrlich als nicht unterstützt, statt es im Katalog zu zeigen.
+  ADR-0016 fehlen weiterhin.
 - **WP3, Rest** — Preopens bleiben **nur lesend**; Schreibrechte sind im Grant-Modell nach wie vor
   nicht ausdrückbar.
-- **WP7.3/7.4 — liegen beim Product Owner.** Das Material steht in
-  [`docs/security/wasi-runtime-review-material.md`](../security/wasi-runtime-review-material.md):
-  Vertrauensgrenzen, was durch benannte Tests belegt ist, die Prüffläche und der Abgleich der
-  ADR-0017-Zusagen mit dem Code. Bewertung und Statuswechsel des ADR wurden bewusst **nicht**
-  vorweggenommen. Auffälligste Lücke zwischen ADR-Anspruch und Code: die Aufrufbreite — heute nur
-  Kommando-Exports und `(s32) -> s32`.
+- **Aufrufbreite** — ausführbar sind der WASI-Kommando-Einstiegspunkt und `(s32) -> s32`.
+  `list<u8>` und `result<T,E>` fehlen, Resources/Futures/Streams hängen an ADR-0019. Das ist der
+  Grund, warum der Vorrang aus ADR-0017 unter Vorbehalt steht.
 
 ## Festgelegte Entscheidungen für WP4 (2026-07-24, Product Owner)
 

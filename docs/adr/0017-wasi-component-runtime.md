@@ -1,7 +1,9 @@
 # ADR-0017: WASI Component Runtime als bevorzugter isolierter Pluginpfad
 
-- **Status:** Vorgeschlagen; Hostauswahl nach Spike
-- **Datum:** 2026-07-24
+- **Status:** Akzeptiert als Isolations- und Grant-Modell (2026-07-25); der Vorrang für
+  *beliebige* neue Tools und Connectoren steht unter Vorbehalt — siehe [Geltungsbereich](#geltungsbereich-2026-07-25).
+  Hostauswahl entschieden: Wasmtime 47 out-of-process ([ADR-0020](0020-wasi-runtime-out-of-process-rust-host.md)).
+- **Datum:** 2026-07-24, Statuswechsel 2026-07-25
 
 ## Kontext
 
@@ -34,7 +36,11 @@ Ownership, Cancellation und das Task-/Event-Modell implementiert sind.
 
 Jedes Modul wird über SHA-256 identifiziert. Produktion verlangt erlaubten Herausgeber oder
 administrativ gepinnten Hash; Cache-Keys enthalten Runtime-, Component- und Grant-Version.
-Erteilte Host-Capabilities werden bei Start und Invocation auditiert.
+Erteilte Host-Capabilities werden **beim Laden** auditiert: Grants sind an den Ladevorgang
+gebunden und können sich zwischen zwei Loads nicht ändern, deshalb genügt ein Datensatz je Load.
+Zusammen mit der Audit-Zeile des Tool-Calls ist damit für jeden Aufruf nachvollziehbar, unter
+welchen Rechten er lief. (Ursprünglich stand hier „bei Start und Invocation"; der Zusatz je Aufruf
+wäre eine Wiederholung unveränderlicher Angaben in jeder Zeile.)
 
 ## Begrenzter Spike
 
@@ -79,6 +85,37 @@ Offen für Produktion: externer Linux-CI-Nachweis (bislang nur lokal Windows); p
 Gating (der Spike gated world-level); Cache/Rollback; Connector-Handshake; Server-Runtimeadapter.
 Der ADR-Status bleibt daher „Vorgeschlagen"; die Hostauswahl (Wasmtime 47) ist durch den Spike aber
 bestätigt.
+
+## Geltungsbereich (2026-07-25)
+
+Der Statuswechsel gilt **dem Isolationsmodell**, nicht dem vollen Produktanspruch. Belegt und
+angenommen:
+
+- default-deny je WASI-Interface, durchgesetzt **vor** der Instanziierung (nicht gewährte
+  Interfaces werden gar nicht erst gelinkt);
+- Preopens pro Wurzel (aufgelöst, nur lesend), Netzwerk als aufgelöste `host:port`-Allowlist,
+  Environment- und Secret-Injektion je Name;
+- Limits pro Aufruf: Fuel, Epoch-Deadline, Linear-Memory, Output;
+- Ed25519-Publisher-Signatur gegen einen persistierten Trust-Store, fail-closed, Entzug wirkt
+  sofort; Grant-Audit je Load;
+- content-adressierter Modul-Cache mit Rollback, Platten-Kompilate über einen host-lokalen
+  Schlüssel MAC-gesichert.
+
+**Unter Vorbehalt** steht der Satz „MCPMCP bevorzugt WebAssembly Components für neue lokale Tools
+und externe Connectoren". Die Aufrufbreite trägt ihn noch nicht: Ausführbar sind heute der
+WASI-Kommando-Einstiegspunkt und typisierte Funktionen der Form `(s32) -> s32`. Alles andere meldet
+die Discovery ausdrücklich als nicht unterstützt, statt es im Katalog zu zeigen — ehrlich, aber
+eben auch schmal. Ebenfalls offen: `list<u8>` als begrenzte Binärdaten und `result<T,E>` als
+Fehlervertrag sind nicht implementiert; Resources, Futures und Streams hängen unverändert am
+Task-/Event-Modell ([ADR-0019](0019-langlaufende-tasks-und-events.md)).
+
+Der Vorbehalt entfällt, wenn die Aufrufbreite den WIT-Typraum abdeckt, den ein Connector braucht.
+Bis dahin ist WASI der bevorzugte Pfad für **Tools, die in diese Form passen**, und nicht die
+Vorgabe für jeden neuen Connector.
+
+Sicherheitsstand und akzeptierte Restrisiken stehen im
+[Threat-Model](../security/threat-model.md); der Review dazu in
+[wasi-runtime-security-review.md](../security/wasi-runtime-security-review.md).
 
 ## Konsequenzen
 
