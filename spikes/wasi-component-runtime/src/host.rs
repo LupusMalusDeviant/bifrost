@@ -22,6 +22,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 
+use crate::disk_cache::DiskCache;
 use crate::{
     CachedModule, CapabilityGrants, ExecutionLimits, GrantAuditRecord, InvocationOutcome,
     ModuleCache, ModuleCacheStats, RUNTIME_VERSION, ToolDescriptor, describe_cached_module,
@@ -167,6 +168,15 @@ fn error(code: &str, message: impl Into<String>) -> (Response, Control) {
 }
 
 impl Session {
+    /// Sitzung mit Platten-Cache: Kompilate überleben den Prozess (WP5).
+    pub fn with_disk_cache(disk: DiskCache) -> Self {
+        Self {
+            negotiated: false,
+            loaded: None,
+            cache: ModuleCache::with_disk(disk),
+        }
+    }
+
     /// Verarbeitet eine Anfrage zu einer Antwort plus Loop-Steuerung.
     pub fn handle(&mut self, request: Request) -> (Response, Control) {
         match request {
@@ -367,8 +377,15 @@ fn read_frame_bytes<R: Read>(reader: &mut R) -> Result<Option<Vec<u8>>> {
 /// Die IPC-Schleife: Frames lesen, in der `Session` verarbeiten, Antworten rahmen. Ein
 /// unparsbarer Frame ergibt eine `error`-Antwort und beendet den Host NICHT; `shutdown` und EOF
 /// beenden ihn sauber.
-pub fn serve<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<()> {
-    let mut session = Session::default();
+pub fn serve<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    disk_cache: Option<DiskCache>,
+) -> Result<()> {
+    let mut session = match disk_cache {
+        Some(disk) => Session::with_disk_cache(disk),
+        None => Session::default(),
+    };
     while let Some(body) = read_frame_bytes(reader)? {
         match serde_json::from_slice::<Request>(&body) {
             Ok(request) => {
@@ -437,7 +454,7 @@ mod tests {
 
     fn first_response(input: &[u8]) -> Response {
         let mut output = Vec::new();
-        serve(&mut &input[..], &mut output).unwrap();
+        serve(&mut &input[..], &mut output, None).unwrap();
         let len = u32::from_be_bytes(output[..4].try_into().unwrap()) as usize;
         serde_json::from_slice(&output[4..4 + len]).unwrap()
     }
@@ -866,7 +883,7 @@ mod tests {
             chunk: 1, // ein Byte pro read — der härteste Fall
         };
         let mut output = Vec::new();
-        serve(&mut reader, &mut output).unwrap();
+        serve(&mut reader, &mut output, None).unwrap();
 
         let len = u32::from_be_bytes(output[..4].try_into().unwrap()) as usize;
         let response: Response = serde_json::from_slice(&output[4..4 + len]).unwrap();
@@ -923,7 +940,7 @@ mod tests {
         let mut input = frame(b"not valid json");
         input.extend(frame(br#"{"type":"shutdown"}"#));
         let mut output = Vec::new();
-        serve(&mut &input[..], &mut output).unwrap();
+        serve(&mut &input[..], &mut output, None).unwrap();
 
         // Erste Antwort: bad-request; der Host lebt weiter und verarbeitet das folgende shutdown.
         let first_len = u32::from_be_bytes(output[..4].try_into().unwrap()) as usize;

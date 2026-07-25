@@ -13,6 +13,7 @@ use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
 use wit_parser::{Function, ManglingAndAbi, Resolve, Type, TypeDefKind, WorldItem, WorldKey};
 
+pub mod disk_cache;
 pub mod host;
 
 const NO_IMPORT_COMPONENT: &str = include_str!("../fixtures/no-import.component.wat");
@@ -529,6 +530,11 @@ pub struct ModuleCacheStats {
     pub last_compile_ms: f64,
     /// Summe aller Kompilierungen — die Kosten, die der Cache seither einspart.
     pub total_compile_ms: f64,
+    /// Treffer aus dem Platten-Cache: Kompilate, die dieser Prozess NICHT selbst erzeugt hat.
+    pub disk_hits: u64,
+    /// Verworfene oder nicht schreibbare Platten-Einträge. Sichtbar, damit ein stummer
+    /// Cache-Ausfall (falsche Rechte, MAC-Fehler) nicht als „kompiliert eben immer neu" endet.
+    pub disk_errors: u64,
 }
 
 /// Content-adressierter Cache kompilierter Components (WP5.1).
@@ -547,6 +553,9 @@ pub struct ModuleCacheStats {
 pub struct ModuleCache {
     entries: std::collections::HashMap<String, CachedModule>,
     stats: ModuleCacheStats,
+    /// Optionaler Platten-Cache. Ohne konfiguriertes Verzeichnis bleibt der Cache prozesslokal —
+    /// ein Verzeichnis lässt sich nicht sicher erraten, also wird keines gewählt.
+    disk: Option<crate::disk_cache::DiskCache>,
 }
 
 impl std::fmt::Debug for CachedModule {
@@ -559,6 +568,15 @@ impl std::fmt::Debug for CachedModule {
 }
 
 impl ModuleCache {
+    /// Cache mit Platten-Rückhalt: Kompilate überleben den Prozess (WP5).
+    pub fn with_disk(disk: crate::disk_cache::DiskCache) -> Self {
+        Self {
+            entries: std::collections::HashMap::new(),
+            stats: ModuleCacheStats::default(),
+            disk: Some(disk),
+        }
+    }
+
     /// Liefert das Kompilat aus dem Cache oder erzeugt es. Ein Fehlschlag hinterlässt keinen
     /// Eintrag — ein kaputtes Component soll nicht als vermeintlich gültiges Kompilat hängen
     /// bleiben.
@@ -580,9 +598,35 @@ impl ModuleCache {
         config.epoch_interruption(limits.timeout_ms.is_some());
         let engine = Engine::new(&config)?;
 
+        // Platte vor Kompilierung: Genau dafür existiert sie — der Prozessstart soll nicht zahlen,
+        // was ein früherer Start schon bezahlt hat.
+        if let Some(disk) = self.disk.as_ref()
+            && let Some(component) = disk.load(&key, &engine)
+        {
+            let module = CachedModule {
+                engine,
+                component,
+                compile: Duration::ZERO,
+            };
+            self.entries.insert(key, module.clone());
+            self.stats.disk_hits += 1;
+            self.stats.entries = self.entries.len();
+            self.stats.last_compile_ms = 0.0;
+            return Ok(module);
+        }
+
         let started = Instant::now();
         let component = Component::from_binary(&engine, component_bytes)?;
         let compile = started.elapsed();
+
+        if let Some(disk) = self.disk.as_ref()
+            && let Err(failure) = disk.store(&key, &component)
+        {
+            // Ein nicht schreibbarer Cache darf den Aufruf nicht scheitern lassen — er kostet
+            // dann nur wieder Kompilierzeit. Sichtbar bleibt er über disk_errors und stderr.
+            self.stats.disk_errors += 1;
+            eprintln!("wasi-host: Kompilat nicht ablegbar: {failure:#}");
+        }
 
         let module = CachedModule {
             engine,

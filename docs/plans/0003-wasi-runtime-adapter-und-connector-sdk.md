@@ -165,7 +165,7 @@ Belegt, jeweils an einen benannten Test gebunden — nicht an ein Plan-Häkchen:
 | WP1 (IPC-Vertrag, Rust-Host) | `spikes/wasi-component-runtime/src/host.rs` — Framing, partielle Reads, Frame-Limits; insgesamt 51 Rust-Tests |
 | WP2 (.NET-Connector) | `WasiRuntimeConnectorTests` gegen den Stub-Host; `UpstreamConfigValidatorTests` für die fail-closed Validierung |
 | WP3 (feingranulares Grant-Mapping) | Der Host linkt **nur die gewährten** WASI-Interfaces (`add_granted_wasi_to_linker`); Preopens werden aufgelöst und lesend eingehängt, die Netzwerk-Allowlist einmalig zu Socket-Adressen aufgelöst (`apply_grants_to_context`). Tests: Kategorie-Gating end-to-end an zwei WAT-Fixtures, Linker-Politik über alle Kategorien, Preopen-Auflösung/fail-closed, Allowlist-Auflösung; `UpstreamConfigValidatorTests` weist nicht durchsetzbare Grants schon in der Konfiguration ab |
-| WP5 (Modul-Cache + Rollback) | `ModuleCache` — Schlüssel aus Modulhash, Runtime-Version, Engine-Profil und Grant-Fingerabdruck; `load` kompiliert als Gesundheitstest, ein Fehlschlag lässt den bisherigen Stand aktiv (`load-rolled-back`). `health` meldet aktives Modul und Cache-Kennzahlen. **Gemessen** am echten Host (Release, Fixture-Guest): kalter Aufruf ~75 ms, warmer ~0,4 ms — vorher zahlte *jeder* Aufruf den kalten Weg. Tests: 3 Rust-Tests zum Cache, 3 zu Rollback/Wiederverwendung, 2 `WasiRealHostCompatibilityTests` über die Leitung |
+| WP5 (Modul-Cache, Platten-Cache, Rollback) | `ModuleCache` — Schlüssel aus Modulhash, Runtime-Version, Engine-Profil und Grant-Fingerabdruck; `load` kompiliert als Gesundheitstest, ein Fehlschlag lässt den bisherigen Stand aktiv (`load-rolled-back`). `health` meldet aktives Modul und Cache-Kennzahlen. **Gemessen** am echten Host (Release, Fixture-Guest): kalter Aufruf ~75 ms, warmer ~0,4 ms — vorher zahlte *jeder* Aufruf den kalten Weg. Zusätzlich Platten-Cache über Prozessgrenzen: erster Host-Start 107 ms Load (90 ms Kompilierung), jeder weitere 0,9–2,6 ms. Jedes Kompilat trägt einen HMAC-SHA256 unter einem host-lokalen Schlüssel (`mac.key`, unter Unix `0600`); ein Eintrag ohne gültigen MAC wird gelöscht statt geladen. Tests: 3 Rust-Tests zum Speicher-Cache, 7 zum Platten-Cache (Manipulation, fremder Schlüssel, fremde Datei, Warmstart, Grant-Anteil im Schlüssel), 3 zu Rollback/Wiederverwendung, 3 `WasiRealHostCompatibilityTests` über die Leitung |
 | WP4 (Trust-Store, Load-Prüfung, Grant-Audit, Secret-Injektion) | `PublisherTrustStore` persistiert (EF-Migrationen SQLite + Postgres), Fingerprint-Id passend zum Host-Audit; der Connector zieht die Schlüssel von dort statt aus der Config und schreibt jeden Load in den Audit-Pfad. Entzug wirkt sofort auf laufende Upstreams. REST unter `/api/v1/publishers`, admin-only. Secrets kommen verschlüsselt aus der Upstream-Konfiguration und werden vom Host als Environment-Einträge injiziert; Werte stehen in keiner Antwort und keinem Audit. Tests: 7 `PublisherTrustTests`, 2 Rust-Tests zur Injektion, 1 Real-Host-Test, Validator-Tests für Namen/Werte |
 | WP6.1 (Namens- und Schema-Normalisierung) | Vertrag **v2**: `discover` liefert typisierte Beschreibungen (`describe_component_tools`), der Kommando-Einstiegspunkt ist genau ein Tool, nicht aufrufbare Signaturen sind als solche markiert. Gateway-seitig `WasiToolNormalizer` — katalog- und URL-taugliche Namen plus ein Schema **pro** Tool. Tests: 3 Rust-Tests, `WasiRuntimeConnectorTests` (Normalisierung, Kollisionen, Schema, gefilterte Exports) |
 | WP6.2 (Vertragskompatibilität) | `WasiRealHostCompatibilityTests` — .NET gegen das **echte** Binary: Handshake, signierter Load, Discovery, Invoke, Default-Deny, Versionsverhandlung mit „1" (der echte Bruch) und „3" |
@@ -179,19 +179,10 @@ Offen und ausdrücklich **nicht** behauptet:
   ADR-0016 fehlen weiterhin. Ebenso die Aufrufbreite: Der Host führt heute nur
   `(s32) -> s32`-Funktionen und den Kommando-Einstiegspunkt aus — alles andere meldet die
   Discovery ehrlich als nicht unterstützt, statt es im Katalog zu zeigen.
-- **WP5, Rest — braucht eine Entscheidung (Messung liegt vor).** Die Voraussetzung von
-  Entscheidung 4 ist **nicht** eingetreten: Gemessen (Release, `compilation_cost_by_module_size`,
-  reproduzierbar über `cargo test --release --lib -- --ignored --nocapture compilation_cost`)
-  kostet die Kompilierung rund **2,3 ms je KiB** — 100 KiB ≈ 0,25 s, 434 KiB ≈ 1,0 s,
-  1,4 MiB ≈ 3,2 s. Ein realistisch großes Plugin-Component (1–3 MB) zahlt also **3–7 Sekunden pro
-  Host-Start**, nicht die angenommenen ≤ 500 ms. Damit lohnt sich ein Platten-Cache — nur ist die
-  offene Frage jetzt eine sicherheitsrelevante: Ein cwasm-Artefakt ist ausführbarer Code, den die
-  Signaturkette **nicht** abdeckt, und der Trust-Store hält nur öffentliche Schlüssel, also kein
-  Material für einen MAC. Wer den Cache baut, muss vorher entscheiden, wie das Artefakt geschützt
-  wird (host-lokaler Schlüssel? Ableitung über DataProtection? Nur Verzeichnisrechte?). Diese
-  Entscheidung gehört zum Product Owner und wurde hier bewusst nicht getroffen.
 - **WP3, Rest** — Preopens bleiben **nur lesend**; Schreibrechte sind im Grant-Modell nach wie vor
   nicht ausdrückbar.
+- **Cache-Obergrenze** — weder Speicher- noch Platten-Cache haben eine Größen- oder
+  Eintragsgrenze. Bei vielen Upstreams × Modulgröße wächst beides unbegrenzt.
 - **WP7.3/7.4 — liegen beim Product Owner.** Das Material steht in
   [`docs/security/wasi-runtime-review-material.md`](../security/wasi-runtime-review-material.md):
   Vertrauensgrenzen, was durch benannte Tests belegt ist, die Prüffläche und der Abgleich der
@@ -218,6 +209,10 @@ neu abzuwägen:
 4. **Platten-Cache** (offener Rest aus WP5): erst messen. Kompiliert ein realistisch großes
    Component unter ~500 ms, wird der Punkt bewusst geschlossen statt gebaut — die Signaturkette
    deckt cwasm-Artefakte nicht ab, und der Gewinn wäre eine Kompilierung pro Upstream-Start.
+   **Nachtrag 2026-07-25:** Die Messung ergab ~2,3 ms je KiB, also 3–7 s für ein 1–3-MB-Component;
+   die Bedingung „unter 500 ms" trat nicht ein. Entscheidung des Product Owners daraufhin: Cache
+   bauen, das Artefakt über einen **host-lokalen Schlüssel** absichern. Umgesetzt in
+   `src/disk_cache.rs`.
 
 ## Erfolgskriterien
 

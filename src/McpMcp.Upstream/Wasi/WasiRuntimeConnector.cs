@@ -63,6 +63,13 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
             CreateNoWindow = true,
         };
         startInfo.ArgumentList.Add("host");
+        if (!string.IsNullOrWhiteSpace(options.ModuleCacheDirectory))
+        {
+            // Der Host legt dort seinen MAC-Schlüssel ab und prüft jedes Kompilat dagegen (WP5).
+            startInfo.ArgumentList.Add("--cache-dir");
+            startInfo.ArgumentList.Add(options.ModuleCacheDirectory);
+        }
+
         foreach (var argument in options.HostArguments ?? [])
         {
             startInfo.ArgumentList.Add(argument);

@@ -17,14 +17,16 @@ public class UpstreamConfigValidatorTests
         IReadOnlyList<string>? pinned = null,
         WasiExecutionLimits? limits = null,
         WasiCapabilityGrants? grants = null,
-        IReadOnlyDictionary<string, string>? secrets = null) => new(
+        IReadOnlyDictionary<string, string>? secrets = null,
+        string? cacheDirectory = null) => new(
         "wasi", "WASI", UpstreamTransportKind.Wasi, Enabled: true,
         Wasi: new WasiTransportOptions(
             "host.exe", "component.wasm", "component.sig",
             pinned ?? [PublisherKey],
             Grants: grants,
             Limits: limits,
-            Secrets: secrets));
+            Secrets: secrets,
+            ModuleCacheDirectory: cacheDirectory));
 
     [Fact]
     public void Valid_wasi_config_passes()
@@ -93,6 +95,19 @@ public class UpstreamConfigValidatorTests
         missingValue.Should().Throw<ArgumentException>().WithMessage("*keinen Wert*");
         ungranted.Should().Throw<ArgumentException>().WithMessage("*nie an*");
         matching.Should().NotThrow();
+    }
+
+    [Fact]
+    public void Wasi_module_cache_directory_must_be_absolute()
+    {
+        // Dort landen ausfuehrbare Kompilate — ein relativer Pfad zeigt je nach
+        // Arbeitsverzeichnis des Host-Prozesses woanders hin.
+        var relative = () => UpstreamConfigValidator.Validate(Wasi(cacheDirectory: "cache"));
+        var absolute = () => UpstreamConfigValidator.Validate(
+            Wasi(cacheDirectory: Path.Combine(Path.GetTempPath(), "wasi-cache")));
+
+        relative.Should().Throw<ArgumentException>().WithMessage("*absoluter Pfad*");
+        absolute.Should().NotThrow();
     }
 
     [Fact]

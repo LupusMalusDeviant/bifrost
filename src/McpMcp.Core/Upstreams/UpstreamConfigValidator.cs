@@ -190,6 +190,15 @@ public static partial class UpstreamConfigValidator
         }
 
         ValidateWasiSecrets(wasi, config);
+
+        if (wasi.ModuleCacheDirectory is { } cacheDirectory
+            && (string.IsNullOrWhiteSpace(cacheDirectory) || !Path.IsPathFullyQualified(cacheDirectory)))
+        {
+            // Ein relativer Pfad zeigt je nach Arbeitsverzeichnis des Host-Prozesses woanders hin —
+            // und dort landen ausführbare Kompilate.
+            throw new ArgumentException(
+                "Wasi.ModuleCacheDirectory muss ein absoluter Pfad sein.", nameof(config));
+        }
     }
 
     /// <summary>

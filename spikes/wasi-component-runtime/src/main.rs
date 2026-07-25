@@ -69,16 +69,34 @@ fn run() -> Result<()> {
             );
         }
         Some("host") => {
+            // Ohne --cache-dir bleibt der Modul-Cache prozesslokal. Ein Verzeichnis wird NICHT
+            // geraten: Ein weltschreibbares Temp-Verzeichnis waere hier die falsche Vorgabe.
+            let cache_directory = match arguments.next().as_deref() {
+                None => None,
+                Some("--cache-dir") => {
+                    Some(arguments.next().context("--cache-dir braucht einen Pfad")?)
+                }
+                Some(other) => bail!(
+                    "unbekanntes Argument '{other}' — usage: mcpmcp-wasi-component-spike host [--cache-dir <pfad>]"
+                ),
+            };
             if arguments.next().is_some() {
-                bail!("usage: mcpmcp-wasi-component-spike host");
+                bail!("usage: mcpmcp-wasi-component-spike host [--cache-dir <pfad>]");
             }
+            let disk_cache = cache_directory
+                .map(mcpmcp_wasi_component_spike::disk_cache::DiskCache::open)
+                .transpose()?;
             let stdin = std::io::stdin();
             let stdout = std::io::stdout();
-            mcpmcp_wasi_component_spike::host::serve(&mut stdin.lock(), &mut stdout.lock())?;
+            mcpmcp_wasi_component_spike::host::serve(
+                &mut stdin.lock(),
+                &mut stdout.lock(),
+                disk_cache,
+            )?;
         }
         _ => {
             bail!(
-                "usage:\n  mcpmcp-wasi-component-spike discover <wit-path> [world]\n  mcpmcp-wasi-component-spike probe\n  mcpmcp-wasi-component-spike compare-container <image> [samples]\n  mcpmcp-wasi-component-spike host\n  mcpmcp-wasi-component-spike sign <component-path> <seed-hex>"
+                "usage:\n  mcpmcp-wasi-component-spike discover <wit-path> [world]\n  mcpmcp-wasi-component-spike probe\n  mcpmcp-wasi-component-spike compare-container <image> [samples]\n  mcpmcp-wasi-component-spike host [--cache-dir <pfad>]\n  mcpmcp-wasi-component-spike sign <component-path> <seed-hex>"
             );
         }
     }

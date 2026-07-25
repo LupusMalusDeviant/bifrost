@@ -1,6 +1,6 @@
 # WASI-Runtime — Material für den Security-Review (Plan 0003, WP7.3/7.4)
 
-Stand: 2026-07-25. **Dies ist kein Review-Ergebnis und keine Freigabe.** Das Dokument trägt
+Stand: 2026-07-25 (Platten-Cache nachgetragen). **Dies ist kein Review-Ergebnis und keine Freigabe.** Das Dokument trägt
 zusammen, was der WASI-Pfad heute tut, was davon durch benannte Tests belegt ist und welche Punkte
 eine Entscheidung brauchen. Bewertung und die Neubewertung von [ADR-0017](../adr/0017-wasi-component-runtime.md)
 liegen beim Product Owner.
@@ -40,8 +40,14 @@ die **Guest-Grenze** (Host ↔ Component, durchgesetzt von Wasmtime plus dem Gra
 1. **IPC-Leitung.** Kein AuthN, keine Verschlüsselung — bewusst: Es sind die privaten Pipes eines
    Kindprozesses, wer sie erreicht, hat bereits den Gateway-Prozess. Zu prüfen: Gilt das auch für
    die Betriebsart, die der PO vorsieht (etwa Sidecar-Container statt Kindprozess)?
-2. **Signaturkette.** Sie deckt die `.wasm`-Bytes ab. Alles Abgeleitete — insbesondere ein
-   künftiges cwasm-Kompilat auf Platte — steht außerhalb.
+2. **Signaturkette und Platten-Cache.** Die Ed25519-Signatur deckt die `.wasm`-Bytes ab, nicht das
+   daraus erzeugte Kompilat. Der Platten-Cache (`Wasi.ModuleCacheDirectory`) schließt diese Lücke
+   mit einem HMAC-SHA256 unter einem host-lokalen Schlüssel (`mac.key`, unter Unix `0600`); ein
+   Eintrag ohne gültigen MAC wird gelöscht statt geladen, und der eingebettete Cache-Schlüssel wird
+   verglichen, damit ein umbenannter Eintrag nicht durchgeht. **Grenze:** Das schützt gegen fremden
+   Schreibzugriff und Bitfehler, nicht gegen jemanden, der als derselbe Benutzer läuft. Zu prüfen:
+   ob die Betriebsauflage „Verzeichnis gehört dem Host-Benutzer, für andere nicht schreibbar" in
+   der vorgesehenen Betriebsart wirklich gilt (Volume-Mounts, `/data`-Rechte).
 3. **Secrets über Environment.** Ein Secret-Grant zieht `wasi:cli/environment` nach sich; das
    Component kann damit **alle** gesetzten Variablen auflisten, nicht nur die eigenen. Bewusste
    Folge der festgelegten Entscheidung 3.
@@ -57,12 +63,11 @@ die **Guest-Grenze** (Host ↔ Component, durchgesetzt von Wasmtime plus dem Gra
 
 ## Entscheidungen, die anstehen
 
-- **Platten-Cache (Rest aus WP5).** Messung liegt vor: ~2,3 ms je KiB, ein 1–3-MB-Component kostet
-  3–7 s pro Host-Start. Der Cache lohnt sich; offen ist, wie das cwasm-Artefakt geschützt wird
-  (host-lokaler Schlüssel, Ableitung über DataProtection, oder nur Verzeichnisrechte).
 - **Schreibende Preopens.** Heute nicht ausdrückbar. Ob und wie das Grant-Modell sie bekommt, ist
   eine Produktentscheidung.
-- **Cache-Obergrenze.** Ob der Modul-Cache eine Größen- oder Eintragsgrenze braucht.
+- **Cache-Obergrenze.** Weder Speicher- noch Platten-Cache haben eine Größen- oder
+  Eintragsgrenze; auf Platte wächst das Verzeichnis mit jeder Modul-/Grant-/Profil-Kombination.
+  Ob es eine Grenze oder ein Aufräumen braucht, ist offen.
 
 ## Für die Neubewertung von ADR-0017
 

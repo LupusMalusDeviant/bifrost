@@ -194,7 +194,20 @@ public sealed record WasiTransportOptions(
     /// Credentials, werden in Ausgaben maskiert und erreichen den Host nur beim Laden. Jeder
     /// gewährte Name braucht genau einen Wert — sonst lehnt der Host fail-closed ab.
     /// </summary>
-    IReadOnlyDictionary<string, string>? Secrets = null);
+    IReadOnlyDictionary<string, string>? Secrets = null,
+    /// <summary>
+    /// Verzeichnis für den Platten-Cache kompilierter Components (Plan 0003, WP5). Ohne Angabe
+    /// bleibt der Cache prozesslokal, und jeder Host-Start kompiliert neu — bei einem Component von
+    /// 1–3 MB sind das 3–7 Sekunden.
+    /// <para>
+    /// Der Host legt dort einen eigenen MAC-Schlüssel an und signiert jedes Kompilat damit: Ein
+    /// Kompilat ist ausführbarer Code, den die Publisher-Signatur <b>nicht</b> abdeckt. Das
+    /// Verzeichnis muss dem Host-Benutzer gehören und darf für andere nicht schreibbar sein — der
+    /// Schlüssel hebt die Hürde auf „gleicher Benutzer", nicht darüber hinaus. Im Container-Image
+    /// eignet sich ein Pfad unter <c>/data</c>.
+    /// </para>
+    /// </summary>
+    string? ModuleCacheDirectory = null);
 
 /// <summary>
 /// Die Host-Capabilities, die ein Component erhält — Spiegel des Grant-Modells im Rust-Host.

@@ -290,6 +290,60 @@ public sealed class WasiRealHostCompatibilityTests
     }
 
     [Fact]
+    public async Task A_new_host_process_starts_warm_from_the_disk_cache()
+    {
+        var host = RequireHost();
+        var ct = TestContext.Current.CancellationToken;
+        var cacheDirectory = Path.Combine(Path.GetTempPath(), $"mcpmcp-wasi-cache-{Guid.NewGuid():N}");
+        var publisher = await PinnedPublisherAsync(ct);
+
+        try
+        {
+            // Erster Prozess: kompiliert und legt das Kompilat MAC-gesichert ab.
+            var firstHealth = await HealthOf(host, cacheDirectory, publisher, ct);
+
+            // Zweiter Prozess, gleiches Verzeichnis, leerer Speicher-Cache: darf nicht erneut
+            // kompilieren. Genau das ist der Gewinn — ein Gateway-Neustart zahlt nicht nochmal.
+            var secondHealth = await HealthOf(host, cacheDirectory, publisher, ct);
+
+            firstHealth.GetProperty("cache").GetProperty("misses").GetInt32().Should().Be(1,
+                "der erste Start kompiliert");
+
+            firstHealth.GetProperty("cache").GetProperty("diskHits").GetInt32().Should().Be(0,
+                "der erste Start hatte nichts zum Wiederverwenden");
+            secondHealth.GetProperty("cache").GetProperty("diskHits").GetInt32().Should().BeGreaterThan(0,
+                "das Kompilat kam von Platte");
+            secondHealth.GetProperty("cache").GetProperty("misses").GetInt32().Should().Be(0,
+                "und wurde nicht neu erzeugt");
+            secondHealth.GetProperty("cache").GetProperty("diskErrors").GetInt32().Should().Be(0);
+            // Der Schutz des Artefakts liegt im Verzeichnis: ein Schlüssel, den nur der Host kennt.
+            File.Exists(Path.Combine(cacheDirectory, "mac.key")).Should().BeTrue();
+        }
+        finally
+        {
+            Directory.Delete(cacheDirectory, recursive: true);
+        }
+    }
+
+    /// <summary>Startet einen Host mit Cache-Verzeichnis, lädt das Component und liest health.</summary>
+    private static async Task<JsonElement> HealthOf(
+        string host, string cacheDirectory, string publisher, CancellationToken ct)
+    {
+        using var wire = new HostWire(host, "--cache-dir", cacheDirectory);
+        await wire.RequestAsync(
+            new { type = "hello", protocolVersion = WasiRuntimeConnector.ProtocolVersion }, ct);
+        await wire.RequestAsync(await LoadRequestAsync(publisher, ct), ct);
+        return await wire.RequestAsync(new { type = "health" }, ct);
+    }
+
+    private static UpstreamServerConfig CacheConfig(string host, string cacheDirectory) => new(
+        "wasi-cache", "WASI (Cache)", UpstreamTransportKind.Wasi, Enabled: true,
+        Wasi: new WasiTransportOptions(
+            host, ComponentPath, SignaturePath, PinnedPublishers: [],
+            Grants: new WasiCapabilityGrants(Environment: EnvironmentGrant),
+            ModuleCacheDirectory: cacheDirectory));
+
+    [Fact]
     public async Task A_failed_load_keeps_the_previous_component_active()
     {
         using var wire = new HostWire(RequireHost());
@@ -339,7 +393,7 @@ public sealed class WasiRealHostCompatibilityTests
     {
         private readonly Process _process;
 
-        public HostWire(string hostExecutable)
+        public HostWire(string hostExecutable, params string[] hostArguments)
         {
             var startInfo = new ProcessStartInfo
             {
@@ -351,6 +405,11 @@ public sealed class WasiRealHostCompatibilityTests
                 CreateNoWindow = true,
             };
             startInfo.ArgumentList.Add("host");
+            foreach (var argument in hostArguments)
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
+
             _process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException($"WASI-Host '{hostExecutable}' ließ sich nicht starten.");
         }

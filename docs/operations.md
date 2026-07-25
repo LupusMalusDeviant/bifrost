@@ -145,6 +145,32 @@ curl -X POST http://localhost:8080/api/v1/publishers \
   Component kann also alle gesetzten Variablen lesen.
 - Jeder Load steht im Audit: Modulhash, Publisher, Runtime und die tatsächlich erteilten Grants.
 
+### Platten-Cache für Kompilate
+
+Ohne `Wasi.ModuleCacheDirectory` kompiliert **jeder Host-Start** neu — gemessen rund 2,3 ms je KiB,
+bei einem Component von 1–3 MB also 3–7 Sekunden pro Gateway-Neustart oder Hot-Swap. Mit
+Verzeichnis (im Image z. B. `/data/wasi-cache`) fällt das auf unter 3 ms:
+
+| | Ladezeit | Kompilierung |
+|---|---|---|
+| erster Host-Start | 107 ms | 90 ms |
+| jeder weitere Start | 0,9–2,6 ms | keine |
+
+Ein Kompilat ist **ausführbarer Maschinencode**, den die Publisher-Signatur nicht abdeckt. Der Host
+legt deshalb im Cache-Verzeichnis einen eigenen Schlüssel (`mac.key`, unter Unix `0600`) an und
+versieht jeden Eintrag mit einem HMAC darüber; ein Eintrag ohne gültigen MAC wird gelöscht statt
+geladen. Daraus folgen zwei Betriebsauflagen:
+
+- Das Verzeichnis **muss** dem Host-Benutzer gehören und darf für andere nicht schreibbar sein.
+  Kein geteiltes Volume, kein weltschreibbares Temp-Verzeichnis.
+- Der Schlüssel schützt gegen fremden Schreibzugriff und Bitfehler, **nicht** gegen jemanden, der
+  als derselbe Benutzer läuft — der liest den Schlüssel und könnte ohnehin das Host-Binary
+  austauschen.
+
+`mac.key` löschen macht alle Einträge ungültig (sie werden verworfen und neu erzeugt) — der Weg,
+einen Cache-Verdacht auszuräumen. Im `health`-Signal des Hosts stehen `diskHits` und `diskErrors`;
+bleibt `diskHits` bei 0 und `diskErrors` steigt, sind meist die Verzeichnisrechte falsch.
+
 ## Webhook-Trigger
 
 Ein eingehender Webhook löst genau **einen** Tool-Aufruf im Namen einer festen Identität aus
