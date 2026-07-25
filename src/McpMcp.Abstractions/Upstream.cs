@@ -214,7 +214,20 @@ public sealed record WasiTransportOptions(
     /// am längsten nicht genutzten Kompilate — ein verdrängter Eintrag kostet nur eine erneute
     /// Kompilierung. Ohne <see cref="ModuleCacheDirectory"/> hat der Wert keine Wirkung.
     /// </summary>
-    long? ModuleCacheMaxBytes = null);
+    long? ModuleCacheMaxBytes = null,
+    /// <summary>
+    /// Hält die Guest-Instanz über die Aufrufe hinweg am Leben (Plan 0003, Resources). Nötig für
+    /// Components, die <c>resource</c>-Handles ausgeben: Ein Handle ist ein Index in die Instanz,
+    /// die es ausgegeben hat — mit einer frischen Instanz pro Aufruf wäre es beim nächsten Aufruf
+    /// wertlos.
+    /// <para>
+    /// Voreinstellung <c>false</c>, und das ist die vorsichtigere Wahl. Die Instanz gehört dem
+    /// Upstream, die Handles gehören je einem Aufrufer — aber der <b>interne</b> Zustand des
+    /// Components (Globals, linearer Speicher) ist ab dann zwischen allen Aufrufern geteilt. Die
+    /// Handle-Trennung schützt davor nicht. Nur einschalten, wenn der Upstream Resources braucht.
+    /// </para>
+    /// </summary>
+    bool PersistentInstance = false);
 
 /// <summary>
 /// Die Host-Capabilities, die ein Component erhält — Spiegel des Grant-Modells im Rust-Host.

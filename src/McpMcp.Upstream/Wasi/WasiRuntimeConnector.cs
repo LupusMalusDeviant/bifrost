@@ -175,7 +175,8 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
 /// Eine laufende Host-Sitzung. Alle Anfragen laufen serialisiert über stdin/stdout des
 /// Kindprozesses — der Vertrag ist request/response, ein Frame nach dem anderen.
 /// </summary>
-internal sealed class WasiUpstreamConnection : IUpstreamConnection, ISignedUpstreamConnection
+internal sealed class WasiUpstreamConnection
+    : IUpstreamConnection, ISignedUpstreamConnection, ICallerAwareUpstreamConnection
 {
     private readonly Process _process;
     private readonly WasiTransportOptions _options;
@@ -238,6 +239,8 @@ internal sealed class WasiUpstreamConnection : IUpstreamConnection, ISignedUpstr
             // Getrennt von den Grants: Der Grant nennt die Namen, dieses Feld trägt die Werte.
             // Sie gehen nur hier über die Leitung und stehen in keiner Antwort und keinem Audit.
             secretValues = _options.Secrets ?? new Dictionary<string, string>(StringComparer.Ordinal),
+            // Ohne persistente Instanz gibt es keine Handles — und damit keine Resources.
+            persistentInstance = _options.PersistentInstance,
         };
         var loaded = await RequestAsync(loadRequest, ct).ConfigureAwait(false);
         var audit = loaded.GetProperty("audit");
@@ -257,7 +260,16 @@ internal sealed class WasiUpstreamConnection : IUpstreamConnection, ISignedUpstr
             [],
             []));
 
-    public async Task<JsonElement> CallToolAsync(string toolName, JsonElement args, CancellationToken ct)
+    public Task<JsonElement> CallToolAsync(string toolName, JsonElement args, CancellationToken ct)
+        => CallToolAsync(string.Empty, toolName, args, ct);
+
+    /// <summary>
+    /// Ruft mit Aufrufer-Identität auf (<see cref="ICallerAwareUpstreamConnection"/>). Nur bei
+    /// <c>PersistentInstance</c> von Belang: Der Host schreibt jedes ausgegebene Handle auf diesen
+    /// Namen, und nur derselbe Name kann es wieder einlösen.
+    /// </summary>
+    public async Task<JsonElement> CallToolAsync(
+        string caller, string toolName, JsonElement args, CancellationToken ct)
     {
         // Der Katalogname ist die normalisierte Form; der Host kennt nur den rohen Export-Namen.
         if (_tools.FirstOrDefault(tool => tool.Name == toolName) is not { } target)
@@ -276,6 +288,7 @@ internal sealed class WasiUpstreamConnection : IUpstreamConnection, ISignedUpstr
             type = "invoke",
             tool = target.Export,
             args = positional,
+            caller,
             limits = new
             {
                 fuel = limits.Fuel,

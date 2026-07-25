@@ -1,0 +1,19 @@
+# Eigenständiges Workspace-Root, damit dieses Guest-Crate NICHT Teil des Spike-Builds wird.
+# Reactor-Component, das eine WIT-Resource exportiert — die Gegenprobe zum Handle-Pfad im Host.
+[workspace]
+
+[package]
+name = "mcpmcp-wasi-guest-resource"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.51.0"
+
+[profile.release]
+opt-level = "s"
+strip = true

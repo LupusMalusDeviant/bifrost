@@ -13,16 +13,121 @@
 //!   Stellen. Lieber ein String, den man ansieht, als eine Zahl, die man glaubt.
 //!
 //! Abgebildet sind alle Skalare, `string`, `char`, `list<T>`, `option<T>`, `result<T,E>` sowie die
-//! zusammengesetzten Typen `record`, `variant`, `enum`, `flags` und `tuple`. Nicht abgebildet
-//! bleiben Resources, Futures und Streams — sie meldet die Discovery als nicht unterstützt, statt
-//! sie im Katalog anzubieten.
+//! zusammengesetzten Typen `record`, `variant`, `enum`, `flags` und `tuple`.
+//!
+//! **Resources** gehen als undurchsichtiges Handle über die Leitung (`{"handle": "res-7"}`). Der
+//! Wert selbst bleibt im Host; der Aufrufer bekommt nur einen Namen, den er vorzeigen darf. Das
+//! setzt eine persistente Instanz voraus — ein Handle ist ein Index in die Instanz, die es
+//! ausgegeben hat. Ohne Sitzung meldet die Abbildung genau das.
+//!
+//! Nicht abgebildet bleiben Futures und Streams — sie meldet die Discovery als nicht unterstützt,
+//! statt sie im Katalog anzubieten.
+
+use std::collections::HashMap;
 
 use anyhow::{Context, Result, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
-use wasmtime::component::{Type, Val};
+use wasmtime::component::{ResourceAny, Type, Val};
+
+/// Ein Handle, wie es über die Leitung geht: ein undurchsichtiger Name in einem Objekt.
+/// Bewusst ein Objekt und kein blanker String — ein Handle soll sich in einem Schema und in einem
+/// Audit-Eintrag von einem gewöhnlichen Text unterscheiden lassen.
+pub const HANDLE_FIELD: &str = "handle";
+
+/// Vergebene Resource-Handles einer Sitzung, samt Eigentümer.
+///
+/// Ein Handle ist eine Fähigkeit, die einen einzelnen Aufruf überlebt. Deshalb steht neben jedem
+/// Eintrag, **wer** ihn bekommen hat: Ein zweiter Aufrufer kann ein fremdes Handle nicht einlösen,
+/// auch wenn er den Namen errät.
+#[derive(Debug, Default)]
+pub struct HandleTable {
+    entries: HashMap<String, HandleEntry>,
+    next: u64,
+}
+
+#[derive(Debug)]
+struct HandleEntry {
+    resource: ResourceAny,
+    owner: String,
+}
+
+/// Obergrenze für offene Handles einer Sitzung. Eine persistente Instanz lebt so lange wie der
+/// Upstream; ohne Grenze wäre jeder Konstruktoraufruf ein Stück Speicher, das nie zurückkommt.
+pub const MAX_OPEN_HANDLES: usize = 256;
+
+impl HandleTable {
+    /// Nimmt ein Handle auf und gibt seinen Namen zurück.
+    pub fn remember(&mut self, owner: &str, resource: ResourceAny) -> Result<String> {
+        if self.entries.len() >= MAX_OPEN_HANDLES {
+            bail!("Sitzung hält bereits {MAX_OPEN_HANDLES} offene Handles");
+        }
+        self.next += 1;
+        let name = format!("res-{}", self.next);
+        self.entries.insert(
+            name.clone(),
+            HandleEntry {
+                resource,
+                owner: owner.to_owned(),
+            },
+        );
+        Ok(name)
+    }
+
+    /// Löst ein Handle für genau diesen Aufrufer auf. Ein fremdes Handle ist „unbekannt" — die
+    /// Meldung unterscheidet nicht zwischen „gibt es nicht" und „gehört jemand anderem", damit
+    /// sich vergebene Namen nicht abfragen lassen.
+    pub fn resolve(&self, owner: &str, name: &str) -> Result<ResourceAny> {
+        match self.entries.get(name) {
+            Some(entry) if entry.owner == owner => Ok(entry.resource),
+            _ => bail!("Handle '{name}' ist unbekannt"),
+        }
+    }
+
+    /// Wie [`Self::resolve`], entfernt den Eintrag aber. Für `own<T>`-Parameter: Dort geht das
+    /// Eigentum an den Guest über, der Name des Aufrufers zeigt danach auf nichts mehr.
+    pub fn take(&mut self, owner: &str, name: &str) -> Result<ResourceAny> {
+        match self.entries.get(name) {
+            Some(entry) if entry.owner == owner => {
+                Ok(self.entries.remove(name).expect("gerade geprüft").resource)
+            }
+            _ => bail!("Handle '{name}' ist unbekannt"),
+        }
+    }
+
+    /// Gibt ein Handle frei, ohne es an den Guest zu übergeben. Der Aufrufer selbst kann damit
+    /// aufräumen, statt auf das Ende der Sitzung zu warten.
+    pub fn release(&mut self, owner: &str, name: &str) -> Result<ResourceAny> {
+        self.take(owner, name)
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// Umgebung für die Wertabbildung: Grenzen plus — sofern die Sitzung persistent ist — die
+/// Handle-Tabelle und der Aufrufer, dem neue Handles gehören.
+pub struct ValueBridge<'a> {
+    pub max_binary_bytes: usize,
+    pub handles: Option<(&'a mut HandleTable, &'a str)>,
+}
+
+impl ValueBridge<'_> {
+    /// Ohne Sitzung: Resources sind dann nicht bedienbar, und der Fehler sagt auch warum.
+    pub fn without_handles(max_binary_bytes: usize) -> Self {
+        Self {
+            max_binary_bytes,
+            handles: None,
+        }
+    }
+}
 
 /// Beschreibung eines Component-Model-Typs für den IPC-Vertrag. Bewusst ein Baum und kein Name:
 /// Aus `"list"` ließe sich kein Schema bauen, aus `list<u8>` gegen `list<string>` sehr wohl.
@@ -79,6 +184,13 @@ pub enum TypeDescriptor {
     /// `tuple` — JSON-Array fester Länge.
     Tuple {
         items: Vec<TypeDescriptor>,
+    },
+    /// `own<T>` bzw. `borrow<T>` — über die Leitung ein undurchsichtiges Handle
+    /// (`{"handle": "…"}`). Der Wert dahinter bleibt im Host; der Aufrufer bekommt nur einen
+    /// Namen, den **er** vorzeigen darf. Wasmtime gibt keinen Typnamen her, deshalb steht hier
+    /// nur, ob geliehen oder besessen.
+    Resource {
+        borrowed: bool,
     },
     /// Ein Typ, den dieser Host nicht abbildet. Er steht im Vertrag, damit die Discovery sagen
     /// kann, **warum** ein Export nicht aufrufbar ist.
@@ -171,6 +283,13 @@ impl TypeDescriptor {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            Self::Resource { borrowed } => {
+                if *borrowed {
+                    "borrow<resource>".to_owned()
+                } else {
+                    "own<resource>".to_owned()
+                }
+            }
             Self::Enum { cases } => format!("enum{{{}}}", cases.join(", ")),
             Self::Flags { names } => format!("flags{{{}}}", names.join(", ")),
             Self::Tuple { items } => format!(
@@ -242,7 +361,8 @@ pub fn describe(ty: &Type) -> TypeDescriptor {
             items: tuple.types().map(|ty| describe(&ty)).collect(),
         },
         Type::Map(_) => unsupported("map"),
-        Type::Own(_) | Type::Borrow(_) => unsupported("resource"),
+        Type::Own(_) => TypeDescriptor::Resource { borrowed: false },
+        Type::Borrow(_) => TypeDescriptor::Resource { borrowed: true },
         Type::Future(_) => unsupported("future"),
         Type::Stream(_) => unsupported("stream"),
         _ => unsupported("unbekannt"),
@@ -258,7 +378,7 @@ fn unsupported(detail: &str) -> TypeDescriptor {
 /// JSON → Component-Wert, geführt vom deklarierten Typ. `max_binary_bytes` begrenzt jeden
 /// einzelnen `list<u8>`-Wert; ein Guest soll über ein Argument keinen beliebig großen Puffer
 /// im Host erzwingen können.
-pub fn to_val(ty: &TypeDescriptor, json: &Json, max_binary_bytes: usize) -> Result<Val> {
+pub fn to_val(ty: &TypeDescriptor, json: &Json, bridge: &mut ValueBridge<'_>) -> Result<Val> {
     match ty {
         TypeDescriptor::Bool => Ok(Val::Bool(
             json.as_bool().context("erwartet wurde true oder false")?,
@@ -306,10 +426,11 @@ pub fn to_val(ty: &TypeDescriptor, json: &Json, max_binary_bytes: usize) -> Resu
             let bytes = BASE64
                 .decode(encoded)
                 .context("list<u8> erwartet gültiges Base64")?;
-            if bytes.len() > max_binary_bytes {
+            if bytes.len() > bridge.max_binary_bytes {
                 bail!(
-                    "list<u8> mit {} Byte überschreitet das Limit von {max_binary_bytes}",
-                    bytes.len()
+                    "list<u8> mit {} Byte überschreitet das Limit von {}",
+                    bytes.len(),
+                    bridge.max_binary_bytes
                 );
             }
             Ok(Val::List(bytes.into_iter().map(Val::U8).collect()))
@@ -318,17 +439,13 @@ pub fn to_val(ty: &TypeDescriptor, json: &Json, max_binary_bytes: usize) -> Resu
             let items = json.as_array().context("erwartet wurde eine Liste")?;
             items
                 .iter()
-                .map(|item| to_val(element, item, max_binary_bytes))
+                .map(|item| to_val(element, item, bridge))
                 .collect::<Result<Vec<_>>>()
                 .map(Val::List)
         }
         TypeDescriptor::Option { value } => match json {
             Json::Null => Ok(Val::Option(None)),
-            other => Ok(Val::Option(Some(Box::new(to_val(
-                value,
-                other,
-                max_binary_bytes,
-            )?)))),
+            other => Ok(Val::Option(Some(Box::new(to_val(value, other, bridge)?)))),
         },
         TypeDescriptor::Result { ok, err } => {
             let object = json
@@ -339,12 +456,12 @@ pub fn to_val(ty: &TypeDescriptor, json: &Json, max_binary_bytes: usize) -> Resu
                 (Some(payload), None) => Ok(Val::Result(Ok(payload_val(
                     ok.as_deref(),
                     payload,
-                    max_binary_bytes,
+                    bridge,
                 )?))),
                 (None, Some(payload)) => Ok(Val::Result(Err(payload_val(
                     err.as_deref(),
                     payload,
-                    max_binary_bytes,
+                    bridge,
                 )?))),
                 (None, None) => bail!("result erwartet 'ok' oder 'err'"),
             }
@@ -360,7 +477,7 @@ pub fn to_val(ty: &TypeDescriptor, json: &Json, max_binary_bytes: usize) -> Resu
                         .with_context(|| format!("Feld '{}' fehlt", field.name))?;
                     Ok((
                         field.name.clone(),
-                        to_val(&field.type_descriptor, value, max_binary_bytes)
+                        to_val(&field.type_descriptor, value, bridge)
                             .with_context(|| format!("Feld '{}'", field.name))?,
                     ))
                 })
@@ -388,7 +505,7 @@ pub fn to_val(ty: &TypeDescriptor, json: &Json, max_binary_bytes: usize) -> Resu
                 .with_context(|| format!("variant kennt keinen Fall '{name}'"))?;
             Ok(Val::Variant(
                 name.clone(),
-                payload_val(case.type_descriptor.as_ref(), payload, max_binary_bytes)?,
+                payload_val(case.type_descriptor.as_ref(), payload, bridge)?,
             ))
         }
         TypeDescriptor::Enum { cases } => {
@@ -428,9 +545,31 @@ pub fn to_val(ty: &TypeDescriptor, json: &Json, max_binary_bytes: usize) -> Resu
             items
                 .iter()
                 .zip(values)
-                .map(|(ty, value)| to_val(ty, value, max_binary_bytes))
+                .map(|(ty, value)| to_val(ty, value, bridge))
                 .collect::<Result<Vec<_>>>()
                 .map(Val::Tuple)
+        }
+        TypeDescriptor::Resource { borrowed } => {
+            let object = json
+                .as_object()
+                .with_context(|| format!("Handle erwartet ein Objekt mit '{HANDLE_FIELD}'"))?;
+            let name = object
+                .get(HANDLE_FIELD)
+                .and_then(Json::as_str)
+                .with_context(|| format!("Handle erwartet das Feld '{HANDLE_FIELD}'"))?;
+            let (table, caller) = bridge
+                .handles
+                .as_mut()
+                .context("Resources brauchen eine persistente Instanz (Wasi.PersistentInstance)")?;
+            // `borrow<T>` leiht nur — der Name bleibt gültig. `own<T>` übergibt das Eigentum an
+            // den Guest; den Eintrag danach stehen zu lassen hieße, auf ein fremdes Handle zu
+            // zeigen, das der Guest längst freigegeben haben kann.
+            let resource = if *borrowed {
+                table.resolve(caller, name)?
+            } else {
+                table.take(caller, name)?
+            };
+            Ok(Val::Resource(resource))
         }
         TypeDescriptor::Unsupported { detail } => {
             bail!("Typ '{detail}' wird von diesem Host nicht abgebildet")
@@ -439,7 +578,7 @@ pub fn to_val(ty: &TypeDescriptor, json: &Json, max_binary_bytes: usize) -> Resu
 }
 
 /// Component-Wert → JSON. Die Umkehrung von [`to_val`]; `list<u8>` wird wieder Base64.
-pub fn to_json(value: &Val) -> Result<Json> {
+pub fn to_json(value: &Val, bridge: &mut ValueBridge<'_>) -> Result<Json> {
     Ok(match value {
         Val::Bool(inner) => Json::Bool(*inner),
         Val::S8(inner) => Json::from(*inner),
@@ -466,11 +605,16 @@ pub fn to_json(value: &Val) -> Result<Json> {
                     .collect();
                 Json::String(BASE64.encode(bytes))
             } else {
-                Json::Array(items.iter().map(to_json).collect::<Result<Vec<_>>>()?)
+                Json::Array(
+                    items
+                        .iter()
+                        .map(|item| to_json(item, bridge))
+                        .collect::<Result<Vec<_>>>()?,
+                )
             }
         }
         Val::Option(inner) => match inner {
-            Some(value) => to_json(value)?,
+            Some(value) => to_json(value, bridge)?,
             None => Json::Null,
         },
         Val::Result(inner) => {
@@ -482,7 +626,7 @@ pub fn to_json(value: &Val) -> Result<Json> {
             object.insert(
                 key.to_owned(),
                 match payload {
-                    Some(value) => to_json(value)?,
+                    Some(value) => to_json(value, bridge)?,
                     None => Json::Null,
                 },
             );
@@ -491,7 +635,7 @@ pub fn to_json(value: &Val) -> Result<Json> {
         Val::Record(fields) => {
             let mut object = serde_json::Map::with_capacity(fields.len());
             for (name, value) in fields {
-                object.insert(name.clone(), to_json(value)?);
+                object.insert(name.clone(), to_json(value, bridge)?);
             }
             Json::Object(object)
         }
@@ -502,7 +646,7 @@ pub fn to_json(value: &Val) -> Result<Json> {
             object.insert(
                 name.clone(),
                 match payload {
-                    Some(value) => to_json(value)?,
+                    Some(value) => to_json(value, bridge)?,
                     None => Json::Null,
                 },
             );
@@ -515,7 +659,24 @@ pub fn to_json(value: &Val) -> Result<Json> {
                 .map(|name| Json::String(name.clone()))
                 .collect(),
         ),
-        Val::Tuple(items) => Json::Array(items.iter().map(to_json).collect::<Result<Vec<_>>>()?),
+        Val::Tuple(items) => Json::Array(
+            items
+                .iter()
+                .map(|item| to_json(item, bridge))
+                .collect::<Result<Vec<_>>>()?,
+        ),
+        // Ein zurückgegebenes Handle bekommt einen Namen, der dem Aufrufer gehört. Der Wert
+        // selbst bleibt im Host — über die Leitung geht nur der Name.
+        Val::Resource(resource) => {
+            let (table, caller) = bridge
+                .handles
+                .as_mut()
+                .context("Resources brauchen eine persistente Instanz (Wasi.PersistentInstance)")?;
+            let name = table.remember(caller, *resource)?;
+            let mut object = serde_json::Map::with_capacity(1);
+            object.insert(HANDLE_FIELD.to_owned(), Json::String(name));
+            Json::Object(object)
+        }
         other => bail!("Rückgabewert {other:?} lässt sich nicht als JSON darstellen"),
     })
 }
@@ -523,13 +684,13 @@ pub fn to_json(value: &Val) -> Result<Json> {
 fn payload_val(
     ty: Option<&TypeDescriptor>,
     json: &Json,
-    max_binary_bytes: usize,
+    bridge: &mut ValueBridge<'_>,
 ) -> Result<Option<Box<Val>>> {
     match ty {
         // `result<_, E>`: Der ok-Zweig trägt keinen Wert, also darf auch keiner kommen.
         None if json.is_null() => Ok(None),
         None => bail!("dieser result-Zweig trägt keinen Wert, bekam aber einen"),
-        Some(ty) => Ok(Some(Box::new(to_val(ty, json, max_binary_bytes)?))),
+        Some(ty) => Ok(Some(Box::new(to_val(ty, json, bridge)?))),
     }
 }
 
@@ -573,9 +734,13 @@ mod tests {
 
     const LIMIT: usize = 1024;
 
+    fn bridge() -> ValueBridge<'static> {
+        ValueBridge::without_handles(LIMIT)
+    }
+
     fn roundtrip(ty: &TypeDescriptor, json: Json) {
-        let value = to_val(ty, &json, LIMIT).expect("hin");
-        let back = to_json(&value).expect("zurück");
+        let value = to_val(ty, &json, &mut bridge()).expect("hin");
+        let back = to_json(&value, &mut bridge()).expect("zurück");
         assert_eq!(back, json, "Rundlauf für {}", ty.label());
     }
 
@@ -593,10 +758,15 @@ mod tests {
     #[test]
     fn wide_integers_survive_as_strings() {
         let huge = u64::MAX.to_string();
-        let value = to_val(&TypeDescriptor::U64, &Json::String(huge.clone()), LIMIT).unwrap();
+        let value = to_val(
+            &TypeDescriptor::U64,
+            &Json::String(huge.clone()),
+            &mut bridge(),
+        )
+        .unwrap();
 
         assert_eq!(value, Val::U64(u64::MAX));
-        assert_eq!(to_json(&value).unwrap(), Json::String(huge));
+        assert_eq!(to_json(&value, &mut bridge()).unwrap(), Json::String(huge));
     }
 
     /// list<u8> ist ein Blob, kein Zahlen-Array — die ADR-Zusage in einer Zeile.
@@ -607,7 +777,7 @@ mod tests {
         let value = to_val(
             &TypeDescriptor::Binary,
             &Json::String(encoded.clone()),
-            LIMIT,
+            &mut bridge(),
         )
         .unwrap();
 
@@ -622,7 +792,10 @@ mod tests {
                 Val::U8(255),
             ])
         );
-        assert_eq!(to_json(&value).unwrap(), Json::String(encoded));
+        assert_eq!(
+            to_json(&value, &mut bridge()).unwrap(),
+            Json::String(encoded)
+        );
     }
 
     /// „Begrenzte Binärdaten" heißt begrenzt: Ein zu großes Argument wird abgewiesen, nicht
@@ -631,7 +804,12 @@ mod tests {
     fn oversized_binary_is_rejected() {
         let encoded = BASE64.encode(vec![0u8; LIMIT + 1]);
 
-        let failure = to_val(&TypeDescriptor::Binary, &Json::String(encoded), LIMIT).unwrap_err();
+        let failure = to_val(
+            &TypeDescriptor::Binary,
+            &Json::String(encoded),
+            &mut bridge(),
+        )
+        .unwrap_err();
 
         assert!(failure.to_string().contains("überschreitet"));
     }
@@ -645,8 +823,15 @@ mod tests {
 
         roundtrip(&ty, serde_json::json!({"ok": "fertig"}));
         roundtrip(&ty, serde_json::json!({"err": 404}));
-        assert!(to_val(&ty, &serde_json::json!({"ok": "a", "err": 1}), LIMIT).is_err());
-        assert!(to_val(&ty, &serde_json::json!({}), LIMIT).is_err());
+        assert!(
+            to_val(
+                &ty,
+                &serde_json::json!({"ok": "a", "err": 1}),
+                &mut bridge()
+            )
+            .is_err()
+        );
+        assert!(to_val(&ty, &serde_json::json!({}), &mut bridge()).is_err());
     }
 
     #[test]
@@ -657,7 +842,7 @@ mod tests {
         };
 
         roundtrip(&ty, serde_json::json!({"ok": null}));
-        assert!(to_val(&ty, &serde_json::json!({"ok": "unerwartet"}), LIMIT).is_err());
+        assert!(to_val(&ty, &serde_json::json!({"ok": "unerwartet"}), &mut bridge()).is_err());
     }
 
     #[test]
@@ -681,9 +866,9 @@ mod tests {
 
     #[test]
     fn out_of_range_integers_are_rejected() {
-        assert!(to_val(&TypeDescriptor::U8, &Json::from(256), LIMIT).is_err());
-        assert!(to_val(&TypeDescriptor::S8, &Json::from(-129), LIMIT).is_err());
-        assert!(to_val(&TypeDescriptor::U32, &Json::from(-1), LIMIT).is_err());
+        assert!(to_val(&TypeDescriptor::U8, &Json::from(256), &mut bridge()).is_err());
+        assert!(to_val(&TypeDescriptor::S8, &Json::from(-129), &mut bridge()).is_err());
+        assert!(to_val(&TypeDescriptor::U32, &Json::from(-1), &mut bridge()).is_err());
     }
 
     fn record_type() -> TypeDescriptor {
@@ -707,12 +892,12 @@ mod tests {
 
         // Fehlendes Feld und unbekanntes Feld sind beides Fehler — ein Record hat genau die
         // Felder seines Typs, nicht mehr und nicht weniger.
-        assert!(to_val(&record_type(), &serde_json::json!({"x": 1}), LIMIT).is_err());
+        assert!(to_val(&record_type(), &serde_json::json!({"x": 1}), &mut bridge()).is_err());
         assert!(
             to_val(
                 &record_type(),
                 &serde_json::json!({"x": 1, "label": "a", "extra": 2}),
-                LIMIT
+                &mut bridge()
             )
             .is_err()
         );
@@ -735,10 +920,17 @@ mod tests {
 
         roundtrip(&ty, serde_json::json!({"zahl": 42}));
         roundtrip(&ty, serde_json::json!({"leer": null}));
-        assert!(to_val(&ty, &serde_json::json!({"zahl": 1, "leer": null}), LIMIT).is_err());
-        assert!(to_val(&ty, &serde_json::json!({"unbekannt": 1}), LIMIT).is_err());
+        assert!(
+            to_val(
+                &ty,
+                &serde_json::json!({"zahl": 1, "leer": null}),
+                &mut bridge()
+            )
+            .is_err()
+        );
+        assert!(to_val(&ty, &serde_json::json!({"unbekannt": 1}), &mut bridge()).is_err());
         // Ein Fall ohne Nutzlast nimmt auch keine an.
-        assert!(to_val(&ty, &serde_json::json!({"leer": 5}), LIMIT).is_err());
+        assert!(to_val(&ty, &serde_json::json!({"leer": 5}), &mut bridge()).is_err());
     }
 
     #[test]
@@ -753,8 +945,8 @@ mod tests {
         roundtrip(&colour, Json::String("rot".to_owned()));
         roundtrip(&options, serde_json::json!(["a", "b"]));
         roundtrip(&options, serde_json::json!([]));
-        assert!(to_val(&colour, &Json::String("blau".to_owned()), LIMIT).is_err());
-        assert!(to_val(&options, &serde_json::json!(["c"]), LIMIT).is_err());
+        assert!(to_val(&colour, &Json::String("blau".to_owned()), &mut bridge()).is_err());
+        assert!(to_val(&options, &serde_json::json!(["c"]), &mut bridge()).is_err());
     }
 
     #[test]
@@ -764,8 +956,8 @@ mod tests {
         };
 
         roundtrip(&ty, serde_json::json!([1, "a"]));
-        assert!(to_val(&ty, &serde_json::json!([1]), LIMIT).is_err());
-        assert!(to_val(&ty, &serde_json::json!([1, "a", 2]), LIMIT).is_err());
+        assert!(to_val(&ty, &serde_json::json!([1]), &mut bridge()).is_err());
+        assert!(to_val(&ty, &serde_json::json!([1, "a", 2]), &mut bridge()).is_err());
     }
 
     /// Verschachtelung ist der eigentliche Nutzen: ein Record mit Liste von Varianten.
@@ -799,7 +991,7 @@ mod tests {
         };
 
         assert!(!ty.is_supported());
-        assert!(to_val(&ty, &Json::Null, LIMIT).is_err());
+        assert!(to_val(&ty, &Json::Null, &mut bridge()).is_err());
         // Auch verschachtelt: eine Liste von Records ist nicht abbildbar.
         assert!(
             !TypeDescriptor::List {

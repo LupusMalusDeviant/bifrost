@@ -269,6 +269,21 @@ internal static class WasiToolNormalizer
                 description = ComponentType("flags"),
             },
             "tuple" => TupleSchema(type),
+            // Ein Handle ist undurchsichtig: Der Wert bleibt im Host, über die Leitung geht nur
+            // der Name, den ein früherer Aufruf ausgegeben hat.
+            "resource" => new
+            {
+                type = "object",
+                properties = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["handle"] = new { type = "string" },
+                },
+                required = new[] { "handle" },
+                additionalProperties = false,
+                description = type.TryGetProperty("borrowed", out var borrowed) && borrowed.GetBoolean()
+                    ? "Handle auf eine Component-Model-Resource (geliehen — bleibt nach dem Aufruf gültig)."
+                    : "Handle auf eine Component-Model-Resource (besessen — geht mit dem Aufruf an den Guest über).",
+            },
             // Sollte nie vorkommen: nicht abbildbare Exports stehen gar nicht erst im Katalog.
             _ => new { description = "Typ ohne Schema." },
         };

@@ -8,7 +8,8 @@ namespace McpMcp.Core.Upstreams;
 /// In-Flight-Calls für die Drain-Semantik (WP1.4). Der Supervisor gibt ausschließlich
 /// diese Hülle nach außen — nie die rohe Verbindung.
 /// </summary>
-public sealed class GuardedUpstreamConnection : IUpstreamConnection, ISignedUpstreamConnection
+public sealed class GuardedUpstreamConnection
+    : IUpstreamConnection, ISignedUpstreamConnection, ICallerAwareUpstreamConnection
 {
     private readonly IUpstreamConnection _inner;
     private readonly TimeSpan _callTimeout;
@@ -46,13 +47,26 @@ public sealed class GuardedUpstreamConnection : IUpstreamConnection, ISignedUpst
     public Task<UpstreamInventory> DiscoverAsync(CancellationToken ct)
         => WithTimeoutAsync((inner, token) => inner.DiscoverAsync(token), "discover", ct);
 
-    public async Task<JsonElement> CallToolAsync(string toolName, JsonElement args, CancellationToken ct)
+    public Task<JsonElement> CallToolAsync(string toolName, JsonElement args, CancellationToken ct)
+        => CallToolAsync(string.Empty, toolName, args, ct);
+
+    /// <summary>
+    /// Reicht die Aufrufer-Identität durch (Plan 0003, Resources). Aus demselben Grund wie bei
+    /// <see cref="PublisherKeyId"/>: Verschluckte der Decorator das Merkmal, fielen alle Aufrufer
+    /// auf denselben Namen zusammen — und die Handle-Trennung wäre still abgeschaltet.
+    /// </summary>
+    public async Task<JsonElement> CallToolAsync(
+        string caller, string toolName, JsonElement args, CancellationToken ct)
     {
         Interlocked.Increment(ref _inFlight);
         try
         {
-            return await WithTimeoutAsync((inner, token) => inner.CallToolAsync(toolName, args, token), toolName, ct)
-                .ConfigureAwait(false);
+            return await WithTimeoutAsync(
+                (inner, token) => inner is ICallerAwareUpstreamConnection aware
+                    ? aware.CallToolAsync(caller, toolName, args, token)
+                    : inner.CallToolAsync(toolName, args, token),
+                toolName,
+                ct).ConfigureAwait(false);
         }
         finally
         {

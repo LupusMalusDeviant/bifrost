@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace McpMcp.Abstractions;
 
 /// <summary>
@@ -68,4 +70,22 @@ public interface ISignedUpstreamConnection
 {
     /// <summary>Fingerprint des Publishers, dessen Signatur beim Laden akzeptiert wurde.</summary>
     string PublisherKeyId { get; }
+}
+
+/// <summary>
+/// Eine Upstream-Verbindung, für die es einen Unterschied macht, <em>wer</em> aufruft (Plan 0003,
+/// Resources). Ein WASI-Upstream mit persistenter Instanz gibt Handles aus, die einen Aufruf
+/// überleben; ohne Aufrufer-Identität wären sie für jeden einlösbar, der den Namen kennt.
+/// </summary>
+/// <remarks>
+/// Bewusst eine eigene Schnittstelle statt eines zusätzlichen Parameters auf
+/// <see cref="IUpstreamConnection"/>: Für alle anderen Connectoren gibt es nichts, wofür die
+/// Identität zählte, und ein Pflichtparameter ohne Wirkung lädt zum Ignorieren ein.
+/// Decorators <strong>müssen</strong> das Merkmal durchreichen — verschluckt es einer, fallen
+/// alle Aufrufer auf denselben Namen zusammen und die Trennung ist still weg.
+/// </remarks>
+public interface ICallerAwareUpstreamConnection
+{
+    /// <summary>Wie <see cref="IUpstreamConnection.CallToolAsync"/>, nur mit Aufrufer.</summary>
+    Task<JsonElement> CallToolAsync(string caller, string toolName, JsonElement args, CancellationToken ct);
 }

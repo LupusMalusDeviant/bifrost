@@ -172,6 +172,7 @@ Belegt, jeweils an einen benannten Test gebunden — nicht an ein Plan-Häkchen:
 | WP7.1/7.2 (Packaging, CI) | Der Host wird **mit** dem Gateway ausgeliefert (ein Image = ein Vertragsstand): eigene Rust-Stage im Dockerfile, die von der Bau-Architektur aus kreuzkompiliert statt unter QEMU zu emulieren. Gemessen: Image 121 MB amd64 / 117 MB arm64 (Grenze 300 MB), Host-Binary 30 MB unter `/usr/local/bin/mcpmcp-wasi-host`. **Beide Architekturen lokal belegt** — im arm64-Image ist das Binary echtes AArch64 (`e_machine 0xB7`) und beantwortet den Handshake unter Emulation; die Cross-Kompilierung von wasmtime dauert 1 m 12 s statt einer QEMU-Ewigkeit. CI prüft Handshake im Image und non-root (UID 1654) |
 | Aufrufbreite (`list<u8>`, `result<T,E>`) | Vertrag **v3**: Typen sind Bäume statt Namen, Argumente und Ergebnis sind JSON-Werte. Der Host ruft über den dynamischen `Val`-Pfad statt `get_typed_func`. `list<u8>` ist ein Base64-Blob mit eigener Längengrenze (`maxBinaryBytes`, 1 MiB), 64-Bit-Ganzzahlen sind Dezimalstrings (JSON-Doubles verlieren ab 2^53). Gateway-seitig entsteht daraus ein echtes Schema je Typ — `contentEncoding: base64`, `minimum`/`maximum` je Breite, `oneOf` für `option`, genau ein Zweig für `result`. Tests: 10 Rust-Tests zur Wertabbildung, 2 an einem echten Component mit `list<u8>`- und `result<string,u32>`-Export (WAT-Fixture mit Bump-Allocator, weil die kanonische ABI Memory und realloc braucht), 3 Connector-Tests |
 | Aufrufbreite, zusammengesetzte Typen und Interface-Exports | `record`, `variant`, `enum`, `flags` und `tuple` sind abgebildet (15 Mapper-Tests inkl. Verschachtelung) — und erreichbar: Funktionen in exportierten **Interface-Instanzen** werden über einen `path` adressiert statt über den punktierten Namen, weil Interface-Namen selbst Punkte enthalten. Damit ist der Normalfall eines aus WIT gebauten Components abgedeckt; belegt an `control-plane.wit` (Record mit Enum, Liste und Option, Rückgabe `result<record, string>`), und an einem **echten, mit `wasm32-wasip2` gebauten Guest** (`guest-interface/`), der dasselbe WIT implementiert und wirklich rechnet: Record hinein, `result<record, string>` heraus, Fehlerzweig inklusive — über die Rust-Seite und über die .NET-Leitung gegen das echte Binary. Gateway-seitig verschachtelte Schemata für Record/Variant/Enum/Flags/Tupel |
+| Aufrufbreite, Resources | Vertrag **v3** erweitert: `load` kennt `persistentInstance`, `invoke` einen `caller`, dazu `release` und offene Handles in `health`. Ein Handle geht als undurchsichtiges Objekt (`{"handle":"res-1"}`) über die Leitung; der Wert bleibt im Host. **Instanz pro Upstream, Handles pro Aufrufer** (Entscheidung des Product Owners, 2026-07-25): Ein fremdes Handle ist „unbekannt" — die Meldung unterscheidet nicht zwischen „gibt es nicht" und „gehört jemand anderem". `own<T>` verbraucht das Handle beim Übergeben, `borrow<T>` nicht; 256 offene Handles je Sitzung sind die Grenze. Voreinstellung ist **aus**, siehe Restrisiko unten. Belegt an einem echten `wasm32-wasip2`-Guest (`guest-resource/`, `docs/spikes/fixtures/counter.wit`): 5 Rust-Tests auf Bibliotheksebene, 4 über den Protokollweg, 2 `WasiRealHostCompatibilityTests` gegen das echte Binary (Zustand über Aufrufe hinweg, Fremdaufrufer abgewiesen), 2 zum Durchreichen der Identität im `GuardedUpstreamConnection` |
 | WP7.3/7.4 (Security-Review, ADR-0017) | Review am 2026-07-25 mit dem Product Owner durchgeführt: [`wasi-runtime-security-review.md`](../security/wasi-runtime-security-review.md), Ergebnis angenommen mit benannten Restrisiken. Sicherheitsstand und Restrisiken stehen im [Threat-Model](../security/threat-model.md). ADR-0017 auf **akzeptiert** — als Isolations- und Grant-Modell, mit ausdrücklichem Vorbehalt für den Vorrang bei beliebigen Connectoren |
 | **M2** (signiertes Component durch die volle Pipeline) | `WasiRealHostGovernanceTests` (echter Host, signiertes Fixture) + `WasiUpstreamE2ETests` (RBAC, Guardrail, Approval, Audit, MCP + REST) |
 
@@ -182,8 +183,16 @@ Offen und ausdrücklich **nicht** behauptet:
   ADR-0016 fehlen weiterhin.
 - **WP3, Rest** — Preopens bleiben **nur lesend**; Schreibrechte sind im Grant-Modell nach wie vor
   nicht ausdrückbar.
-- **Aufrufbreite, Rest** — offen bleiben nur noch **Resources, Futures und Streams**; sie hängen
-  am Task-/Event-Modell (ADR-0019). Alles andere ist abgebildet und aufrufbar.
+- **Aufrufbreite, Rest** — offen bleiben nur noch **Futures und Streams**; sie hängen am
+  Task-/Event-Modell (ADR-0019) und brauchen zusätzlich die asynchrone ABI
+  (`component-model-async`). Alles andere ist abgebildet und aufrufbar.
+- **Resources, Restrisiko** — eine persistente Instanz teilt ihren **internen** Zustand (Globals,
+  linearer Speicher) zwischen allen Aufrufern desselben Upstreams. Die Handle-Trennung schützt
+  davor nicht: Sie verhindert, dass ein Aufrufer ein fremdes Handle *benennt*, nicht, dass ein
+  Component quer über Aufrufer hinweg Zustand führt. Deshalb ist `PersistentInstance` **aus**,
+  solange ein Upstream keine Resources braucht. Eine Instanz **pro Aufrufer** wäre die Trennung,
+  die das schlösse — sie kostet Speicher und Instanziierungszeit je Aufrufer und ist bewusst nicht
+  vorweggenommen.
 
 ## Festgelegte Entscheidungen für WP4 (2026-07-24, Product Owner)
 

@@ -402,6 +402,101 @@ public sealed class WasiRealHostCompatibilityTests
         stillCallable.GetProperty("type").GetString().Should().Be("discovered");
     }
 
+
+    private static readonly string CounterComponentPath =
+        Path.Combine(FixturesDirectory, "counter.component.wasm");
+
+    private static readonly string CounterSignaturePath =
+        Path.Combine(FixturesDirectory, "counter.component.sig");
+
+    /// <summary>
+    /// Der ganze Weg für Resources: .NET-Connector, echter Host, echter wasip2-Guest. Ein Handle
+    /// aus einem Aufruf, der Zustand im nächsten — und ein zweiter Aufrufer, der dasselbe Handle
+    /// nicht einlösen kann. Ohne persistente Instanz gäbe es keinen der beiden Nachweise.
+    /// </summary>
+    [Fact]
+    public async Task A_persistent_instance_keeps_resource_handles_per_caller()
+    {
+        var host = RequireHost();
+        var ct = TestContext.Current.CancellationToken;
+        var connector = ConnectorFor(await PinnedPublisherAsync(ct));
+        var config = new UpstreamServerConfig(
+            "wasi-counter", "WASI (Resource)", UpstreamTransportKind.Wasi, Enabled: true,
+            Wasi: new WasiTransportOptions(
+                host, CounterComponentPath, CounterSignaturePath, PinnedPublishers: [],
+                Grants: new WasiCapabilityGrants(Environment: EnvironmentGrant),
+                PersistentInstance: true));
+
+        await using var connection = await connector.ConnectAsync(new ServerId(Guid.NewGuid()), config, ct);
+        var inventory = await connection.DiscoverAsync(ct);
+
+        // Die Katalognamen sind normalisiert; gesucht wird über den rohen Export-Namen in der
+        // Beschreibung, damit der Test nicht an der Normalisierungsregel klebt.
+        string ToolFor(string export) => inventory.Tools
+            .Single(tool => tool.Description?.Contains(export, StringComparison.Ordinal) == true)
+            .Name;
+        var create = ToolFor("[constructor]counter");
+        var bump = ToolFor("[method]counter.bump");
+
+        // Das Handle steht als eigener Typ im Schema — undurchsichtig, aber nicht als blosser
+        // String, damit ein Agent es nicht für einen frei wählbaren Text hält.
+        var self = inventory.Tools.Single(tool => tool.Name == bump)
+            .InputSchema.GetProperty("properties").GetProperty("self");
+        self.GetProperty("type").GetString().Should().Be("object");
+        self.GetProperty("required").EnumerateArray().Select(item => item.GetString())
+            .Should().Equal("handle");
+        self.GetProperty("description").GetString().Should().Contain("geliehen");
+
+        var aware = connection.Should().BeAssignableTo<ICallerAwareUpstreamConnection>().Subject;
+        var created = await aware.CallToolAsync("alice", create, Args("{\"start\":10}"), ct);
+        var handle = JsonDocument.Parse(
+            created.GetProperty("content")[0].GetProperty("text").GetString()!).RootElement;
+        handle.GetProperty("handle").GetString().Should().NotBeNullOrEmpty(
+            "der Konstruktor gibt ein undurchsichtiges Handle zurück");
+
+        // Zweiter Aufruf, dasselbe Handle: Der Zustand hat den ersten Aufruf überlebt.
+        var arguments = $"{{\"self\":{handle.GetRawText()},\"by\":32}}";
+        var bumped = await aware.CallToolAsync("alice", bump, Args(arguments), ct);
+        bumped.GetProperty("isError").GetBoolean().Should().BeFalse();
+        bumped.GetProperty("content")[0].GetProperty("text").GetString().Should().Be("42");
+
+        // Ein anderer Aufrufer kennt den Namen, darf ihn aber nicht einlösen.
+        var foreign = await aware.CallToolAsync("mallory", bump, Args(arguments), ct);
+        foreign.GetProperty("isError").GetBoolean().Should().BeTrue();
+        foreign.GetProperty("content")[0].GetProperty("text").GetString()
+            .Should().Contain("unbekannt");
+    }
+
+    /// <summary>
+    /// Gegenprobe: Ohne <c>PersistentInstance</c> bleibt es bei einer frischen Instanz pro Aufruf.
+    /// Der Host sagt dann, woran es liegt, statt ein Handle zu erfinden.
+    /// </summary>
+    [Fact]
+    public async Task Without_a_persistent_instance_resources_are_refused()
+    {
+        var host = RequireHost();
+        var ct = TestContext.Current.CancellationToken;
+        var connector = ConnectorFor(await PinnedPublisherAsync(ct));
+        var config = new UpstreamServerConfig(
+            "wasi-counter", "WASI (Resource)", UpstreamTransportKind.Wasi, Enabled: true,
+            Wasi: new WasiTransportOptions(
+                host, CounterComponentPath, CounterSignaturePath, PinnedPublishers: [],
+                Grants: new WasiCapabilityGrants(Environment: EnvironmentGrant)));
+
+        await using var connection = await connector.ConnectAsync(new ServerId(Guid.NewGuid()), config, ct);
+        var inventory = await connection.DiscoverAsync(ct);
+        var create = inventory.Tools
+            .Single(tool => tool.Description?.Contains("[constructor]counter", StringComparison.Ordinal) == true)
+            .Name;
+
+        var refused = await connection.CallToolAsync(create, Args("{\"start\":1}"), ct);
+        refused.GetProperty("isError").GetBoolean().Should().BeTrue();
+        refused.GetProperty("content")[0].GetProperty("text").GetString()
+            .Should().Contain("persistente Instanz");
+    }
+
+    private static JsonElement Args(string json) => JsonSerializer.Deserialize<JsonElement>(json);
+
     private static async Task<object> LoadRequestAsync(string publisher, CancellationToken ct) => new
     {
         type = "load",

@@ -1,0 +1,20 @@
+// Fixture für den Resource-Pfad des WASI-Hosts (Plan 0003, Aufrufbreite).
+// Bewusst minimal: Ein Handle, das über mehrere Aufrufe hinweg Zustand hält — genau das, was ohne
+// persistente Instanz nicht funktionieren kann.
+package mcpmcp:counter@0.1.0;
+
+interface counters {
+  resource counter {
+    constructor(start: s32);
+    // Erhöht um `by` und gibt den neuen Stand zurück — der Beweis, dass der Zustand am Handle hängt.
+    bump: func(by: s32) -> s32;
+    value: func() -> s32;
+  }
+
+  // Freie Funktion, die ein Handle entgegennimmt: prüft den Weg vom Aufrufer zurück in den Guest.
+  double-of: func(which: borrow<counter>) -> s32;
+}
+
+world counter-host {
+  export counters;
+}

@@ -8,11 +8,15 @@
 //! Kommandos: `hello` (Versionsverhandlung), `load` (Signaturprüfung gegen gepinnte Publisher +
 //! Grants + Kompilierung als Gesundheitstest, fail-closed), `discover` (typisierte Beschreibung
 //! der aufrufbaren Exports), `invoke` (Aufruf eines Exports mit Limits und Truncation-Metadaten),
-//! `health` (aktives Modul und Cache-Kennzahlen), `shutdown`. Fehler sind strukturiert
-//! (`code` + `message`) und beenden den Host nicht.
+//! `release` (Freigabe eines Resource-Handles), `health` (aktives Modul, Cache-Kennzahlen, offene
+//! Handles), `shutdown`. Fehler sind strukturiert (`code` + `message`) und beenden den Host nicht.
 //!
 //! Die Sitzung hält den Modul-Cache: Kompiliert wird einmal pro Inhalt, Grant-Satz und
 //! Engine-Profil, nicht pro Aufruf (WP5).
+//!
+//! Mit `persistentInstance` hält sie zusätzlich die **laufende Guest-Instanz** — ohne die gäbe es
+//! keine Resources, weil ein Handle nur in der Instanz gilt, die es ausgegeben hat. Die Instanz
+//! gehört dem Upstream, die Handles je einem `caller`. Ein Reload beendet die Instanz.
 
 use std::io::{self, Read, Write};
 
@@ -24,9 +28,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::disk_cache::DiskCache;
 use crate::{
-    CachedModule, CapabilityGrants, ExecutionLimits, GrantAuditRecord, InvocationOutcome,
-    ModuleCache, ModuleCacheStats, RUNTIME_VERSION, ToolDescriptor, describe_cached_module,
-    grant_audit_record, invoke_cached_module, pinned_publisher, verify_component_signature,
+    CachedModule, CapabilityGrants, ExecutionLimits, GrantAuditRecord, GuestSession,
+    InvocationOutcome, ModuleCache, ModuleCacheStats, RUNTIME_VERSION, ToolDescriptor,
+    describe_cached_module, grant_audit_record, invoke_cached_module_in, pinned_publisher,
+    verify_component_signature,
 };
 
 /// Protokollversion des IPC-Vertrags. Inkompatible Versionen werden beim Handshake abgewiesen.
@@ -70,6 +75,14 @@ pub enum Request {
         /// dieses Feld liefert den Inhalt — und nur dieses Feld trägt Geheimnisse.
         #[serde(default, rename = "secretValues")]
         secret_values: std::collections::BTreeMap<String, String>,
+        /// Hält die Guest-Instanz über die Aufrufe hinweg am Leben. Nötig für Resources: Ein
+        /// Handle ist ein Index in die Instanz, die es ausgegeben hat.
+        ///
+        /// Voreinstellung ist `false`, und das ist die sicherere Wahl: Eine persistente Instanz
+        /// teilt ihren internen Zustand (Globals, linearer Speicher) zwischen allen Aufrufern
+        /// dieses Upstreams. Die Handle-Trennung schützt davor nicht.
+        #[serde(default, rename = "persistentInstance")]
+        persistent_instance: bool,
     },
     /// Listet die aufrufbaren Tools (Exports) des geladenen Components.
     Discover,
@@ -84,6 +97,16 @@ pub enum Request {
         /// Limits für diesen Aufruf; fehlend = enge Defaults.
         #[serde(default)]
         limits: ExecutionLimits,
+        /// Wem die Handles dieses Aufrufs gehören. Nur bei einer persistenten Instanz von Belang;
+        /// fehlend = der namenlose Aufrufer, was für Upstreams ohne Resources genügt.
+        #[serde(default)]
+        caller: String,
+    },
+    /// Gibt ein Resource-Handle frei. Nur auf einer persistenten Instanz sinnvoll.
+    Release {
+        #[serde(default)]
+        caller: String,
+        handle: String,
     },
     /// Liveness/Readiness-Abfrage.
     Health,
@@ -116,6 +139,10 @@ pub enum Response {
         #[serde(flatten)]
         outcome: InvocationOutcome,
     },
+    Released {
+        /// Wie viele Handles die Sitzung danach noch hält.
+        handles: usize,
+    },
     Health {
         status: String,
         loaded: bool,
@@ -123,6 +150,9 @@ pub enum Response {
         #[serde(rename = "moduleSha256")]
         module_sha256: Option<String>,
         cache: ModuleCacheStats,
+        /// Offene Resource-Handles der persistenten Instanz; 0 ohne persistente Instanz.
+        #[serde(default)]
+        handles: usize,
     },
     Bye,
     Error {
@@ -139,7 +169,7 @@ pub enum Control {
 }
 
 /// Zustand einer IPC-Sitzung. Die Logik ist rein (kein IO) und damit direkt testbar.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Session {
     negotiated: bool,
     loaded: Option<LoadedComponent>,
@@ -150,7 +180,6 @@ pub struct Session {
 /// Die Bytes bleiben liegen, damit ein Aufruf mit anderem Limit-Profil neu kompilieren kann,
 /// ohne dass das Gateway das Component erneut schicken muss. `Arc`, weil sie pro Aufruf nur
 /// weitergereicht werden.
-#[derive(Debug)]
 struct LoadedComponent {
     bytes: std::sync::Arc<Vec<u8>>,
     module: CachedModule,
@@ -159,6 +188,14 @@ struct LoadedComponent {
     /// Werte zu den gewährten Secret-Namen. Bleiben im Prozess und gehen nie in eine Antwort:
     /// Der Audit-Datensatz nennt nur Namen.
     secret_values: std::sync::Arc<std::collections::BTreeMap<String, String>>,
+    /// Ob dieser Upstream eine über die Aufrufe hinweg lebende Instanz bekommt.
+    persistent: bool,
+    /// Die lebende Instanz, sobald der erste Aufruf sie gestartet hat.
+    session: Option<GuestSession>,
+    /// Das Engine-Profil (Fuel an/aus, Epoche an/aus), mit dem die Instanz gestartet wurde. Ein
+    /// Aufruf mit anderem Profil bräuchte eine andere Engine — und damit eine andere Instanz, in
+    /// der die bisherigen Handles nichts mehr bedeuten.
+    session_profile: Option<(bool, bool)>,
 }
 
 fn error(code: &str, message: impl Into<String>) -> (Response, Control) {
@@ -212,6 +249,7 @@ impl Session {
                 pinned_publishers,
                 grants,
                 secret_values,
+                persistent_instance,
             } => {
                 if !self.negotiated {
                     return error("handshake-required", "hello muss vor load gesendet werden");
@@ -222,6 +260,7 @@ impl Session {
                     &pinned_publishers,
                     grants,
                     secret_values,
+                    persistent_instance,
                 ) {
                     Ok(loaded) => (loaded, Control::Continue),
                     // Rollback (WP5.2): Ein fehlgeschlagener Load lässt das vorherige Component
@@ -245,7 +284,12 @@ impl Session {
                     Control::Continue,
                 )
             }
-            Request::Invoke { tool, args, limits } => {
+            Request::Invoke {
+                tool,
+                args,
+                limits,
+                caller,
+            } => {
                 let Some(loaded) = self.loaded.as_ref() else {
                     return error("not-loaded", "kein Component geladen — load zuerst senden");
                 };
@@ -255,13 +299,52 @@ impl Session {
                 let bytes = std::sync::Arc::clone(&loaded.bytes);
                 let grants = loaded.grants.clone();
                 let secrets = std::sync::Arc::clone(&loaded.secret_values);
+                let persistent = loaded.persistent;
                 let module = match self.cache.compile(&bytes, &grants, &limits) {
                     Ok(module) => module,
-                    Err(failure) => return error("invoke-failed", failure.to_string()),
+                    Err(failure) => return error("invoke-failed", format!("{failure:#}")),
                 };
-                match invoke_cached_module(&module, &grants, &secrets, &tool, &args, &limits) {
+
+                let loaded = self.loaded.as_mut().expect("gerade geprüft");
+                let profile = (limits.fuel.is_some(), limits.timeout_ms.is_some());
+                if persistent {
+                    // Ein anderes Engine-Profil hieße eine andere Instanz — und damit Handles, die
+                    // ins Leere zeigen. Das lieber sagen als still verlieren.
+                    match loaded.session_profile {
+                        Some(started) if started != profile => {
+                            return error(
+                                "session-profile-changed",
+                                "die laufende Instanz wurde mit anderen Limit-Kategorien gestartet",
+                            );
+                        }
+                        _ => loaded.session_profile = Some(profile),
+                    }
+                }
+
+                let session = persistent.then_some(&mut loaded.session);
+                match invoke_cached_module_in(
+                    &module, &grants, &secrets, &tool, &args, &limits, &caller, session,
+                ) {
                     Ok(outcome) => (Response::Invoked { outcome }, Control::Continue),
-                    Err(failure) => error("invoke-failed", failure.to_string()),
+                    Err(failure) => error("invoke-failed", format!("{failure:#}")),
+                }
+            }
+            Request::Release { caller, handle } => {
+                let Some(session) = self
+                    .loaded
+                    .as_mut()
+                    .and_then(|loaded| loaded.session.as_mut())
+                else {
+                    return error("no-session", "es läuft keine persistente Instanz");
+                };
+                match session.release(&caller, &handle) {
+                    Ok(()) => (
+                        Response::Released {
+                            handles: session.handle_count(),
+                        },
+                        Control::Continue,
+                    ),
+                    Err(failure) => error("release-failed", format!("{failure:#}")),
                 }
             }
             Request::Health => (
@@ -273,6 +356,11 @@ impl Session {
                         .as_ref()
                         .map(|loaded| loaded.module_sha256.clone()),
                     cache: self.cache.stats().clone(),
+                    handles: self
+                        .loaded
+                        .as_ref()
+                        .and_then(|loaded| loaded.session.as_ref())
+                        .map_or(0, GuestSession::handle_count),
                 },
                 Control::Continue,
             ),
@@ -294,6 +382,7 @@ impl Session {
         pinned_b64: &[String],
         grants: CapabilityGrants,
         secret_values: std::collections::BTreeMap<String, String>,
+        persistent_instance: bool,
     ) -> Result<Response> {
         let component = BASE64.decode(component_b64)?;
         let signature: [u8; 64] = BASE64
@@ -336,6 +425,11 @@ impl Session {
             module,
             grants,
             secret_values: std::sync::Arc::new(secret_values),
+            persistent: persistent_instance,
+            // Ein neues Component heißt eine neue Instanz: Die Handles des vorherigen Stands
+            // gehören zu einer Instanz, die es gleich nicht mehr gibt.
+            session: None,
+            session_profile: None,
         });
         Ok(Response::Loaded {
             compile_ms: if cached {
@@ -433,6 +527,7 @@ mod tests {
     /// Standard-Invoke auf den WASI-Kommando-Export (Name wird reflektiert, nicht geraten).
     fn run_request() -> Request {
         Request::Invoke {
+            caller: String::new(),
             tool: crate::wasi_command_export(GUEST).unwrap(),
             args: vec![],
             limits: ExecutionLimits::default(),
@@ -441,6 +536,7 @@ mod tests {
 
     fn load_request(signing: &SigningKey, grants: CapabilityGrants) -> Request {
         Request::Load {
+            persistent_instance: false,
             component: BASE64.encode(GUEST),
             signature: BASE64.encode(signing.sign(GUEST).to_bytes()),
             pinned_publishers: vec![BASE64.encode(signing.verifying_key().as_bytes())],
@@ -508,6 +604,7 @@ mod tests {
         assert_eq!(
             response,
             Response::Health {
+                handles: 0,
                 status: "ok".to_owned(),
                 loaded: false,
                 module_sha256: None,
@@ -546,6 +643,7 @@ mod tests {
         let (health, _) = session.handle(Request::Health);
         match health {
             Response::Health {
+                handles: 0,
                 loaded,
                 module_sha256,
                 cache,
@@ -577,6 +675,7 @@ mod tests {
         let publisher = include_str!("../fixtures/wasi-p2-guest.publisher.pub");
 
         let (response, _) = negotiated().handle(Request::Load {
+            persistent_instance: false,
             component: BASE64.encode(GUEST),
             signature: BASE64.encode(signature),
             pinned_publishers: vec![publisher.trim().to_owned()],
@@ -603,6 +702,7 @@ mod tests {
         let mut session = negotiated();
 
         let (loaded, _) = session.handle(Request::Load {
+            persistent_instance: false,
             component: BASE64.encode(GUEST),
             signature: BASE64.encode(signing.sign(GUEST).to_bytes()),
             pinned_publishers: vec![BASE64.encode(signing.verifying_key().as_bytes())],
@@ -646,6 +746,7 @@ mod tests {
         grants.secrets.insert("MCPMCP_SPIKE".to_owned());
 
         let (response, _) = negotiated().handle(Request::Load {
+            persistent_instance: false,
             component: BASE64.encode(GUEST),
             signature: BASE64.encode(signing.sign(GUEST).to_bytes()),
             pinned_publishers: vec![BASE64.encode(signing.verifying_key().as_bytes())],
@@ -669,6 +770,7 @@ mod tests {
         // die Ladbarkeit.
         let broken = b"kein wasm".to_vec();
         let (response, control) = session.handle(Request::Load {
+            persistent_instance: false,
             component: BASE64.encode(&broken),
             signature: BASE64.encode(signing.sign(&broken).to_bytes()),
             pinned_publishers: vec![BASE64.encode(signing.verifying_key().as_bytes())],
@@ -706,6 +808,7 @@ mod tests {
         let broken = b"kein wasm".to_vec();
 
         let (response, _) = negotiated().handle(Request::Load {
+            persistent_instance: false,
             component: BASE64.encode(&broken),
             signature: BASE64.encode(signing.sign(&broken).to_bytes()),
             pinned_publishers: vec![BASE64.encode(signing.verifying_key().as_bytes())],
@@ -754,6 +857,7 @@ mod tests {
         let publisher = include_str!("../fixtures/wasi-p2-guest.publisher.pub");
 
         let (response, _) = negotiated().handle(Request::Load {
+            persistent_instance: false,
             component: BASE64.encode(component),
             signature: BASE64.encode(signature),
             pinned_publishers: vec![publisher.trim().to_owned()],
@@ -774,6 +878,7 @@ mod tests {
         let mut session = negotiated();
 
         let (response, _) = session.handle(Request::Load {
+            persistent_instance: false,
             component: BASE64.encode(GUEST),
             signature: BASE64.encode(rogue.sign(GUEST).to_bytes()),
             pinned_publishers: vec![BASE64.encode(trusted.verifying_key().as_bytes())],
@@ -790,6 +895,7 @@ mod tests {
         let mut session = negotiated();
 
         let (response, _) = session.handle(Request::Load {
+            persistent_instance: false,
             component: BASE64.encode(GUEST),
             signature: BASE64.encode(signing.sign(GUEST).to_bytes()),
             pinned_publishers: vec![],
@@ -874,6 +980,7 @@ mod tests {
         session.handle(load_request(&signing, CapabilityGrants::default()));
 
         let (response, _) = session.handle(Request::Invoke {
+            caller: String::new(),
             tool: "does:not/exist@1.0.0".to_owned(),
             args: vec![],
             limits: ExecutionLimits::default(),
@@ -979,5 +1086,188 @@ mod tests {
         let second_len = u32::from_be_bytes(rest[..4].try_into().unwrap()) as usize;
         let second: Response = serde_json::from_slice(&rest[4..4 + second_len]).unwrap();
         assert_eq!(second, Response::Bye);
+    }
+
+    const COUNTER: &[u8] = include_bytes!("../fixtures/counter.component.wasm");
+
+    /// Lädt das Resource-Fixture in eine bereits verhandelte Sitzung.
+    fn load_counter(session: &mut Session, persistent: bool) {
+        let signing = SigningKey::from_bytes(&[3u8; 32]);
+        // Rusts std zieht wasi:cli/environment mit, auch wenn der Guest es nicht benutzt.
+        let mut grants = CapabilityGrants::default();
+        grants.environment.insert("MCPMCP_SPIKE".to_owned());
+
+        let (response, _) = session.handle(Request::Load {
+            persistent_instance: persistent,
+            component: BASE64.encode(COUNTER),
+            signature: BASE64.encode(signing.sign(COUNTER).to_bytes()),
+            pinned_publishers: vec![BASE64.encode(signing.verifying_key().as_bytes())],
+            grants,
+            secret_values: Default::default(),
+        });
+        assert!(
+            matches!(response, Response::Loaded { .. }),
+            "load muss gelingen: {response:?}"
+        );
+    }
+
+    fn counter_session(persistent: bool) -> Session {
+        let mut session = negotiated();
+        load_counter(&mut session, persistent);
+        session
+    }
+
+    fn invoke(
+        session: &mut Session,
+        caller: &str,
+        tool: &str,
+        args: Vec<serde_json::Value>,
+    ) -> Response {
+        session
+            .handle(Request::Invoke {
+                caller: caller.to_owned(),
+                tool: tool.to_owned(),
+                args,
+                limits: ExecutionLimits::default(),
+            })
+            .0
+    }
+
+    fn result_of(response: Response) -> serde_json::Value {
+        match response {
+            Response::Invoked { outcome } => outcome.result.expect("Rückgabewert"),
+            other => panic!("expected invoked, got {other:?}"),
+        }
+    }
+
+    const COUNTER_NEW: &str = "mcpmcp:counter/counters@0.1.0.[constructor]counter";
+    const COUNTER_BUMP: &str = "mcpmcp:counter/counters@0.1.0.[method]counter.bump";
+
+    /// Über den echten Protokollweg: Handle aus einem Aufruf, Zustand im nächsten. Das ist der
+    /// Unterschied, den `persistentInstance` ausmacht.
+    #[test]
+    fn a_persistent_instance_carries_handles_between_requests() {
+        let mut session = counter_session(true);
+
+        let handle = result_of(invoke(
+            &mut session,
+            "alice",
+            COUNTER_NEW,
+            vec![serde_json::json!(1)],
+        ));
+        let bumped = result_of(invoke(
+            &mut session,
+            "alice",
+            COUNTER_BUMP,
+            vec![handle.clone(), serde_json::json!(41)],
+        ));
+        assert_eq!(bumped, serde_json::json!(42));
+
+        // Und `health` sagt, wie viele Handles offen sind — ein Leck wäre von außen sichtbar.
+        match session.handle(Request::Health).0 {
+            Response::Health { handles, .. } => assert_eq!(handles, 1),
+            other => panic!("expected health, got {other:?}"),
+        }
+
+        // Freigeben schließt das Handle; danach ist es auch für den Eigentümer weg.
+        match session.handle(Request::Release {
+            caller: "alice".to_owned(),
+            handle: handle[crate::values::HANDLE_FIELD]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        }) {
+            (Response::Released { handles }, _) => assert_eq!(handles, 0),
+            (other, _) => panic!("expected released, got {other:?}"),
+        }
+        match invoke(
+            &mut session,
+            "alice",
+            COUNTER_BUMP,
+            vec![handle, serde_json::json!(1)],
+        ) {
+            Response::Error { code, message } => {
+                assert_eq!(code, "invoke-failed");
+                assert!(message.contains("unbekannt"), "{message}");
+            }
+            other => panic!("expected error, got {other:?}"),
+        }
+    }
+
+    /// Ohne `persistentInstance` bleibt es beim bisherigen Verhalten: frische Instanz pro Aufruf,
+    /// also keine Handles. Der Fehler nennt den Grund.
+    #[test]
+    fn without_the_flag_resources_are_refused() {
+        let mut session = counter_session(false);
+
+        match invoke(
+            &mut session,
+            "alice",
+            COUNTER_NEW,
+            vec![serde_json::json!(1)],
+        ) {
+            Response::Error { code, message } => {
+                assert_eq!(code, "invoke-failed");
+                assert!(message.contains("persistente Instanz"), "{message}");
+            }
+            other => panic!("expected error, got {other:?}"),
+        }
+    }
+
+    /// Ein neues Component beendet die Instanz. Die Handles des vorherigen Stands zeigen danach
+    /// auf nichts mehr — und das sagt der Host, statt einen fremden Zähler zu bedienen.
+    #[test]
+    fn reloading_ends_the_session() {
+        let mut session = counter_session(true);
+        let handle = result_of(invoke(
+            &mut session,
+            "alice",
+            COUNTER_NEW,
+            vec![serde_json::json!(7)],
+        ));
+
+        // Dasselbe Component noch einmal laden: Der Cache liefert dasselbe Kompilat, die Instanz
+        // ist trotzdem eine neue.
+        load_counter(&mut session, true);
+
+        match invoke(
+            &mut session,
+            "alice",
+            COUNTER_BUMP,
+            vec![handle, serde_json::json!(1)],
+        ) {
+            Response::Error { code, message } => {
+                assert_eq!(code, "invoke-failed");
+                assert!(message.contains("unbekannt"), "{message}");
+            }
+            other => panic!("expected error, got {other:?}"),
+        }
+    }
+
+    /// Ein Aufruf mit anderem Limit-Profil bräuchte eine andere Engine und damit eine andere
+    /// Instanz. Der Host weist das ab, statt die Handles still zu verlieren.
+    #[test]
+    fn a_changed_limit_profile_is_refused_while_a_session_lives() {
+        let mut session = counter_session(true);
+        result_of(invoke(
+            &mut session,
+            "alice",
+            COUNTER_NEW,
+            vec![serde_json::json!(1)],
+        ));
+
+        let (response, _) = session.handle(Request::Invoke {
+            caller: "alice".to_owned(),
+            tool: COUNTER_NEW.to_owned(),
+            args: vec![serde_json::json!(1)],
+            limits: ExecutionLimits {
+                fuel: None,
+                ..ExecutionLimits::default()
+            },
+        });
+        match response {
+            Response::Error { code, .. } => assert_eq!(code, "session-profile-changed"),
+            other => panic!("expected error, got {other:?}"),
+        }
     }
 }

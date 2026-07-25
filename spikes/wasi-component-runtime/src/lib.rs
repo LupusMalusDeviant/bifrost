@@ -37,6 +37,11 @@ const WASI_GUEST_COMPONENT: &[u8] = include_bytes!("../fixtures/wasi-p2-guest.co
 const TOOLS_INTERFACE_COMPONENT: &[u8] =
     include_bytes!("../fixtures/tools-interface.component.wasm");
 
+/// Guest mit einer Resource, deren Zustand am Handle hängt. Quelle: `guest-resource/`, Vertrag:
+/// `docs/spikes/fixtures/counter.wit`.
+#[cfg(test)]
+const COUNTER_COMPONENT: &[u8] = include_bytes!("../fixtures/counter.component.wasm");
+
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapabilityInventory {
@@ -998,34 +1003,51 @@ pub fn invoke_component_tool(
     invoke_cached_module(&module, grants, &Default::default(), tool, args, limits)
 }
 
-/// Ruft ein Tool eines bereits kompilierten Components auf (WP5). Die Grants werden hier erneut
-/// angewandt — sie hängen am Aufruf, nicht am Kompilat.
-pub fn invoke_cached_module(
+/// Eine über mehrere Aufrufe hinweg lebende Guest-Instanz. Nötig für Resources: Ein Handle ist ein
+/// Index in die Instanz, die es ausgegeben hat — endet die Instanz, ist das Handle wertlos.
+///
+/// Die Instanz gehört einem Upstream, die Handles gehören je einem Aufrufer (siehe
+/// [`values::HandleTable`]). Was das NICHT trennt: den Zustand innerhalb des Components (Globals,
+/// linearer Speicher). Zwei Aufrufer auf demselben Upstream sehen dieselbe Instanz — die
+/// Handle-Trennung schützt nur davor, fremde Handles zu benennen, nicht vor geteiltem Zustand.
+pub struct GuestSession {
+    store: Store<WasiGuestHost>,
+    instance: wasmtime::component::Instance,
+    stdout: wasmtime_wasi::p2::pipe::MemoryOutputPipe,
+    /// Wie viele stdout-Bytes bereits gemeldet wurden — der Puffer sammelt über alle Aufrufe.
+    reported: usize,
+    handles: values::HandleTable,
+    /// Nach einem Trap ist die Instanz nicht mehr benutzbar und wird verworfen.
+    poisoned: bool,
+}
+
+impl GuestSession {
+    pub fn handle_count(&self) -> usize {
+        self.handles.len()
+    }
+
+    /// Gibt ein Handle dieses Aufrufers frei. Ohne diesen Weg lebte jedes je erzeugte Handle bis
+    /// zum Ende des Upstreams — bei 256 offenen Handles wäre danach Schluss.
+    pub fn release(&mut self, caller: &str, handle: &str) -> Result<()> {
+        let resource = self.handles.release(caller, handle)?;
+        resource.resource_drop(&mut self.store)?;
+        Ok(())
+    }
+}
+
+/// Baut Linker, Store und stdout-Puffer für einen Lauf. Die Grants werden hier angewandt — sie
+/// hängen am Aufruf bzw. an der Sitzung, nicht am Kompilat.
+fn prepare_store(
     module: &CachedModule,
     grants: &CapabilityGrants,
     secret_values: &std::collections::BTreeMap<String, String>,
-    tool: &str,
-    args: &[serde_json::Value],
     limits: &ExecutionLimits,
-) -> Result<InvocationOutcome> {
+) -> Result<(
+    Linker<WasiGuestHost>,
+    Store<WasiGuestHost>,
+    wasmtime_wasi::p2::pipe::MemoryOutputPipe,
+)> {
     let engine = &module.engine;
-    let component = &module.component;
-
-    let exports = component_exports(engine, component);
-    if !exports.iter().any(|export| export == tool) {
-        bail!("tool '{tool}' is not exported by this component");
-    }
-
-    // Die Signatur kommt aus derselben Reflexion wie die Discovery — der Aufruf kann damit gar
-    // nicht auf eine andere Form treffen, als der Katalog angeboten hat.
-    let descriptor = describe_cached_module(module)
-        .into_iter()
-        .find(|candidate| candidate.name == tool)
-        .with_context(|| format!("tool '{tool}' ist nicht beschreibbar"))?;
-    if let Some(reason) = descriptor.unsupported_reason.as_deref() {
-        bail!("tool '{tool}' ist nicht aufrufbar: {reason}");
-    }
-
     let mut linker = Linker::<WasiGuestHost>::new(engine);
     add_granted_wasi_to_linker(&mut linker, grants)?;
 
@@ -1047,14 +1069,182 @@ pub fn invoke_cached_module(
     };
     let mut store = Store::new(engine, host);
     store.limiter(|state: &mut WasiGuestHost| &mut state.limits);
+    // Ein frischer Store hat null Treibstoff und eine bereits abgelaufene Epochen-Frist; ohne das
+    // hier würde schon die Instanziierung trappen. `with_limits` setzt beides vor jedem Aufruf neu.
     if let Some(fuel) = limits.fuel {
         store.set_fuel(fuel)?;
     }
+    if limits.timeout_ms.is_some() {
+        store.set_epoch_deadline(1);
+    }
+    Ok((linker, store, stdout))
+}
 
+/// Ruft ein Tool eines bereits kompilierten Components auf (WP5) — mit frischer Instanz pro Aufruf.
+pub fn invoke_cached_module(
+    module: &CachedModule,
+    grants: &CapabilityGrants,
+    secret_values: &std::collections::BTreeMap<String, String>,
+    tool: &str,
+    args: &[serde_json::Value],
+    limits: &ExecutionLimits,
+) -> Result<InvocationOutcome> {
+    invoke_cached_module_in(module, grants, secret_values, tool, args, limits, "", None)
+}
+
+/// Wie [`invoke_cached_module`], aber optional auf einer persistenten Instanz. Ist `session`
+/// gesetzt, wird die Instanz beim ersten Aufruf gestartet und danach wiederverwendet; `caller`
+/// bestimmt, wem die dabei entstehenden Handles gehören.
+#[allow(clippy::too_many_arguments)]
+pub fn invoke_cached_module_in(
+    module: &CachedModule,
+    grants: &CapabilityGrants,
+    secret_values: &std::collections::BTreeMap<String, String>,
+    tool: &str,
+    args: &[serde_json::Value],
+    limits: &ExecutionLimits,
+    caller: &str,
+    session: Option<&mut Option<GuestSession>>,
+) -> Result<InvocationOutcome> {
+    let engine = &module.engine;
+    let component = &module.component;
+
+    let exports = component_exports(engine, component);
+    if !exports.iter().any(|export| export == tool) {
+        bail!("tool '{tool}' is not exported by this component");
+    }
+
+    // Die Signatur kommt aus derselben Reflexion wie die Discovery — der Aufruf kann damit gar
+    // nicht auf eine andere Form treffen, als der Katalog angeboten hat.
+    let descriptor = describe_cached_module(module)
+        .into_iter()
+        .find(|candidate| candidate.name == tool)
+        .with_context(|| format!("tool '{tool}' ist nicht beschreibbar"))?;
+    if let Some(reason) = descriptor.unsupported_reason.as_deref() {
+        bail!("tool '{tool}' ist nicht aufrufbar: {reason}");
+    }
+
+    // Ein Kommando läuft genau einmal und beendet sich; eine persistente Instanz wäre dafür
+    // sinnlos und würde nur den Store der Sitzung verbrauchen.
+    match session.filter(|_| !is_wasi_command_export(tool)) {
+        Some(slot) => {
+            if slot.is_none() {
+                let (linker, mut store, stdout) =
+                    prepare_store(module, grants, secret_values, limits)?;
+                let instance = linker.instantiate(&mut store, component)?;
+                *slot = Some(GuestSession {
+                    store,
+                    instance,
+                    stdout,
+                    reported: 0,
+                    handles: values::HandleTable::default(),
+                    poisoned: false,
+                });
+            }
+            let live = slot.as_mut().expect("gerade gesetzt");
+            let outcome = run_on_session(live, &descriptor, tool, args, limits, caller);
+            if live.poisoned {
+                *slot = None;
+            }
+            outcome
+        }
+        None => {
+            let (linker, mut store, stdout) = prepare_store(module, grants, secret_values, limits)?;
+            let mut trapped = false;
+            let result = with_limits(&mut store, limits, |store| {
+                if is_wasi_command_export(tool) {
+                    let command = wasmtime_wasi::p2::bindings::sync::Command::instantiate(
+                        &mut *store,
+                        component,
+                        &linker,
+                    )?;
+                    command
+                        .wasi_cli_run()
+                        .call_run(&mut *store)?
+                        .map_err(|()| anyhow::anyhow!("guest run returned an error"))?;
+                    Ok(None)
+                } else {
+                    let instance = linker.instantiate(&mut *store, component)?;
+                    let mut bridge = values::ValueBridge::without_handles(limits.max_binary_bytes);
+                    call_export(
+                        store,
+                        &instance,
+                        &descriptor,
+                        tool,
+                        args,
+                        &mut bridge,
+                        &mut trapped,
+                    )
+                }
+            });
+            let bytes = stdout.contents();
+            Ok(InvocationOutcome {
+                truncated: bytes.len() >= limits.max_output_bytes,
+                stdout: String::from_utf8_lossy(&bytes).into_owned(),
+                result: result?,
+            })
+        }
+    }
+}
+
+fn run_on_session(
+    session: &mut GuestSession,
+    descriptor: &ToolDescriptor,
+    tool: &str,
+    args: &[serde_json::Value],
+    limits: &ExecutionLimits,
+    caller: &str,
+) -> Result<InvocationOutcome> {
+    let GuestSession {
+        store,
+        instance,
+        stdout,
+        reported,
+        handles,
+        poisoned,
+    } = session;
+    let mut bridge = values::ValueBridge {
+        max_binary_bytes: limits.max_binary_bytes,
+        handles: Some((handles, caller)),
+    };
+    let result = with_limits(store, limits, |store| {
+        call_export(
+            store,
+            instance,
+            descriptor,
+            tool,
+            args,
+            &mut bridge,
+            poisoned,
+        )
+    });
+
+    // Der Puffer sammelt über die ganze Sitzung; gemeldet wird nur, was seit dem letzten Aufruf
+    // dazugekommen ist. Die Kapazität gilt damit pro Sitzung, nicht pro Aufruf.
+    let bytes = stdout.contents();
+    let fresh = bytes.get(*reported..).unwrap_or_default().to_vec();
+    *reported = bytes.len();
+    Ok(InvocationOutcome {
+        truncated: bytes.len() >= limits.max_output_bytes,
+        stdout: String::from_utf8_lossy(&fresh).into_owned(),
+        result: result?,
+    })
+}
+
+/// Setzt Treibstoff und Wanduhr-Deadline für genau einen Aufruf und räumt den Wachhund danach ab.
+/// Auf einer persistenten Instanz zählt das Budget damit pro Aufruf, nicht über die Sitzung.
+fn with_limits<T>(
+    store: &mut Store<WasiGuestHost>,
+    limits: &ExecutionLimits,
+    body: impl FnOnce(&mut Store<WasiGuestHost>) -> Result<T>,
+) -> Result<T> {
+    if let Some(fuel) = limits.fuel {
+        store.set_fuel(fuel)?;
+    }
     // Wanduhr-Deadline: ein Wachhund erhöht die Epoche nach dem Timeout, was den Guest trappt.
     let watchdog = limits.timeout_ms.map(|timeout_ms| {
         store.set_epoch_deadline(1);
-        let engine = engine.clone();
+        let engine = store.engine().clone();
         let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
         let handle = std::thread::spawn(move || {
             if stop_rx
@@ -1067,88 +1257,85 @@ pub fn invoke_cached_module(
         (stop_tx, handle)
     });
 
-    let outcome = (|| -> Result<Option<serde_json::Value>> {
-        if is_wasi_command_export(tool) {
-            let command = wasmtime_wasi::p2::bindings::sync::Command::instantiate(
-                &mut store, component, &linker,
-            )?;
-            command
-                .wasi_cli_run()
-                .call_run(&mut store)?
-                .map_err(|()| anyhow::anyhow!("guest run returned an error"))?;
-            Ok(None)
-        } else {
-            let instance = linker.instantiate(&mut store, component)?;
-            // Der Pfad statt des Namens: Bei einer Funktion in einem exportierten Interface muss
-            // erst die Instanz aufgelöst werden, und Interface-Namen enthalten selbst Punkte —
-            // aus dem zusammengesetzten Namen liesse sich die Grenze nicht zurückgewinnen.
-            let mut parent = None;
-            let (last, parents) = descriptor
-                .path
-                .split_last()
-                .context("Tool ohne Adressierungspfad")?;
-            for segment in parents {
-                parent = Some(
-                    instance
-                        .get_export_index(&mut store, parent.as_ref(), segment)
-                        .with_context(|| format!("Interface '{segment}' nicht gefunden"))?,
-                );
-            }
-            let index = instance
-                .get_export_index(&mut store, parent.as_ref(), last)
-                .with_context(|| format!("export '{tool}' nicht gefunden"))?;
-            let func = instance
-                .get_func(&mut store, index)
-                .with_context(|| format!("export '{tool}' ist keine aufrufbare Funktion"))?;
-
-            if args.len() != descriptor.params.len() {
-                bail!(
-                    "'{tool}' erwartet {} Argument(e), bekam {}",
-                    descriptor.params.len(),
-                    args.len()
-                );
-            }
-            let arguments = descriptor
-                .params
-                .iter()
-                .zip(args)
-                .map(|(param, json)| {
-                    crate::values::to_val(&param.type_descriptor, json, limits.max_binary_bytes)
-                        .with_context(|| format!("Argument '{}'", param.name))
-                })
-                .collect::<Result<Vec<_>>>()?;
-
-            // Der dynamische Pfad statt `get_typed_func`: Nur so lassen sich list<u8>, result<T,E>
-            // und die übrigen abbildbaren Typen überhaupt übergeben.
-            let mut results = vec![wasmtime::component::Val::Bool(false); descriptor.results.len()];
-            func.call(&mut store, &arguments, &mut results)?;
-
-            Ok(match results.len() {
-                0 => None,
-                1 => Some(crate::values::to_json(&results[0])?),
-                // Mehrere Rückgabewerte gibt es im Component Model praktisch nicht mehr; falls
-                // doch, wird daraus ein Array statt eines stillen Verlusts.
-                _ => Some(serde_json::Value::Array(
-                    results
-                        .iter()
-                        .map(crate::values::to_json)
-                        .collect::<Result<Vec<_>>>()?,
-                )),
-            })
-        }
-    })();
+    let outcome = body(store);
 
     if let Some((stop_tx, handle)) = watchdog {
         let _ = stop_tx.send(());
         let _ = handle.join();
     }
+    outcome
+}
 
-    let result = outcome?;
-    let bytes = stdout.contents();
-    Ok(InvocationOutcome {
-        truncated: bytes.len() >= limits.max_output_bytes,
-        stdout: String::from_utf8_lossy(&bytes).into_owned(),
-        result,
+/// Löst den Export über seinen Pfad auf, übersetzt Argumente und Ergebnis. `trapped` wird nur
+/// gesetzt, wenn der Guest selbst gescheitert ist — ein Übersetzungsfehler ist ein Aufruferfehler
+/// und darf eine laufende Sitzung nicht verwerfen.
+fn call_export(
+    store: &mut Store<WasiGuestHost>,
+    instance: &wasmtime::component::Instance,
+    descriptor: &ToolDescriptor,
+    tool: &str,
+    args: &[serde_json::Value],
+    bridge: &mut values::ValueBridge<'_>,
+    trapped: &mut bool,
+) -> Result<Option<serde_json::Value>> {
+    // Der Pfad statt des Namens: Bei einer Funktion in einem exportierten Interface muss
+    // erst die Instanz aufgelöst werden, und Interface-Namen enthalten selbst Punkte —
+    // aus dem zusammengesetzten Namen liesse sich die Grenze nicht zurückgewinnen.
+    let mut parent = None;
+    let (last, parents) = descriptor
+        .path
+        .split_last()
+        .context("Tool ohne Adressierungspfad")?;
+    for segment in parents {
+        parent = Some(
+            instance
+                .get_export_index(&mut *store, parent.as_ref(), segment)
+                .with_context(|| format!("Interface '{segment}' nicht gefunden"))?,
+        );
+    }
+    let index = instance
+        .get_export_index(&mut *store, parent.as_ref(), last)
+        .with_context(|| format!("export '{tool}' nicht gefunden"))?;
+    let func = instance
+        .get_func(&mut *store, index)
+        .with_context(|| format!("export '{tool}' ist keine aufrufbare Funktion"))?;
+
+    if args.len() != descriptor.params.len() {
+        bail!(
+            "'{tool}' erwartet {} Argument(e), bekam {}",
+            descriptor.params.len(),
+            args.len()
+        );
+    }
+    let arguments = descriptor
+        .params
+        .iter()
+        .zip(args)
+        .map(|(param, json)| {
+            values::to_val(&param.type_descriptor, json, bridge)
+                .with_context(|| format!("Argument '{}'", param.name))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    // Der dynamische Pfad statt `get_typed_func`: Nur so lassen sich list<u8>, result<T,E>
+    // und die übrigen abbildbaren Typen überhaupt übergeben.
+    let mut results = vec![wasmtime::component::Val::Bool(false); descriptor.results.len()];
+    if let Err(error) = func.call(&mut *store, &arguments, &mut results) {
+        *trapped = true;
+        return Err(error.into());
+    }
+
+    Ok(match results.len() {
+        0 => None,
+        1 => Some(values::to_json(&results[0], bridge)?),
+        // Mehrere Rückgabewerte gibt es im Component Model praktisch nicht mehr; falls
+        // doch, wird daraus ein Array statt eines stillen Verlusts.
+        _ => Some(serde_json::Value::Array(
+            results
+                .iter()
+                .map(|item| values::to_json(item, bridge))
+                .collect::<Result<Vec<_>>>()?,
+        )),
     })
 }
 
@@ -2654,6 +2841,239 @@ mod tests {
             .is_err(),
             "ein Fuel-Budget von 1 muss den Aufruf abbrechen"
         );
+        Ok(())
+    }
+
+    /// Grants, die ein mit `wasm32-wasip2` gebauter Rust-Guest braucht: std zieht
+    /// `wasi:cli/environment` mit, auch wenn der Guest es nicht benutzt.
+    #[cfg(test)]
+    fn wasip2_guest_grants() -> CapabilityGrants {
+        let mut grants = CapabilityGrants::default();
+        grants.environment.insert("MCPMCP_SPIKE".to_owned());
+        grants
+    }
+
+    /// Der Kernnachweis für Resources: Ein Handle überlebt den Aufruf, der es erzeugt hat, und der
+    /// Zustand dahinter zählt weiter. Ohne persistente Instanz wäre jeder `bump` wieder bei Null.
+    #[test]
+    fn a_resource_handle_keeps_its_state_across_calls() -> Result<()> {
+        let grants = wasip2_guest_grants();
+        let limits = ExecutionLimits::default();
+        let mut cache = ModuleCache::default();
+        let module = cache.compile(COUNTER_COMPONENT, &grants, &limits)?;
+        let mut session = None;
+
+        let call = |session: &mut Option<GuestSession>,
+                    tool: &str,
+                    args: &[serde_json::Value]|
+         -> Result<Option<serde_json::Value>> {
+            Ok(invoke_cached_module_in(
+                &module,
+                &grants,
+                &Default::default(),
+                tool,
+                args,
+                &limits,
+                "alice",
+                Some(session),
+            )?
+            .result)
+        };
+
+        let handle = call(
+            &mut session,
+            "mcpmcp:counter/counters@0.1.0.[constructor]counter",
+            &[serde_json::json!(10)],
+        )?
+        .expect("Konstruktor gibt ein Handle zurück");
+        assert_eq!(handle, serde_json::json!({"handle": "res-1"}));
+
+        // Zwei Aufrufe auf demselben Handle — der zweite baut auf dem Ergebnis des ersten auf.
+        let after_first = call(
+            &mut session,
+            "mcpmcp:counter/counters@0.1.0.[method]counter.bump",
+            &[handle.clone(), serde_json::json!(5)],
+        )?;
+        let after_second = call(
+            &mut session,
+            "mcpmcp:counter/counters@0.1.0.[method]counter.bump",
+            &[handle.clone(), serde_json::json!(7)],
+        )?;
+        assert_eq!(after_first, Some(serde_json::json!(15)));
+        assert_eq!(after_second, Some(serde_json::json!(22)));
+
+        // Und eine freie Funktion nimmt dasselbe Handle entgegen: der Weg vom Aufrufer zurück
+        // in den Guest, nicht bloß Methodenaufruf auf sich selbst.
+        let doubled = call(
+            &mut session,
+            "mcpmcp:counter/counters@0.1.0.double-of",
+            &[handle],
+        )?;
+        assert_eq!(doubled, Some(serde_json::json!(44)));
+        assert_eq!(session.expect("Sitzung lebt").handle_count(), 1);
+        Ok(())
+    }
+
+    /// Zwei Handles nebeneinander: Der Zustand hängt am Handle, nicht an der Instanz. Sonst wäre
+    /// die ganze Konstruktion nur ein globaler Zähler mit Zeremonie.
+    #[test]
+    fn two_handles_hold_separate_state() -> Result<()> {
+        let grants = wasip2_guest_grants();
+        let limits = ExecutionLimits::default();
+        let mut cache = ModuleCache::default();
+        let module = cache.compile(COUNTER_COMPONENT, &grants, &limits)?;
+        let mut session = None;
+        let mut call = |tool: &str, args: &[serde_json::Value]| -> Result<serde_json::Value> {
+            invoke_cached_module_in(
+                &module,
+                &grants,
+                &Default::default(),
+                tool,
+                args,
+                &limits,
+                "alice",
+                Some(&mut session),
+            )
+            .map(|outcome| outcome.result.unwrap_or(serde_json::Value::Null))
+        };
+
+        let first = call(
+            "mcpmcp:counter/counters@0.1.0.[constructor]counter",
+            &[serde_json::json!(0)],
+        )?;
+        let second = call(
+            "mcpmcp:counter/counters@0.1.0.[constructor]counter",
+            &[serde_json::json!(100)],
+        )?;
+        assert_ne!(first, second);
+
+        call(
+            "mcpmcp:counter/counters@0.1.0.[method]counter.bump",
+            &[first.clone(), serde_json::json!(1)],
+        )?;
+        assert_eq!(
+            call(
+                "mcpmcp:counter/counters@0.1.0.[method]counter.value",
+                &[first]
+            )?,
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            call(
+                "mcpmcp:counter/counters@0.1.0.[method]counter.value",
+                &[second]
+            )?,
+            serde_json::json!(100)
+        );
+        Ok(())
+    }
+
+    /// Handles gehören einem Aufrufer. Wer den Namen kennt, aber nicht der Eigentümer ist, kommt
+    /// nicht heran — und die Meldung verrät auch nicht, dass es den Namen gibt.
+    #[test]
+    fn a_handle_belongs_to_its_caller() -> Result<()> {
+        let grants = wasip2_guest_grants();
+        let limits = ExecutionLimits::default();
+        let mut cache = ModuleCache::default();
+        let module = cache.compile(COUNTER_COMPONENT, &grants, &limits)?;
+        let mut session = None;
+        let mut call =
+            |caller: &str, tool: &str, args: &[serde_json::Value]| -> Result<InvocationOutcome> {
+                invoke_cached_module_in(
+                    &module,
+                    &grants,
+                    &Default::default(),
+                    tool,
+                    args,
+                    &limits,
+                    caller,
+                    Some(&mut session),
+                )
+            };
+
+        let handle = call(
+            "alice",
+            "mcpmcp:counter/counters@0.1.0.[constructor]counter",
+            &[serde_json::json!(3)],
+        )?
+        .result
+        .expect("Handle");
+
+        let failure = call(
+            "mallory",
+            "mcpmcp:counter/counters@0.1.0.[method]counter.value",
+            std::slice::from_ref(&handle),
+        )
+        .unwrap_err();
+        let message = format!("{failure:#}");
+        assert!(message.contains("unbekannt"), "{message}");
+
+        // Der Eigentümer selbst kommt weiterhin heran — der abgewiesene Fremdzugriff hat die
+        // Sitzung nicht verworfen.
+        assert_eq!(
+            call(
+                "alice",
+                "mcpmcp:counter/counters@0.1.0.[method]counter.value",
+                &[handle],
+            )?
+            .result,
+            Some(serde_json::json!(3))
+        );
+        Ok(())
+    }
+
+    /// Ohne persistente Instanz gibt es keine Handles — und der Fehler sagt, woran es liegt,
+    /// statt einen Typfehler zu melden.
+    #[test]
+    fn resources_need_a_persistent_instance() -> Result<()> {
+        let grants = wasip2_guest_grants();
+        let failure = invoke_component_tool(
+            COUNTER_COMPONENT,
+            &grants,
+            "mcpmcp:counter/counters@0.1.0.[constructor]counter",
+            &[serde_json::json!(1)],
+            &ExecutionLimits::default(),
+        )
+        .unwrap_err();
+
+        let message = format!("{failure:#}");
+        assert!(message.contains("persistente Instanz"), "{message}");
+        Ok(())
+    }
+
+    /// Discovery: Die Resource-Exports stehen mit ihren Handle-Typen im Katalog, statt als
+    /// „nicht unterstützt" zu erscheinen.
+    #[test]
+    fn resource_exports_are_discovered_as_handles() -> Result<()> {
+        use crate::values::TypeDescriptor;
+
+        let tools = describe_component_tools(COUNTER_COMPONENT)?;
+        let named = |name: &str| {
+            tools
+                .iter()
+                .find(|tool| tool.name == name)
+                .unwrap_or_else(|| panic!("{name} fehlt im Katalog: {tools:?}"))
+                .clone()
+        };
+
+        let constructor = named("mcpmcp:counter/counters@0.1.0.[constructor]counter");
+        assert!(
+            constructor.supported,
+            "{:?}",
+            constructor.unsupported_reason
+        );
+        assert_eq!(
+            constructor.results[0],
+            TypeDescriptor::Resource { borrowed: false }
+        );
+
+        // Der Selbstparameter einer Methode ist geliehen — das Handle bleibt dem Aufrufer.
+        let bump = named("mcpmcp:counter/counters@0.1.0.[method]counter.bump");
+        assert_eq!(
+            bump.params[0].type_descriptor,
+            TypeDescriptor::Resource { borrowed: true }
+        );
+        assert_eq!(bump.results[0], TypeDescriptor::S32);
         Ok(())
     }
 

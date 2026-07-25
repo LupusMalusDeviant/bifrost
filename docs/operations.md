@@ -145,6 +145,27 @@ curl -X POST http://localhost:8080/api/v1/publishers \
   Component kann also alle gesetzten Variablen lesen.
 - Jeder Load steht im Audit: Modulhash, Publisher, Runtime und die tatsächlich erteilten Grants.
 
+### Resources: `Wasi.PersistentInstance`
+
+Manche Components geben `resource`-Handles aus — ein Handle ist ein Index in die Guest-Instanz, die
+es ausgegeben hat, und überlebt den Aufruf. Damit das funktioniert, muss die Instanz leben bleiben:
+`Wasi.PersistentInstance: true`. Ohne das Flag bekommt jeder Aufruf eine frische Instanz, und der
+Host weist Resource-Aufrufe mit genau dieser Begründung ab.
+
+Über die Leitung ist ein Handle ein undurchsichtiges Objekt (`{"handle": "res-1"}`); der Wert
+bleibt im Host. Jedes Handle gehört dem Aufrufer, für den es entstanden ist — ein anderer bekommt
+„Handle ist unbekannt", ob es den Namen nun gibt oder nicht.
+
+**Die Auflage dazu:** Eine persistente Instanz teilt ihren **internen** Zustand (Globals, linearer
+Speicher) zwischen allen Aufrufern desselben Upstreams. Die Handle-Trennung ändert daran nichts —
+sie verhindert nur, dass ein Aufrufer ein fremdes Handle benennt. Das Flag gehört deshalb nur an
+Upstreams, die Resources wirklich brauchen, und nur an Components, denen man das Zusammenlegen
+zutraut. Wer strikte Trennung braucht, legt pro Mandant einen eigenen Upstream an.
+
+Betriebliches: `health` meldet die offenen Handles der Instanz; über 256 lehnt der Host neue ab.
+Ein Trap verwirft die Instanz samt Handles, der nächste Aufruf startet frisch. Ein Reload (neues
+Component, Hot-Swap) beendet die Instanz ebenfalls — Handles von davor sind danach ungültig.
+
 ### Kapazität: ein Aufruf pro Upstream gleichzeitig
 
 Der IPC-Vertrag ist strikt request/response, die Verbindung zum Host serialisiert. Ein langsames

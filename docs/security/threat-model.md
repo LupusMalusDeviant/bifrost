@@ -89,6 +89,15 @@ prüft die Signatur, setzt Grants durch und führt aus. Vollständiger Review:
   auflisten, nicht nur die eigenen. Bewusste Folge der gewählten Injektionsform; eine eigene
   WASI-Secret-Schnittstelle wäre enger, war aber nicht gewollt. Werte stehen in keiner Antwort und
   keinem Audit.
+- **WASI: eine persistente Instanz teilt internen Zustand zwischen Aufrufern.** Mit
+  `Wasi.PersistentInstance` (nötig für `resource`-Handles) lebt **eine** Guest-Instanz pro Upstream.
+  Handles sind pro Aufrufer getrennt — ein fremdes Handle ist „unbekannt", ohne zu verraten, ob es
+  existiert. Der **interne** Zustand des Components (Globals, linearer Speicher) ist davon nicht
+  berührt: Ein Component kann quer über Aufrufer hinweg Zustand führen, und ein bösartiges tut das.
+  Deshalb ist das Flag **aus** voreingestellt und gehört nur an Upstreams, die Resources brauchen.
+  Wer strikte Trennung braucht, legt pro Mandant einen eigenen Upstream an. Eine Instanz je
+  Aufrufer wäre die technische Antwort und ist bewusst nicht gebaut — sie kostet Speicher und
+  Instanziierungszeit je Aufrufer.
 - **WASI: Platten-Cache schützt nicht gegen „gleicher Benutzer".** Kompilate sind ausführbarer
   Code, den die Publisher-Signatur nicht abdeckt; sie tragen deshalb einen HMAC unter einem
   host-lokalen Schlüssel. Das schützt gegen fremden Schreibzugriff und Bitfehler — wer als der

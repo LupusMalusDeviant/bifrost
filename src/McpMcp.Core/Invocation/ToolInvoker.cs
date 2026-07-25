@@ -184,7 +184,12 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
 
         try
         {
-            var content = await connection.CallToolAsync(upstreamToolName, request.Arguments, effectiveCt)
+            // Wo die Identität zählt, geht sie mit (Plan 0003, Resources): Ein WASI-Upstream mit
+            // persistenter Instanz schreibt seine Handles auf diesen Namen. Alle anderen
+            // Connectoren kennen das Merkmal nicht und bekommen den bisherigen Aufruf.
+            var content = await (connection is ICallerAwareUpstreamConnection aware
+                    ? aware.CallToolAsync(request.Caller.ToString(), upstreamToolName, request.Arguments, effectiveCt)
+                    : connection.CallToolAsync(upstreamToolName, request.Arguments, effectiveCt))
                 .ConfigureAwait(false);
 
             // FR-16: Kürzen erst hier, nach dem Upstream-Call — das Audit soll die tatsächlich
