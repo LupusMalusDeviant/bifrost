@@ -199,6 +199,23 @@ public static partial class UpstreamConfigValidator
             throw new ArgumentException(
                 "Wasi.ModuleCacheDirectory muss ein absoluter Pfad sein.", nameof(config));
         }
+
+        if (wasi.ModuleCacheMaxBytes is { } budget)
+        {
+            if (budget < 0)
+            {
+                throw new ArgumentException(
+                    "Wasi.ModuleCacheMaxBytes darf nicht negativ sein (0 = unbegrenzt).", nameof(config));
+            }
+
+            if (wasi.ModuleCacheDirectory is null)
+            {
+                // Sonst stellt jemand ein Budget ein und wundert sich, dass gar nicht gecacht wird.
+                throw new ArgumentException(
+                    "Wasi.ModuleCacheMaxBytes ohne Wasi.ModuleCacheDirectory hat keine Wirkung.",
+                    nameof(config));
+            }
+        }
     }
 
     /// <summary>

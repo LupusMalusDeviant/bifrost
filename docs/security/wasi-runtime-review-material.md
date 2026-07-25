@@ -56,8 +56,11 @@ die **Guest-Grenze** (Host ↔ Component, durchgesetzt von Wasmtime plus dem Gra
 5. **Trust-Store-Schreibzugriff.** Wer `/api/v1/publishers` bedienen darf (Global-Grant-Admin),
    entscheidet, welcher fremde Code laufen darf. Der Store liegt unverschlüsselt in der DB —
    Public Keys sind kein Geheimnis, aber ihre **Integrität** hängt am DB-Schreibzugriff.
-6. **Ressourcenverbrauch.** Ein Host-Prozess pro Upstream, Modul-Cache im Prozess. Speicher wächst
-   mit Anzahl Upstreams × Modulgröße; es gibt keine Obergrenze für die Cache-Größe.
+6. **Ressourcenverbrauch.** Ein Host-Prozess pro Upstream, Modul-Cache im Prozess. Beide
+   Cache-Ebenen sind jetzt begrenzt (8 Kompilate im Speicher, 256 MiB auf Platte, Verdrängung nach
+   Nutzung). Die Grenze im Speicher zählt **Einträge, nicht Byte** — Wasmtime gibt den
+   Speicherbedarf eines fertigen `Component` nicht her. Bei sehr großen Modulen bleibt der
+   Verbrauch damit nach oben offen; zu prüfen, ob das für die vorgesehene Betriebsgröße reicht.
 7. **Prozess-Lifecycle.** Start/Kill über die bestehende ProcessHygiene (ADR-0005). Ein hängender
    Host wird beim Dispose hart beendet; ein Zombie-Kindprozess des Hosts selbst ist nicht getestet.
 
@@ -65,9 +68,9 @@ die **Guest-Grenze** (Host ↔ Component, durchgesetzt von Wasmtime plus dem Gra
 
 - **Schreibende Preopens.** Heute nicht ausdrückbar. Ob und wie das Grant-Modell sie bekommt, ist
   eine Produktentscheidung.
-- **Cache-Obergrenze.** Weder Speicher- noch Platten-Cache haben eine Größen- oder
-  Eintragsgrenze; auf Platte wächst das Verzeichnis mit jeder Modul-/Grant-/Profil-Kombination.
-  Ob es eine Grenze oder ein Aufräumen braucht, ist offen.
+- **Angemessenheit der Cache-Grenzen.** Umgesetzt sind 8 Einträge im Speicher und 256 MiB auf
+  Platte. Ob die Vorgaben für die vorgesehene Betriebsgröße passen — und ob die Speichergrenze in
+  Einträgen statt Byte ausreicht — ist eine Betriebsentscheidung.
 
 ## Für die Neubewertung von ADR-0017
 

@@ -8,6 +8,9 @@ use mcpmcp_wasi_component_spike::{
     compare_with_container, discover_wit, pinned_publisher, run_runtime_probe,
 };
 
+const HOST_USAGE: &str =
+    "usage: mcpmcp-wasi-component-spike host [--cache-dir <pfad>] [--cache-max-bytes <n>]";
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("{error:#}");
@@ -71,20 +74,41 @@ fn run() -> Result<()> {
         Some("host") => {
             // Ohne --cache-dir bleibt der Modul-Cache prozesslokal. Ein Verzeichnis wird NICHT
             // geraten: Ein weltschreibbares Temp-Verzeichnis waere hier die falsche Vorgabe.
-            let cache_directory = match arguments.next().as_deref() {
-                None => None,
-                Some("--cache-dir") => {
-                    Some(arguments.next().context("--cache-dir braucht einen Pfad")?)
+            let mut cache_directory: Option<String> = None;
+            let mut cache_max_bytes: Option<u64> = None;
+            while let Some(argument) = arguments.next() {
+                match argument.as_str() {
+                    "--cache-dir" => {
+                        cache_directory =
+                            Some(arguments.next().context("--cache-dir braucht einen Pfad")?);
+                    }
+                    "--cache-max-bytes" => {
+                        cache_max_bytes = Some(
+                            arguments
+                                .next()
+                                .context("--cache-max-bytes braucht eine Zahl")?
+                                .parse()
+                                .context(
+                                    "--cache-max-bytes muss eine Byte-Zahl sein (0 = unbegrenzt)",
+                                )?,
+                        );
+                    }
+                    other => bail!("unbekanntes Argument '{other}' — {HOST_USAGE}"),
                 }
-                Some(other) => bail!(
-                    "unbekanntes Argument '{other}' — usage: mcpmcp-wasi-component-spike host [--cache-dir <pfad>]"
-                ),
-            };
-            if arguments.next().is_some() {
-                bail!("usage: mcpmcp-wasi-component-spike host [--cache-dir <pfad>]");
             }
+            if cache_max_bytes.is_some() && cache_directory.is_none() {
+                bail!("--cache-max-bytes ohne --cache-dir hat keine Wirkung");
+            }
+
             let disk_cache = cache_directory
-                .map(mcpmcp_wasi_component_spike::disk_cache::DiskCache::open)
+                .map(|directory| match cache_max_bytes {
+                    Some(budget) => {
+                        mcpmcp_wasi_component_spike::disk_cache::DiskCache::open_with_budget(
+                            directory, budget,
+                        )
+                    }
+                    None => mcpmcp_wasi_component_spike::disk_cache::DiskCache::open(directory),
+                })
                 .transpose()?;
             let stdin = std::io::stdin();
             let stdout = std::io::stdout();

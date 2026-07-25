@@ -18,7 +18,8 @@ public class UpstreamConfigValidatorTests
         WasiExecutionLimits? limits = null,
         WasiCapabilityGrants? grants = null,
         IReadOnlyDictionary<string, string>? secrets = null,
-        string? cacheDirectory = null) => new(
+        string? cacheDirectory = null,
+        long? cacheMaxBytes = null) => new(
         "wasi", "WASI", UpstreamTransportKind.Wasi, Enabled: true,
         Wasi: new WasiTransportOptions(
             "host.exe", "component.wasm", "component.sig",
@@ -26,7 +27,8 @@ public class UpstreamConfigValidatorTests
             Grants: grants,
             Limits: limits,
             Secrets: secrets,
-            ModuleCacheDirectory: cacheDirectory));
+            ModuleCacheDirectory: cacheDirectory,
+            ModuleCacheMaxBytes: cacheMaxBytes));
 
     [Fact]
     public void Valid_wasi_config_passes()
@@ -108,6 +110,21 @@ public class UpstreamConfigValidatorTests
 
         relative.Should().Throw<ArgumentException>().WithMessage("*absoluter Pfad*");
         absolute.Should().NotThrow();
+    }
+
+    [Fact]
+    public void Wasi_module_cache_budget_needs_a_directory_and_may_not_be_negative()
+    {
+        var withoutDirectory = () => UpstreamConfigValidator.Validate(Wasi(cacheMaxBytes: 1024));
+        var negative = () => UpstreamConfigValidator.Validate(
+            Wasi(cacheDirectory: Path.GetTempPath(), cacheMaxBytes: -1));
+        // 0 heisst ausdruecklich unbegrenzt und ist damit gueltig.
+        var unlimited = () => UpstreamConfigValidator.Validate(
+            Wasi(cacheDirectory: Path.GetTempPath(), cacheMaxBytes: 0));
+
+        withoutDirectory.Should().Throw<ArgumentException>().WithMessage("*keine Wirkung*");
+        negative.Should().Throw<ArgumentException>().WithMessage("*nicht negativ*");
+        unlimited.Should().NotThrow();
     }
 
     [Fact]

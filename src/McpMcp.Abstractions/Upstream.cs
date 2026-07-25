@@ -207,7 +207,14 @@ public sealed record WasiTransportOptions(
     /// eignet sich ein Pfad unter <c>/data</c>.
     /// </para>
     /// </summary>
-    string? ModuleCacheDirectory = null);
+    string? ModuleCacheDirectory = null,
+    /// <summary>
+    /// Obergrenze der Belegung des Platten-Caches in Byte. Ohne Angabe gilt die Vorgabe des Hosts
+    /// (256 MiB); <c>0</c> heißt ausdrücklich unbegrenzt. Über der Grenze verdrängt der Host die
+    /// am längsten nicht genutzten Kompilate — ein verdrängter Eintrag kostet nur eine erneute
+    /// Kompilierung. Ohne <see cref="ModuleCacheDirectory"/> hat der Wert keine Wirkung.
+    /// </summary>
+    long? ModuleCacheMaxBytes = null);
 
 /// <summary>
 /// Die Host-Capabilities, die ein Component erhält — Spiegel des Grant-Modells im Rust-Host.

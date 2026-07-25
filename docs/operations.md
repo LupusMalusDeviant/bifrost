@@ -167,6 +167,12 @@ geladen. Daraus folgen zwei Betriebsauflagen:
   als derselbe Benutzer läuft — der liest den Schlüssel und könnte ohnehin das Host-Binary
   austauschen.
 
+**Obergrenzen** halten beides endlich: Im Speicher hält der Host höchstens 8 Kompilate und
+verdrängt das am längsten nicht genutzte; auf Platte gilt ein Budget von 256 MiB, über
+`Wasi.ModuleCacheMaxBytes` einstellbar (`0` = ausdrücklich unbegrenzt). Verdrängt wird nach
+Nutzung, nicht nach Schreibalter — ein Treffer stempelt seinen Eintrag frisch. Ein verdrängtes
+Kompilat kostet nur eine erneute Kompilierung. `mac.key` wird beim Aufräumen nie angefasst.
+
 `mac.key` löschen macht alle Einträge ungültig (sie werden verworfen und neu erzeugt) — der Weg,
 einen Cache-Verdacht auszuräumen. Im `health`-Signal des Hosts stehen `diskHits` und `diskErrors`;
 bleibt `diskHits` bei 0 und `diskErrors` steigt, sind meist die Verzeichnisrechte falsch.

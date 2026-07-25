@@ -68,6 +68,11 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
             // Der Host legt dort seinen MAC-Schlüssel ab und prüft jedes Kompilat dagegen (WP5).
             startInfo.ArgumentList.Add("--cache-dir");
             startInfo.ArgumentList.Add(options.ModuleCacheDirectory);
+            if (options.ModuleCacheMaxBytes is { } budget)
+            {
+                startInfo.ArgumentList.Add("--cache-max-bytes");
+                startInfo.ArgumentList.Add(budget.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
         }
 
         foreach (var argument in options.HostArguments ?? [])

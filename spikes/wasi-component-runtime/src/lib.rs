@@ -535,6 +535,12 @@ pub struct ModuleCacheStats {
     /// Verworfene oder nicht schreibbare Platten-Einträge. Sichtbar, damit ein stummer
     /// Cache-Ausfall (falsche Rechte, MAC-Fehler) nicht als „kompiliert eben immer neu" endet.
     pub disk_errors: u64,
+    /// Aus dem Speicher-Cache verdrängte Kompilate (Obergrenze erreicht).
+    pub evictions: u64,
+    /// Vom Platten-Cache gelöschte Einträge, weil das Budget erreicht war.
+    pub disk_evictions: u64,
+    /// Belegung des Platten-Caches nach dem letzten Aufräumen, in Byte.
+    pub disk_bytes: u64,
 }
 
 /// Content-adressierter Cache kompilierter Components (WP5.1).
@@ -549,13 +555,44 @@ pub struct ModuleCacheStats {
 /// - **Grant-Fingerabdruck** — heute beeinflussen Grants nur das Linken, nicht die Kompilierung.
 ///   Er steht trotzdem im Schlüssel: Ein Eintrag soll nie über eine Grant-Änderung hinweg
 ///   weiterverwendet werden, falls das Linken einmal ins Kompilat wandert.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ModuleCache {
-    entries: std::collections::HashMap<String, CachedModule>,
+    entries: std::collections::HashMap<String, CacheEntry>,
     stats: ModuleCacheStats,
     /// Optionaler Platten-Cache. Ohne konfiguriertes Verzeichnis bleibt der Cache prozesslokal —
     /// ein Verzeichnis lässt sich nicht sicher erraten, also wird keines gewählt.
     disk: Option<crate::disk_cache::DiskCache>,
+    /// Obergrenze der Kompilate im Speicher. Gezählt wird in Einträgen, nicht in Byte: Wasmtime
+    /// gibt den Speicherbedarf eines fertigen `Component` nicht her, und ihn über `serialize()`
+    /// zu schätzen würde genau die Arbeit kosten, die der Cache einsparen soll.
+    max_modules: usize,
+    /// Monoton steigender Zähler für die Verdrängungsreihenfolge (LRU).
+    clock: u64,
+}
+
+/// Ein Kompilat samt letztem Zugriff. Der Zeitstempel gehört in den Cache, nicht in das
+/// öffentliche [`CachedModule`], das der Aufrufer geklont bekommt.
+#[derive(Debug)]
+struct CacheEntry {
+    module: CachedModule,
+    last_used: u64,
+}
+
+/// Vorgabe für die Zahl der Kompilate im Speicher. Ein Host bedient einen Upstream; mehrere
+/// Einträge entstehen nur über verschiedene Grant-Sätze oder Limit-Profile desselben Components.
+/// Acht ist reichlich und begrenzt trotzdem, was ein wechselndes Limit-Profil anhäufen kann.
+pub const DEFAULT_MAX_MEMORY_MODULES: usize = 8;
+
+impl Default for ModuleCache {
+    fn default() -> Self {
+        Self {
+            entries: std::collections::HashMap::new(),
+            stats: ModuleCacheStats::default(),
+            disk: None,
+            max_modules: DEFAULT_MAX_MEMORY_MODULES,
+            clock: 0,
+        }
+    }
 }
 
 impl std::fmt::Debug for CachedModule {
@@ -571,10 +608,15 @@ impl ModuleCache {
     /// Cache mit Platten-Rückhalt: Kompilate überleben den Prozess (WP5).
     pub fn with_disk(disk: crate::disk_cache::DiskCache) -> Self {
         Self {
-            entries: std::collections::HashMap::new(),
-            stats: ModuleCacheStats::default(),
             disk: Some(disk),
+            ..Self::default()
         }
+    }
+
+    /// Setzt die Obergrenze der Kompilate im Speicher (mindestens eines).
+    pub fn with_max_modules(mut self, max_modules: usize) -> Self {
+        self.max_modules = max_modules.max(1);
+        self
     }
 
     /// Liefert das Kompilat aus dem Cache oder erzeugt es. Ein Fehlschlag hinterlässt keinen
@@ -587,9 +629,11 @@ impl ModuleCache {
         limits: &ExecutionLimits,
     ) -> Result<CachedModule> {
         let key = Self::key(component_bytes, grants, limits);
-        if let Some(cached) = self.entries.get(&key) {
+        self.clock += 1;
+        if let Some(entry) = self.entries.get_mut(&key) {
+            entry.last_used = self.clock;
             self.stats.hits += 1;
-            return Ok(cached.clone());
+            return Ok(entry.module.clone());
         }
 
         let mut config = Config::new();
@@ -608,9 +652,8 @@ impl ModuleCache {
                 component,
                 compile: Duration::ZERO,
             };
-            self.entries.insert(key, module.clone());
+            self.remember(key, module.clone());
             self.stats.disk_hits += 1;
-            self.stats.entries = self.entries.len();
             self.stats.last_compile_ms = 0.0;
             return Ok(module);
         }
@@ -619,13 +662,19 @@ impl ModuleCache {
         let component = Component::from_binary(&engine, component_bytes)?;
         let compile = started.elapsed();
 
-        if let Some(disk) = self.disk.as_ref()
-            && let Err(failure) = disk.store(&key, &component)
-        {
-            // Ein nicht schreibbarer Cache darf den Aufruf nicht scheitern lassen — er kostet
-            // dann nur wieder Kompilierzeit. Sichtbar bleibt er über disk_errors und stderr.
-            self.stats.disk_errors += 1;
-            eprintln!("wasi-host: Kompilat nicht ablegbar: {failure:#}");
+        if let Some(disk) = self.disk.as_ref() {
+            match disk.store(&key, &component) {
+                Ok(pruned) => {
+                    self.stats.disk_evictions += pruned.evicted;
+                    self.stats.disk_bytes = pruned.bytes;
+                }
+                Err(failure) => {
+                    // Ein nicht schreibbarer Cache darf den Aufruf nicht scheitern lassen — er
+                    // kostet dann nur wieder Kompilierzeit. Sichtbar bleibt er über disk_errors.
+                    self.stats.disk_errors += 1;
+                    eprintln!("wasi-host: Kompilat nicht ablegbar: {failure:#}");
+                }
+            }
         }
 
         let module = CachedModule {
@@ -633,9 +682,8 @@ impl ModuleCache {
             component,
             compile,
         };
-        self.entries.insert(key, module.clone());
+        self.remember(key, module.clone());
         self.stats.misses += 1;
-        self.stats.entries = self.entries.len();
         self.stats.last_compile_ms = compile.as_secs_f64() * 1_000.0;
         self.stats.total_compile_ms += self.stats.last_compile_ms;
         Ok(module)
@@ -643,6 +691,34 @@ impl ModuleCache {
 
     pub fn stats(&self) -> &ModuleCacheStats {
         &self.stats
+    }
+
+    /// Nimmt ein Kompilat auf und verdrängt bei Überschreitung der Obergrenze das am längsten
+    /// nicht genutzte. Ein verdrängtes Kompilat ist kein Verlust, nur eine spätere Kompilierung —
+    /// und auf Platte liegt es meist noch.
+    fn remember(&mut self, key: String, module: CachedModule) {
+        self.entries.insert(
+            key,
+            CacheEntry {
+                module,
+                last_used: self.clock,
+            },
+        );
+
+        while self.entries.len() > self.max_modules {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            self.entries.remove(&oldest);
+            self.stats.evictions += 1;
+        }
+
+        self.stats.entries = self.entries.len();
     }
 
     fn key(component_bytes: &[u8], grants: &CapabilityGrants, limits: &ExecutionLimits) -> String {
@@ -1909,6 +1985,48 @@ mod tests {
             0,
             "keiner dieser Fälle darf ein Treffer sein"
         );
+        Ok(())
+    }
+
+    /// Obergrenze im Speicher: Der Cache wächst nicht unbegrenzt, und verdrängt wird das am
+    /// längsten nicht genutzte Kompilat — nicht das zuletzt eingefügte.
+    #[test]
+    fn the_memory_cache_evicts_the_least_recently_used_module() -> Result<()> {
+        let engine = hardened_engine(false, false)?;
+        let (first, _) = compile_component(&engine, NO_IMPORT_COMPONENT)?;
+        let mut cache = ModuleCache::default().with_max_modules(2);
+        let limits = ExecutionLimits::default();
+
+        // Drei verschiedene Grant-Sätze = drei Schlüssel für denselben Inhalt.
+        let grants: Vec<CapabilityGrants> = ["a", "b", "c"]
+            .iter()
+            .map(|name| {
+                let mut grants = CapabilityGrants::default();
+                grants.environment.insert((*name).to_owned());
+                grants
+            })
+            .collect();
+
+        cache.compile(&first, &grants[0], &limits)?;
+        cache.compile(&first, &grants[1], &limits)?;
+        // Auf a zugreifen macht b zum ältesten Eintrag.
+        cache.compile(&first, &grants[0], &limits)?;
+        cache.compile(&first, &grants[2], &limits)?;
+
+        assert_eq!(cache.stats().entries, 2, "die Obergrenze hält");
+        assert_eq!(cache.stats().evictions, 1);
+        // a war zuletzt benutzt und muss noch da sein: erneuter Zugriff ist ein Treffer.
+        let hits_before = cache.stats().hits;
+        cache.compile(&first, &grants[0], &limits)?;
+        assert_eq!(
+            cache.stats().hits,
+            hits_before + 1,
+            "a wurde nicht verdrängt"
+        );
+        // b war am längsten unbenutzt und ist weg: erneuter Zugriff kompiliert.
+        let misses_before = cache.stats().misses;
+        cache.compile(&first, &grants[1], &limits)?;
+        assert_eq!(cache.stats().misses, misses_before + 1, "b wurde verdrängt");
         Ok(())
     }
 

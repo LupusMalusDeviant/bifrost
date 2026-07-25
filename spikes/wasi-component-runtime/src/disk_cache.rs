@@ -40,11 +40,26 @@ const MAGIC: &[u8; 8] = b"MCPMCPCW";
 const FORMAT_VERSION: u8 = 1;
 const KEY_FILE: &str = "mac.key";
 const KEY_BYTES: usize = 32;
+/// Dateiendung der Einträge. Das Aufräumen fasst nur diese an — `mac.key` bleibt liegen.
+const ENTRY_EXTENSION: &str = "cwasm";
+
+/// Vorgabe für die Belegung des Cache-Verzeichnisses. Ein Kompilat ist deutlich größer als das
+/// Component; 256 MiB fassen auch mehrere große Plugins und bleiben für ein Datenvolumen zumutbar.
+pub const DEFAULT_MAX_DISK_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Ergebnis eines Aufräumdurchgangs: Belegung danach und wie viele Einträge dafür weichen mussten.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PruneOutcome {
+    pub bytes: u64,
+    pub evicted: u64,
+}
 
 /// Ein Verzeichnis mit MAC-gesicherten Kompilaten plus dem host-lokalen Schlüssel dazu.
 pub struct DiskCache {
     directory: PathBuf,
     mac_key: [u8; KEY_BYTES],
+    /// Obergrenze der Belegung. Überschreitung räumt die am längsten nicht genutzten Einträge ab.
+    max_bytes: u64,
 }
 
 impl std::fmt::Debug for DiskCache {
@@ -65,11 +80,28 @@ impl DiskCache {
             format!("Cache-Verzeichnis '{}' nicht anlegbar", directory.display())
         })?;
         let mac_key = load_or_create_key(&directory.join(KEY_FILE))?;
-        Ok(Self { directory, mac_key })
+        Ok(Self {
+            directory,
+            mac_key,
+            max_bytes: DEFAULT_MAX_DISK_BYTES,
+        })
+    }
+
+    /// Wie [`Self::open`], aber mit eigener Obergrenze. `0` bedeutet „unbegrenzt" — bewusst
+    /// ausdrücklich, damit niemand versehentlich einen Cache ohne Grenze bekommt.
+    pub fn open_with_budget(directory: impl AsRef<Path>, max_bytes: u64) -> Result<Self> {
+        Ok(Self {
+            max_bytes,
+            ..Self::open(directory)?
+        })
     }
 
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+
+    pub fn max_bytes(&self) -> u64 {
+        self.max_bytes
     }
 
     /// Liest ein Kompilat, wenn eines für genau diesen Cache-Schlüssel vorliegt und sein MAC passt.
@@ -89,7 +121,10 @@ impl DiskCache {
                 // übereinstimmt, und (3) wasmtime zusätzlich seine eigene Kompatibilitätsprüfung
                 // ausführt und bei fremdem Erzeuger einen Fehler liefert statt zu laufen.
                 match unsafe { Component::deserialize(engine, precompiled) } {
-                    Ok(component) => Some(component),
+                    Ok(component) => {
+                        Self::touch(&path);
+                        Some(component)
+                    }
                     Err(failure) => {
                         eprintln!(
                             "wasi-host: Kompilat '{}' nicht ladbar ({failure}) — wird neu erzeugt",
@@ -113,9 +148,9 @@ impl DiskCache {
         }
     }
 
-    /// Legt ein Kompilat ab. Atomar über temporäre Datei plus Rename, damit ein zweiter Host nie
-    /// einen halb geschriebenen Eintrag sieht.
-    pub fn store(&self, cache_key: &str, component: &Component) -> Result<()> {
+    /// Legt ein Kompilat ab und räumt danach auf. Atomar über temporäre Datei plus Rename, damit
+    /// ein zweiter Host nie einen halb geschriebenen Eintrag sieht.
+    pub fn store(&self, cache_key: &str, component: &Component) -> Result<PruneOutcome> {
         let precompiled = component.serialize()?;
         let key_bytes = cache_key.as_bytes();
         let key_len = u32::try_from(key_bytes.len())?;
@@ -141,7 +176,67 @@ impl DiskCache {
             file.sync_all()?;
         }
         std::fs::rename(&temporary, &target)?;
-        Ok(())
+        Ok(self.prune())
+    }
+
+    /// Räumt auf, bis die Belegung unter der Obergrenze liegt: älteste Änderungszeit zuerst.
+    ///
+    /// Ein Treffer stempelt seinen Eintrag frisch (siehe [`Self::load`]), damit „alt" hier
+    /// „lange nicht gebraucht" heißt und nicht „lange her geschrieben". Fehler beim Aufräumen sind
+    /// keine Aufruf-Fehler: Ein voller oder gesperrter Cache kostet Kompilierzeit, nichts weiter.
+    /// Räumen zwei Hosts gleichzeitig, kann einer einen Eintrag löschen, den der andere gerade
+    /// lesen wollte — das ergibt einen Miss und eine Neukompilierung.
+    pub fn prune(&self) -> PruneOutcome {
+        let mut entries: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
+        let Ok(listing) = std::fs::read_dir(&self.directory) else {
+            return PruneOutcome::default();
+        };
+
+        for entry in listing.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some(ENTRY_EXTENSION) {
+                continue;
+            }
+            if let Ok(metadata) = entry.metadata() {
+                let modified = metadata.modified().unwrap_or(std::time::UNIX_EPOCH);
+                entries.push((modified, metadata.len(), path));
+            }
+        }
+
+        let mut total: u64 = entries.iter().map(|(_, size, _)| size).sum();
+        if self.max_bytes == 0 {
+            return PruneOutcome {
+                bytes: total,
+                evicted: 0,
+            };
+        }
+
+        // Ältester zuerst — der wird als erster geopfert.
+        entries.sort_by_key(|(modified, _, _)| *modified);
+        let mut evicted = 0;
+        for (_, size, path) in &entries {
+            if total <= self.max_bytes {
+                break;
+            }
+            if std::fs::remove_file(path).is_ok() {
+                total = total.saturating_sub(*size);
+                evicted += 1;
+            }
+        }
+
+        PruneOutcome {
+            bytes: total,
+            evicted,
+        }
+    }
+
+    /// Stempelt einen Eintrag als gerade benutzt. Ohne das verdrängte das Aufräumen nach
+    /// Schreibalter statt nach Nutzung — und würde bevorzugt das Kompilat wegwerfen, das seit
+    /// Wochen bei jedem Start gebraucht wird.
+    fn touch(path: &Path) {
+        if let Ok(file) = std::fs::OpenOptions::new().write(true).open(path) {
+            let _ = file.set_modified(std::time::SystemTime::now());
+        }
     }
 
     /// Prüft Kennung, Version, MAC und den eingebetteten Cache-Schlüssel; gibt das Kompilat zurück.
@@ -364,6 +459,90 @@ mod tests {
         assert_eq!(second.stats().disk_hits, 1, "das Kompilat kam von Platte");
         assert_eq!(second.stats().misses, 0, "und wurde nicht neu erzeugt");
         assert_eq!(second.stats().last_compile_ms, 0.0);
+        std::fs::remove_dir_all(&directory)?;
+        Ok(())
+    }
+
+    /// Obergrenze auf Platte: Über dem Budget wird abgeräumt, statt das Verzeichnis unbegrenzt
+    /// wachsen zu lassen. Der jüngste Eintrag überlebt.
+    #[test]
+    fn the_disk_budget_evicts_the_oldest_entry() -> Result<()> {
+        let directory = scratch("budget");
+        let engine = engine();
+        let component = Component::from_binary(&engine, GUEST)?;
+        // Budget knapp unter zwei Einträgen: der zweite Store muss den ersten verdrängen.
+        let one = {
+            let unbounded = DiskCache::open_with_budget(&directory, 0)?;
+            unbounded.store("erster", &component)?;
+            let size = unbounded.prune().bytes;
+            std::fs::remove_file(unbounded.entry_path("erster"))?;
+            size
+        };
+        let cache = DiskCache::open_with_budget(&directory, one + one / 2)?;
+
+        cache.store("alt", &component)?;
+        // Änderungszeiten müssen unterscheidbar sein, sonst ist „ältester" nicht bestimmt.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(cache.entry_path("alt"))?
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))?;
+        let outcome = cache.store("neu", &component)?;
+
+        assert_eq!(outcome.evicted, 1, "ein Eintrag musste weichen");
+        assert!(
+            outcome.bytes <= cache.max_bytes(),
+            "Budget muss danach halten"
+        );
+        assert!(cache.load("neu", &engine).is_some(), "der jüngste bleibt");
+        assert!(cache.load("alt", &engine).is_none(), "der älteste ist weg");
+        std::fs::remove_dir_all(&directory)?;
+        Ok(())
+    }
+
+    /// Ein Treffer stempelt seinen Eintrag frisch — sonst würde das Aufräumen bevorzugt das
+    /// Kompilat wegwerfen, das bei jedem Start gebraucht wird, nur weil es lange geschrieben ist.
+    #[test]
+    fn a_hit_refreshes_the_entry_against_eviction() -> Result<()> {
+        let directory = scratch("touch");
+        let engine = engine();
+        let cache = DiskCache::open(&directory)?;
+        cache.store("heiss", &Component::from_binary(&engine, GUEST)?)?;
+        let path = cache.entry_path("heiss");
+        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)?
+            .set_modified(long_ago)?;
+
+        assert!(cache.load("heiss", &engine).is_some());
+
+        let refreshed = std::fs::metadata(&path)?.modified()?;
+        assert!(
+            refreshed > long_ago,
+            "der Treffer muss die Nutzung vermerken"
+        );
+        std::fs::remove_dir_all(&directory)?;
+        Ok(())
+    }
+
+    /// Aufräumen fasst nur Einträge an — der Schlüssel überlebt, sonst wären mit einem Mal alle
+    /// Kompilate ungültig.
+    #[test]
+    fn pruning_never_touches_the_key_file() -> Result<()> {
+        let directory = scratch("keysafe");
+        let cache = DiskCache::open_with_budget(&directory, 1)?;
+
+        // Ein Budget von einem Byte räumt jeden Eintrag sofort wieder ab — store() prunt selbst.
+        let outcome = cache.store("egal", &Component::from_binary(&engine(), GUEST)?)?;
+
+        assert_eq!(outcome.evicted, 1);
+        assert_eq!(outcome.bytes, 0, "kein Eintrag bleibt übrig");
+        assert!(
+            directory.join(KEY_FILE).exists(),
+            "mac.key darf nie mit abgeräumt werden"
+        );
+        // Und der Schlüssel zählt auch nicht in die Belegung hinein.
+        assert_eq!(cache.prune(), PruneOutcome::default());
         std::fs::remove_dir_all(&directory)?;
         Ok(())
     }
