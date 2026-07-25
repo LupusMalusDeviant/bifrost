@@ -805,6 +805,10 @@ pub struct ToolParameter {
 pub struct ToolDescriptor {
     /// Roher Export-Name — genau diesen erwartet [`invoke_component_tool`].
     pub name: String,
+    /// Adressierungspfad: ein Element für einen Top-Level-Export, zwei für eine Funktion in einem
+    /// exportierten Interface. Der Name allein reicht nicht, weil Interface-Namen selbst Punkte
+    /// enthalten (`mcpmcp:spike/tools@0.1.0`) und sich nicht eindeutig zerlegen lassen.
+    pub path: Vec<String>,
     pub kind: ToolKind,
     pub params: Vec<ToolParameter>,
     /// Ergebnistypen als Baum, wie die Parameter.
@@ -818,8 +822,8 @@ pub struct ToolDescriptor {
 ///
 /// Gelistet wird genau das, was adressierbar ist: der WASI-Kommando-Einstiegspunkt als **ein**
 /// Tool (seine innere `run`-Funktion ist derselbe Einstiegspunkt und erschiene sonst doppelt),
-/// Top-Level-Funktionen als typisierte Tools, und Funktionen in anderen Instanzen als nicht
-/// unterstützt — ihr punktierter Name lässt sich beim Aufruf heute nicht auflösen.
+/// Top-Level-Funktionen und die Funktionen exportierter Interfaces. Letztere sind bei einem aus
+/// WIT gebauten Component der Normalfall; adressiert werden sie über [`ToolDescriptor::path`].
 pub fn describe_component_tools(component_bytes: &[u8]) -> Result<Vec<ToolDescriptor>> {
     let mut cache = ModuleCache::default();
     let module = cache.compile(
@@ -854,6 +858,7 @@ pub fn describe_cached_module(module: &CachedModule) -> Vec<ToolDescriptor> {
                 let unsupported_reason = unsupported_function_reason(&params, &results);
                 tools.push(ToolDescriptor {
                     name: name.to_owned(),
+                    path: vec![name.to_owned()],
                     kind: ToolKind::Function,
                     params,
                     results,
@@ -867,6 +872,7 @@ pub fn describe_cached_module(module: &CachedModule) -> Vec<ToolDescriptor> {
                 let _ = instance;
                 tools.push(ToolDescriptor {
                     name: name.to_owned(),
+                    path: vec![name.to_owned()],
                     kind: ToolKind::Command,
                     params: Vec::new(),
                     results: Vec::new(),
@@ -874,18 +880,35 @@ pub fn describe_cached_module(module: &CachedModule) -> Vec<ToolDescriptor> {
                     unsupported_reason: None,
                 });
             }
+            // Ein aus WIT gebautes Component legt seine Funktionen in eine Interface-Instanz —
+            // das ist der Normalfall, nicht die Ausnahme. Deshalb werden ihre Funktionen wie
+            // Top-Level-Exports beschrieben; adressiert werden sie über `path`.
             ComponentItem::ComponentInstance(instance) => {
-                for (child, _) in instance.exports(engine) {
+                for (child, item) in instance.exports(engine) {
+                    let ComponentItem::ComponentFunc(func) = item.ty else {
+                        // Typen, Ressourcen und geschachtelte Instanzen sind keine Tools.
+                        continue;
+                    };
+                    let params: Vec<ToolParameter> = func
+                        .params()
+                        .map(|(param, ty)| ToolParameter {
+                            name: param.to_owned(),
+                            type_descriptor: crate::values::describe(&ty),
+                        })
+                        .collect();
+                    let results: Vec<crate::values::TypeDescriptor> = func
+                        .results()
+                        .map(|ty| crate::values::describe(&ty))
+                        .collect();
+                    let unsupported_reason = unsupported_function_reason(&params, &results);
                     tools.push(ToolDescriptor {
                         name: format!("{name}.{child}"),
+                        path: vec![name.to_owned(), child.to_owned()],
                         kind: ToolKind::Function,
-                        params: Vec::new(),
-                        results: Vec::new(),
-                        supported: false,
-                        unsupported_reason: Some(
-                            "Exports in Instanzen sind über ihren punktierten Namen noch nicht aufrufbar"
-                                .to_owned(),
-                        ),
+                        params,
+                        results,
+                        supported: unsupported_reason.is_none(),
+                        unsupported_reason,
                     });
                 }
             }
@@ -1050,8 +1073,26 @@ pub fn invoke_cached_module(
             Ok(None)
         } else {
             let instance = linker.instantiate(&mut store, component)?;
+            // Der Pfad statt des Namens: Bei einer Funktion in einem exportierten Interface muss
+            // erst die Instanz aufgelöst werden, und Interface-Namen enthalten selbst Punkte —
+            // aus dem zusammengesetzten Namen liesse sich die Grenze nicht zurückgewinnen.
+            let mut parent = None;
+            let (last, parents) = descriptor
+                .path
+                .split_last()
+                .context("Tool ohne Adressierungspfad")?;
+            for segment in parents {
+                parent = Some(
+                    instance
+                        .get_export_index(&mut store, parent.as_ref(), segment)
+                        .with_context(|| format!("Interface '{segment}' nicht gefunden"))?,
+                );
+            }
+            let index = instance
+                .get_export_index(&mut store, parent.as_ref(), last)
+                .with_context(|| format!("export '{tool}' nicht gefunden"))?;
             let func = instance
-                .get_func(&mut store, tool)
+                .get_func(&mut store, index)
                 .with_context(|| format!("export '{tool}' ist keine aufrufbare Funktion"))?;
 
             if args.len() != descriptor.params.len() {
@@ -2023,6 +2064,88 @@ mod tests {
         )?;
         assert_eq!(even.result, Some(serde_json::json!({"ok": "gerade"})));
         assert_eq!(odd.result, Some(serde_json::json!({"err": 7})));
+        Ok(())
+    }
+
+    /// Der Normalfall eines aus WIT gebauten Components: Alles liegt in einer Interface-Instanz.
+    /// Genau diese Funktionen waren bis eben nicht aufrufbar — und mit ihnen die Records und
+    /// Varianten, die praktisch nur dort vorkommen.
+    #[test]
+    fn functions_inside_an_exported_interface_are_addressable() -> Result<()> {
+        use crate::values::TypeDescriptor;
+        let bytes = encode_control_plane_component()?;
+
+        let tools = describe_component_tools(&bytes)?;
+
+        // Typen der Instanz (mode, request, response) sind keine Tools — nur `run` ist eines.
+        assert_eq!(tools.len(), 1, "erwartet genau ein Tool: {tools:?}");
+        let run = &tools[0];
+        assert_eq!(run.name, "mcpmcp:spike/tools@0.1.0.run");
+        assert_eq!(run.path, ["mcpmcp:spike/tools@0.1.0", "run"]);
+        assert!(run.supported, "{:?}", run.unsupported_reason);
+
+        // Der Record-Parameter kommt mit allen Feldern und ihren Typen an.
+        let TypeDescriptor::Record { fields } = &run.params[0].type_descriptor else {
+            panic!("erwartet wurde ein Record, bekam {:?}", run.params[0]);
+        };
+        assert_eq!(
+            fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            ["id", "name", "mode", "tags", "note"]
+        );
+        assert_eq!(fields[0].type_descriptor, TypeDescriptor::U64);
+        assert!(matches!(
+            fields[2].type_descriptor,
+            TypeDescriptor::Enum { .. }
+        ));
+        assert!(matches!(
+            fields[3].type_descriptor,
+            TypeDescriptor::List { .. }
+        ));
+        assert!(matches!(
+            fields[4].type_descriptor,
+            TypeDescriptor::Option { .. }
+        ));
+
+        // Und die Rückgabe ist result<record, string>.
+        let TypeDescriptor::Result { ok, err } = &run.results[0] else {
+            panic!("erwartet wurde ein Result, bekam {:?}", run.results[0]);
+        };
+        assert!(matches!(ok.as_deref(), Some(TypeDescriptor::Record { .. })));
+        assert_eq!(err.as_deref(), Some(&TypeDescriptor::String));
+        Ok(())
+    }
+
+    /// Der Aufruf erreicht die Funktion in der Instanz. Das Fixture ist ein Dummy-Modul, der
+    /// Rumpf trappt also — entscheidend ist, dass der Fehler aus der **Ausführung** kommt und
+    /// nicht aus der Adressierung.
+    #[test]
+    fn an_interface_function_resolves_before_it_traps() -> Result<()> {
+        let bytes = encode_control_plane_component()?;
+        let argument = serde_json::json!({
+            "id": "1", "name": "x", "mode": "fast", "tags": [], "note": null
+        });
+
+        let failure = invoke_component_tool(
+            &bytes,
+            &CapabilityGrants::default(),
+            "mcpmcp:spike/tools@0.1.0.run",
+            &[argument],
+            &ExecutionLimits::default(),
+        )
+        .unwrap_err();
+
+        let message = format!("{failure:#}");
+        assert!(
+            !message.contains("nicht gefunden") && !message.contains("keine aufrufbare Funktion"),
+            "die Adressierung darf nicht mehr scheitern: {message}"
+        );
+        assert!(
+            message.contains("unreachable") || message.contains("trap"),
+            "erwartet wurde ein Trap des Dummy-Rumpfs: {message}"
+        );
         Ok(())
     }
 

@@ -171,6 +171,7 @@ Belegt, jeweils an einen benannten Test gebunden — nicht an ein Plan-Häkchen:
 | WP6.2 (Vertragskompatibilität) | `WasiRealHostCompatibilityTests` — .NET gegen das **echte** Binary: Handshake, signierter Load, Discovery, Invoke, Default-Deny, Versionsverhandlung mit „1" (der echte Bruch) und „3" |
 | WP7.1/7.2 (Packaging, CI) | Der Host wird **mit** dem Gateway ausgeliefert (ein Image = ein Vertragsstand): eigene Rust-Stage im Dockerfile, die von der Bau-Architektur aus kreuzkompiliert statt unter QEMU zu emulieren. Gemessen: Image 121 MB amd64 / 117 MB arm64 (Grenze 300 MB), Host-Binary 30 MB unter `/usr/local/bin/mcpmcp-wasi-host`. **Beide Architekturen lokal belegt** — im arm64-Image ist das Binary echtes AArch64 (`e_machine 0xB7`) und beantwortet den Handshake unter Emulation; die Cross-Kompilierung von wasmtime dauert 1 m 12 s statt einer QEMU-Ewigkeit. CI prüft Handshake im Image und non-root (UID 1654) |
 | Aufrufbreite (`list<u8>`, `result<T,E>`) | Vertrag **v3**: Typen sind Bäume statt Namen, Argumente und Ergebnis sind JSON-Werte. Der Host ruft über den dynamischen `Val`-Pfad statt `get_typed_func`. `list<u8>` ist ein Base64-Blob mit eigener Längengrenze (`maxBinaryBytes`, 1 MiB), 64-Bit-Ganzzahlen sind Dezimalstrings (JSON-Doubles verlieren ab 2^53). Gateway-seitig entsteht daraus ein echtes Schema je Typ — `contentEncoding: base64`, `minimum`/`maximum` je Breite, `oneOf` für `option`, genau ein Zweig für `result`. Tests: 10 Rust-Tests zur Wertabbildung, 2 an einem echten Component mit `list<u8>`- und `result<string,u32>`-Export (WAT-Fixture mit Bump-Allocator, weil die kanonische ABI Memory und realloc braucht), 3 Connector-Tests |
+| Aufrufbreite, zusammengesetzte Typen und Interface-Exports | `record`, `variant`, `enum`, `flags` und `tuple` sind abgebildet (15 Mapper-Tests inkl. Verschachtelung) — und erreichbar: Funktionen in exportierten **Interface-Instanzen** werden über einen `path` adressiert statt über den punktierten Namen, weil Interface-Namen selbst Punkte enthalten. Damit ist der Normalfall eines aus WIT gebauten Components abgedeckt; belegt an `control-plane.wit` (Record mit Enum, Liste und Option, Rückgabe `result<record, string>`), inklusive Nachweis, dass der Aufruf die Funktion erreicht und erst im Rumpf trappt. Gateway-seitig verschachtelte Schemata für Record/Variant/Enum/Flags/Tupel |
 | WP7.3/7.4 (Security-Review, ADR-0017) | Review am 2026-07-25 mit dem Product Owner durchgeführt: [`wasi-runtime-security-review.md`](../security/wasi-runtime-security-review.md), Ergebnis angenommen mit benannten Restrisiken. Sicherheitsstand und Restrisiken stehen im [Threat-Model](../security/threat-model.md). ADR-0017 auf **akzeptiert** — als Isolations- und Grant-Modell, mit ausdrücklichem Vorbehalt für den Vorrang bei beliebigen Connectoren |
 | **M2** (signiertes Component durch die volle Pipeline) | `WasiRealHostGovernanceTests` (echter Host, signiertes Fixture) + `WasiUpstreamE2ETests` (RBAC, Guardrail, Approval, Audit, MCP + REST) |
 
@@ -181,18 +182,8 @@ Offen und ausdrücklich **nicht** behauptet:
   ADR-0016 fehlen weiterhin.
 - **WP3, Rest** — Preopens bleiben **nur lesend**; Schreibrechte sind im Grant-Modell nach wie vor
   nicht ausdrückbar.
-- **Aufrufbreite, Rest — hängt an den Instanz-Exports.** Die Typabbildung deckt jetzt auch
-  `record`, `variant`, `enum`, `flags` und `tuple` ab (15 Tests, inklusive Verschachtelung). Sie
-  ist für echte Components aber noch nicht erreichbar: Ein aus WIT gebautes Component legt seine
-  Funktionen in eine **Interface-Instanz**, und der Host ruft heute nur Top-Level-Exports auf —
-  belegt an `encode_control_plane_component`, dessen vier Funktionen alle als
-  `mcpmcp:spike/tools@0.1.0.<name>` erscheinen und als nicht aufrufbar gemeldet werden.
-  Benannte Typen lassen sich zudem gar nicht als Top-Level-Export lifen (wasmtime: „func not valid
-  to be used as export"), was denselben Punkt von der anderen Seite zeigt: Records und Varianten
-  gehören ins Interface.
-  **Nächster Schritt ist daher nicht mehr Typabbildung, sondern das Aufrufen von Instanz-Exports**
-  (`get_export_index` mit Elternindex) — der in WP6.1 zurückgestellte Punkt. Resources, Futures
-  und Streams hängen weiter an ADR-0019.
+- **Aufrufbreite, Rest** — offen bleiben nur noch **Resources, Futures und Streams**; sie hängen
+  am Task-/Event-Modell (ADR-0019). Alles andere ist abgebildet und aufrufbar.
 
 ## Festgelegte Entscheidungen für WP4 (2026-07-24, Product Owner)
 

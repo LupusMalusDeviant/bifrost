@@ -110,13 +110,14 @@ und externe Connectoren" — inzwischen aber deutlich enger als beim Statuswechs
 64-Bit-Ganzzahlen als Dezimalstring. Seit demselben Tag sind auch `record`, `variant`, `enum`,
 `flags` und `tuple` abgebildet.
 
-**Der Vorbehalt bleibt trotzdem**, aus einem anderen Grund als angenommen: Ein aus WIT gebautes
-Component legt seine Funktionen in eine **Interface-Instanz**, und der Host ruft bislang nur
-Top-Level-Exports auf. Solange das so ist, erreicht die Typabbildung kein reales Component.
-Resources, Futures und Streams hängen unverändert am Task-/Event-Modell
-([ADR-0019](0019-langlaufende-tasks-und-events.md)).
+Seit demselben Tag sind auch Funktionen in **exportierten Interfaces** aufrufbar — der Normalfall
+eines aus WIT gebauten Components. Damit greift die Typabbildung an realen Components und nicht
+nur an handgeschriebenen Top-Level-Exports.
 
-Der Vorbehalt entfällt, wenn Funktionen in exportierten Interfaces aufrufbar sind. Bis dahin ist WASI der bevorzugte Pfad für **Tools, die in diese Form
+**Offen bleiben Resources, Futures und Streams**; sie hängen unverändert am Task-/Event-Modell
+([ADR-0019](0019-langlaufende-tasks-und-events.md)). Das ist der verbleibende Grund für den
+Vorbehalt: Ein Interface mit Handles ist heute nicht bedienbar. Für Interfaces ohne Handles trägt
+der Vorrang. Bis dahin ist WASI der bevorzugte Pfad für **Tools, die in diese Form
 passen**, und nicht die Vorgabe für jeden neuen Connector.
 
 Sicherheitsstand und akzeptierte Restrisiken stehen im

@@ -128,6 +128,40 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_interface_function_gets_a_catalog_name_and_a_nested_schema()
+    {
+        await using var connection = await ConnectAsync();
+
+        var inventory = await connection.DiscoverAsync(TestContext.Current.CancellationToken);
+
+        // Der Interface-Name wird katalogtauglich, der rohe Pfad bleibt in der Beschreibung.
+        var place = inventory.Tools.Single(tool => tool.Name == "demo_shapes_api_place");
+        place.Description.Should().Contain("demo:shapes/api@1.0.0.place");
+
+        // Der Record wird zu einem verschachtelten Schema, nicht zu "object".
+        var point = place.InputSchema.GetProperty("properties").GetProperty("point");
+        point.GetProperty("type").GetString().Should().Be("object");
+        point.GetProperty("required").EnumerateArray().Select(item => item.GetString())
+            .Should().Equal("x", "colour");
+        point.GetProperty("properties").GetProperty("colour").GetProperty("enum")
+            .EnumerateArray().Select(item => item.GetString()).Should().Equal("rot", "gruen");
+        point.GetProperty("additionalProperties").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task An_interface_function_is_callable_under_its_catalog_name()
+    {
+        await using var connection = await ConnectAsync();
+        var args = JsonSerializer.Deserialize<JsonElement>("""{"point":{"x":7,"colour":"rot"}}""");
+
+        var result = await connection.CallToolAsync(
+            "demo_shapes_api_place", args, TestContext.Current.CancellationToken);
+
+        result.GetProperty("isError").GetBoolean().Should().BeFalse();
+        result.GetProperty("content")[0].GetProperty("text").GetString().Should().Be("7");
+    }
+
+    [Fact]
     public async Task Binary_arguments_and_results_travel_as_base64()
     {
         await using var connection = await ConnectAsync();

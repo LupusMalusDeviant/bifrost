@@ -252,10 +252,93 @@ internal static class WasiToolNormalizer
                 description = "Component-Model-Typ 'option' — null bedeutet none.",
             },
             "result" => ResultSchema(type),
+            "record" => RecordSchema(type),
+            // Ein Variant ist ein Objekt mit genau einem Fallnamen — dieselbe Form wie result.
+            "variant" => VariantSchema(type),
+            "enum" => new
+            {
+                type = "string",
+                @enum = Names(type, "cases"),
+                description = ComponentType("enum"),
+            },
+            "flags" => new
+            {
+                type = "array",
+                items = new { type = "string", @enum = Names(type, "names") },
+                uniqueItems = true,
+                description = ComponentType("flags"),
+            },
+            "tuple" => TupleSchema(type),
             // Sollte nie vorkommen: nicht abbildbare Exports stehen gar nicht erst im Katalog.
             _ => new { description = "Typ ohne Schema." },
         };
     }
+
+    /// <summary>Ein Record hat genau die Felder seines Typs — alle Pflicht, keine weiteren.</summary>
+    private static object RecordSchema(JsonElement type)
+    {
+        var properties = new Dictionary<string, object>(StringComparer.Ordinal);
+        var required = new List<string>();
+        foreach (var field in Members(type, "fields"))
+        {
+            var name = field.GetProperty("name").GetString()!;
+            properties[name] = SchemaForType(field.GetProperty("type"));
+            required.Add(name);
+        }
+
+        return new
+        {
+            type = "object",
+            properties,
+            required,
+            additionalProperties = false,
+            description = ComponentType("record"),
+        };
+    }
+
+    private static object VariantSchema(JsonElement type)
+    {
+        var properties = new Dictionary<string, object>(StringComparer.Ordinal);
+        foreach (var @case in Members(type, "cases"))
+        {
+            var name = @case.GetProperty("name").GetString()!;
+            // Ein Fall ohne Nutzlast nimmt null — sonst gäbe es keine Form, ihn zu nennen.
+            properties[name] = @case.TryGetProperty("type", out var payload)
+                ? SchemaForType(payload)
+                : new { type = "null" };
+        }
+
+        return new
+        {
+            type = "object",
+            properties,
+            additionalProperties = false,
+            minProperties = 1,
+            maxProperties = 1,
+            description = "Component-Model-Typ 'variant' — genau ein Fallname.",
+        };
+    }
+
+    private static object TupleSchema(JsonElement type)
+    {
+        var items = Members(type, "items").Select(SchemaForType).ToArray();
+        return new
+        {
+            type = "array",
+            prefixItems = items,
+            minItems = items.Length,
+            maxItems = items.Length,
+            description = ComponentType("tuple"),
+        };
+    }
+
+    private static JsonElement.ArrayEnumerator Members(JsonElement type, string property)
+        => type.TryGetProperty(property, out var declared) && declared.ValueKind is JsonValueKind.Array
+            ? declared.EnumerateArray()
+            : default;
+
+    private static string[] Names(JsonElement type, string property)
+        => [.. Members(type, property).Select(item => item.GetString() ?? string.Empty)];
 
     /// <summary><c>result&lt;T,E&gt;</c> als Objekt mit genau einem der Zweige.</summary>
     private static object ResultSchema(JsonElement type)

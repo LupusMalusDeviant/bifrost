@@ -129,6 +129,32 @@ static object[] Tools() =>
         },
         supported = true,
     },
+    // Wie ein echtes WIT-Component: Die Funktion liegt in einer Interface-Instanz und ihr
+    // Parameter ist ein Record.
+    new
+    {
+        name = "demo:shapes/api@1.0.0.place",
+        path = new[] { "demo:shapes/api@1.0.0", "place" },
+        kind = "function",
+        @params = new object[]
+        {
+            new
+            {
+                name = "point",
+                type = new
+                {
+                    kind = "record",
+                    fields = new object[]
+                    {
+                        new { name = "x", type = new { kind = "s32" } },
+                        new { name = "colour", type = new { kind = "enum", cases = new[] { "rot", "gruen" } } },
+                    },
+                },
+            },
+        },
+        results = new object[] { new { kind = "s32" } },
+        supported = true,
+    },
     // Gibt ein Secret auf stdout aus — Prüfpunkt für die eingehende Guardrail.
     new
     {
@@ -229,6 +255,13 @@ static object Invoke(JsonElement request)
             result = (object?)null,
         },
         // Typisierter Export: verdoppelt sein Argument — beweist die Argumentübergabe.
+        "demo:shapes/api@1.0.0.place" => new
+        {
+            type = "invoked",
+            stdout = string.Empty,
+            truncated = false,
+            result = (object?)(arguments.Length > 0 ? arguments[0].GetProperty("x").GetInt32() : 0),
+        },
         "double" => new
         {
             type = "invoked",
