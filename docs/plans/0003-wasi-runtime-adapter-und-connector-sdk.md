@@ -170,6 +170,7 @@ Belegt, jeweils an einen benannten Test gebunden — nicht an ein Plan-Häkchen:
 | WP6.1 (Namens- und Schema-Normalisierung) | Vertrag **v2**: `discover` liefert typisierte Beschreibungen (`describe_component_tools`), der Kommando-Einstiegspunkt ist genau ein Tool, nicht aufrufbare Signaturen sind als solche markiert. Gateway-seitig `WasiToolNormalizer` — katalog- und URL-taugliche Namen plus ein Schema **pro** Tool. Tests: 3 Rust-Tests, `WasiRuntimeConnectorTests` (Normalisierung, Kollisionen, Schema, gefilterte Exports) |
 | WP6.2 (Vertragskompatibilität) | `WasiRealHostCompatibilityTests` — .NET gegen das **echte** Binary: Handshake, signierter Load, Discovery, Invoke, Default-Deny, Versionsverhandlung mit „1" (der echte Bruch) und „3" |
 | WP7.1/7.2 (Packaging, CI) | Der Host wird **mit** dem Gateway ausgeliefert (ein Image = ein Vertragsstand): eigene Rust-Stage im Dockerfile, die von der Bau-Architektur aus kreuzkompiliert statt unter QEMU zu emulieren. Gemessen: Image 121 MB amd64 / 117 MB arm64 (Grenze 300 MB), Host-Binary 30 MB unter `/usr/local/bin/mcpmcp-wasi-host`. **Beide Architekturen lokal belegt** — im arm64-Image ist das Binary echtes AArch64 (`e_machine 0xB7`) und beantwortet den Handshake unter Emulation; die Cross-Kompilierung von wasmtime dauert 1 m 12 s statt einer QEMU-Ewigkeit. CI prüft Handshake im Image und non-root (UID 1654) |
+| Aufrufbreite (`list<u8>`, `result<T,E>`) | Vertrag **v3**: Typen sind Bäume statt Namen, Argumente und Ergebnis sind JSON-Werte. Der Host ruft über den dynamischen `Val`-Pfad statt `get_typed_func`. `list<u8>` ist ein Base64-Blob mit eigener Längengrenze (`maxBinaryBytes`, 1 MiB), 64-Bit-Ganzzahlen sind Dezimalstrings (JSON-Doubles verlieren ab 2^53). Gateway-seitig entsteht daraus ein echtes Schema je Typ — `contentEncoding: base64`, `minimum`/`maximum` je Breite, `oneOf` für `option`, genau ein Zweig für `result`. Tests: 10 Rust-Tests zur Wertabbildung, 2 an einem echten Component mit `list<u8>`- und `result<string,u32>`-Export (WAT-Fixture mit Bump-Allocator, weil die kanonische ABI Memory und realloc braucht), 3 Connector-Tests |
 | WP7.3/7.4 (Security-Review, ADR-0017) | Review am 2026-07-25 mit dem Product Owner durchgeführt: [`wasi-runtime-security-review.md`](../security/wasi-runtime-security-review.md), Ergebnis angenommen mit benannten Restrisiken. Sicherheitsstand und Restrisiken stehen im [Threat-Model](../security/threat-model.md). ADR-0017 auf **akzeptiert** — als Isolations- und Grant-Modell, mit ausdrücklichem Vorbehalt für den Vorrang bei beliebigen Connectoren |
 | **M2** (signiertes Component durch die volle Pipeline) | `WasiRealHostGovernanceTests` (echter Host, signiertes Fixture) + `WasiUpstreamE2ETests` (RBAC, Guardrail, Approval, Audit, MCP + REST) |
 
@@ -180,9 +181,11 @@ Offen und ausdrücklich **nicht** behauptet:
   ADR-0016 fehlen weiterhin.
 - **WP3, Rest** — Preopens bleiben **nur lesend**; Schreibrechte sind im Grant-Modell nach wie vor
   nicht ausdrückbar.
-- **Aufrufbreite** — ausführbar sind der WASI-Kommando-Einstiegspunkt und `(s32) -> s32`.
-  `list<u8>` und `result<T,E>` fehlen, Resources/Futures/Streams hängen an ADR-0019. Das ist der
-  Grund, warum der Vorrang aus ADR-0017 unter Vorbehalt steht.
+- **Aufrufbreite, Rest** — abgebildet sind jetzt alle Skalare, `string`, `char`, `list<T>`,
+  `list<u8>` als Blob, `option<T>` und `result<T,E>`. **Offen bleiben Records, Varianten, Enums,
+  Flags und Tupel** — sie melden sich in der Discovery als nicht unterstützt. Resources, Futures
+  und Streams hängen weiter an ADR-0019. Der Vorbehalt in ADR-0017 bleibt damit bestehen, ist aber
+  deutlich kleiner.
 
 ## Festgelegte Entscheidungen für WP4 (2026-07-24, Product Owner)
 

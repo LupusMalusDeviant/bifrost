@@ -43,7 +43,7 @@ while (true)
         "hello" => new
         {
             type = "hello",
-            protocolVersion = mode == "--bad-protocol" ? "999" : "2",
+            protocolVersion = mode == "--bad-protocol" ? "999" : "3",
             runtime = "stub",
             host = "wasi-host-stub/0.1.0",
         },
@@ -88,7 +88,7 @@ while (true)
 static object NotLoaded()
     => new { type = "error", code = "not-loaded", message = "kein Component geladen" };
 
-// Typisierte Discovery wie im echten Host (Vertrag v2, WP6.1): ein Kommando-Einstiegspunkt, zwei
+// Typisierte Discovery wie im echten Host (Vertrag v3): ein Kommando-Einstiegspunkt, zwei
 // typisierte Funktionen und ein Export, den der Host nicht aufrufen kann — letzterer darf im
 // Katalog nicht erscheinen.
 static object[] Tools() =>
@@ -98,15 +98,35 @@ static object[] Tools() =>
         name = "wasi:cli/run@0.2.6",
         kind = "command",
         @params = Array.Empty<object>(),
-        results = Array.Empty<string>(),
+        results = Array.Empty<object>(),
         supported = true,
     },
     new
     {
         name = "double",
         kind = "function",
-        @params = new[] { new { name = "value", type = "s32" } },
-        results = new[] { "s32" },
+        @params = new object[] { new { name = "value", type = new { kind = "s32" } } },
+        results = new object[] { new { kind = "s32" } },
+        supported = true,
+    },
+    // list<u8> und result<T,E> — die Typen, um die es in dieser Stufe geht.
+    new
+    {
+        name = "blob",
+        kind = "function",
+        @params = new object[] { new { name = "data", type = new { kind = "binary" } } },
+        results = new object[] { new { kind = "binary" } },
+        supported = true,
+    },
+    new
+    {
+        name = "classify",
+        kind = "function",
+        @params = new object[] { new { name = "value", type = new { kind = "u32" } } },
+        results = new object[]
+        {
+            new { kind = "result", ok = new { kind = "string" }, err = new { kind = "u32" } },
+        },
         supported = true,
     },
     // Gibt ein Secret auf stdout aus — Prüfpunkt für die eingehende Guardrail.
@@ -114,18 +134,18 @@ static object[] Tools() =>
     {
         name = "leak",
         kind = "function",
-        @params = new[] { new { name = "value", type = "s32" } },
-        results = new[] { "s32" },
+        @params = new object[] { new { name = "value", type = new { kind = "s32" } } },
+        results = new object[] { new { kind = "s32" } },
         supported = true,
     },
     new
     {
         name = "grow",
         kind = "function",
-        @params = new[] { new { name = "pages", type = "u32" } },
-        results = new[] { "s32" },
+        @params = new object[] { new { name = "record", type = new { kind = "unsupported", detail = "record" } } },
+        results = new object[] { new { kind = "s32" } },
         supported = false,
-        unsupportedReason = "nur (s32) -> s32 wird aufgerufen, dieser Export ist (u32) -> (s32)",
+        unsupportedReason = "nicht abbildbare Typen: record: record",
     },
 ];
 
@@ -144,7 +164,7 @@ static object Named(string name) => new
     name,
     kind = "command",
     @params = Array.Empty<object>(),
-    results = Array.Empty<string>(),
+    results = Array.Empty<object>(),
     supported = true,
 };
 
@@ -193,8 +213,10 @@ static object Load(JsonElement request, ref bool loaded, ref string? loadedSha25
 static object Invoke(JsonElement request)
 {
     var tool = request.GetProperty("tool").GetString();
-    var arguments = request.TryGetProperty("args", out var args) && args.ValueKind is JsonValueKind.Array
-        ? args.EnumerateArray().Select(item => item.GetInt32()).ToArray()
+    // Argumente sind seit Vertrag 3 beliebige JSON-Werte, nicht mehr nur Zahlen.
+    JsonElement[] arguments = request.TryGetProperty("args", out var args)
+        && args.ValueKind is JsonValueKind.Array
+        ? [.. args.EnumerateArray()]
         : [];
 
     return tool switch
@@ -204,7 +226,7 @@ static object Invoke(JsonElement request)
             type = "invoked",
             stdout = "stub-guest-ok",
             truncated = false,
-            result = (int?)null,
+            result = (object?)null,
         },
         // Typisierter Export: verdoppelt sein Argument — beweist die Argumentübergabe.
         "double" => new
@@ -212,7 +234,25 @@ static object Invoke(JsonElement request)
             type = "invoked",
             stdout = string.Empty,
             truncated = false,
-            result = (int?)(arguments.Length > 0 ? arguments[0] * 2 : 0),
+            result = (object?)(arguments.Length > 0 ? arguments[0].GetInt32() * 2 : 0),
+        },
+        // Gibt die Bytes unverändert zurück — list<u8> bleibt Base64, wird kein Zahlen-Array.
+        "blob" => new
+        {
+            type = "invoked",
+            stdout = string.Empty,
+            truncated = false,
+            result = (object?)(arguments.Length > 0 ? arguments[0].GetString() : null),
+        },
+        // result<string, u32>: gerade Zahlen sind ok, ungerade err.
+        "classify" => new
+        {
+            type = "invoked",
+            stdout = string.Empty,
+            truncated = false,
+            result = (object?)(arguments.Length > 0 && arguments[0].GetInt32() % 2 == 0
+                ? new Dictionary<string, object?> { ["ok"] = "gerade" }
+                : new Dictionary<string, object?> { ["err"] = arguments.Length > 0 ? arguments[0].GetInt32() : 0 }),
         },
         // Ein Guest darf alles auf stdout schreiben — auch ein Secret. Der Beispielschlüssel
         // stammt aus der AWS-Dokumentation und ist keiner.
@@ -221,7 +261,7 @@ static object Invoke(JsonElement request)
             type = "invoked",
             stdout = "token=AKIAIOSFODNN7EXAMPLE",
             truncated = false,
-            result = (int?)null,
+            result = (object?)null,
         },
         _ => new
         {

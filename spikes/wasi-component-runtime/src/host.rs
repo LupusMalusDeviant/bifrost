@@ -32,10 +32,13 @@ use crate::{
 /// Protokollversion des IPC-Vertrags. Inkompatible Versionen werden beim Handshake abgewiesen.
 ///
 /// `2` (WP6.1): `discover` liefert typisierte Tool-Beschreibungen statt einer Namensliste — der
-/// Aufrufer kann daraus ein echtes Schema erzeugen. Bewusst ein Bruch statt eines Zusatzfelds:
-/// Ein Client, der die alte Namensliste erwartet, soll am Handshake scheitern und nicht an einem
-/// stillschweigend anders geformten `tools`-Feld.
-pub const PROTOCOL_VERSION: &str = "2";
+/// Aufrufer kann daraus ein echtes Schema erzeugen.
+///
+/// `3` (Aufrufbreite): Typen sind Bäume statt Namen, `args` und `result` sind JSON-Werte statt
+/// `i32`. Wieder ein Bruch statt eines Zusatzfelds: Ein Client der Version 2 läse `result` als
+/// Zahl und ließe ein Objekt oder einen Base64-Blob still unter den Tisch fallen — ein
+/// Handshake-Fehler ist die ehrlichere Antwort.
+pub const PROTOCOL_VERSION: &str = "3";
 
 /// Obergrenze für einen einzelnen Frame (Schutz gegen Memory-DoS über ein riesiges Längenpräfix).
 const MAX_FRAME_BYTES: u32 = 64 * 1024 * 1024;
@@ -74,9 +77,10 @@ pub enum Request {
     Invoke {
         /// Export-Name; unbekannte Namen werden abgewiesen.
         tool: String,
-        /// Argumente für typisierte Exports (Spike: `s32`).
+        /// Argumente für typisierte Exports, positionsweise in der Reihenfolge der Parameter.
+        /// JSON-Werte statt Zahlen, seit der Host mehr als `s32` abbildet.
         #[serde(default)]
-        args: Vec<i32>,
+        args: Vec<serde_json::Value>,
         /// Limits für diesen Aufruf; fehlend = enge Defaults.
         #[serde(default)]
         limits: ExecutionLimits,
@@ -855,7 +859,7 @@ mod tests {
 
     #[test]
     fn serve_frames_a_hello_response_then_ends_on_eof() {
-        let input = frame(br#"{"type":"hello","protocolVersion":"2"}"#);
+        let input = frame(br#"{"type":"hello","protocolVersion":"3"}"#);
         assert!(matches!(first_response(&input), Response::Hello { .. }));
     }
 
@@ -877,7 +881,7 @@ mod tests {
 
     #[test]
     fn framing_survives_partial_reads() {
-        let input = frame(br#"{"type":"hello","protocolVersion":"2"}"#);
+        let input = frame(br#"{"type":"hello","protocolVersion":"3"}"#);
         let mut reader = ChunkedReader {
             data: &input,
             chunk: 1, // ein Byte pro read — der härteste Fall

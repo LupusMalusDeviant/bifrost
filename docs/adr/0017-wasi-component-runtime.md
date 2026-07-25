@@ -102,16 +102,19 @@ angenommen:
   Schlüssel MAC-gesichert.
 
 **Unter Vorbehalt** steht der Satz „MCPMCP bevorzugt WebAssembly Components für neue lokale Tools
-und externe Connectoren". Die Aufrufbreite trägt ihn noch nicht: Ausführbar sind heute der
-WASI-Kommando-Einstiegspunkt und typisierte Funktionen der Form `(s32) -> s32`. Alles andere meldet
-die Discovery ausdrücklich als nicht unterstützt, statt es im Katalog zu zeigen — ehrlich, aber
-eben auch schmal. Ebenfalls offen: `list<u8>` als begrenzte Binärdaten und `result<T,E>` als
-Fehlervertrag sind nicht implementiert; Resources, Futures und Streams hängen unverändert am
-Task-/Event-Modell ([ADR-0019](0019-langlaufende-tasks-und-events.md)).
+und externe Connectoren" — inzwischen aber deutlich enger als beim Statuswechsel.
 
-Der Vorbehalt entfällt, wenn die Aufrufbreite den WIT-Typraum abdeckt, den ein Connector braucht.
-Bis dahin ist WASI der bevorzugte Pfad für **Tools, die in diese Form passen**, und nicht die
-Vorgabe für jeden neuen Connector.
+*Nachtrag 2026-07-25:* Die zugesagte Behandlung von `list<u8>` als begrenzte Binärdaten und
+`result<T,E>` als Fehlervertrag ist umgesetzt. Abgebildet sind alle Skalare, `string`, `char`,
+`list<T>`, `option<T>` und `result<T,E>`; Binärdaten gehen als Base64 mit eigener Längengrenze,
+64-Bit-Ganzzahlen als Dezimalstring. **Offen bleiben Records, Varianten, Enums, Flags und Tupel**;
+sie melden sich in der Discovery als nicht unterstützt, statt im Katalog zu erscheinen. Resources,
+Futures und Streams hängen unverändert am Task-/Event-Modell
+([ADR-0019](0019-langlaufende-tasks-und-events.md)).
+
+Der Vorbehalt entfällt, wenn auch zusammengesetzte Typen abgebildet sind — ein Connector-Interface
+ohne Record ist die Ausnahme. Bis dahin ist WASI der bevorzugte Pfad für **Tools, die in diese Form
+passen**, und nicht die Vorgabe für jeden neuen Connector.
 
 Sicherheitsstand und akzeptierte Restrisiken stehen im
 [Threat-Model](../security/threat-model.md); der Review dazu in

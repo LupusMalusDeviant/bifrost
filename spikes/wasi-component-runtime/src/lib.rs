@@ -15,11 +15,14 @@ use wit_parser::{Function, ManglingAndAbi, Resolve, Type, TypeDefKind, WorldItem
 
 pub mod disk_cache;
 pub mod host;
+pub mod values;
 
 const NO_IMPORT_COMPONENT: &str = include_str!("../fixtures/no-import.component.wat");
 const DENIED_IMPORT_COMPONENT: &str = include_str!("../fixtures/denied-import.component.wat");
 const INFINITE_COMPONENT: &str = include_str!("../fixtures/infinite.component.wat");
 const MEMORY_GROWTH_COMPONENT: &str = include_str!("../fixtures/memory-growth.component.wat");
+#[cfg(test)]
+const RICH_TYPES_COMPONENT: &str = include_str!("../fixtures/rich-types.component.wat");
 #[cfg(test)]
 const NEEDS_RANDOM_COMPONENT: &str = include_str!("../fixtures/needs-random.component.wat");
 #[cfg(test)]
@@ -495,6 +498,17 @@ pub struct ExecutionLimits {
     pub max_memory_bytes: Option<usize>,
     /// Obergrenze der eingesammelten stdout-Bytes.
     pub max_output_bytes: usize,
+    /// Obergrenze je `list<u8>`-Wert (Argument oder Rückgabe). ADR-0017 nennt Binärdaten
+    /// ausdrücklich „begrenzt"; ohne diese Schranke könnte ein Argument beliebig viel Speicher
+    /// im Host binden. Eigenes Feld, weil stdout und Nutzdaten verschiedene Dinge sind.
+    #[serde(default = "default_max_binary_bytes")]
+    pub max_binary_bytes: usize,
+}
+
+/// Vorgabe für einzelne Binärwerte: 1 MiB. Gross genug für Nutzdaten, klein genug, dass ein
+/// versehentlicher Dump nicht durchgeht.
+fn default_max_binary_bytes() -> usize {
+    1024 * 1024
 }
 
 impl Default for ExecutionLimits {
@@ -504,6 +518,7 @@ impl Default for ExecutionLimits {
             timeout_ms: Some(5_000),
             max_memory_bytes: Some(64 * 1024 * 1024),
             max_output_bytes: 64 * 1024,
+            max_binary_bytes: default_max_binary_bytes(),
         }
     }
 }
@@ -744,8 +759,8 @@ pub struct InvocationOutcome {
     pub stdout: String,
     /// True, wenn die Ausgabe das Limit erreicht hat und abgeschnitten sein kann.
     pub truncated: bool,
-    /// Rückgabewert eines typisierten Exports, falls vorhanden.
-    pub result: Option<i32>,
+    /// Rückgabewert eines typisierten Exports als JSON, falls vorhanden.
+    pub result: Option<serde_json::Value>,
 }
 
 /// Listet die aufrufbaren Exports (Tools) eines Components. Reine Reflexion — das Component wird
@@ -769,13 +784,13 @@ pub enum ToolKind {
 }
 
 /// Ein Parameter eines Funktions-Exports. Der Name kommt aus dem Component-Typ, nicht geraten.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolParameter {
     pub name: String,
-    /// Component-Model-Typname, z. B. `s32`.
+    /// Component-Model-Typ als Baum — daraus baut das Gateway das JSON-Schema.
     #[serde(rename = "type")]
-    pub type_name: String,
+    pub type_descriptor: crate::values::TypeDescriptor,
 }
 
 /// Beschreibung eines Exports für die Discovery (WP6.1). Trägt genug Typinformation, dass der
@@ -792,8 +807,8 @@ pub struct ToolDescriptor {
     pub name: String,
     pub kind: ToolKind,
     pub params: Vec<ToolParameter>,
-    /// Ergebnistypen in Component-Model-Schreibweise.
-    pub results: Vec<String>,
+    /// Ergebnistypen als Baum, wie die Parameter.
+    pub results: Vec<crate::values::TypeDescriptor>,
     pub supported: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unsupported_reason: Option<String>,
@@ -829,10 +844,13 @@ pub fn describe_cached_module(module: &CachedModule) -> Vec<ToolDescriptor> {
                     .params()
                     .map(|(param, ty)| ToolParameter {
                         name: param.to_owned(),
-                        type_name: type_name(&ty),
+                        type_descriptor: crate::values::describe(&ty),
                     })
                     .collect();
-                let results: Vec<String> = func.results().map(|ty| type_name(&ty)).collect();
+                let results: Vec<crate::values::TypeDescriptor> = func
+                    .results()
+                    .map(|ty| crate::values::describe(&ty))
+                    .collect();
                 let unsupported_reason = unsupported_function_reason(&params, &results);
                 tools.push(ToolDescriptor {
                     name: name.to_owned(),
@@ -882,54 +900,31 @@ pub fn describe_cached_module(module: &CachedModule) -> Vec<ToolDescriptor> {
 /// Warum ein Funktions-Export heute nicht aufrufbar ist — `None`, wenn er es ist. Die Bedingung
 /// spiegelt exakt den typisierten Pfad in [`invoke_component_tool`]: eine `s32`-Eingabe, eine
 /// `s32`-Ausgabe. Sie muss mitwandern, wenn dieser Pfad erweitert wird.
-fn unsupported_function_reason(params: &[ToolParameter], results: &[String]) -> Option<String> {
-    let signature = format!(
-        "({}) -> ({})",
-        params
-            .iter()
-            .map(|param| param.type_name.as_str())
-            .collect::<Vec<_>>()
-            .join(", "),
-        results.join(", ")
-    );
-    if params.len() == 1 && params[0].type_name == "s32" && results == ["s32"] {
+fn unsupported_function_reason(
+    params: &[ToolParameter],
+    results: &[crate::values::TypeDescriptor],
+) -> Option<String> {
+    // Nicht mehr die Form der Signatur entscheidet, sondern ob jeder beteiligte Typ abbildbar ist.
+    let unmapped: Vec<String> = params
+        .iter()
+        .filter(|param| !param.type_descriptor.is_supported())
+        .map(|param| format!("{}: {}", param.name, param.type_descriptor.label()))
+        .chain(
+            results
+                .iter()
+                .filter(|ty| !ty.is_supported())
+                .map(|ty| format!("Rückgabe: {}", ty.label())),
+        )
+        .collect();
+
+    if unmapped.is_empty() {
         None
     } else {
         Some(format!(
-            "nur (s32) -> s32 wird aufgerufen, dieser Export ist {signature}"
+            "nicht abbildbare Typen: {} (Records, Varianten, Enums, Flags, Tupel und Resources              bildet dieser Host noch nicht ab)",
+            unmapped.join(", ")
         ))
     }
-}
-
-/// Component-Model-Typname. Zusammengesetzte Typen bekommen ihren Sortennamen — für die
-/// Schema-Erzeugung reicht das, denn aufrufbar sind ohnehin nur die skalaren Fälle.
-fn type_name(ty: &wasmtime::component::Type) -> String {
-    use wasmtime::component::Type;
-    match ty {
-        Type::Bool => "bool",
-        Type::S8 => "s8",
-        Type::U8 => "u8",
-        Type::S16 => "s16",
-        Type::U16 => "u16",
-        Type::S32 => "s32",
-        Type::U32 => "u32",
-        Type::S64 => "s64",
-        Type::U64 => "u64",
-        Type::Float32 => "f32",
-        Type::Float64 => "f64",
-        Type::Char => "char",
-        Type::String => "string",
-        Type::List(_) => "list",
-        Type::Record(_) => "record",
-        Type::Tuple(_) => "tuple",
-        Type::Variant(_) => "variant",
-        Type::Enum(_) => "enum",
-        Type::Option(_) => "option",
-        Type::Result(_) => "result",
-        Type::Flags(_) => "flags",
-        _ => "unknown",
-    }
-    .to_owned()
 }
 
 /// Führt die eingebaute Fixture-Guest-Component aus (bequemer Wrapper für Tests).
@@ -964,7 +959,7 @@ pub fn invoke_component_tool(
     component_bytes: &[u8],
     grants: &CapabilityGrants,
     tool: &str,
-    args: &[i32],
+    args: &[serde_json::Value],
     limits: &ExecutionLimits,
 ) -> Result<InvocationOutcome> {
     // Ohne Cache: kompiliert jedes Mal neu. Der Host nutzt den Cache-Pfad; diese Form bleibt für
@@ -981,7 +976,7 @@ pub fn invoke_cached_module(
     grants: &CapabilityGrants,
     secret_values: &std::collections::BTreeMap<String, String>,
     tool: &str,
-    args: &[i32],
+    args: &[serde_json::Value],
     limits: &ExecutionLimits,
 ) -> Result<InvocationOutcome> {
     let engine = &module.engine;
@@ -990,6 +985,16 @@ pub fn invoke_cached_module(
     let exports = component_exports(engine, component);
     if !exports.iter().any(|export| export == tool) {
         bail!("tool '{tool}' is not exported by this component");
+    }
+
+    // Die Signatur kommt aus derselben Reflexion wie die Discovery — der Aufruf kann damit gar
+    // nicht auf eine andere Form treffen, als der Katalog angeboten hat.
+    let descriptor = describe_cached_module(module)
+        .into_iter()
+        .find(|candidate| candidate.name == tool)
+        .with_context(|| format!("tool '{tool}' ist nicht beschreibbar"))?;
+    if let Some(reason) = descriptor.unsupported_reason.as_deref() {
+        bail!("tool '{tool}' ist nicht aufrufbar: {reason}");
     }
 
     let mut linker = Linker::<WasiGuestHost>::new(engine);
@@ -1033,7 +1038,7 @@ pub fn invoke_cached_module(
         (stop_tx, handle)
     });
 
-    let outcome = (|| -> Result<Option<i32>> {
+    let outcome = (|| -> Result<Option<serde_json::Value>> {
         if is_wasi_command_export(tool) {
             let command = wasmtime_wasi::p2::bindings::sync::Command::instantiate(
                 &mut store, component, &linker,
@@ -1046,13 +1051,43 @@ pub fn invoke_cached_module(
         } else {
             let instance = linker.instantiate(&mut store, component)?;
             let func = instance
-                .get_typed_func::<(i32,), (i32,)>(&mut store, tool)
-                .map_err(|error| {
-                    anyhow::anyhow!("export '{tool}' is not a (s32) -> s32 function: {error}")
-                })?;
-            let argument = args.first().copied().unwrap_or_default();
-            let (result,) = func.call(&mut store, (argument,))?;
-            Ok(Some(result))
+                .get_func(&mut store, tool)
+                .with_context(|| format!("export '{tool}' ist keine aufrufbare Funktion"))?;
+
+            if args.len() != descriptor.params.len() {
+                bail!(
+                    "'{tool}' erwartet {} Argument(e), bekam {}",
+                    descriptor.params.len(),
+                    args.len()
+                );
+            }
+            let arguments = descriptor
+                .params
+                .iter()
+                .zip(args)
+                .map(|(param, json)| {
+                    crate::values::to_val(&param.type_descriptor, json, limits.max_binary_bytes)
+                        .with_context(|| format!("Argument '{}'", param.name))
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            // Der dynamische Pfad statt `get_typed_func`: Nur so lassen sich list<u8>, result<T,E>
+            // und die übrigen abbildbaren Typen überhaupt übergeben.
+            let mut results = vec![wasmtime::component::Val::Bool(false); descriptor.results.len()];
+            func.call(&mut store, &arguments, &mut results)?;
+
+            Ok(match results.len() {
+                0 => None,
+                1 => Some(crate::values::to_json(&results[0])?),
+                // Mehrere Rückgabewerte gibt es im Component Model praktisch nicht mehr; falls
+                // doch, wird daraus ein Array statt eines stillen Verlusts.
+                _ => Some(serde_json::Value::Array(
+                    results
+                        .iter()
+                        .map(crate::values::to_json)
+                        .collect::<Result<Vec<_>>>()?,
+                )),
+            })
         }
     })();
 
@@ -1870,10 +1905,10 @@ mod tests {
             tools[0].params,
             [ToolParameter {
                 name: "value".to_owned(),
-                type_name: "s32".to_owned(),
+                type_descriptor: crate::values::TypeDescriptor::S32,
             }]
         );
-        assert_eq!(tools[0].results, ["s32"]);
+        assert_eq!(tools[0].results, [crate::values::TypeDescriptor::S32]);
         assert!(tools[0].supported);
         Ok(())
     }
@@ -1911,20 +1946,110 @@ mod tests {
 
         let tools = describe_component_tools(&bytes)?;
 
+        // u32 ist inzwischen abbildbar — der Export ist damit aufrufbar, und genau das prüfen wir.
         let grow = tools.iter().find(|tool| tool.name == "grow").unwrap();
-        assert_eq!(grow.params[0].type_name, "u32");
-        assert!(!grow.supported);
-        assert!(grow.unsupported_reason.as_ref().unwrap().contains("u32"));
-        // Und der Befund stimmt: der Aufruf scheitert tatsächlich.
-        assert!(
+        assert_eq!(
+            grow.params[0].type_descriptor,
+            crate::values::TypeDescriptor::U32
+        );
+        assert!(grow.supported);
+        assert_eq!(
             invoke_component_tool(
                 &bytes,
                 &CapabilityGrants::default(),
                 "grow",
-                &[1],
+                &[serde_json::json!(1)],
                 &ExecutionLimits::default()
-            )
-            .is_err()
+            )?
+            .result,
+            Some(serde_json::json!(1)),
+            "memory.grow gibt die vorherige Seitenzahl zurück"
+        );
+        Ok(())
+    }
+
+    /// Die Aufrufbreite an einem echten Component: `list<u8>` geht als Blob hin und zurück,
+    /// `result<T,E>` trägt beide Zweige. Ohne diesen Test wäre nur die JSON-Abbildung belegt,
+    /// nicht der Weg durch die kanonische ABI.
+    #[test]
+    fn rich_types_round_trip_through_a_real_component() -> Result<()> {
+        use crate::values::TypeDescriptor;
+        use base64::Engine as _;
+        let engine = hardened_engine(false, false)?;
+        let (bytes, _) = compile_component(&engine, RICH_TYPES_COMPONENT)?;
+        let tools = describe_component_tools(&bytes)?;
+
+        // Discovery meldet die Typen strukturiert — daraus baut das Gateway sein Schema.
+        let echo = tools.iter().find(|tool| tool.name == "echo").unwrap();
+        assert!(echo.supported, "{:?}", echo.unsupported_reason);
+        assert_eq!(echo.params[0].type_descriptor, TypeDescriptor::Binary);
+        assert_eq!(echo.results, [TypeDescriptor::Binary]);
+
+        let classify = tools.iter().find(|tool| tool.name == "classify").unwrap();
+        assert!(classify.supported, "{:?}", classify.unsupported_reason);
+        assert_eq!(
+            classify.results[0],
+            TypeDescriptor::Result {
+                ok: Some(Box::new(TypeDescriptor::String)),
+                err: Some(Box::new(TypeDescriptor::U32)),
+            }
+        );
+
+        // list<u8> als Base64 hin und zurück — nicht als Zahlen-Array.
+        let payload = base64::engine::general_purpose::STANDARD.encode([0u8, 127, 255]);
+        let echoed = invoke_component_tool(
+            &bytes,
+            &CapabilityGrants::default(),
+            "echo",
+            &[serde_json::json!(payload)],
+            &ExecutionLimits::default(),
+        )?;
+        assert_eq!(echoed.result, Some(serde_json::json!(payload)));
+
+        // Beide Zweige von result<string, u32>.
+        let even = invoke_component_tool(
+            &bytes,
+            &CapabilityGrants::default(),
+            "classify",
+            &[serde_json::json!(4)],
+            &ExecutionLimits::default(),
+        )?;
+        let odd = invoke_component_tool(
+            &bytes,
+            &CapabilityGrants::default(),
+            "classify",
+            &[serde_json::json!(7)],
+            &ExecutionLimits::default(),
+        )?;
+        assert_eq!(even.result, Some(serde_json::json!({"ok": "gerade"})));
+        assert_eq!(odd.result, Some(serde_json::json!({"err": 7})));
+        Ok(())
+    }
+
+    /// Die Binärgrenze wirkt auch am echten Aufruf, nicht nur im Mapper.
+    #[test]
+    fn an_oversized_binary_argument_is_refused_at_the_call() -> Result<()> {
+        use base64::Engine as _;
+        let engine = hardened_engine(false, false)?;
+        let (bytes, _) = compile_component(&engine, RICH_TYPES_COMPONENT)?;
+        let limits = ExecutionLimits {
+            max_binary_bytes: 8,
+            ..ExecutionLimits::default()
+        };
+        let payload = base64::engine::general_purpose::STANDARD.encode(vec![0u8; 9]);
+
+        let failure = invoke_component_tool(
+            &bytes,
+            &CapabilityGrants::default(),
+            "echo",
+            &[serde_json::json!(payload)],
+            &limits,
+        )
+        .unwrap_err();
+
+        assert!(
+            failure.to_string().contains("Argument 'data'"),
+            "{failure:#}"
         );
         Ok(())
     }
@@ -2111,7 +2236,7 @@ mod tests {
                 &bytes,
                 &CapabilityGrants::default(),
                 "run",
-                &[7],
+                &[serde_json::json!(7)],
                 &ExecutionLimits::default(),
             );
             assert!(
@@ -2123,16 +2248,27 @@ mod tests {
             let mut wrong = CapabilityGrants::default();
             wrong.environment.insert("MCPMCP_SPIKE".to_owned());
             assert!(
-                invoke_component_tool(&bytes, &wrong, "run", &[7], &ExecutionLimits::default())
-                    .is_err(),
+                invoke_component_tool(
+                    &bytes,
+                    &wrong,
+                    "run",
+                    &[serde_json::json!(7)],
+                    &ExecutionLimits::default()
+                )
+                .is_err(),
                 "ein fremder Grant darf keine andere Kategorie freischalten"
             );
 
             let mut granted = CapabilityGrants::default();
             grant(&mut granted);
-            let outcome =
-                invoke_component_tool(&bytes, &granted, "run", &[7], &ExecutionLimits::default())?;
-            assert_eq!(outcome.result, Some(7));
+            let outcome = invoke_component_tool(
+                &bytes,
+                &granted,
+                "run",
+                &[serde_json::json!(7)],
+                &ExecutionLimits::default(),
+            )?;
+            assert_eq!(outcome.result, Some(serde_json::json!(7)));
         }
         Ok(())
     }
@@ -2251,11 +2387,11 @@ mod tests {
             &bytes,
             &CapabilityGrants::default(),
             "run",
-            &[41],
+            &[serde_json::json!(41)],
             &ExecutionLimits::default(),
         )?;
 
-        assert_eq!(outcome.result, Some(42));
+        assert_eq!(outcome.result, Some(serde_json::json!(42)));
         assert!(!outcome.truncated);
         Ok(())
     }
@@ -2288,8 +2424,14 @@ mod tests {
         };
 
         assert!(
-            invoke_component_tool(&bytes, &CapabilityGrants::default(), "run", &[41], &starved)
-                .is_err(),
+            invoke_component_tool(
+                &bytes,
+                &CapabilityGrants::default(),
+                "run",
+                &[serde_json::json!(41)],
+                &starved
+            )
+            .is_err(),
             "ein Fuel-Budget von 1 muss den Aufruf abbrechen"
         );
         Ok(())

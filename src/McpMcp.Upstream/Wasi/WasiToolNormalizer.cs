@@ -21,23 +21,24 @@ internal sealed record WasiTool(
     /// führt. Der Vertrag überträgt <c>args</c> als Reihenfolge — die Namen existieren nur im
     /// Schema, also muss die Übersetzung hier stattfinden und nicht beim Aufrufer.
     /// </summary>
-    public bool TryBindArguments(JsonElement arguments, out int[] positional, out string error)
+    public bool TryBindArguments(JsonElement arguments, out JsonElement[] positional, out string error)
     {
-        var bound = new int[ParameterNames.Count];
+        var bound = new JsonElement[ParameterNames.Count];
         for (var index = 0; index < ParameterNames.Count; index++)
         {
             var name = ParameterNames[index];
+            // Geprüft wird hier nur Anwesenheit und Reihenfolge. Ob der Wert zum Typ passt,
+            // entscheidet das Schema im Invoker und danach der Host — zwei Stellen mit derselben
+            // Prüfung wären zwei Wahrheiten, die auseinanderlaufen können.
             if (arguments.ValueKind is not JsonValueKind.Object
-                || !arguments.TryGetProperty(name, out var value)
-                || value.ValueKind is not JsonValueKind.Number
-                || !value.TryGetInt32(out var number))
+                || !arguments.TryGetProperty(name, out var value))
             {
                 positional = [];
-                error = $"Argument '{name}' fehlt oder ist keine 32-Bit-Ganzzahl.";
+                error = $"Argument '{name}' fehlt.";
                 return false;
             }
 
-            bound[index] = number;
+            bound[index] = value;
         }
 
         positional = bound;
@@ -178,10 +179,9 @@ internal static class WasiToolNormalizer
         {
             if (parameter.TryGetProperty("name", out var name) && name.GetString() is { Length: > 0 } named)
             {
-                var type = parameter.TryGetProperty("type", out var declaredType)
-                    ? declaredType.GetString() ?? "unknown"
-                    : "unknown";
-                parameters.Add(new WasiParameter(named, type));
+                parameters.Add(new WasiParameter(
+                    named,
+                    parameter.TryGetProperty("type", out var declaredType) ? declaredType.Clone() : default));
             }
         }
 
@@ -198,11 +198,7 @@ internal static class WasiToolNormalizer
         var properties = new Dictionary<string, object>(StringComparer.Ordinal);
         foreach (var parameter in parameters)
         {
-            properties[parameter.Name] = new
-            {
-                type = JsonType(parameter.Type),
-                description = $"Component-Model-Typ '{parameter.Type}'.",
-            };
+            properties[parameter.Name] = SchemaForType(parameter.Type);
         }
 
         return JsonSerializer.SerializeToElement(new Dictionary<string, object>(StringComparer.Ordinal)
@@ -214,15 +210,88 @@ internal static class WasiToolNormalizer
         });
     }
 
-    private static string JsonType(string componentType) => componentType switch
+    /// <summary>
+    /// Baut das Schema eines Component-Model-Typs aus dem Typbaum des Hosts. Der Baum ist der
+    /// Grund, warum das überhaupt geht: Aus dem blossen Namen „list" liesse sich kein
+    /// <c>items</c> ableiten, und <c>list&lt;u8&gt;</c> wäre nicht von <c>list&lt;string&gt;</c>
+    /// zu unterscheiden.
+    /// </summary>
+    private static object SchemaForType(JsonElement type)
     {
-        "s8" or "u8" or "s16" or "u16" or "s32" or "u32" or "s64" or "u64" => "integer",
-        "f32" or "f64" => "number",
-        "bool" => "boolean",
-        "string" or "char" => "string",
-        "list" => "array",
-        _ => "object",
-    };
+        var kind = type.ValueKind is JsonValueKind.Object && type.TryGetProperty("kind", out var declared)
+            ? declared.GetString()
+            : null;
+
+        return kind switch
+        {
+            "bool" => Described("boolean", "bool"),
+            "s8" => Bounded(sbyte.MinValue, sbyte.MaxValue, "s8"),
+            "u8" => Bounded(byte.MinValue, byte.MaxValue, "u8"),
+            "s16" => Bounded(short.MinValue, short.MaxValue, "s16"),
+            "u16" => Bounded(ushort.MinValue, ushort.MaxValue, "u16"),
+            "s32" => Bounded(int.MinValue, int.MaxValue, "s32"),
+            "u32" => Bounded(uint.MinValue, uint.MaxValue, "u32"),
+            // 64 Bit als Dezimalstring: JSON-Zahlen sind Doubles und verlieren ab 2^53 Stellen.
+            "s64" => Pattern("^-?[0-9]+$", "s64"),
+            "u64" => Pattern("^[0-9]+$", "u64"),
+            "f32" => Described("number", "f32"),
+            "f64" => Described("number", "f64"),
+            "char" => new { type = "string", minLength = 1, maxLength = 1, description = ComponentType("char") },
+            "string" => Described("string", "string"),
+            // list<u8> ist ein Blob, kein Zahlen-Array (ADR-0017).
+            "binary" => new { type = "string", contentEncoding = "base64", description = ComponentType("list<u8>") },
+            "list" => new
+            {
+                type = "array",
+                items = SchemaForType(type.GetProperty("element")),
+                description = ComponentType("list"),
+            },
+            "option" => new
+            {
+                oneOf = new[] { SchemaForType(type.GetProperty("value")), new { type = "null" } },
+                description = "Component-Model-Typ 'option' — null bedeutet none.",
+            },
+            "result" => ResultSchema(type),
+            // Sollte nie vorkommen: nicht abbildbare Exports stehen gar nicht erst im Katalog.
+            _ => new { description = "Typ ohne Schema." },
+        };
+    }
+
+    /// <summary><c>result&lt;T,E&gt;</c> als Objekt mit genau einem der Zweige.</summary>
+    private static object ResultSchema(JsonElement type)
+    {
+        var properties = new Dictionary<string, object>(StringComparer.Ordinal);
+        if (type.TryGetProperty("ok", out var ok))
+        {
+            properties["ok"] = SchemaForType(ok);
+        }
+
+        if (type.TryGetProperty("err", out var err))
+        {
+            properties["err"] = SchemaForType(err);
+        }
+
+        return new
+        {
+            type = "object",
+            properties,
+            additionalProperties = false,
+            minProperties = 1,
+            maxProperties = 1,
+            description = "Component-Model-Typ 'result' — genau eines von 'ok' oder 'err'.",
+        };
+    }
+
+    private static string ComponentType(string name) => $"Component-Model-Typ '{name}'.";
+
+    private static object Described(string jsonType, string componentType)
+        => new { type = jsonType, description = ComponentType(componentType) };
+
+    private static object Bounded(long minimum, long maximum, string componentType)
+        => new { type = "integer", minimum, maximum, description = ComponentType(componentType) };
+
+    private static object Pattern(string pattern, string componentType)
+        => new { type = "string", pattern, description = $"Component-Model-Typ '{componentType}' als Dezimalstring." };
 
     private static string Describe(JsonElement descriptor, string export, IReadOnlyList<WasiParameter> parameters)
     {
@@ -231,8 +300,9 @@ internal static class WasiToolNormalizer
         // muss ihn im Component wiederfinden können.
         return kind == "command"
             ? $"WASI-Kommando-Export '{export}' — läuft ohne Argumente."
-            : $"WASI-Funktions-Export '{export}'({string.Join(", ", parameters.Select(p => $"{p.Name}: {p.Type}"))}).";
+            : $"WASI-Funktions-Export '{export}'({string.Join(", ", parameters.Select(p => p.Name))}).";
     }
 
-    private sealed record WasiParameter(string Name, string Type);
+    /// <summary>Ein Parameter mit dem Typbaum, den der Host gemeldet hat.</summary>
+    private sealed record WasiParameter(string Name, JsonElement Type);
 }

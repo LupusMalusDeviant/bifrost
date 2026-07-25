@@ -97,14 +97,63 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
 
         // Typisierter Export: der echte Parametername mit passendem JSON-Typ, strikt geschlossen.
         var typed = inventory.Tools.Single(tool => tool.Name == "double");
-        typed.InputSchema.GetProperty("properties").GetProperty("value").GetProperty("type")
-            .GetString().Should().Be("integer");
+        var value = typed.InputSchema.GetProperty("properties").GetProperty("value");
+        value.GetProperty("type").GetString().Should().Be("integer");
+        value.GetProperty("minimum").GetInt64().Should().Be(int.MinValue, "s32 ist begrenzt");
         typed.InputSchema.GetProperty("required").EnumerateArray()
             .Select(item => item.GetString()).Should().Equal("value");
         typed.InputSchema.GetProperty("additionalProperties").GetBoolean().Should().BeFalse();
 
         // Was der Host nicht aufrufen kann, gehört nicht in den Katalog.
         inventory.Tools.Select(tool => tool.Name).Should().NotContain("grow");
+    }
+
+    [Fact]
+    public async Task Binary_and_result_types_become_real_schemas()
+    {
+        await using var connection = await ConnectAsync();
+
+        var inventory = await connection.DiscoverAsync(TestContext.Current.CancellationToken);
+
+        // list<u8> ist ein Base64-String, kein Zahlen-Array (ADR-0017).
+        var blob = inventory.Tools.Single(tool => tool.Name == "blob");
+        var data = blob.InputSchema.GetProperty("properties").GetProperty("data");
+        data.GetProperty("type").GetString().Should().Be("string");
+        data.GetProperty("contentEncoding").GetString().Should().Be("base64");
+
+        // Der Typbaum ist der Grund, warum das Schema mehr als "object" sagen kann.
+        var classify = inventory.Tools.Single(tool => tool.Name == "classify");
+        classify.InputSchema.GetProperty("properties").GetProperty("value")
+            .GetProperty("maximum").GetUInt32().Should().Be(uint.MaxValue, "u32 ist begrenzt");
+    }
+
+    [Fact]
+    public async Task Binary_arguments_and_results_travel_as_base64()
+    {
+        await using var connection = await ConnectAsync();
+        var payload = Convert.ToBase64String(new byte[] { 0, 127, 255 });
+        var args = JsonSerializer.Deserialize<JsonElement>($$"""{"data":"{{payload}}"}""");
+
+        var result = await connection.CallToolAsync("blob", args, TestContext.Current.CancellationToken);
+
+        result.GetProperty("isError").GetBoolean().Should().BeFalse();
+        result.GetProperty("content")[0].GetProperty("text").GetString().Should().Be(payload,
+            "ein String-Ergebnis geht roh durch, nicht mit Anführungszeichen");
+    }
+
+    [Fact]
+    public async Task A_result_type_reaches_the_caller_as_json()
+    {
+        await using var connection = await ConnectAsync();
+        var even = JsonSerializer.Deserialize<JsonElement>("""{"value":4}""");
+        var odd = JsonSerializer.Deserialize<JsonElement>("""{"value":7}""");
+
+        var ok = await connection.CallToolAsync("classify", even, TestContext.Current.CancellationToken);
+        var err = await connection.CallToolAsync("classify", odd, TestContext.Current.CancellationToken);
+
+        // Zusammengesetzte Rückgaben behalten ihre Struktur, statt zu einer Zahl zu verkümmern.
+        ok.GetProperty("content")[0].GetProperty("text").GetString().Should().Be("""{"ok":"gerade"}""");
+        err.GetProperty("content")[0].GetProperty("text").GetString().Should().Be("""{"err":7}""");
     }
 
     [Fact]

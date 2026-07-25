@@ -19,10 +19,11 @@ namespace McpMcp.Upstream.Wasi;
 public sealed class WasiRuntimeConnector : IUpstreamConnector
 {
     /// <summary>
-    /// Protokollversion, die dieser Client spricht. Muss zum Host passen — <c>2</c> liefert
-    /// typisierte Tool-Beschreibungen bei <c>discover</c> (Plan 0003, WP6.1).
+    /// Protokollversion, die dieser Client spricht. Muss zum Host passen — <c>3</c> trägt
+    /// Typbäume statt Typnamen und JSON-Werte statt <c>i32</c> in Argumenten und Ergebnis
+    /// (Plan 0003, Aufrufbreite).
     /// </summary>
-    public const string ProtocolVersion = "2";
+    public const string ProtocolVersion = "3";
 
     private readonly IPublisherTrustStore _trust;
     private readonly IAuditSink? _audit;
@@ -296,9 +297,15 @@ internal sealed class WasiUpstreamConnection : IUpstreamConnection, ISignedUpstr
         }
 
         var text = response.TryGetProperty("stdout", out var stdout) ? stdout.GetString() ?? string.Empty : string.Empty;
-        if (response.TryGetProperty("result", out var result) && result.ValueKind is JsonValueKind.Number)
+        if (response.TryGetProperty("result", out var result)
+            && result.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null)
         {
-            text = text.Length > 0 ? $"{text}\n{result.GetInt32()}" : result.GetInt32().ToString(System.Globalization.CultureInfo.InvariantCulture);
+            // Seit Vertrag 3 ist der Rückgabewert ein beliebiger JSON-Wert. Strings gehen roh
+            // durch — sonst stünden Anführungszeichen im Ergebnis —, alles andere als JSON.
+            var rendered = result.ValueKind is JsonValueKind.String
+                ? result.GetString() ?? string.Empty
+                : result.GetRawText();
+            text = text.Length > 0 ? $"{text}\n{rendered}" : rendered;
         }
 
         var truncated = response.TryGetProperty("truncated", out var flag) && flag.GetBoolean();

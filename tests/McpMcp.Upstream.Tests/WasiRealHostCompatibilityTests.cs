@@ -199,8 +199,8 @@ public sealed class WasiRealHostCompatibilityTests
     }
 
     [Theory]
-    [InlineData("1")] // älterer Client trifft neueren Host — genau der Bruch aus WP6.1
-    [InlineData("3")] // neuerer Client trifft älteren Host
+    [InlineData("2")] // älterer Client trifft neueren Host — der Bruch der Aufrufbreite
+    [InlineData("4")] // neuerer Client trifft älteren Host
     public async Task An_incompatible_contract_version_is_rejected_without_killing_the_host(string version)
     {
         using var wire = new HostWire(RequireHost());
