@@ -2,6 +2,9 @@
 
 - **Status:** Vorgeschlagen
 - **Datum:** 2026-07-24
+- **Entscheidungsmaterial:** [0019-entscheidungsmaterial.md](0019-entscheidungsmaterial.md) — was
+  von diesem Entwurf im Code schon existiert, was er still voraussetzt, und die vier Fragen, an
+  denen die Umsetzung hängt (Stand 2026-07-25).
 
 ## Kontext
 
