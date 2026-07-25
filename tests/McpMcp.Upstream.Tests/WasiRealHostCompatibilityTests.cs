@@ -234,8 +234,8 @@ public sealed class WasiRealHostCompatibilityTests
     }
 
     [Theory]
-    [InlineData("2")] // älterer Client trifft neueren Host — der Bruch der Aufrufbreite
-    [InlineData("4")] // neuerer Client trifft älteren Host
+    [InlineData("3")] // älterer Client trifft neueren Host — der Bruch der Nebenläufigkeit
+    [InlineData("5")] // neuerer Client trifft älteren Host
     public async Task An_incompatible_contract_version_is_rejected_without_killing_the_host(string version)
     {
         using var wire = new HostWire(RequireHost());
@@ -544,9 +544,14 @@ public sealed class WasiRealHostCompatibilityTests
                 ?? throw new InvalidOperationException($"WASI-Host '{hostExecutable}' ließ sich nicht starten.");
         }
 
+        private long _nextId;
+
         public async Task<JsonElement> RequestAsync(object request, CancellationToken ct)
         {
-            var payload = JsonSerializer.SerializeToUtf8Bytes(request);
+            // Vertrag v4: Ohne Korrelations-Id lehnt der Host den Frame ab.
+            var envelope = JsonSerializer.SerializeToNode(request)!.AsObject();
+            envelope["id"] = Interlocked.Increment(ref _nextId);
+            var payload = JsonSerializer.SerializeToUtf8Bytes(envelope);
             var length = new byte[4];
             BinaryPrimitives.WriteUInt32BigEndian(length, (uint)payload.Length);
 

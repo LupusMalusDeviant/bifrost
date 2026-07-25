@@ -77,7 +77,7 @@ unterscheidet `requested` von `confirmed`.
 | MCP-Upstream (stdio/SSE) | ja — `notifications/cancelled` |
 | CLI ([ADR-0014](0014-cli-programme-als-upstream-transport.md)) | ja — Prozessbaum-Kill ist gebaut |
 | OpenAPI/HTTP | nein — Verbindungsabbruch ohne Zusage über die Gegenseite |
-| WASI ([ADR-0020](0020-wasi-runtime-out-of-process-rust-host.md)) | **nein, vorerst** — der IPC-Vertrag ist ein Frame rein, ein Frame raus und hat kein Cancel-Frame. Fuel und Epoche sind eine Reißleine, keine Abbruchsemantik |
+| WASI ([ADR-0020](0020-wasi-runtime-out-of-process-rust-host.md)) | ja, seit IPC-Vertrag v4 (2026-07-25) — `cancel` trappt den Guest über die Epoche, und `confirmed` wird erst gemeldet, wenn der Aufruf wirklich geendet hat. Bleibt das binnen fünf Sekunden aus, steht `confirmed: false`, und es greifen wieder nur Fuel und Frist |
 
 Ein Transport ohne Bestätigung bleibt bei `requested` stehen. Das ist ausdrücklich so gewollt: Ein
 `confirmed`, das niemand einlöst, wäre ein Feld, das Sicherheit vortäuscht — und im Audit ist
@@ -155,6 +155,9 @@ Zustellung als Zusage braucht — dann als eigene ADR, weil sie ein eigenes Betr
   Persistenz und Berechtigungen aus dieser ADR **implementiert** sind — die Entscheidung hier
   genügt dafür nicht.
 - **WASI-Streams** (Plan 0003) sind damit auf einer Seite entschieden: Chunks werden geholt, Abbruch
-  ist persistiert und bleibt bei WASI vorerst `requested`. Es bleibt der asynchrone Umbau des
-  Rust-Hosts (`component-model-async` zieht `async` nach sich) plus IPC-Vertrag v4 mit
-  Korrelations-Ids, Chunk- und Cancel-Frames. Der fällt unabhängig von dieser ADR an.
+  ist persistiert. **Nachtrag 2026-07-25:** Der IPC-Vertrag v4 ist gebaut — Korrelations-Ids,
+  nebenläufige Aufrufe und ein `cancel`, das seine Wirkung belegt. Damit ist WASI in der Tabelle
+  oben von „nein" auf „ja" gewechselt. Offen bleibt für Streams nur noch der asynchrone Umbau des
+  Rust-Hosts (`component-model-async` zieht `async` nach sich) samt Chunk-Frames — und die
+  Erkenntnis, dass ein dynamischer Host Streams ohnehin nur für fest einkompilierte Payload-Typen
+  lesen kann (`StreamReader<T>` verlangt ein statisches `T`; `Val` erfüllt das nicht).

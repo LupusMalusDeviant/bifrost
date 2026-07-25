@@ -173,6 +173,7 @@ Belegt, jeweils an einen benannten Test gebunden — nicht an ein Plan-Häkchen:
 | Aufrufbreite (`list<u8>`, `result<T,E>`) | Vertrag **v3**: Typen sind Bäume statt Namen, Argumente und Ergebnis sind JSON-Werte. Der Host ruft über den dynamischen `Val`-Pfad statt `get_typed_func`. `list<u8>` ist ein Base64-Blob mit eigener Längengrenze (`maxBinaryBytes`, 1 MiB), 64-Bit-Ganzzahlen sind Dezimalstrings (JSON-Doubles verlieren ab 2^53). Gateway-seitig entsteht daraus ein echtes Schema je Typ — `contentEncoding: base64`, `minimum`/`maximum` je Breite, `oneOf` für `option`, genau ein Zweig für `result`. Tests: 10 Rust-Tests zur Wertabbildung, 2 an einem echten Component mit `list<u8>`- und `result<string,u32>`-Export (WAT-Fixture mit Bump-Allocator, weil die kanonische ABI Memory und realloc braucht), 3 Connector-Tests |
 | Aufrufbreite, zusammengesetzte Typen und Interface-Exports | `record`, `variant`, `enum`, `flags` und `tuple` sind abgebildet (15 Mapper-Tests inkl. Verschachtelung) — und erreichbar: Funktionen in exportierten **Interface-Instanzen** werden über einen `path` adressiert statt über den punktierten Namen, weil Interface-Namen selbst Punkte enthalten. Damit ist der Normalfall eines aus WIT gebauten Components abgedeckt; belegt an `control-plane.wit` (Record mit Enum, Liste und Option, Rückgabe `result<record, string>`), und an einem **echten, mit `wasm32-wasip2` gebauten Guest** (`guest-interface/`), der dasselbe WIT implementiert und wirklich rechnet: Record hinein, `result<record, string>` heraus, Fehlerzweig inklusive — über die Rust-Seite und über die .NET-Leitung gegen das echte Binary. Gateway-seitig verschachtelte Schemata für Record/Variant/Enum/Flags/Tupel |
 | Aufrufbreite, Resources | Vertrag **v3** erweitert: `load` kennt `persistentInstance`, `invoke` einen `caller`, dazu `release` und offene Handles in `health`. Ein Handle geht als undurchsichtiges Objekt (`{"handle":"res-1"}`) über die Leitung; der Wert bleibt im Host. **Instanz pro Upstream, Handles pro Aufrufer** (Entscheidung des Product Owners, 2026-07-25): Ein fremdes Handle ist „unbekannt" — die Meldung unterscheidet nicht zwischen „gibt es nicht" und „gehört jemand anderem". `own<T>` verbraucht das Handle beim Übergeben, `borrow<T>` nicht; 256 offene Handles je Sitzung sind die Grenze. Voreinstellung ist **aus**, siehe Restrisiko unten. Belegt an einem echten `wasm32-wasip2`-Guest (`guest-resource/`, `docs/spikes/fixtures/counter.wit`): 5 Rust-Tests auf Bibliotheksebene, 4 über den Protokollweg, 2 `WasiRealHostCompatibilityTests` gegen das echte Binary (Zustand über Aufrufe hinweg, Fremdaufrufer abgewiesen), 2 zum Durchreichen der Identität im `GuardedUpstreamConnection` |
+| IPC-Vertrag v4 (Nebenläufigkeit und Abbruch) | Jede Anfrage trägt eine `id`, jede Antwort gibt sie zurück — Antworten dürfen in anderer Reihenfolge kommen. Damit laufen bis zu **16 Aufrufe je Host-Prozess gleichzeitig** statt einem; darüber `too-many-calls`, weil `maxMemoryBytes` pro Aufruf gilt. Neu ist `cancel`: Es trappt den Guest über die Epoche und meldet `confirmed` erst, wenn der Aufruf **wirklich** geendet hat. Nebenbei geschlossen: Der alte Wachhund rief `increment_epoch` auf der geteilten Engine und hätte unter Nebenläufigkeit fremde Aufrufe getroffen — jeder Store entscheidet jetzt über einen eigenen Callback. Aufrufe auf einer persistenten Instanz bleiben seriell (es gibt sie nur einmal), laufen aber auf einem eigenen Thread und sind damit ebenfalls abbrechbar. Gateway-seitig ein Pump-Task, der Antworten über die Id zuordnet; eine Antwort ohne Id lässt alle Wartenden mit klarer Meldung scheitern, statt den Handshake hängen zu lassen. Tests: 4 Rust-Tests (Korrelation, Abbruch bestätigt, unbekanntes Ziel, langsamer Aufruf blockiert den nächsten nicht), Stub und Real-Host-Tests auf v4 gezogen |
 | WP7.3/7.4 (Security-Review, ADR-0017) | Review am 2026-07-25 mit dem Product Owner durchgeführt: [`wasi-runtime-security-review.md`](../security/wasi-runtime-security-review.md), Ergebnis angenommen mit benannten Restrisiken. Sicherheitsstand und Restrisiken stehen im [Threat-Model](../security/threat-model.md). ADR-0017 auf **akzeptiert** — als Isolations- und Grant-Modell, mit ausdrücklichem Vorbehalt für den Vorrang bei beliebigen Connectoren |
 | **M2** (signiertes Component durch die volle Pipeline) | `WasiRealHostGovernanceTests` (echter Host, signiertes Fixture) + `WasiUpstreamE2ETests` (RBAC, Guardrail, Approval, Audit, MCP + REST) |
 
@@ -183,14 +184,18 @@ Offen und ausdrücklich **nicht** behauptet:
   ADR-0016 fehlen weiterhin.
 - **WP3, Rest** — Preopens bleiben **nur lesend**; Schreibrechte sind im Grant-Modell nach wie vor
   nicht ausdrückbar.
-- **Aufrufbreite, Rest** — offen bleiben nur noch **Futures und Streams**. Die Modellseite ist seit
-  dem 2026-07-25 entschieden ([ADR-0019](../adr/0019-langlaufende-tasks-und-events.md)): Chunks
-  werden **geholt**, nicht geschickt, und der Abbruch ist ein persistiertes Kennzeichen, das bei
-  WASI vorerst bei `requested` stehen bleibt — der IPC-Vertrag hat kein Cancel-Frame. Offen bleibt
-  damit die Technik, nicht die Semantik: die asynchrone ABI (`component-model-async` zieht `async`
-  nach sich, also asynchroner Store, `call_async` statt `Func::call` und ein umgebauter stdio-Loop
-  samt Fuel-Nachfüllung, Epochen-Wachhund und persistenter Instanz) plus **IPC-Vertrag v4** mit
-  Korrelations-Ids, Chunk- und Cancel-Frames. Alles andere ist abgebildet und aufrufbar.
+- **Aufrufbreite, Rest** — offen bleiben nur noch **Futures und Streams**. Modellseite und
+  Vertragsseite sind erledigt: ADR-0019 hat entschieden, dass Chunks **geholt** werden, und
+  IPC-Vertrag v4 bringt Korrelations-Ids, Nebenläufigkeit und einen bestätigten Abbruch. Offen ist
+  damit nur noch der **asynchrone Umbau des Rust-Hosts**: `component-model-async` zieht `async`
+  nach sich, also asynchroner Store, `call_async` statt `Func::call` und ein umgebauter stdio-Loop.
+- **Streams, harte Grenze** — ein **dynamischer** Host kann Streams nur für Payload-Typen lesen,
+  die in ihn hineinkompiliert sind. `StreamAny` (was `Val::Stream` trägt) kann nur `close()`;
+  Lesen verlangt `StreamReader<T>` mit `T: ComponentType + 'static`, und `Val` erfüllt das nicht.
+  `stream<u8>` wäre also machbar, `stream<irgendein-record-aus-dem-Katalog>` nie — dafür bräuchte
+  jedes Component seinen eigenen generierten Host. Das ist die Bauart der wasmtime-API, keine
+  Lücke, und es sollte vor dem async-Umbau bewertet werden: Der Umbau kostet den Kern des Hosts,
+  der Nutzen ist schmaler als „Streams" vermuten lässt.
 - **Resources, Restrisiko** — eine persistente Instanz teilt ihren **internen** Zustand (Globals,
   linearer Speicher) zwischen allen Aufrufern desselben Upstreams. Die Handle-Trennung schützt
   davor nicht: Sie verhindert, dass ein Aufrufer ein fremdes Handle *benennt*, nicht, dass ein
@@ -242,7 +247,7 @@ neu abzuwägen:
 
 - **IPC-Form** (WP1.1): length-prefixed JSON über stdio vs. lokaler Socket (Named Pipe/UDS) — braucht evtl. ein Mini-ADR-0021.
 - **Packaging** (WP7.1): ein Container mit .NET + Rust-Host vs. getrennte Artefakte — Ops-Auswirkung.
-- **Binärdaten/Streaming** über den Vertrag: begrenzte Blobs sind umgesetzt (`list<u8>` als Base64 mit eigener Längengrenze). Echte Streams sind seit ADR-0019 auf der Modellseite geklärt (Holen, Abbruch persistiert); es fehlt der asynchrone Host-Umbau und IPC-Vertrag v4 — beides eigener Aufwand, siehe Stand-Abschnitt.
+- **Binärdaten/Streaming** über den Vertrag: begrenzte Blobs sind umgesetzt (`list<u8>` als Base64 mit eigener Längengrenze), IPC-Vertrag v4 steht. Echte Streams brauchen nur noch den asynchronen Host-Umbau — und bleiben auf fest einkompilierte Payload-Typen begrenzt, siehe Stand-Abschnitt.
 
 ## Referenzen
 

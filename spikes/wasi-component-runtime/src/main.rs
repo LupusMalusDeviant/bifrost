@@ -111,12 +111,11 @@ fn run() -> Result<()> {
                 })
                 .transpose()?;
             let stdin = std::io::stdin();
-            let stdout = std::io::stdout();
-            mcpmcp_wasi_component_spike::host::serve(
-                &mut stdin.lock(),
-                &mut stdout.lock(),
-                disk_cache,
-            )?;
+            // Bewusst `Stdout` statt `StdoutLock`: Ab Vertrag v4 schreiben mehrere Threads
+            // Antworten, und der Lock-Guard ist nicht `Send`. Die Serialisierung übernimmt der
+            // Mutex in `serve` — ein Frame geht immer am Stück hinaus.
+            let mut stdout = std::io::stdout();
+            mcpmcp_wasi_component_spike::host::serve(&mut stdin.lock(), &mut stdout, disk_cache)?;
         }
         _ => {
             bail!(

@@ -166,15 +166,32 @@ Betriebliches: `health` meldet die offenen Handles der Instanz; über 256 lehnt 
 Ein Trap verwirft die Instanz samt Handles, der nächste Aufruf startet frisch. Ein Reload (neues
 Component, Hot-Swap) beendet die Instanz ebenfalls — Handles von davor sind danach ungültig.
 
-### Kapazität: ein Aufruf pro Upstream gleichzeitig
+### Kapazität: bis zu 16 Aufrufe gleichzeitig
 
-Der IPC-Vertrag ist strikt request/response, die Verbindung zum Host serialisiert. Ein langsames
-Component blockiert damit weitere Aufrufe **desselben** WASI-Upstreams; andere Upstreams sind nicht
-betroffen. Der Per-Call-Timeout (FR-09) und Fuel/Epoch-Limits begrenzen, wie lange das dauern kann.
+Seit Vertrag v4 trägt jede Anfrage eine Korrelations-Id, und Antworten dürfen in anderer
+Reihenfolge zurückkommen. Ein langsames Component blockiert damit **nicht mehr** die übrigen
+Aufrufe desselben Upstreams; jeder bekommt seine eigene Instanz mit eigenem Store.
 
-Wer mehrere gleichzeitige Aufrufe eines Components braucht, legt ihn heute als mehrere Upstreams
-an — jeder bekommt seinen eigenen Host-Prozess. Echte Nebenläufigkeit in einer Verbindung bräuchte
-Korrelations-Ids im Vertrag und wäre damit eine Versionsänderung.
+Die Grenze liegt bei **16 gleichzeitigen Aufrufen je Host-Prozess**. Darüber antwortet der Host mit
+`too-many-calls`, statt weiter Speicher zu binden: `MaxMemoryBytes` gilt pro Aufruf, ohne Grenze
+wäre der Speicherbedarf das Produkt aus Limit und Anzahl der Anfragen. Wer dauerhaft mehr braucht,
+legt den Upstream mehrfach an — jeder bekommt seinen eigenen Host-Prozess.
+
+**Eine Ausnahme:** Mit `Wasi.PersistentInstance` gibt es genau eine Guest-Instanz, und die kann
+nicht zweimal gleichzeitig rechnen. Aufrufe darauf laufen weiterhin nacheinander. Sie sind
+trotzdem abbrechbar (siehe unten) — sie blockieren nur einander, nicht den Host.
+
+### Abbruch: ein Aufruf lässt sich stoppen
+
+Bricht der Aufrufer ab (Per-Call-Timeout FR-09, abgebrochener Request), schickt das Gateway ein
+`cancel` an den Host. Der trappt den laufenden Guest über die Epoche und antwortet erst, wenn der
+Aufruf **wirklich** beendet ist — `confirmed: true` heißt beendet, nicht „Abbruch abgeschickt".
+Bleibt die Bestätigung binnen fünf Sekunden aus, meldet der Host `confirmed: false`; dann läuft der
+Guest noch, und es greift weiterhin nur sein Fuel- oder Zeitlimit.
+
+Der Unterschied ist im Ergebnis sichtbar: Ein abgebrochener Aufruf endet mit dem Code `cancelled`,
+eine abgelaufene Frist mit dem gewohnten Timeout. Wer im Audit nachsieht, muss nicht raten, welches
+von beidem passiert ist.
 
 ### Platten-Cache für Kompilate
 

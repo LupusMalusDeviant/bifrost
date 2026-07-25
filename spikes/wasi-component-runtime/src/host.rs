@@ -19,6 +19,8 @@
 //! gehört dem Upstream, die Handles je einem `caller`. Ein Reload beendet die Instanz.
 
 use std::io::{self, Read, Write};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use base64::Engine as _;
@@ -43,7 +45,13 @@ use crate::{
 /// `i32`. Wieder ein Bruch statt eines Zusatzfelds: Ein Client der Version 2 läse `result` als
 /// Zahl und ließe ein Objekt oder einen Base64-Blob still unter den Tisch fallen — ein
 /// Handshake-Fehler ist die ehrlichere Antwort.
-pub const PROTOCOL_VERSION: &str = "3";
+/// `4` (Nebenlaeufigkeit und Abbruch): Jede Anfrage traegt eine `id`, jede Antwort gibt sie zurueck.
+/// Damit duerfen Antworten in anderer Reihenfolge kommen als die Anfragen — die Voraussetzung
+/// dafuer, dass mehrere Aufrufe desselben Upstreams nebeneinander laufen. Neu ist `cancel`, das
+/// einen laufenden Aufruf ueber seine `id` trifft. Wieder ein Bruch statt eines Zusatzfelds: Ein
+/// Client der Version 3 ordnet Antworten der Reihenfolge nach zu und wuerde unter Nebenlaeufigkeit
+/// stillschweigend das falsche Ergebnis dem falschen Aufruf zuschreiben.
+pub const PROTOCOL_VERSION: &str = "4";
 
 /// Obergrenze für einen einzelnen Frame (Schutz gegen Memory-DoS über ein riesiges Längenpräfix).
 const MAX_FRAME_BYTES: u32 = 64 * 1024 * 1024;
@@ -110,8 +118,18 @@ pub enum Request {
     },
     /// Liveness/Readiness-Abfrage.
     Health,
+    /// Bricht einen laufenden Aufruf ab. `target` ist die `id` der `invoke`-Anfrage.
+    Cancel { target: u64 },
     /// Ordentlicher Shutdown.
     Shutdown,
+}
+
+/// Anfrage samt Korrelations-Id, wie sie ueber die Leitung kommt (Vertrag v4).
+#[derive(Debug, Deserialize)]
+pub struct Envelope {
+    pub id: u64,
+    #[serde(flatten)]
+    pub request: Request,
 }
 
 /// Antwort des Hosts an das Gateway.
@@ -142,6 +160,13 @@ pub enum Response {
     Released {
         /// Wie viele Handles die Sitzung danach noch hält.
         handles: usize,
+    },
+    Cancelled {
+        target: u64,
+        /// `true` nur, wenn der Aufruf wirklich geendet hat — nicht schon, wenn der Abbruch
+        /// abgeschickt wurde. Ein `confirmed`, das niemand einloest, taeuschte Sicherheit vor
+        /// (ADR-0019).
+        confirmed: bool,
     },
     Health {
         status: String,
@@ -181,13 +206,13 @@ pub struct Session {
 /// ohne dass das Gateway das Component erneut schicken muss. `Arc`, weil sie pro Aufruf nur
 /// weitergereicht werden.
 struct LoadedComponent {
-    bytes: std::sync::Arc<Vec<u8>>,
+    bytes: Arc<Vec<u8>>,
     module: CachedModule,
     module_sha256: String,
     grants: CapabilityGrants,
     /// Werte zu den gewährten Secret-Namen. Bleiben im Prozess und gehen nie in eine Antwort:
     /// Der Audit-Datensatz nennt nur Namen.
-    secret_values: std::sync::Arc<std::collections::BTreeMap<String, String>>,
+    secret_values: Arc<std::collections::BTreeMap<String, String>>,
     /// Ob dieser Upstream eine über die Aufrufe hinweg lebende Instanz bekommt.
     persistent: bool,
     /// Die lebende Instanz, sobald der erste Aufruf sie gestartet hat.
@@ -289,46 +314,32 @@ impl Session {
                 args,
                 limits,
                 caller,
-            } => {
-                let Some(loaded) = self.loaded.as_ref() else {
-                    return error("not-loaded", "kein Component geladen — load zuerst senden");
-                };
-                // Der Aufruf darf andere Limit-Kategorien mitbringen als der Load; die stecken im
-                // Engine-Profil und damit im Cache-Schlüssel. Der Cache liefert das passende
-                // Kompilat — im Normalfall das vom Laden, sonst einmalig ein neues.
-                let bytes = std::sync::Arc::clone(&loaded.bytes);
-                let grants = loaded.grants.clone();
-                let secrets = std::sync::Arc::clone(&loaded.secret_values);
-                let persistent = loaded.persistent;
-                let module = match self.cache.compile(&bytes, &grants, &limits) {
-                    Ok(module) => module,
-                    Err(failure) => return error("invoke-failed", format!("{failure:#}")),
-                };
-
-                let loaded = self.loaded.as_mut().expect("gerade geprüft");
-                let profile = (limits.fuel.is_some(), limits.timeout_ms.is_some());
-                if persistent {
-                    // Ein anderes Engine-Profil hieße eine andere Instanz — und damit Handles, die
-                    // ins Leere zeigen. Das lieber sagen als still verlieren.
-                    match loaded.session_profile {
-                        Some(started) if started != profile => {
-                            return error(
-                                "session-profile-changed",
-                                "die laufende Instanz wurde mit anderen Limit-Kategorien gestartet",
-                            );
-                        }
-                        _ => loaded.session_profile = Some(profile),
-                    }
-                }
-
-                let session = persistent.then_some(&mut loaded.session);
-                match invoke_cached_module_in(
-                    &module, &grants, &secrets, &tool, &args, &limits, &caller, session,
-                ) {
-                    Ok(outcome) => (Response::Invoked { outcome }, Control::Continue),
-                    Err(failure) => error("invoke-failed", format!("{failure:#}")),
-                }
-            }
+            } => match self.loaded.as_ref().map(|loaded| loaded.persistent) {
+                None => error("not-loaded", "kein Component geladen — load zuerst senden"),
+                // Eine persistente Instanz gibt es genau einmal; ihr Aufruf läuft deshalb unter
+                // dem Sitzungs-Lock und nicht nebenläufig.
+                Some(true) => self.invoke_on_session(
+                    &tool,
+                    &args,
+                    &limits,
+                    &caller,
+                    &crate::CallControl::new(),
+                ),
+                Some(false) => match self.prepare_detached(tool, args, limits, caller) {
+                    Ok(call) => run_detached(&call, &crate::CallControl::new()),
+                    Err(refusal) => *refusal,
+                },
+            },
+            // Ohne Nebenläufigkeit kann hier nichts laufen, das abzubrechen wäre: Der Loop liest
+            // erst weiter, wenn die Antwort geschrieben ist. `serve` behandelt `cancel` deshalb
+            // selbst; diese Antwort gilt nur für den seriellen Weg (Tests, Einzelaufrufe).
+            Request::Cancel { target } => (
+                Response::Cancelled {
+                    target,
+                    confirmed: false,
+                },
+                Control::Continue,
+            ),
             Request::Release { caller, handle } => {
                 let Some(session) = self
                     .loaded
@@ -366,6 +377,93 @@ impl Session {
             ),
             Request::Shutdown => (Response::Bye, Control::Stop),
         }
+    }
+
+    /// Ruft auf der persistenten Instanz auf. Läuft unter dem Sitzungs-Lock, weil es diese
+    /// Instanz genau einmal gibt — zwei gleichzeitige Aufrufe hätten denselben Store.
+    fn invoke_on_session(
+        &mut self,
+        tool: &str,
+        args: &[serde_json::Value],
+        limits: &ExecutionLimits,
+        caller: &str,
+        control: &Arc<crate::CallControl>,
+    ) -> (Response, Control) {
+        let Some(loaded) = self.loaded.as_ref() else {
+            return error("not-loaded", "kein Component geladen — load zuerst senden");
+        };
+        let bytes = Arc::clone(&loaded.bytes);
+        let grants = loaded.grants.clone();
+        let secrets = Arc::clone(&loaded.secret_values);
+        let module = match self.cache.compile(&bytes, &grants, limits) {
+            Ok(module) => module,
+            Err(failure) => return error("invoke-failed", format!("{failure:#}")),
+        };
+
+        let loaded = self.loaded.as_mut().expect("gerade geprüft");
+        // Ein anderes Engine-Profil hieße eine andere Instanz — und damit Handles, die ins Leere
+        // zeigen. Das lieber sagen als still verlieren.
+        let profile = (limits.fuel.is_some(), limits.timeout_ms.is_some());
+        match loaded.session_profile {
+            Some(started) if started != profile => {
+                return error(
+                    "session-profile-changed",
+                    "die laufende Instanz wurde mit anderen Limit-Kategorien gestartet",
+                );
+            }
+            _ => loaded.session_profile = Some(profile),
+        }
+
+        match invoke_cached_module_in(
+            &module,
+            &grants,
+            &secrets,
+            tool,
+            args,
+            limits,
+            caller,
+            Some(&mut loaded.session),
+            control,
+        ) {
+            Ok(outcome) => (Response::Invoked { outcome }, Control::Continue),
+            Err(failure) => invoke_failure(&failure, control),
+        }
+    }
+
+    /// Schnürt einen Aufruf so zusammen, dass er die Sitzung nicht mehr braucht. Das Kompilieren
+    /// passiert hier — es greift auf den Cache zu und gehört deshalb unter den Lock.
+    fn prepare_detached(
+        &mut self,
+        tool: String,
+        args: Vec<serde_json::Value>,
+        limits: ExecutionLimits,
+        caller: String,
+    ) -> std::result::Result<DetachedCall, Box<(Response, Control)>> {
+        let Some(loaded) = self.loaded.as_ref() else {
+            return Err(Box::new(error(
+                "not-loaded",
+                "kein Component geladen — load zuerst senden",
+            )));
+        };
+        // Der Aufruf darf andere Limit-Kategorien mitbringen als der Load; die stecken im
+        // Engine-Profil und damit im Cache-Schlüssel. Der Cache liefert das passende Kompilat —
+        // im Normalfall das vom Laden, sonst einmalig ein neues.
+        let bytes = Arc::clone(&loaded.bytes);
+        let grants = loaded.grants.clone();
+        let secrets = Arc::clone(&loaded.secret_values);
+        let module = match self.cache.compile(&bytes, &grants, &limits) {
+            Ok(module) => module,
+            Err(failure) => return Err(Box::new(error("invoke-failed", format!("{failure:#}")))),
+        };
+        Ok(DetachedCall {
+            module,
+            grants,
+            secrets,
+            tool,
+            args,
+            limits,
+            caller,
+        })
     }
 
     /// Dekodiert, verifiziert, **kompiliert** und übernimmt ein Component. Fail-closed: ohne
@@ -420,11 +518,11 @@ impl Session {
         let cached = self.cache.stats().hits > hits_before;
 
         self.loaded = Some(LoadedComponent {
-            bytes: std::sync::Arc::new(component),
+            bytes: Arc::new(component),
             module_sha256: audit.module_sha256.clone(),
             module,
             grants,
-            secret_values: std::sync::Arc::new(secret_values),
+            secret_values: Arc::new(secret_values),
             persistent: persistent_instance,
             // Ein neues Component heißt eine neue Instanz: Die Handles des vorherigen Stands
             // gehören zu einer Instanz, die es gleich nicht mehr gibt.
@@ -444,8 +542,15 @@ impl Session {
 }
 
 /// Schreibt eine Antwort als gerahmten Frame (Längenpräfix + JSON) und flusht.
-pub fn write_frame<W: Write>(writer: &mut W, response: &Response) -> Result<()> {
-    let body = serde_json::to_vec(response)?;
+pub fn write_frame<W: Write>(writer: &mut W, id: u64, response: &Response) -> Result<()> {
+    let mut body = serde_json::to_vec(response)?;
+    // Die Id wird in das bereits serialisierte Objekt eingesetzt, statt jede Antwortvariante um
+    // ein Feld zu erweitern. `Response` bleibt damit das, was die Tests vergleichen.
+    if body.first() == Some(&b'{') {
+        let mut framed = format!("{{\"id\":{id},").into_bytes();
+        framed.extend_from_slice(&body[1..]);
+        body = framed;
+    }
     let len = u32::try_from(body.len())?;
     writer.write_all(&len.to_be_bytes())?;
     writer.write_all(&body)?;
@@ -475,36 +580,260 @@ fn read_frame_bytes<R: Read>(reader: &mut R) -> Result<Option<Vec<u8>>> {
 /// Die IPC-Schleife: Frames lesen, in der `Session` verarbeiten, Antworten rahmen. Ein
 /// unparsbarer Frame ergibt eine `error`-Antwort und beendet den Host NICHT; `shutdown` und EOF
 /// beenden ihn sauber.
-pub fn serve<R: Read, W: Write>(
+/// Ein Aufruf, der von der Sitzung losgelöst ist: Alles, was er braucht, hält er selbst. Nur so
+/// kann er außerhalb des Sitzungs-Locks laufen — und damit neben anderen Aufrufen.
+struct DetachedCall {
+    module: CachedModule,
+    grants: CapabilityGrants,
+    secrets: Arc<std::collections::BTreeMap<String, String>>,
+    tool: String,
+    args: Vec<serde_json::Value>,
+    limits: ExecutionLimits,
+    caller: String,
+}
+
+/// Führt einen losgelösten Aufruf aus. Frische Instanz, eigener Store — nichts davon wird geteilt.
+fn run_detached(call: &DetachedCall, control: &Arc<crate::CallControl>) -> (Response, Control) {
+    match invoke_cached_module_in(
+        &call.module,
+        &call.grants,
+        &call.secrets,
+        &call.tool,
+        &call.args,
+        &call.limits,
+        &call.caller,
+        None,
+        control,
+    ) {
+        Ok(outcome) => (Response::Invoked { outcome }, Control::Continue),
+        Err(failure) => invoke_failure(&failure, control),
+    }
+}
+
+/// Ordnet einen gescheiterten Aufruf ein. Ein Trap sieht bei Abbruch und bei Zeitüberschreitung
+/// gleich aus; den Unterschied kennt nur der Griff, über den abgebrochen wurde.
+fn invoke_failure(
+    failure: &anyhow::Error,
+    control: &Arc<crate::CallControl>,
+) -> (Response, Control) {
+    if control.is_cancelled() {
+        return error("cancelled", "der Aufruf wurde abgebrochen");
+    }
+    error("invoke-failed", format!("{failure:#}"))
+}
+
+/// Register der laufenden Aufrufe. `cancel` findet darüber seinen Aufruf, und weil der Eintrag
+/// erst nach dem Ende verschwindet, lässt sich ein Abbruch **bestätigen** statt nur behaupten.
+#[derive(Default)]
+struct InFlight {
+    calls: std::sync::Mutex<std::collections::HashMap<u64, Arc<crate::CallControl>>>,
+    finished: std::sync::Condvar,
+}
+
+impl InFlight {
+    /// Nimmt einen Aufruf auf, solange Platz ist. `false` heißt: Obergrenze erreicht.
+    fn register(&self, id: u64, control: Arc<crate::CallControl>) -> bool {
+        let mut calls = self.calls.lock().expect("laufende Aufrufe");
+        if calls.len() >= MAX_CONCURRENT_CALLS {
+            return false;
+        }
+        calls.insert(id, control);
+        true
+    }
+
+    fn finish(&self, id: u64) {
+        self.calls.lock().expect("laufende Aufrufe").remove(&id);
+        self.finished.notify_all();
+    }
+
+    /// Bricht ab und wartet begrenzt darauf, dass der Aufruf wirklich endet. Rückgabe ist genau
+    /// das `confirmed` des Vertrags: `true` erst, wenn der Aufruf weg ist.
+    fn cancel(&self, target: u64, grace: Duration) -> bool {
+        let mut calls = self.calls.lock().expect("laufende Aufrufe");
+        let Some(control) = calls.get(&target).cloned() else {
+            // Unbekannt heißt hier fast immer: schon fertig. Beides ist kein Abbruch.
+            return false;
+        };
+        control.cancel();
+
+        let deadline = Instant::now() + grace;
+        while calls.contains_key(&target) {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            let (next, _) = self
+                .finished
+                .wait_timeout(calls, remaining)
+                .expect("auf das Ende warten");
+            calls = next;
+        }
+        true
+    }
+}
+
+/// Wie lange `cancel` auf das tatsächliche Ende wartet, bevor es `confirmed: false` meldet.
+const CANCEL_GRACE: Duration = Duration::from_secs(5);
+
+fn too_many_calls() -> (Response, Control) {
+    error(
+        "too-many-calls",
+        format!("es laufen bereits {MAX_CONCURRENT_CALLS} Aufrufe — später erneut versuchen"),
+    )
+}
+
+/// Wie viele Aufrufe gleichzeitig laufen dürfen.
+///
+/// Nebenläufigkeit hat einen Preis, den die serielle Fassung nicht hatte: Jeder Aufruf bekommt
+/// einen eigenen Store mit eigenem Linear-Memory, und `maxMemoryBytes` gilt **pro Aufruf**. Ohne
+/// Grenze wäre der Speicherbedarf des Hosts das Produkt aus Limit und Anzahl der Anfragen — ein
+/// Angriff, der vorher schon daran scheiterte, dass nur ein Aufruf lief.
+const MAX_CONCURRENT_CALLS: usize = 16;
+
+fn write_response<W: Write>(
+    writer: &std::sync::Mutex<&mut W>,
+    id: u64,
+    response: &Response,
+) -> Result<()> {
+    let mut guard = writer.lock().expect("Schreibseite");
+    write_frame(&mut **guard, id, response)
+}
+
+/// Liest Frames, beantwortet sie und beendet sich bei `shutdown`.
+///
+/// Ab Vertrag v4 ist der Loop **nicht mehr streng seriell**: Aufrufe ohne persistente Instanz
+/// laufen auf eigenen Threads, damit ein langsames Component den Upstream nicht blockiert. Was
+/// Zustand ändert (`hello`, `load`, `release`, `shutdown`) und jeder Aufruf auf einer persistenten
+/// Instanz laufen weiterhin unter dem Sitzungs-Lock — es gibt nur eine Instanz, und die kann nicht
+/// zweimal gleichzeitig rechnen.
+pub fn serve<R: Read, W: Write + Send>(
     reader: &mut R,
     writer: &mut W,
     disk_cache: Option<DiskCache>,
 ) -> Result<()> {
-    let mut session = match disk_cache {
+    let session = std::sync::Mutex::new(match disk_cache {
         Some(disk) => Session::with_disk_cache(disk),
         None => Session::default(),
-    };
-    while let Some(body) = read_frame_bytes(reader)? {
-        match serde_json::from_slice::<Request>(&body) {
-            Ok(request) => {
-                let (response, control) = session.handle(request);
-                write_frame(writer, &response)?;
-                if control == Control::Stop {
-                    return Ok(());
+    });
+    let writer = std::sync::Mutex::new(writer);
+    let in_flight = InFlight::default();
+
+    std::thread::scope(|scope| -> Result<()> {
+        while let Some(body) = read_frame_bytes(reader)? {
+            let envelope = match serde_json::from_slice::<Envelope>(&body) {
+                Ok(envelope) => envelope,
+                Err(failure) => {
+                    // Ohne lesbare Hülle gibt es keine Id, auf die geantwortet werden könnte —
+                    // 0 ist die reservierte „gehört zu keiner Anfrage"-Id.
+                    write_response(
+                        &writer,
+                        0,
+                        &Response::Error {
+                            code: "bad-request".to_owned(),
+                            message: failure.to_string(),
+                        },
+                    )?;
+                    continue;
+                }
+            };
+
+            let id = envelope.id;
+            match envelope.request {
+                // Abbruch wartet auf das Ende des Ziels — das darf den Leser nicht aufhalten,
+                // sonst käme die Antwort des abgebrochenen Aufrufs nie durch.
+                Request::Cancel { target } => {
+                    let in_flight = &in_flight;
+                    let writer = &writer;
+                    scope.spawn(move || {
+                        let confirmed = in_flight.cancel(target, CANCEL_GRACE);
+                        let _ =
+                            write_response(writer, id, &Response::Cancelled { target, confirmed });
+                    });
+                }
+                Request::Invoke {
+                    tool,
+                    args,
+                    limits,
+                    caller,
+                } => {
+                    // Die Entscheidung „nebenläufig oder nicht" fällt unter dem Lock, weil sie am
+                    // geladenen Component hängt. Der Aufruf selbst fällt danach heraus.
+                    let mut guard = session.lock().expect("Sitzung");
+                    match guard.loaded.as_ref().map(|loaded| loaded.persistent) {
+                        None => {
+                            drop(guard);
+                            write_response(
+                                &writer,
+                                id,
+                                &error("not-loaded", "kein Component geladen — load zuerst senden")
+                                    .0,
+                            )?;
+                        }
+                        // Eine persistente Instanz gibt es genau einmal — ihre Aufrufe bleiben
+                        // seriell, und zwar über denselben Lock, den auch `release` und `load`
+                        // nehmen. Trotzdem laufen sie auf einem eigenen Thread: Blockierte der
+                        // Leser hier, käme ein `cancel` gar nicht erst herein, und ausgerechnet
+                        // der langlaufende Fall wäre nicht abbrechbar.
+                        Some(true) => {
+                            drop(guard);
+                            let control = crate::CallControl::new();
+                            if !in_flight.register(id, Arc::clone(&control)) {
+                                write_response(&writer, id, &too_many_calls().0)?;
+                                continue;
+                            }
+                            let in_flight = &in_flight;
+                            let writer = &writer;
+                            let session = &session;
+                            scope.spawn(move || {
+                                let (response, _) = {
+                                    let mut guard = session.lock().expect("Sitzung");
+                                    guard
+                                        .invoke_on_session(&tool, &args, &limits, &caller, &control)
+                                };
+                                in_flight.finish(id);
+                                let _ = write_response(writer, id, &response);
+                            });
+                        }
+                        Some(false) => match guard.prepare_detached(tool, args, limits, caller) {
+                            Err(refusal) => {
+                                drop(guard);
+                                write_response(&writer, id, &refusal.0)?;
+                            }
+                            Ok(call) => {
+                                drop(guard);
+                                // Eintragen **vor** dem Spawn: Sonst könnte ein unmittelbar
+                                // folgendes `cancel` den Aufruf noch nicht finden und
+                                // fälschlich melden, es gäbe nichts abzubrechen.
+                                let control = crate::CallControl::new();
+                                if !in_flight.register(id, Arc::clone(&control)) {
+                                    write_response(&writer, id, &too_many_calls().0)?;
+                                    continue;
+                                }
+                                let in_flight = &in_flight;
+                                let writer = &writer;
+                                scope.spawn(move || {
+                                    let (response, _) = run_detached(&call, &control);
+                                    in_flight.finish(id);
+                                    let _ = write_response(writer, id, &response);
+                                });
+                            }
+                        },
+                    }
+                }
+                request => {
+                    let (response, control) = {
+                        let mut guard = session.lock().expect("Sitzung");
+                        guard.handle(request)
+                    };
+                    write_response(&writer, id, &response)?;
+                    if control == Control::Stop {
+                        return Ok(());
+                    }
                 }
             }
-            Err(error) => {
-                write_frame(
-                    writer,
-                    &Response::Error {
-                        code: "bad-request".to_owned(),
-                        message: error.to_string(),
-                    },
-                )?;
-            }
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -991,7 +1320,7 @@ mod tests {
 
     #[test]
     fn serve_frames_a_hello_response_then_ends_on_eof() {
-        let input = frame(br#"{"type":"hello","protocolVersion":"3"}"#);
+        let input = frame(br#"{"id":1,"type":"hello","protocolVersion":"4"}"#);
         assert!(matches!(first_response(&input), Response::Hello { .. }));
     }
 
@@ -1013,7 +1342,7 @@ mod tests {
 
     #[test]
     fn framing_survives_partial_reads() {
-        let input = frame(br#"{"type":"hello","protocolVersion":"3"}"#);
+        let input = frame(br#"{"id":1,"type":"hello","protocolVersion":"4"}"#);
         let mut reader = ChunkedReader {
             data: &input,
             chunk: 1, // ein Byte pro read — der härteste Fall
@@ -1039,7 +1368,7 @@ mod tests {
                 },
             };
             let mut buffer = Vec::new();
-            write_frame(&mut buffer, &response).unwrap();
+            write_frame(&mut buffer, 1, &response).unwrap();
 
             let body = read_frame_bytes(&mut &buffer[..]).unwrap().unwrap();
             let decoded: Response = serde_json::from_slice(&body).unwrap();
@@ -1074,7 +1403,7 @@ mod tests {
     #[test]
     fn serve_rejects_a_malformed_frame_without_dying() {
         let mut input = frame(b"not valid json");
-        input.extend(frame(br#"{"type":"shutdown"}"#));
+        input.extend(frame(br#"{"id":2,"type":"shutdown"}"#));
         let mut output = Vec::new();
         serve(&mut &input[..], &mut output, None).unwrap();
 
@@ -1269,5 +1598,172 @@ mod tests {
             Response::Error { code, .. } => assert_eq!(code, "session-profile-changed"),
             other => panic!("expected error, got {other:?}"),
         }
+    }
+
+    /// Zerlegt einen Ausgabestrom in (id, Antwort) — die Reihenfolge ist ab v4 nicht mehr die der
+    /// Anfragen, also muss der Test über die Id zuordnen.
+    fn responses(output: &[u8]) -> Vec<(u64, Response)> {
+        let mut rest = output;
+        let mut collected = Vec::new();
+        while rest.len() >= 4 {
+            let len = u32::from_be_bytes(rest[..4].try_into().unwrap()) as usize;
+            let body = &rest[4..4 + len];
+            let id = serde_json::from_slice::<serde_json::Value>(body).unwrap()["id"]
+                .as_u64()
+                .expect("jede Antwort trägt ihre Korrelations-Id");
+            collected.push((id, serde_json::from_slice(body).unwrap()));
+            rest = &rest[4 + len..];
+        }
+        collected
+    }
+
+    /// Baut die Frames für einen Lauf: Handshake, signierter Load, dann die übergebenen Rohframes.
+    fn wire(component: &[u8], persistent: bool, requests: &[String]) -> Vec<u8> {
+        let signing = SigningKey::from_bytes(&[3u8; 32]);
+        let load = serde_json::json!({
+            "id": 2,
+            "type": "load",
+            "component": BASE64.encode(component),
+            "signature": BASE64.encode(signing.sign(component).to_bytes()),
+            "pinnedPublishers": [BASE64.encode(signing.verifying_key().as_bytes())],
+            "grants": {
+                "filesystemPreopens": [], "networkAllow": [], "environment": ["MCPMCP_SPIKE"],
+                "secrets": [], "clock": false, "random": false
+            },
+            "persistentInstance": persistent,
+        });
+        let mut input = frame(
+            format!(r#"{{"id":1,"type":"hello","protocolVersion":"{PROTOCOL_VERSION}"}}"#)
+                .as_bytes(),
+        );
+        input.extend(frame(serde_json::to_vec(&load).unwrap().as_slice()));
+        for request in requests {
+            input.extend(frame(request.as_bytes()));
+        }
+        input
+    }
+
+    /// Ein Component, das nie fertig wird — der einzige ehrliche Weg, einen Abbruch zu prüfen.
+    fn spinning_component() -> Vec<u8> {
+        wat::parse_str(crate::INFINITE_COMPONENT).unwrap()
+    }
+
+    /// Jede Antwort trägt die Id ihrer Anfrage zurück. Ohne das wäre Nebenläufigkeit nicht
+    /// zuzuordnen — genau der Grund für den Versionsbruch auf 4.
+    #[test]
+    fn every_response_carries_the_id_of_its_request() {
+        let input = wire(
+            COUNTER,
+            false,
+            &[
+                r#"{"id":7,"type":"discover"}"#.to_owned(),
+                r#"{"id":9,"type":"health"}"#.to_owned(),
+            ],
+        );
+        let mut output = Vec::new();
+        serve(&mut &input[..], &mut output, None).unwrap();
+
+        let seen = responses(&output);
+        assert_eq!(seen[0].0, 1, "hello");
+        assert_eq!(seen[1].0, 2, "load");
+        let ids: Vec<u64> = seen.iter().map(|(id, _)| *id).collect();
+        assert!(ids.contains(&7) && ids.contains(&9), "{ids:?}");
+        assert!(
+            seen.iter()
+                .any(|(id, response)| *id == 7 && matches!(response, Response::Discovered { .. }))
+        );
+    }
+
+    /// Ein laufender Aufruf lässt sich abbrechen, und der Abbruch wird **bestätigt** — nicht bloß
+    /// entgegengenommen. Das Component dreht sich endlos; ohne Abbruch liefe der Test in den
+    /// Timeout statt in ein `cancelled`.
+    #[test]
+    fn a_running_call_can_be_cancelled_and_the_cancel_is_confirmed() {
+        let spinning = spinning_component();
+        let input = wire(
+            &spinning,
+            false,
+            &[
+                // Grosszuegiger Timeout: Es soll der Abbruch greifen, nicht die Frist.
+                r#"{"id":10,"type":"invoke","tool":"spin","limits":{"fuel":null,"timeoutMs":60000,"maxMemoryBytes":null,"maxOutputBytes":65536}}"#.to_owned(),
+                r#"{"id":11,"type":"cancel","target":10}"#.to_owned(),
+            ],
+        );
+        let mut output = Vec::new();
+        serve(&mut &input[..], &mut output, None).unwrap();
+
+        let seen = responses(&output);
+        let invoke = seen
+            .iter()
+            .find(|(id, _)| *id == 10)
+            .expect("Aufruf-Antwort");
+        let cancel = seen
+            .iter()
+            .find(|(id, _)| *id == 11)
+            .expect("Abbruch-Antwort");
+
+        // Eigener Code: „abgebrochen" ist etwas anderes als „gescheitert" oder „Zeit abgelaufen".
+        assert!(
+            matches!(&invoke.1, Response::Error { code, .. } if code == "cancelled"),
+            "{:?}",
+            invoke.1
+        );
+        assert_eq!(
+            cancel.1,
+            Response::Cancelled {
+                target: 10,
+                confirmed: true
+            },
+            "bestätigt heißt: der Aufruf ist wirklich beendet"
+        );
+    }
+
+    /// Ein Abbruch auf eine unbekannte Id ist kein Fehler, aber auch keine Bestätigung.
+    #[test]
+    fn cancelling_an_unknown_call_is_not_confirmed() {
+        let input = wire(
+            COUNTER,
+            false,
+            &[r#"{"id":12,"type":"cancel","target":999}"#.to_owned()],
+        );
+        let mut output = Vec::new();
+        serve(&mut &input[..], &mut output, None).unwrap();
+
+        let seen = responses(&output);
+        assert_eq!(
+            seen.iter().find(|(id, _)| *id == 12).map(|(_, r)| r),
+            Some(&Response::Cancelled {
+                target: 999,
+                confirmed: false
+            })
+        );
+    }
+
+    /// Der Kern von v4: Zwei Aufrufe laufen nebeneinander. Der erste dreht sich, bis er
+    /// abgebrochen wird — der zweite darf darauf nicht warten müssen. Vor v4 hätte der Loop erst
+    /// nach der Antwort des ersten weitergelesen.
+    #[test]
+    fn a_slow_call_does_not_block_the_next_one() {
+        let spinning = spinning_component();
+        let input = wire(
+            &spinning,
+            false,
+            &[
+                r#"{"id":20,"type":"invoke","tool":"spin","limits":{"fuel":null,"timeoutMs":60000,"maxMemoryBytes":null,"maxOutputBytes":65536}}"#.to_owned(),
+                r#"{"id":21,"type":"health"}"#.to_owned(),
+                r#"{"id":22,"type":"cancel","target":20}"#.to_owned(),
+            ],
+        );
+        let mut output = Vec::new();
+        serve(&mut &input[..], &mut output, None).unwrap();
+
+        let seen = responses(&output);
+        let order: Vec<u64> = seen.iter().map(|(id, _)| *id).collect();
+        let health = order.iter().position(|id| *id == 21).expect("health");
+        let invoke = order.iter().position(|id| *id == 20).expect("invoke");
+        assert!(
+            health < invoke,
+            "health muss vor dem hängenden Aufruf beantwortet sein, war {order:?}"
+        );
     }
 }

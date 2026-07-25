@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using McpMcp.Abstractions;
@@ -19,11 +20,11 @@ namespace McpMcp.Upstream.Wasi;
 public sealed class WasiRuntimeConnector : IUpstreamConnector
 {
     /// <summary>
-    /// Protokollversion, die dieser Client spricht. Muss zum Host passen — <c>3</c> trägt
-    /// Typbäume statt Typnamen und JSON-Werte statt <c>i32</c> in Argumenten und Ergebnis
-    /// (Plan 0003, Aufrufbreite).
+    /// Protokollversion, die dieser Client spricht. Muss zum Host passen — <c>4</c> trägt eine
+    /// <c>id</c> je Anfrage und Antwort, kennt <c>cancel</c> und erlaubt damit mehrere Aufrufe
+    /// gleichzeitig (Plan 0003, Nebenläufigkeit und Abbruch).
     /// </summary>
-    public const string ProtocolVersion = "3";
+    public const string ProtocolVersion = "4";
 
     private readonly IPublisherTrustStore _trust;
     private readonly IAuditSink? _audit;
@@ -172,16 +173,26 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
 }
 
 /// <summary>
-/// Eine laufende Host-Sitzung. Alle Anfragen laufen serialisiert über stdin/stdout des
-/// Kindprozesses — der Vertrag ist request/response, ein Frame nach dem anderen.
+/// Eine laufende Host-Sitzung über stdin/stdout des Kindprozesses.
+/// <para>
+/// Ab Vertrag v4 trägt jede Anfrage eine <c>id</c> und jede Antwort gibt sie zurück. Deshalb liest
+/// ein einzelner Pump-Task alle Frames und weckt darüber den jeweiligen Wartenden — Antworten
+/// dürfen in anderer Reihenfolge kommen als die Anfragen. Serialisiert wird nur noch das
+/// <b>Schreiben</b> eines Frames, nicht mehr der ganze Aufruf.
+/// </para>
 /// </summary>
 internal sealed class WasiUpstreamConnection
     : IUpstreamConnection, ISignedUpstreamConnection, ICallerAwareUpstreamConnection
 {
     private readonly Process _process;
     private readonly WasiTransportOptions _options;
+    /// <summary>Nur noch die Schreibseite: Ein Frame muss am Stück hinausgehen.</summary>
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly List<WasiTool> _tools = [];
+    private readonly ConcurrentDictionary<long, TaskCompletionSource<JsonElement>> _pending = new();
+    private readonly CancellationTokenSource _stopped = new();
+    private readonly Task _pump;
+    private long _nextId;
     private bool _disposed;
 
     public WasiUpstreamConnection(ServerId id, Process process, WasiTransportOptions options)
@@ -189,6 +200,61 @@ internal sealed class WasiUpstreamConnection
         Id = id;
         _process = process;
         _options = options;
+        _pump = Task.Run(PumpAsync);
+    }
+
+    /// <summary>
+    /// Liest Frames, solange der Host lebt, und weckt den Wartenden zur jeweiligen Id. Ein
+    /// verwaister Frame (unbekannte Id) wird verworfen — er gehört zu einem Aufruf, den niemand
+    /// mehr erwartet.
+    /// </summary>
+    private async Task PumpAsync()
+    {
+        try
+        {
+            while (!_stopped.IsCancellationRequested)
+            {
+                var body = await ReadFrameAsync(_process.StandardOutput.BaseStream, _stopped.Token)
+                    .ConfigureAwait(false);
+                using var document = JsonDocument.Parse(body);
+                var root = document.RootElement.Clone();
+                if (!root.TryGetProperty("id", out var declared))
+                {
+                    // Ohne Korrelations-Id ist keine Zuordnung möglich — und Raten wäre schlimmer
+                    // als Aufgeben. Praktisch heißt das fast immer: Der Host spricht noch Vertrag 3.
+                    // Ohne diesen Abbruch würde der Handshake schlicht hängen, statt es zu sagen.
+                    FailPending(new WasiHostException(
+                        "WASI-Host antwortet ohne Korrelations-Id — er spricht Vertrag "
+                        + $"{WasiRuntimeConnector.ProtocolVersion} nicht."));
+                    return;
+                }
+
+                if (_pending.TryRemove(declared.GetInt64(), out var waiter))
+                {
+                    waiter.TrySetResult(root);
+                }
+            }
+        }
+        catch (Exception failure)
+        {
+            // Der Host ist weg oder die Leitung kaputt. Wartende jetzt scheitern zu lassen ist
+            // besser, als sie bis zum Per-Call-Timeout hängen zu lassen.
+            FailPending(failure);
+            return;
+        }
+
+        FailPending(new WasiHostException("WASI-Host wurde beendet."));
+    }
+
+    private void FailPending(Exception failure)
+    {
+        foreach (var (id, waiter) in _pending)
+        {
+            if (_pending.TryRemove(id, out _))
+            {
+                waiter.TrySetException(failure);
+            }
+        }
     }
 
     public ServerId Id { get; }
@@ -378,8 +444,20 @@ internal sealed class WasiUpstreamConnection
             // Prozess ist bereits weg.
         }
 
+        await _stopped.CancelAsync().ConfigureAwait(false);
+        try
+        {
+            await _pump.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is TimeoutException or OperationCanceledException
+            or IOException or ObjectDisposedException or WasiHostException)
+        {
+            // Der Pump hängt am toten Prozess — das Aufräumen darf daran nicht scheitern.
+        }
+
         _process.Dispose();
         _gate.Dispose();
+        _stopped.Dispose();
     }
 
     private static JsonElement Result(string text, bool isError)
@@ -390,36 +468,90 @@ internal sealed class WasiUpstreamConnection
         });
 
     /// <summary>
-    /// Sendet einen Frame und liest die Antwort. Serialisiert über <see cref="_gate"/>, weil der
-    /// Vertrag strikt request/response ist. Eine <c>error</c>-Antwort wird zur
-    /// <see cref="WasiHostException"/>.
+    /// Sendet einen Frame und wartet auf die Antwort <b>zu dieser Id</b>. Eine <c>error</c>-Antwort
+    /// wird zur <see cref="WasiHostException"/>.
+    /// <para>
+    /// Bricht <paramref name="ct"/> ab, geht ein <c>cancel</c> an den Host und es wird weiter auf
+    /// dessen Antwort gewartet: Erst sie belegt, dass der Aufruf wirklich geendet hat. Einfach
+    /// aufzugeben würde den Guest weiterlaufen lassen und den Abbruch nur behaupten.
+    /// </para>
     /// </summary>
     private async Task<JsonElement> RequestAsync(object request, CancellationToken ct)
     {
+        var id = Interlocked.Increment(ref _nextId);
+        var envelope = JsonSerializer.SerializeToNode(request)?.AsObject()
+            ?? throw new InvalidOperationException("Anfrage ließ sich nicht serialisieren.");
+        envelope["id"] = id;
+
+        var waiter = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pending[id] = waiter;
+        try
+        {
+            await SendAsync(envelope, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            _pending.TryRemove(id, out _);
+            throw;
+        }
+
+        JsonElement root;
+        await using (ct.Register(() => _ = CancelAsync(id)).ConfigureAwait(false))
+        {
+            root = await waiter.Task.ConfigureAwait(false);
+        }
+
+        if (root.GetProperty("type").GetString() == "error")
+        {
+            var code = root.TryGetProperty("code", out var c) ? c.GetString() : "unknown";
+            var message = root.TryGetProperty("message", out var m) ? m.GetString() : string.Empty;
+            // Der Host hat den Abbruch eingelöst — nach außen ist das eine Abbruchmeldung und
+            // kein Upstream-Fehler.
+            if (code == "cancelled")
+            {
+                throw new OperationCanceledException($"WASI-Aufruf abgebrochen: {message}");
+            }
+
+            throw new WasiHostException($"{code}: {message}");
+        }
+
+        return root;
+    }
+
+    /// <summary>Schickt einen Abbruch für eine laufende Anfrage; best effort.</summary>
+    private async Task CancelAsync(long target)
+    {
+        try
+        {
+            var envelope = new System.Text.Json.Nodes.JsonObject
+            {
+                ["id"] = Interlocked.Increment(ref _nextId),
+                ["type"] = "cancel",
+                ["target"] = target,
+            };
+            await SendAsync(envelope, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or ObjectDisposedException
+            or InvalidOperationException or OperationCanceledException)
+        {
+            // Host schon weg — dann ist der Aufruf ohnehin beendet.
+        }
+    }
+
+    /// <summary>Schreibt einen Frame am Stück. Nur das muss serialisiert sein, nicht der Aufruf.</summary>
+    private async Task SendAsync(System.Text.Json.Nodes.JsonObject envelope, CancellationToken ct)
+    {
+        var payload = JsonSerializer.SerializeToUtf8Bytes(envelope);
+        var length = new byte[4];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(length, (uint)payload.Length);
+
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var payload = JsonSerializer.SerializeToUtf8Bytes(request);
-            var length = new byte[4];
-            System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(length, (uint)payload.Length);
-
             var stdin = _process.StandardInput.BaseStream;
             await stdin.WriteAsync(length, ct).ConfigureAwait(false);
             await stdin.WriteAsync(payload, ct).ConfigureAwait(false);
             await stdin.FlushAsync(ct).ConfigureAwait(false);
-
-            var body = await ReadFrameAsync(_process.StandardOutput.BaseStream, ct).ConfigureAwait(false);
-            using var document = JsonDocument.Parse(body);
-            var root = document.RootElement.Clone();
-
-            if (root.GetProperty("type").GetString() == "error")
-            {
-                var code = root.TryGetProperty("code", out var c) ? c.GetString() : "unknown";
-                var message = root.TryGetProperty("message", out var m) ? m.GetString() : string.Empty;
-                throw new WasiHostException($"{code}: {message}");
-            }
-
-            return root;
         }
         finally
         {

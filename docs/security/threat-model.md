@@ -79,11 +79,17 @@ prüft die Signatur, setzt Grants durch und führt aus. Vollständiger Review:
   ein zyklischer Verbund läuft in Timeouts statt in unbegrenzte Rekursion, und die Fehlerquote im
   Dashboard wird sofort auffällig. **Betriebsregel:** Gateway-Verbünde azyklisch konfigurieren.
   Echte transitive Erkennung bräuchte Call-Metadaten statt Verbindungs-Header — v2-Kandidat.
-- **WASI: ein Aufruf pro Upstream gleichzeitig.** Der IPC-Vertrag ist strikt request/response, die
-  Verbindung serialisiert. Ein langsames Component blockiert weitere Aufrufe **desselben**
-  Upstreams; begrenzt wird der Schaden durch den Per-Call-Timeout und Fuel/Epoch im Host. Das ist
-  eine Kapazitäts-, keine Sicherheitsgrenze — sie steht in [operations.md](../operations.md).
-  Nebenläufigkeit bräuchte Korrelations-Ids im Vertrag und ist damit eine Versionsfrage.
+- **WASI: 16 gleichzeitige Aufrufe je Host-Prozess.** Seit Vertrag v4 laufen Aufrufe nebeneinander,
+  jeder mit eigenem Store. Das kehrt die frühere Kapazitätsgrenze um und schafft dafür eine neue
+  Frage: `MaxMemoryBytes` gilt **pro Aufruf**, der Bedarf wäre also das Produkt aus Limit und
+  Anzahl gleichzeitiger Anfragen. Deshalb die harte Obergrenze von 16 mit `too-many-calls` darüber —
+  vorher schützte schlicht die Serialisierung. Aufrufe auf einer persistenten Instanz bleiben
+  seriell, weil es diese Instanz nur einmal gibt.
+- **WASI: Abbruch ist bestätigt, aber nicht garantiert.** `cancel` trappt den Guest über die Epoche
+  und wird erst mit `confirmed: true` beantwortet, wenn der Aufruf wirklich geendet hat. Bleibt die
+  Bestätigung binnen fünf Sekunden aus, meldet der Host `confirmed: false` — der Guest läuft dann
+  weiter, bis Fuel oder Frist ihn stoppen. Ein Guest, der sich nicht trappen lässt, ist damit
+  nicht abbrechbar; die Reißleine bleiben die Limits, nicht der Abbruch.
 - **WASI: Secrets liegen im Host-Prozessspeicher** über dessen Laufzeit, und ein Secret-Grant zieht
   `wasi:cli/environment` nach sich — das Component kann damit **alle** gesetzten Variablen
   auflisten, nicht nur die eigenen. Bewusste Folge der gewählten Injektionsform; eine eigene

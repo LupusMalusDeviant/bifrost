@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::{Component as PathComponent, Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -301,6 +302,62 @@ struct WasiGuestHost {
     ctx: wasmtime_wasi::WasiCtx,
     table: wasmtime::component::ResourceTable,
     limits: StoreLimits,
+}
+
+/// Der Griff, an dem ein **einzelner** laufender Aufruf abgebrochen wird (Vertrag v4).
+///
+/// Ein Abbruch von außen kann den Guest nicht höflich bitten — er muss ihn trappen. Das einzige
+/// Mittel dafür ist die Epoche, und die gehört der Engine. Damit ein Abbruch nicht alle Aufrufe
+/// derselben Engine trifft, entscheidet der Epochen-Callback jedes Stores anhand *dieses* Griffs,
+/// ob er trappt (siehe `with_limits`).
+///
+/// Derselbe Griff trägt die Wanduhr-Frist. Dadurch lassen sich hinterher „abgebrochen" und
+/// „Zeit abgelaufen" unterscheiden — der Trap selbst sieht in beiden Fällen gleich aus.
+/// Welcher Aufruf gerade auf einem Store läuft. Der Epochen-Callback liest hier nach, statt einen
+/// festen Griff zu kennen — eine persistente Instanz behält ihren Store über viele Aufrufe hinweg,
+/// und jeder davon bringt seinen eigenen Abbruchgriff mit.
+pub type CurrentCall = Arc<std::sync::Mutex<Option<Arc<CallControl>>>>;
+
+#[derive(Debug, Default)]
+pub struct CallControl {
+    cancelled: std::sync::atomic::AtomicBool,
+    deadline: std::sync::Mutex<Option<Instant>>,
+    /// Erst gesetzt, wenn der Aufruf wirklich läuft — vorher gäbe es nichts zu wecken.
+    engine: std::sync::Mutex<Option<Engine>>,
+}
+
+impl CallControl {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// Bricht diesen Aufruf ab. Weckt die Epoche, damit der Callback auch dann läuft, wenn der
+    /// Guest gerade in einer Schleife ohne Wachhund sitzt.
+    pub fn cancel(&self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(engine) = self.engine.lock().expect("Engine-Griff").as_ref() {
+            engine.increment_epoch();
+        }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn arm(&self, engine: &Engine, deadline: Option<Instant>) {
+        *self.deadline.lock().expect("Frist") = deadline;
+        *self.engine.lock().expect("Engine-Griff") = Some(engine.clone());
+        // Ein Abbruch, der vor dem Armieren kam, hat die Epoche nicht wecken können — das wird
+        // hier nachgeholt, damit der Callback beim ersten Prüfpunkt greift.
+        if self.is_cancelled() {
+            engine.increment_epoch();
+        }
+    }
+
+    fn deadline_passed(&self) -> bool {
+        matches!(*self.deadline.lock().expect("Frist"), Some(at) if Instant::now() >= at)
+    }
 }
 
 /// `HasData`-Marker für die WASI-I/O-Interfaces, die nur die Resource-Table brauchen.
@@ -665,7 +722,9 @@ impl ModuleCache {
         let mut config = Config::new();
         config.wasm_component_model(true);
         config.consume_fuel(limits.fuel.is_some());
-        config.epoch_interruption(limits.timeout_ms.is_some());
+        // Ab Vertrag v4 immer an: Die Epoche ist das einzige Mittel, einen laufenden Guest von
+        // aussen zu stoppen — ohne sie waere "cancel" ein Wunsch ohne Wirkung.
+        config.epoch_interruption(true);
         let engine = Engine::new(&config)?;
 
         // Platte vor Kompilierung: Genau dafür existiert sie — der Prozessstart soll nicht zahlen,
@@ -757,7 +816,7 @@ impl ModuleCache {
             "{}:{RUNTIME_VERSION}:fuel={}:epoch={}:{grants_fingerprint}",
             sha256_hex(component_bytes),
             limits.fuel.is_some(),
-            limits.timeout_ms.is_some(),
+            true,
         )
     }
 }
@@ -1014,6 +1073,8 @@ pub struct GuestSession {
     store: Store<WasiGuestHost>,
     instance: wasmtime::component::Instance,
     stdout: wasmtime_wasi::p2::pipe::MemoryOutputPipe,
+    /// Welcher Aufruf gerade laeuft — der Epochen-Callback des Stores liest hier nach.
+    current: CurrentCall,
     /// Wie viele stdout-Bytes bereits gemeldet wurden — der Puffer sammelt über alle Aufrufe.
     reported: usize,
     handles: values::HandleTable,
@@ -1046,6 +1107,7 @@ fn prepare_store(
     Linker<WasiGuestHost>,
     Store<WasiGuestHost>,
     wasmtime_wasi::p2::pipe::MemoryOutputPipe,
+    CurrentCall,
 )> {
     let engine = &module.engine;
     let mut linker = Linker::<WasiGuestHost>::new(engine);
@@ -1074,10 +1136,23 @@ fn prepare_store(
     if let Some(fuel) = limits.fuel {
         store.set_fuel(fuel)?;
     }
-    if limits.timeout_ms.is_some() {
-        store.set_epoch_deadline(1);
-    }
-    Ok((linker, store, stdout))
+
+    // Callback **vor** der Instanziierung, nicht erst vor dem Aufruf: Die Epoche gehört der Engine,
+    // und ein Abbruch eines anderen Aufrufs weckt sie. Ohne Callback wäre das Wecken ein Trap —
+    // ausgerechnet in der Instanziierung eines unbeteiligten Aufrufs.
+    let current: CurrentCall = Arc::new(std::sync::Mutex::new(None));
+    let watched = Arc::clone(&current);
+    store.set_epoch_deadline(1);
+    store.epoch_deadline_callback(move |_| {
+        let running = watched.lock().expect("laufender Aufruf");
+        match running.as_deref() {
+            Some(control) if control.is_cancelled() || control.deadline_passed() => {
+                Ok(wasmtime::UpdateDeadline::Interrupt)
+            }
+            _ => Ok(wasmtime::UpdateDeadline::Continue(1)),
+        }
+    });
+    Ok((linker, store, stdout, current))
 }
 
 /// Ruft ein Tool eines bereits kompilierten Components auf (WP5) — mit frischer Instanz pro Aufruf.
@@ -1089,7 +1164,17 @@ pub fn invoke_cached_module(
     args: &[serde_json::Value],
     limits: &ExecutionLimits,
 ) -> Result<InvocationOutcome> {
-    invoke_cached_module_in(module, grants, secret_values, tool, args, limits, "", None)
+    invoke_cached_module_in(
+        module,
+        grants,
+        secret_values,
+        tool,
+        args,
+        limits,
+        "",
+        None,
+        &CallControl::new(),
+    )
 }
 
 /// Wie [`invoke_cached_module`], aber optional auf einer persistenten Instanz. Ist `session`
@@ -1105,6 +1190,7 @@ pub fn invoke_cached_module_in(
     limits: &ExecutionLimits,
     caller: &str,
     session: Option<&mut Option<GuestSession>>,
+    control: &Arc<CallControl>,
 ) -> Result<InvocationOutcome> {
     let engine = &module.engine;
     let component = &module.component;
@@ -1129,29 +1215,31 @@ pub fn invoke_cached_module_in(
     match session.filter(|_| !is_wasi_command_export(tool)) {
         Some(slot) => {
             if slot.is_none() {
-                let (linker, mut store, stdout) =
+                let (linker, mut store, stdout, current) =
                     prepare_store(module, grants, secret_values, limits)?;
                 let instance = linker.instantiate(&mut store, component)?;
                 *slot = Some(GuestSession {
                     store,
                     instance,
                     stdout,
+                    current,
                     reported: 0,
                     handles: values::HandleTable::default(),
                     poisoned: false,
                 });
             }
             let live = slot.as_mut().expect("gerade gesetzt");
-            let outcome = run_on_session(live, &descriptor, tool, args, limits, caller);
+            let outcome = run_on_session(live, &descriptor, tool, args, limits, caller, control);
             if live.poisoned {
                 *slot = None;
             }
             outcome
         }
         None => {
-            let (linker, mut store, stdout) = prepare_store(module, grants, secret_values, limits)?;
+            let (linker, mut store, stdout, current) =
+                prepare_store(module, grants, secret_values, limits)?;
             let mut trapped = false;
-            let result = with_limits(&mut store, limits, |store| {
+            let result = with_limits(&mut store, limits, control, &current, |store| {
                 if is_wasi_command_export(tool) {
                     let command = wasmtime_wasi::p2::bindings::sync::Command::instantiate(
                         &mut *store,
@@ -1194,11 +1282,13 @@ fn run_on_session(
     args: &[serde_json::Value],
     limits: &ExecutionLimits,
     caller: &str,
+    control: &Arc<CallControl>,
 ) -> Result<InvocationOutcome> {
     let GuestSession {
         store,
         instance,
         stdout,
+        current,
         reported,
         handles,
         poisoned,
@@ -1207,7 +1297,7 @@ fn run_on_session(
         max_binary_bytes: limits.max_binary_bytes,
         handles: Some((handles, caller)),
     };
-    let result = with_limits(store, limits, |store| {
+    let result = with_limits(store, limits, control, current, |store| {
         call_export(
             store,
             instance,
@@ -1236,14 +1326,39 @@ fn run_on_session(
 fn with_limits<T>(
     store: &mut Store<WasiGuestHost>,
     limits: &ExecutionLimits,
+    control: &Arc<CallControl>,
+    current: &CurrentCall,
     body: impl FnOnce(&mut Store<WasiGuestHost>) -> Result<T>,
 ) -> Result<T> {
     if let Some(fuel) = limits.fuel {
         store.set_fuel(fuel)?;
     }
-    // Wanduhr-Deadline: ein Wachhund erhöht die Epoche nach dem Timeout, was den Guest trappt.
+
+    // Die Epoche gehört der **Engine**, nicht dem Store — und der Modul-Cache teilt eine Engine
+    // zwischen allen Kompilaten desselben Profils. Ein Wachhund, der einfach `increment_epoch`
+    // ruft, träfe deshalb jeden gleichzeitig laufenden Aufruf. Solange Aufrufe serialisiert waren,
+    // ist das nie aufgefallen; mit Vertrag v4 laufen sie nebeneinander.
+    //
+    // Deshalb entscheidet jeder Store für sich (Callback in `prepare_store`), und hier wird nur
+    // hinterlegt, *welcher* Aufruf gerade läuft. Fremde Ticks kosten einen Funktionsaufruf.
+    let deadline = limits
+        .timeout_ms
+        .map(|timeout_ms| Instant::now() + Duration::from_millis(timeout_ms));
+    control.arm(store.engine(), deadline);
+    *current.lock().expect("laufender Aufruf") = Some(Arc::clone(control));
+
+    // Zwischen „Aufruf angenommen" und „Aufruf armiert" liegt ein Moment, in dem ein Abbruch die
+    // Engine noch nicht kennt und die Epoche deshalb nicht wecken kann. Ein Abbruch aus diesem
+    // Fenster stünde sonst wirkungslos im Griff, während der Guest losläuft — hier eingelöst,
+    // bevor überhaupt etwas startet.
+    if control.is_cancelled() {
+        *current.lock().expect("laufender Aufruf") = None;
+        bail!("der Aufruf wurde vor dem Start abgebrochen");
+    }
+
+    // Der Wachhund weckt die Epoche zum Fristende. Ohne ihn liefe eine Endlosschleife weiter, weil
+    // niemand die Epoche bewegt; ein Abbruch von außen bewegt sie über `CallControl::cancel`.
     let watchdog = limits.timeout_ms.map(|timeout_ms| {
-        store.set_epoch_deadline(1);
         let engine = store.engine().clone();
         let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
         let handle = std::thread::spawn(move || {
@@ -1259,6 +1374,7 @@ fn with_limits<T>(
 
     let outcome = body(store);
 
+    *current.lock().expect("laufender Aufruf") = None;
     if let Some((stop_tx, handle)) = watchdog {
         let _ = stop_tx.send(());
         let _ = handle.join();
@@ -2876,6 +2992,7 @@ mod tests {
                 &limits,
                 "alice",
                 Some(session),
+                &CallControl::new(),
             )?
             .result)
         };
@@ -2933,6 +3050,7 @@ mod tests {
                 &limits,
                 "alice",
                 Some(&mut session),
+                &CallControl::new(),
             )
             .map(|outcome| outcome.result.unwrap_or(serde_json::Value::Null))
         };
@@ -2988,6 +3106,7 @@ mod tests {
                     &limits,
                     caller,
                     Some(&mut session),
+                    &CallControl::new(),
                 )
             };
 

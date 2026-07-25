@@ -37,13 +37,17 @@ while (true)
 
     using var request = JsonDocument.Parse(body);
     var type = request.RootElement.GetProperty("type").GetString();
+    // Vertrag v4: Jede Antwort traegt die Korrelations-Id ihrer Anfrage zurueck.
+    var correlationId = request.RootElement.TryGetProperty("id", out var declaredId)
+        ? declaredId.GetInt64()
+        : 0L;
 
     object response = type switch
     {
         "hello" => new
         {
             type = "hello",
-            protocolVersion = mode == "--bad-protocol" ? "999" : "3",
+            protocolVersion = mode == "--bad-protocol" ? "999" : "4",
             runtime = "stub",
             host = "wasi-host-stub/0.1.0",
         },
@@ -72,7 +76,9 @@ while (true)
         _ => new { type = "error", code = "bad-request", message = $"unbekannter Typ '{type}'" },
     };
 
-    var payload = JsonSerializer.SerializeToUtf8Bytes(response);
+    var envelope = JsonSerializer.SerializeToNode(response)!.AsObject();
+    envelope["id"] = correlationId;
+    var payload = JsonSerializer.SerializeToUtf8Bytes(envelope);
     var length = new byte[4];
     BinaryPrimitives.WriteUInt32BigEndian(length, (uint)payload.Length);
     await stdout.WriteAsync(length);
