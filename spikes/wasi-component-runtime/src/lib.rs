@@ -30,6 +30,12 @@ const NEEDS_CLOCK_COMPONENT: &str = include_str!("../fixtures/needs-clock.compon
 const CONTROL_PLANE_WIT: &str = include_str!("../../../docs/spikes/fixtures/control-plane.wit");
 pub const RUNTIME_VERSION: &str = "wasmtime-47.0.2";
 const WASI_GUEST_COMPONENT: &[u8] = include_bytes!("../fixtures/wasi-p2-guest.component.wasm");
+/// Mit `wasm32-wasip2` gebauter Reactor-Guest, der `mcpmcp:spike/tools` exportiert — die
+/// Gegenprobe zum Interface-Aufruf. Quelle: `guest-interface/`, Vertrag:
+/// `docs/spikes/fixtures/control-plane.wit`.
+#[cfg(test)]
+const TOOLS_INTERFACE_COMPONENT: &[u8] =
+    include_bytes!("../fixtures/tools-interface.component.wasm");
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2115,6 +2121,97 @@ mod tests {
         };
         assert!(matches!(ok.as_deref(), Some(TypeDescriptor::Record { .. })));
         assert_eq!(err.as_deref(), Some(&TypeDescriptor::String));
+        Ok(())
+    }
+
+    /// Der vollständige Weg an einem **echten** Guest: Ein mit `wasm32-wasip2` gebautes Component
+    /// exportiert `mcpmcp:spike/tools` und rechnet wirklich. Record hinein, `result<record, string>`
+    /// heraus — mit Enum, Liste und Option unterwegs.
+    #[test]
+    fn a_real_interface_guest_computes_a_record_result() -> Result<()> {
+        // Rusts std zieht wasi:cli/environment mit, auch wenn der Guest es nicht benutzt. Ohne
+        // Grant scheitert die Instanziierung — genau das gewollte deny-before-instantiation.
+        let mut grants = CapabilityGrants::default();
+        grants.environment.insert("MCPMCP_SPIKE".to_owned());
+        let call = |input: serde_json::Value| -> Result<Option<serde_json::Value>> {
+            Ok(invoke_component_tool(
+                TOOLS_INTERFACE_COMPONENT,
+                &grants,
+                "mcpmcp:spike/tools@0.1.0.run",
+                &[input],
+                &ExecutionLimits::default(),
+            )?
+            .result)
+        };
+
+        let ok = call(serde_json::json!({
+            "id": "42",
+            "name": "probe",
+            "mode": "safe",
+            "tags": ["a", "b"],
+            "note": "hallo"
+        }))?;
+        let err = call(serde_json::json!({
+            "id": "1", "name": "", "mode": "fast", "tags": [], "note": null
+        }))?;
+
+        // u64 als String hin, Record zurück — jedes Feld ist unterwegs erhalten geblieben.
+        assert_eq!(
+            ok,
+            Some(serde_json::json!({
+                "ok": {"accepted": true, "message": "42:probe:safe:a+b:hallo"}
+            }))
+        );
+        // Und der Fehlerzweig des result kommt als solcher an, nicht als Trap.
+        assert_eq!(
+            err,
+            Some(serde_json::json!({"err": "name darf nicht leer sein"}))
+        );
+        Ok(())
+    }
+
+    /// Dieselbe Component ohne Grant: Sie kommt nicht einmal zum Laufen. Der Nachweis gehört
+    /// hierher, weil ein Reactor-Guest seine WASI-Imports über std bezieht, ohne sie zu benutzen —
+    /// die Grant-Prüfung greift trotzdem, und zwar vor der Ausführung.
+    #[test]
+    fn the_real_interface_guest_needs_its_grant() {
+        let failure = invoke_component_tool(
+            TOOLS_INTERFACE_COMPONENT,
+            &CapabilityGrants::default(),
+            "mcpmcp:spike/tools@0.1.0.run",
+            &[serde_json::json!({
+                "id": "1", "name": "x", "mode": "fast", "tags": [], "note": null
+            })],
+            &ExecutionLimits::default(),
+        )
+        .unwrap_err();
+
+        let message = format!("{failure:#}");
+        assert!(
+            message.contains("wasi:cli/environment"),
+            "erwartet wurde ein nicht gelinktes Interface: {message}"
+        );
+    }
+
+    /// Discovery an demselben echten Guest: Der Record-Parameter und das `result` stehen im
+    /// Katalog, nicht bloß ein Platzhalter.
+    #[test]
+    fn the_real_interface_guest_is_discovered_with_its_types() -> Result<()> {
+        use crate::values::TypeDescriptor;
+
+        let tools = describe_component_tools(TOOLS_INTERFACE_COMPONENT)?;
+
+        let run = tools
+            .iter()
+            .find(|tool| tool.name == "mcpmcp:spike/tools@0.1.0.run")
+            .expect("run muss im Katalog stehen");
+        assert!(run.supported, "{:?}", run.unsupported_reason);
+        assert_eq!(run.path, ["mcpmcp:spike/tools@0.1.0", "run"]);
+        assert!(matches!(
+            run.params[0].type_descriptor,
+            TypeDescriptor::Record { .. }
+        ));
+        assert!(matches!(run.results[0], TypeDescriptor::Result { .. }));
         Ok(())
     }
 

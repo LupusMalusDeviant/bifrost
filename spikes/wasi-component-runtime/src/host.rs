@@ -568,6 +568,9 @@ mod tests {
     /// anderen erneuert; regenerieren mit:
     /// `mcpmcp-wasi-component-spike sign fixtures/wasi-p2-guest.component.wasm <seed-hex>`
     /// (Dev-Testvektor-Seed: 0x03 × 32 — kein Geheimnis, nur ein reproduzierbarer Testschlüssel).
+    ///
+    /// Dasselbe gilt für `tools-interface.component.wasm`; dessen Quelle liegt unter
+    /// `guest-interface/` und wird mit `cargo build --release --target wasm32-wasip2` erzeugt.
     #[test]
     fn the_committed_signature_fixture_loads() {
         let signature = include_bytes!("../fixtures/wasi-p2-guest.component.sig");
@@ -740,6 +743,28 @@ mod tests {
             }
             other => panic!("expected health, got {other:?}"),
         }
+    }
+
+    /// Auch das Interface-Fixture muss zu seiner Signatur passen — sonst schlägt der
+    /// .NET-Test dagegen mit einer Ursache fehl, die im Rust-Teil längst sichtbar wäre.
+    #[test]
+    fn the_committed_interface_fixture_loads() {
+        let component = include_bytes!("../fixtures/tools-interface.component.wasm");
+        let signature = include_bytes!("../fixtures/tools-interface.component.sig");
+        let publisher = include_str!("../fixtures/wasi-p2-guest.publisher.pub");
+
+        let (response, _) = negotiated().handle(Request::Load {
+            component: BASE64.encode(component),
+            signature: BASE64.encode(signature),
+            pinned_publishers: vec![publisher.trim().to_owned()],
+            grants: CapabilityGrants::default(),
+            secret_values: Default::default(),
+        });
+
+        assert!(
+            matches!(response, Response::Loaded { .. }),
+            "Interface-Fixture laedt nicht: {response:?}"
+        );
     }
 
     #[test]

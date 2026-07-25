@@ -1,0 +1,24 @@
+# Eigenständiges Workspace-Root, damit dieses Guest-Crate NICHT Teil des Spike-Builds wird.
+# Es wird separat für wasm32-wasip2 gebaut; das erzeugte Component liegt als Fixture im Spike.
+#
+# Anders als `guest/` ist das hier kein Kommando, sondern ein Reactor: Es exportiert das
+# WIT-Interface `mcpmcp:spike/tools` — also genau die Form, in der ein echtes Component seine
+# Funktionen anbietet (Interface-Instanz, Records, Enum, Option, result).
+[workspace]
+
+[package]
+name = "mcpmcp-wasi-guest-interface"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+# cdylib erzeugt auf wasm32-wasip2 ein Reactor-Component ohne `run`-Einstiegspunkt.
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.51.0"
+
+[profile.release]
+opt-level = "s"
+strip = true

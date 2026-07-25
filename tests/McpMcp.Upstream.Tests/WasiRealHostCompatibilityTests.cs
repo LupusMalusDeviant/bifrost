@@ -153,6 +153,41 @@ public sealed class WasiRealHostCompatibilityTests
     }
 
     [Fact]
+    public async Task An_interface_function_of_a_real_component_is_callable_over_the_wire()
+    {
+        var host = RequireHost();
+        var ct = TestContext.Current.CancellationToken;
+        var connector = ConnectorFor(await PinnedPublisherAsync(ct));
+        // Ein mit wasm32-wasip2 gebautes Component, das ein WIT-Interface exportiert — die Form,
+        // in der reale Components ihre Funktionen anbieten.
+        var config = Config(host, new WasiCapabilityGrants(Environment: EnvironmentGrant)) with
+        {
+            Wasi = new WasiTransportOptions(
+                host,
+                Path.Combine(FixturesDirectory, "tools-interface.component.wasm"),
+                Path.Combine(FixturesDirectory, "tools-interface.component.sig"),
+                PinnedPublishers: [],
+                Grants: new WasiCapabilityGrants(Environment: EnvironmentGrant)),
+        };
+
+        await using var connection = await connector.ConnectAsync(new ServerId(Guid.NewGuid()), config, ct);
+        var inventory = await connection.DiscoverAsync(ct);
+        var arguments = JsonSerializer.Deserialize<JsonElement>("""
+            {"input":{"id":"42","name":"probe","mode":"safe","tags":["a","b"],"note":"hallo"}}
+            """);
+        var result = await connection.CallToolAsync("mcpmcp_spike_tools_run", arguments, ct);
+
+        // Der Interface-Name wird katalogtauglich, der Record-Parameter bekommt ein echtes Schema.
+        inventory.Tools.Select(tool => tool.Name).Should().Equal("mcpmcp_spike_tools_run");
+        inventory.Tools[0].InputSchema.GetProperty("properties").GetProperty("input")
+            .GetProperty("type").GetString().Should().Be("object");
+        // Und der Aufruf rechnet wirklich: Record hinein, result<record, string> heraus.
+        result.GetProperty("isError").GetBoolean().Should().BeFalse();
+        result.GetProperty("content")[0].GetProperty("text").GetString()
+            .Should().Contain("42:probe:safe:a+b:hallo");
+    }
+
+    [Fact]
     public async Task The_real_host_enforces_default_deny_across_the_wire()
     {
         var host = RequireHost();
