@@ -107,13 +107,16 @@ und externe Connectoren" — inzwischen aber deutlich enger als beim Statuswechs
 *Nachtrag 2026-07-25:* Die zugesagte Behandlung von `list<u8>` als begrenzte Binärdaten und
 `result<T,E>` als Fehlervertrag ist umgesetzt. Abgebildet sind alle Skalare, `string`, `char`,
 `list<T>`, `option<T>` und `result<T,E>`; Binärdaten gehen als Base64 mit eigener Längengrenze,
-64-Bit-Ganzzahlen als Dezimalstring. **Offen bleiben Records, Varianten, Enums, Flags und Tupel**;
-sie melden sich in der Discovery als nicht unterstützt, statt im Katalog zu erscheinen. Resources,
-Futures und Streams hängen unverändert am Task-/Event-Modell
+64-Bit-Ganzzahlen als Dezimalstring. Seit demselben Tag sind auch `record`, `variant`, `enum`,
+`flags` und `tuple` abgebildet.
+
+**Der Vorbehalt bleibt trotzdem**, aus einem anderen Grund als angenommen: Ein aus WIT gebautes
+Component legt seine Funktionen in eine **Interface-Instanz**, und der Host ruft bislang nur
+Top-Level-Exports auf. Solange das so ist, erreicht die Typabbildung kein reales Component.
+Resources, Futures und Streams hängen unverändert am Task-/Event-Modell
 ([ADR-0019](0019-langlaufende-tasks-und-events.md)).
 
-Der Vorbehalt entfällt, wenn auch zusammengesetzte Typen abgebildet sind — ein Connector-Interface
-ohne Record ist die Ausnahme. Bis dahin ist WASI der bevorzugte Pfad für **Tools, die in diese Form
+Der Vorbehalt entfällt, wenn Funktionen in exportierten Interfaces aufrufbar sind. Bis dahin ist WASI der bevorzugte Pfad für **Tools, die in diese Form
 passen**, und nicht die Vorgabe für jeden neuen Connector.
 
 Sicherheitsstand und akzeptierte Restrisiken stehen im

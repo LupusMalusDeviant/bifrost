@@ -12,8 +12,10 @@
 //! - **64-Bit-Ganzzahlen sind Strings.** JSON-Zahlen sind Doubles; ab 2^53 verlöre `u64` still
 //!   Stellen. Lieber ein String, den man ansieht, als eine Zahl, die man glaubt.
 //!
-//! Was hier nicht abgebildet wird — Records, Varianten, Enums, Flags, Resources, Futures, Streams —
-//! meldet die Discovery als nicht unterstützt, statt es im Katalog anzubieten.
+//! Abgebildet sind alle Skalare, `string`, `char`, `list<T>`, `option<T>`, `result<T,E>` sowie die
+//! zusammengesetzten Typen `record`, `variant`, `enum`, `flags` und `tuple`. Nicht abgebildet
+//! bleiben Resources, Futures und Streams — sie meldet die Discovery als nicht unterstützt, statt
+//! sie im Katalog anzubieten.
 
 use anyhow::{Context, Result, bail};
 use base64::Engine as _;
@@ -56,11 +58,49 @@ pub enum TypeDescriptor {
         #[serde(skip_serializing_if = "Option::is_none")]
         err: Option<Box<TypeDescriptor>>,
     },
+    /// `record` — JSON-Objekt mit benannten Feldern, alle Pflicht (WIT-Records haben keine
+    /// optionalen Felder; ein `option<T>`-Feld ist vorhanden und darf `null` sein).
+    Record {
+        fields: Vec<FieldDescriptor>,
+    },
+    /// `variant` — Objekt mit **genau einem** Schlüssel: dem Fallnamen. Dieselbe Form wie
+    /// `result`, das im Component Model nichts anderes als ein Variant mit zwei festen Fällen ist.
+    Variant {
+        cases: Vec<CaseDescriptor>,
+    },
+    /// `enum` — schlicht der Fallname als String.
+    Enum {
+        cases: Vec<String>,
+    },
+    /// `flags` — Liste der gesetzten Namen.
+    Flags {
+        names: Vec<String>,
+    },
+    /// `tuple` — JSON-Array fester Länge.
+    Tuple {
+        items: Vec<TypeDescriptor>,
+    },
     /// Ein Typ, den dieser Host nicht abbildet. Er steht im Vertrag, damit die Discovery sagen
     /// kann, **warum** ein Export nicht aufrufbar ist.
     Unsupported {
         detail: String,
     },
+}
+
+/// Ein Record-Feld: Name und Typ.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct FieldDescriptor {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_descriptor: TypeDescriptor,
+}
+
+/// Ein Variant-Fall. `type` fehlt, wenn der Fall keine Nutzlast trägt.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CaseDescriptor {
+    pub name: String,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub type_descriptor: Option<TypeDescriptor>,
 }
 
 impl TypeDescriptor {
@@ -74,6 +114,15 @@ impl TypeDescriptor {
                 ok.as_ref().is_none_or(|ty| ty.is_supported())
                     && err.as_ref().is_none_or(|ty| ty.is_supported())
             }
+            Self::Record { fields } => fields
+                .iter()
+                .all(|field| field.type_descriptor.is_supported()),
+            Self::Variant { cases } => cases.iter().all(|case| {
+                case.type_descriptor
+                    .as_ref()
+                    .is_none_or(|ty| ty.is_supported())
+            }),
+            Self::Tuple { items } => items.iter().all(|item| item.is_supported()),
             _ => true,
         }
     }
@@ -103,6 +152,35 @@ impl TypeDescriptor {
                 (None, Some(err)) => format!("result<_, {}>", err.label()),
                 (None, None) => "result".to_owned(),
             },
+            Self::Record { fields } => format!(
+                "record{{{}}}",
+                fields
+                    .iter()
+                    .map(|field| format!("{}: {}", field.name, field.type_descriptor.label()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::Variant { cases } => format!(
+                "variant{{{}}}",
+                cases
+                    .iter()
+                    .map(|case| match &case.type_descriptor {
+                        Some(ty) => format!("{}({})", case.name, ty.label()),
+                        None => case.name.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::Enum { cases } => format!("enum{{{}}}", cases.join(", ")),
+            Self::Flags { names } => format!("flags{{{}}}", names.join(", ")),
+            Self::Tuple { items } => format!(
+                "tuple<{}>",
+                items
+                    .iter()
+                    .map(TypeDescriptor::label)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Self::Unsupported { detail } => detail.clone(),
         }
     }
@@ -136,11 +214,33 @@ pub fn describe(ty: &Type) -> TypeDescriptor {
             ok: result.ok().map(|ty| Box::new(describe(&ty))),
             err: result.err().map(|ty| Box::new(describe(&ty))),
         },
-        Type::Record(_) => unsupported("record"),
-        Type::Variant(_) => unsupported("variant"),
-        Type::Enum(_) => unsupported("enum"),
-        Type::Flags(_) => unsupported("flags"),
-        Type::Tuple(_) => unsupported("tuple"),
+        Type::Record(record) => TypeDescriptor::Record {
+            fields: record
+                .fields()
+                .map(|field| FieldDescriptor {
+                    name: field.name.to_owned(),
+                    type_descriptor: describe(&field.ty),
+                })
+                .collect(),
+        },
+        Type::Variant(variant) => TypeDescriptor::Variant {
+            cases: variant
+                .cases()
+                .map(|case| CaseDescriptor {
+                    name: case.name.to_owned(),
+                    type_descriptor: case.ty.as_ref().map(describe),
+                })
+                .collect(),
+        },
+        Type::Enum(enumeration) => TypeDescriptor::Enum {
+            cases: enumeration.names().map(str::to_owned).collect(),
+        },
+        Type::Flags(flags) => TypeDescriptor::Flags {
+            names: flags.names().map(str::to_owned).collect(),
+        },
+        Type::Tuple(tuple) => TypeDescriptor::Tuple {
+            items: tuple.types().map(|ty| describe(&ty)).collect(),
+        },
         Type::Map(_) => unsupported("map"),
         Type::Own(_) | Type::Borrow(_) => unsupported("resource"),
         Type::Future(_) => unsupported("future"),
@@ -249,6 +349,89 @@ pub fn to_val(ty: &TypeDescriptor, json: &Json, max_binary_bytes: usize) -> Resu
                 (None, None) => bail!("result erwartet 'ok' oder 'err'"),
             }
         }
+        TypeDescriptor::Record { fields } => {
+            let object = json.as_object().context("record erwartet ein Objekt")?;
+            // Reihenfolge nach Deklaration, nicht nach JSON — die Feldreihenfolge gehört zum Typ.
+            let values = fields
+                .iter()
+                .map(|field| {
+                    let value = object
+                        .get(&field.name)
+                        .with_context(|| format!("Feld '{}' fehlt", field.name))?;
+                    Ok((
+                        field.name.clone(),
+                        to_val(&field.type_descriptor, value, max_binary_bytes)
+                            .with_context(|| format!("Feld '{}'", field.name))?,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            if let Some(extra) = object
+                .keys()
+                .find(|key| !fields.iter().any(|field| &field.name == *key))
+            {
+                bail!("record kennt kein Feld '{extra}'");
+            }
+            Ok(Val::Record(values))
+        }
+        TypeDescriptor::Variant { cases } => {
+            let object = json
+                .as_object()
+                .context("variant erwartet ein Objekt mit genau einem Fallnamen")?;
+            if object.len() != 1 {
+                bail!("variant erwartet genau einen Fall, bekam {}", object.len());
+            }
+            let (name, payload) = object.iter().next().expect("genau einer");
+            let case = cases
+                .iter()
+                .find(|case| &case.name == name)
+                .with_context(|| format!("variant kennt keinen Fall '{name}'"))?;
+            Ok(Val::Variant(
+                name.clone(),
+                payload_val(case.type_descriptor.as_ref(), payload, max_binary_bytes)?,
+            ))
+        }
+        TypeDescriptor::Enum { cases } => {
+            let name = json
+                .as_str()
+                .context("enum erwartet den Fallnamen als String")?;
+            if !cases.iter().any(|case| case == name) {
+                bail!("enum kennt keinen Fall '{name}'");
+            }
+            Ok(Val::Enum(name.to_owned()))
+        }
+        TypeDescriptor::Flags { names } => {
+            let items = json
+                .as_array()
+                .context("flags erwartet eine Liste von Namen")?;
+            let set = items
+                .iter()
+                .map(|item| {
+                    let name = item.as_str().context("flags erwartet Strings")?;
+                    if !names.iter().any(|known| known == name) {
+                        bail!("flags kennt kein Flag '{name}'");
+                    }
+                    Ok(name.to_owned())
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(Val::Flags(set))
+        }
+        TypeDescriptor::Tuple { items } => {
+            let values = json.as_array().context("tuple erwartet eine Liste")?;
+            if values.len() != items.len() {
+                bail!(
+                    "tuple erwartet {} Element(e), bekam {}",
+                    items.len(),
+                    values.len()
+                );
+            }
+            items
+                .iter()
+                .zip(values)
+                .map(|(ty, value)| to_val(ty, value, max_binary_bytes))
+                .collect::<Result<Vec<_>>>()
+                .map(Val::Tuple)
+        }
         TypeDescriptor::Unsupported { detail } => {
             bail!("Typ '{detail}' wird von diesem Host nicht abgebildet")
         }
@@ -305,6 +488,34 @@ pub fn to_json(value: &Val) -> Result<Json> {
             );
             Json::Object(object)
         }
+        Val::Record(fields) => {
+            let mut object = serde_json::Map::with_capacity(fields.len());
+            for (name, value) in fields {
+                object.insert(name.clone(), to_json(value)?);
+            }
+            Json::Object(object)
+        }
+        // Ein Variant ist ein Objekt mit genau einem Schlüssel — dieselbe Form wie `result`,
+        // das im Component Model nichts anderes ist.
+        Val::Variant(name, payload) => {
+            let mut object = serde_json::Map::with_capacity(1);
+            object.insert(
+                name.clone(),
+                match payload {
+                    Some(value) => to_json(value)?,
+                    None => Json::Null,
+                },
+            );
+            Json::Object(object)
+        }
+        Val::Enum(name) => Json::String(name.clone()),
+        Val::Flags(names) => Json::Array(
+            names
+                .iter()
+                .map(|name| Json::String(name.clone()))
+                .collect(),
+        ),
+        Val::Tuple(items) => Json::Array(items.iter().map(to_json).collect::<Result<Vec<_>>>()?),
         other => bail!("Rückgabewert {other:?} lässt sich nicht als JSON darstellen"),
     })
 }
@@ -473,6 +684,112 @@ mod tests {
         assert!(to_val(&TypeDescriptor::U8, &Json::from(256), LIMIT).is_err());
         assert!(to_val(&TypeDescriptor::S8, &Json::from(-129), LIMIT).is_err());
         assert!(to_val(&TypeDescriptor::U32, &Json::from(-1), LIMIT).is_err());
+    }
+
+    fn record_type() -> TypeDescriptor {
+        TypeDescriptor::Record {
+            fields: vec![
+                FieldDescriptor {
+                    name: "x".to_owned(),
+                    type_descriptor: TypeDescriptor::S32,
+                },
+                FieldDescriptor {
+                    name: "label".to_owned(),
+                    type_descriptor: TypeDescriptor::String,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn records_map_to_objects_with_all_fields() {
+        roundtrip(&record_type(), serde_json::json!({"x": -1, "label": "a"}));
+
+        // Fehlendes Feld und unbekanntes Feld sind beides Fehler — ein Record hat genau die
+        // Felder seines Typs, nicht mehr und nicht weniger.
+        assert!(to_val(&record_type(), &serde_json::json!({"x": 1}), LIMIT).is_err());
+        assert!(
+            to_val(
+                &record_type(),
+                &serde_json::json!({"x": 1, "label": "a", "extra": 2}),
+                LIMIT
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn variants_carry_exactly_one_case() {
+        let ty = TypeDescriptor::Variant {
+            cases: vec![
+                CaseDescriptor {
+                    name: "leer".to_owned(),
+                    type_descriptor: None,
+                },
+                CaseDescriptor {
+                    name: "zahl".to_owned(),
+                    type_descriptor: Some(TypeDescriptor::S32),
+                },
+            ],
+        };
+
+        roundtrip(&ty, serde_json::json!({"zahl": 42}));
+        roundtrip(&ty, serde_json::json!({"leer": null}));
+        assert!(to_val(&ty, &serde_json::json!({"zahl": 1, "leer": null}), LIMIT).is_err());
+        assert!(to_val(&ty, &serde_json::json!({"unbekannt": 1}), LIMIT).is_err());
+        // Ein Fall ohne Nutzlast nimmt auch keine an.
+        assert!(to_val(&ty, &serde_json::json!({"leer": 5}), LIMIT).is_err());
+    }
+
+    #[test]
+    fn enums_and_flags_use_their_declared_names() {
+        let colour = TypeDescriptor::Enum {
+            cases: vec!["rot".to_owned(), "gruen".to_owned()],
+        };
+        let options = TypeDescriptor::Flags {
+            names: vec!["a".to_owned(), "b".to_owned()],
+        };
+
+        roundtrip(&colour, Json::String("rot".to_owned()));
+        roundtrip(&options, serde_json::json!(["a", "b"]));
+        roundtrip(&options, serde_json::json!([]));
+        assert!(to_val(&colour, &Json::String("blau".to_owned()), LIMIT).is_err());
+        assert!(to_val(&options, &serde_json::json!(["c"]), LIMIT).is_err());
+    }
+
+    #[test]
+    fn tuples_keep_their_length() {
+        let ty = TypeDescriptor::Tuple {
+            items: vec![TypeDescriptor::S32, TypeDescriptor::String],
+        };
+
+        roundtrip(&ty, serde_json::json!([1, "a"]));
+        assert!(to_val(&ty, &serde_json::json!([1]), LIMIT).is_err());
+        assert!(to_val(&ty, &serde_json::json!([1, "a", 2]), LIMIT).is_err());
+    }
+
+    /// Verschachtelung ist der eigentliche Nutzen: ein Record mit Liste von Varianten.
+    #[test]
+    fn composites_nest() {
+        let ty = TypeDescriptor::Record {
+            fields: vec![FieldDescriptor {
+                name: "eintraege".to_owned(),
+                type_descriptor: TypeDescriptor::List {
+                    element: Box::new(TypeDescriptor::Variant {
+                        cases: vec![CaseDescriptor {
+                            name: "text".to_owned(),
+                            type_descriptor: Some(TypeDescriptor::String),
+                        }],
+                    }),
+                },
+            }],
+        };
+
+        assert!(ty.is_supported());
+        roundtrip(
+            &ty,
+            serde_json::json!({"eintraege": [{"text": "a"}, {"text": "b"}]}),
+        );
     }
 
     #[test]

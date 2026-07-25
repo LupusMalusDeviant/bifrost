@@ -181,11 +181,18 @@ Offen und ausdrücklich **nicht** behauptet:
   ADR-0016 fehlen weiterhin.
 - **WP3, Rest** — Preopens bleiben **nur lesend**; Schreibrechte sind im Grant-Modell nach wie vor
   nicht ausdrückbar.
-- **Aufrufbreite, Rest** — abgebildet sind jetzt alle Skalare, `string`, `char`, `list<T>`,
-  `list<u8>` als Blob, `option<T>` und `result<T,E>`. **Offen bleiben Records, Varianten, Enums,
-  Flags und Tupel** — sie melden sich in der Discovery als nicht unterstützt. Resources, Futures
-  und Streams hängen weiter an ADR-0019. Der Vorbehalt in ADR-0017 bleibt damit bestehen, ist aber
-  deutlich kleiner.
+- **Aufrufbreite, Rest — hängt an den Instanz-Exports.** Die Typabbildung deckt jetzt auch
+  `record`, `variant`, `enum`, `flags` und `tuple` ab (15 Tests, inklusive Verschachtelung). Sie
+  ist für echte Components aber noch nicht erreichbar: Ein aus WIT gebautes Component legt seine
+  Funktionen in eine **Interface-Instanz**, und der Host ruft heute nur Top-Level-Exports auf —
+  belegt an `encode_control_plane_component`, dessen vier Funktionen alle als
+  `mcpmcp:spike/tools@0.1.0.<name>` erscheinen und als nicht aufrufbar gemeldet werden.
+  Benannte Typen lassen sich zudem gar nicht als Top-Level-Export lifen (wasmtime: „func not valid
+  to be used as export"), was denselben Punkt von der anderen Seite zeigt: Records und Varianten
+  gehören ins Interface.
+  **Nächster Schritt ist daher nicht mehr Typabbildung, sondern das Aufrufen von Instanz-Exports**
+  (`get_export_index` mit Elternindex) — der in WP6.1 zurückgestellte Punkt. Resources, Futures
+  und Streams hängen weiter an ADR-0019.
 
 ## Festgelegte Entscheidungen für WP4 (2026-07-24, Product Owner)
 
