@@ -31,7 +31,7 @@
 | 8 – OpenRPC | **TEILWEISE / Design-Spike** | Import-/Security-Spike und Roadmap vorhanden; kein Connector. |
 | 9 – gRPC | **TEILWEISE / Design-Spike** | Unary-/Reflection-/Descriptor-Set-Spike und Roadmap vorhanden; kein Connector. |
 | 10 – GraphQL | **OFFEN** | Nur Entscheidungsmatrix/Roadmap. |
-| 11 – Task-/Event-Modell | **TEILWEISE** | ADR-0019 vorhanden; keine Persistenz oder API. |
+| 11 – Task-/Event-Modell | **TEILWEISE; entschieden** | ADR-0019 seit 2026-07-25 akzeptiert: Task verallgemeinert die Freigabe, Polling ist der Vertrag, Abbruch persistiert, `input-required` ist Elicitation über Tasks. Persistenz und API fehlen weiterhin; EventV1 mit Zustellzusage ist ausdrücklich vertagt. |
 | 12 – AsyncAPI | **OFFEN** | Bewusst blockiert, bis Phase 11 stabil umgesetzt ist. |
 | 13 – A2A | **OFFEN** | Bewusst blockiert, bis Task-, Delegations-, Budget- und Loop-Semantik stabil sind. |
 | 14 – SOAP/WSDL | **BEWERTET / ZURÜCKGESTELLT** | Architekturkompatibilität in der Matrix; keine Implementierung ohne validierte Nachfrage. |

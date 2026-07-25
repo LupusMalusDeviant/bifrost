@@ -183,9 +183,14 @@ Offen und ausdrücklich **nicht** behauptet:
   ADR-0016 fehlen weiterhin.
 - **WP3, Rest** — Preopens bleiben **nur lesend**; Schreibrechte sind im Grant-Modell nach wie vor
   nicht ausdrückbar.
-- **Aufrufbreite, Rest** — offen bleiben nur noch **Futures und Streams**; sie hängen am
-  Task-/Event-Modell (ADR-0019) und brauchen zusätzlich die asynchrone ABI
-  (`component-model-async`). Alles andere ist abgebildet und aufrufbar.
+- **Aufrufbreite, Rest** — offen bleiben nur noch **Futures und Streams**. Die Modellseite ist seit
+  dem 2026-07-25 entschieden ([ADR-0019](../adr/0019-langlaufende-tasks-und-events.md)): Chunks
+  werden **geholt**, nicht geschickt, und der Abbruch ist ein persistiertes Kennzeichen, das bei
+  WASI vorerst bei `requested` stehen bleibt — der IPC-Vertrag hat kein Cancel-Frame. Offen bleibt
+  damit die Technik, nicht die Semantik: die asynchrone ABI (`component-model-async` zieht `async`
+  nach sich, also asynchroner Store, `call_async` statt `Func::call` und ein umgebauter stdio-Loop
+  samt Fuel-Nachfüllung, Epochen-Wachhund und persistenter Instanz) plus **IPC-Vertrag v4** mit
+  Korrelations-Ids, Chunk- und Cancel-Frames. Alles andere ist abgebildet und aufrufbar.
 - **Resources, Restrisiko** — eine persistente Instanz teilt ihren **internen** Zustand (Globals,
   linearer Speicher) zwischen allen Aufrufern desselben Upstreams. Die Handle-Trennung schützt
   davor nicht: Sie verhindert, dass ein Aufrufer ein fremdes Handle *benennt*, nicht, dass ein
@@ -237,7 +242,7 @@ neu abzuwägen:
 
 - **IPC-Form** (WP1.1): length-prefixed JSON über stdio vs. lokaler Socket (Named Pipe/UDS) — braucht evtl. ein Mini-ADR-0021.
 - **Packaging** (WP7.1): ein Container mit .NET + Rust-Host vs. getrennte Artefakte — Ops-Auswirkung.
-- **Binärdaten/Streaming** über den Vertrag: zunächst begrenzte Blobs; echte Streams erst mit dem Task-/Event-Modell (ADR-0019).
+- **Binärdaten/Streaming** über den Vertrag: begrenzte Blobs sind umgesetzt (`list<u8>` als Base64 mit eigener Längengrenze). Echte Streams sind seit ADR-0019 auf der Modellseite geklärt (Holen, Abbruch persistiert); es fehlt der asynchrone Host-Umbau und IPC-Vertrag v4 — beides eigener Aufwand, siehe Stand-Abschnitt.
 
 ## Referenzen
 

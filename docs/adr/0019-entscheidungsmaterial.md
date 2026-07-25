@@ -1,5 +1,19 @@
 # Entscheidungsmaterial zu ADR-0019 (Tasks und Events)
 
+> **Erledigt am 2026-07-25.** Alle vier Fragen wurden mit dem Product Owner durchgegangen und
+> entschieden; die Entscheidungen stehen in [ADR-0019](0019-langlaufende-tasks-und-events.md)
+> (Status jetzt *Akzeptiert*). Kurzfassung:
+>
+> | Frage | Entscheidung |
+> |---|---|
+> | F1 Task/Freigabe | Task **verallgemeinert** die Freigabe — eine Tabelle, eine API, eine Liste; `Pending` wird `input-required` |
+> | F2 Holen/Schicken | **Holen ist der Vertrag**, Notifications sind nur Hinweise. EventV1 mit Zusage (at-least-once, DLQ, Subscriptions) ist vertagt |
+> | F3 Abbruch | Persistiertes Kennzeichen, `requested` vs. `confirmed` — `confirmed` nur, wo der Transport es hergibt. WASI bleibt vorerst bei `requested` |
+> | F4 Elicitation | **Ja, ausdrücklich**: `input-required` ist Elicitation über Tasks. ADR-0010 wurde ergänzt; Sampling bleibt verworfen |
+>
+> Dieses Dokument bleibt als Beleg stehen — was geprüft wurde und woran die Entscheidungen hingen.
+> Die Abschnitte darunter sind der Stand **vor** der Entscheidung und werden nicht nachgeführt.
+
 **Stand 2026-07-25. Dies ist Material, keine Entscheidung.** [ADR-0019](0019-langlaufende-tasks-und-events.md)
 steht auf *Vorgeschlagen* und beschreibt bereits eine ziemlich vollständige Lösung — TaskV1, EventV1,
 Zustände, at-least-once, REST-Endpunkte. Dieses Dokument prüft diesen Entwurf gegen den Code, der

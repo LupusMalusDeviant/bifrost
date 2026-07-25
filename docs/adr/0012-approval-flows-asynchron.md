@@ -1,8 +1,16 @@
 # ADR-0012: Approval-Flows asynchron statt blockierend
 
-- **Status:** Akzeptiert
+- **Status:** Akzeptiert; technisch abgelöst am 2026-07-25 durch
+  [ADR-0019](0019-langlaufende-tasks-und-events.md)
 - **Datum:** 2026-07-20
 - **Betrifft:** FR-32, FR-09 (Call-Timeout), ADR-0008 (Invocation-Kern)
+
+> **Ergänzung 2026-07-25 (ADR-0019).** Die Entscheidung dieser ADR — sofort ablehnen statt
+> blockieren, Freigabe pro Call — bleibt unverändert gültig. Was sich ändert, ist der Unterbau: Die
+> Freigabe-Anfrage geht im Task-Modell auf und wird der Task-Zustand `input-required`. Eine Tabelle,
+> eine API, eine Liste in der UI, statt zweier Warteschlangen nebeneinander. Bestehende wartende
+> Freigaben werden migriert, nicht verworfen; der heiße Pfad (`TryConsumeApprovalAsync` vor jedem
+> Call) braucht dafür einen Index auf (Eigentümer, Tool, Eingabe-Fingerprint, Zustand).
 
 ## Kontext
 

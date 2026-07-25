@@ -1,8 +1,20 @@
 # ADR-0010: Sampling und Elicitation werden nicht durchgereicht
 
-- **Status:** Accepted
+- **Status:** Accepted, ergänzt am 2026-07-25 durch [ADR-0019](0019-langlaufende-tasks-und-events.md)
 - **Datum:** 2026-07-18
 - **Betrifft:** FR-04 (Kann-Teil), ADR-0001 (Proxy-Architektur), ADR-0005 (Supervisor)
+
+> **Ergänzung 2026-07-25 (ADR-0019).** Diese ADR gilt weiter für **synchrone, im Band laufende**
+> Sampling- und Elicitation-Anfragen. ADR-0019 öffnet einen anderen Weg für Elicitation: den
+> Task-Zustand `input-required`. Der ist nicht server-initiiert im Band, sondern ein persistierter
+> Zustand, zu dem der Aufrufer zurückkommt — **die Task-Id ist genau die Korrelation, die das
+> Protokoll nicht trägt** (Grund 1 unten), und der Task-Store ersetzt den fehlenden Request-Kontext
+> im SDK-Handler (Grund 2). Grund 3 ist zur Hälfte überholt: Die `IdentityId` endet seit
+> `b7638f9` nicht mehr im `ToolInvoker`, sondern erreicht über `ICallerAwareUpstreamConnection` den
+> Connector; die geteilte Verbindung je `ServerId` bleibt.
+>
+> **Sampling ist davon unberührt und bleibt verworfen.** Der Kosten-, Modellzugriffs- und
+> Prompt-Injection-Einwand unten gilt unverändert — er hängt nicht an der Korrelation.
 
 ## Kontext
 
