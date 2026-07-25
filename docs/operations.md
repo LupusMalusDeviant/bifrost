@@ -117,6 +117,34 @@ Die Freigabe bindet an `(Identität, Tool, Argument-Fingerprint)` und verfällt 
 Welche Tools freigabepflichtig sind, ist unter **Freigaben** (Admin-Bereich) zur Laufzeit
 schaltbar, ohne Neustart.
 
+## WASI-Components als Upstream
+
+Ein signiertes WebAssembly-Component läuft in einem eigenen Rust-Host-Prozess
+([ADR-0020](adr/0020-wasi-runtime-out-of-process-rust-host.md)). Der Host **liegt im Image** unter
+`/usr/local/bin/mcpmcp-wasi-host` — genau dieser Pfad gehört in `Wasi.HostExecutable` eines
+WASI-Upstreams.
+
+Vertrauen kommt **ausschließlich** aus dem Publisher-Trust-Store, nicht aus der Upstream-Config:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/publishers \
+  -H "Authorization: Bearer $ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d '{"publicKey":"<Ed25519-Public-Key, Base64, 32 Byte>","label":"acme"}'
+```
+
+- Ohne passenden gepinnten Schlüssel lädt der Host nichts — ein Upstream kommt dann gar nicht erst
+  hoch (fail-closed). Beim ersten Start nach dem Update werden Schlüssel aus vorhandenen
+  `Wasi.PinnedPublishers` einmalig übernommen und danach ignoriert.
+- `POST /api/v1/publishers/{keyId}/revoke` wirkt **sofort**: Laufende Upstreams mit Components
+  dieses Publishers werden gestoppt und der Vorgang auditiert.
+- Grants sind default-deny und werden pro WASI-Interface durchgesetzt. Dateisystem-Preopens sind
+  absolute Pfade und werden **nur lesend** eingehängt, Netzwerkziele sind `host:port`.
+- Secrets: `Grants.Secrets` nennt die Namen, `Wasi.Secrets` liefert die Werte (verschlüsselt wie
+  alle Upstream-Credentials, in Ausgaben maskiert). Der Host injiziert sie als
+  Environment-Einträge — wer Secrets gewährt, gewährt damit die Environment-Schnittstelle, das
+  Component kann also alle gesetzten Variablen lesen.
+- Jeder Load steht im Audit: Modulhash, Publisher, Runtime und die tatsächlich erteilten Grants.
+
 ## Webhook-Trigger
 
 Ein eingehender Webhook löst genau **einen** Tool-Aufruf im Namen einer festen Identität aus

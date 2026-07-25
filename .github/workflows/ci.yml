@@ -178,6 +178,35 @@ jobs:
       - name: Build image
         run: docker build -t mcpmcp:ci .
 
+      # Plan 0003, WP7.1: Der WASI-Host wird MIT ausgeliefert. Ohne diese Prüfung wäre "der
+      # Pluginpfad ist deploybar" eine Behauptung — ein fehlendes oder für die falsche
+      # Architektur gebautes Binary fiele erst auf, wenn ein Betreiber einen WASI-Upstream anlegt.
+      # Der Handshake wird in Python gerahmt: Das Längenpräfix sind vier rohe Bytes, und
+      # printf-Escapes verhalten sich je nach Shell unterschiedlich. --entrypoint ist Pflicht,
+      # sonst hängt der Befehl am dotnet-Entrypoint des Images.
+      - name: WASI-Host liegt im Image und spricht den Vertrag (WP7.1)
+        run: |
+          ANSWER=$(python3 -c "
+          import struct,sys
+          msg=b'{\"type\":\"hello\",\"protocolVersion\":\"2\"}'
+          sys.stdout.buffer.write(struct.pack('>I',len(msg))+msg)" \
+            | docker run -i --rm --entrypoint /usr/local/bin/mcpmcp-wasi-host mcpmcp:ci host \
+            | tr -d '\0')
+          echo "Host-Antwort: $ANSWER"
+          case "$ANSWER" in
+            *'"protocolVersion":"2"'*) echo "Handshake im Image ok" ;;
+            *) echo "::error::WASI-Host im Image antwortet nicht auf den Handshake."; exit 1 ;;
+          esac
+
+      - name: Container läuft non-root (WP7.2)
+        run: |
+          CONTAINER_UID=$(docker run --rm --entrypoint id mcpmcp:ci -u)
+          echo "Container-UID: $CONTAINER_UID"
+          if [ "$CONTAINER_UID" = "0" ]; then
+            echo "::error::Der Container läuft als root."
+            exit 1
+          fi
+
       - name: Verify image size < 300 MB (WP7 DoD)
         run: |
           BYTES=$(docker image inspect mcpmcp:ci --format '{{.Size}}')

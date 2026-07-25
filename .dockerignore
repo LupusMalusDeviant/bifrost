@@ -10,3 +10,9 @@ coverage*/
 *.user
 *.log
 data/
+# Rust-Build-Artefakte: lokal zweistellige GB. Ohne diese Zeile wandert der halbe
+# cargo-target-Ordner in den Build-Context und der Rust-Stage-Cache ist wertlos.
+spikes/**/target/
+# Ausnahme von 'docs/' oben: Der WASI-Host bindet diese WIT-Datei per include_str! ein,
+# ohne sie scheitert der Rust-Build im Image.
+!docs/spikes/fixtures/
