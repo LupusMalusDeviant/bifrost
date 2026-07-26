@@ -187,23 +187,44 @@ public class SecretGuardTests
             guard.Inspect(payload, GuardDirection.Inbound);
         }
 
-        // Wall-Clock schwankt auf geteilter CI-Hardware. Deshalb mehrere Batches messen und den
-        // SCHNELLSTEN auswerten: ein einzelner GC-/Scheduling-Ausreißer darf den Gate nicht kippen,
-        // eine echte Regression (dauerhaft > 1 ms) fällt aber in ALLEN Batches durch.
-        var bestPerCallMs = double.MaxValue;
-        for (var batch = 0; batch < 5; batch++)
+        // Gemessen wird ein VERHÄLTNIS, keine Millisekundenzahl.
+        //
+        // Eine absolute Schwelle taugt hier nicht: Lokal kostet die Prüfung ~0,05 ms, auf einem
+        // geteilten CI-Runner wurden 1,04 ms gemessen — Faktor 20 allein aus Rauschen. Jede
+        // absolute Grenze, die dieses Rauschen übersteht, liegt damit oberhalb dessen, was eine
+        // echte Regression auszeichnet, und schützt gegen nichts mehr. Genau deshalb liegt der
+        // Durchsatz-Benchmark in einem eigenen CI-Job („geteilte Runner sind keine
+        // Referenz-Hardware").
+        //
+        // Wovor der Test wirklich schützen soll, ist ein Sprung um Größenordnungen: ein
+        // backtrackendes Muster oder ein entfallener Keyword-Prefilter (ADR-0011). Das lässt sich
+        // maschinenunabhängig prüfen, indem dieselbe Nutzlast auf derselben Maschine gegen einen
+        // naiven Einzel-Scan normiert wird.
+        static double BestPerCallMs(Action work)
         {
-            var sw = Stopwatch.StartNew();
-            for (var i = 0; i < 100; i++)
+            var best = double.MaxValue;
+            for (var batch = 0; batch < 5; batch++)
             {
-                guard.Inspect(payload, GuardDirection.Inbound);
+                var sw = Stopwatch.StartNew();
+                for (var i = 0; i < 100; i++)
+                {
+                    work();
+                }
+
+                sw.Stop();
+                best = Math.Min(best, sw.Elapsed.TotalMilliseconds / 100);
             }
 
-            sw.Stop();
-            bestPerCallMs = Math.Min(bestPerCallMs, sw.Elapsed.TotalMilliseconds / 100);
+            return best;
         }
 
-        bestPerCallMs.Should().BeLessThan(1.0,
-            $"lokal ~0,05 ms; 1 ms ist eine großzügige Obergrenze für den schnellsten Batch (ist: {bestPerCallMs:0.000} ms)");
+        var guardMs = BestPerCallMs(() => guard.Inspect(payload, GuardDirection.Inbound));
+        // Grundlinie: ein einziger ordinaler Durchlauf über dieselbe Nutzlast, ohne Treffer.
+        var baselineMs = BestPerCallMs(() => payload.Contains("kommt-hier-nicht-vor", StringComparison.Ordinal));
+        var ratio = guardMs / Math.Max(baselineMs, double.Epsilon);
+
+        ratio.Should().BeLessThan(500,
+            "die Prüfung darf ein Vielfaches eines Einzel-Scans kosten, aber keine Größenordnung mehr — "
+            + $"ist: {ratio:0} × (Prüfung {guardMs:0.000} ms, Grundlinie {baselineMs:0.000} ms)");
     }
 }
