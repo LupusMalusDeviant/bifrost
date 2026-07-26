@@ -11,6 +11,11 @@
 > eine API, eine Liste in der UI, statt zweier Warteschlangen nebeneinander. Bestehende wartende
 > Freigaben werden migriert, nicht verworfen; der heiße Pfad (`TryConsumeApprovalAsync` vor jedem
 > Call) braucht dafür einen Index auf (Eigentümer, Tool, Eingabe-Fingerprint, Zustand).
+>
+> **Vollzogen am 2026-07-26.** `IApprovalStore` bleibt der Vertrag; der Unterbau ist die
+> Vorgangs-Tabelle. Der Index existierte bereits und ist mitgewandert. Die Einmaligkeit dieser ADR
+> hängt jetzt an einem Claim-Zeitpunkt, weil der Task-Zustandsautomat "freigegeben" und "eingelöst"
+> nicht unterscheidet.
 
 ## Kontext
 

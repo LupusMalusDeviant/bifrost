@@ -117,6 +117,23 @@ Die Freigabe bindet an `(Identität, Tool, Argument-Fingerprint)` und verfällt 
 Welche Tools freigabepflichtig sind, ist unter **Freigaben** (Admin-Bereich) zur Laufzeit
 schaltbar, ohne Neustart.
 
+### Unterbau seit 2026-07-26: Freigaben sind Vorgänge
+
+Am Verhalten ändert sich nichts — an der Speicherung schon. Freigaben liegen seit
+[ADR-0019](adr/0019-langlaufende-tasks-und-events.md) in der **Vorgangs-Tabelle** (`Tasks`): Eine
+wartende Anfrage ist ein Vorgang im Zustand `input-required`, eine erteilte Freigabe einer im
+Zustand `working`, eine abgelehnte ein gescheiterter mit dem Code `approval-denied`. Statt zweier
+Warteschlangen gibt es eine.
+
+Beim **ersten Start nach dem Update** werden vorhandene Freigaben einmalig übernommen, bevor
+irgendwem eine Liste angezeigt wird — sonst sähe ein Operator eine leere Queue und hielte offene
+Anfragen für erledigt. Die Übernahme ist idempotent (die Freigabe-Id wird die Vorgangs-Id), ein
+zweiter Start kopiert also nichts doppelt. Eine bereits **verbrauchte** Freigabe kommt als
+eingelöst herüber und ist nicht erneut einlösbar.
+
+Die alte Tabelle `ApprovalRequests` bleibt mit ihren Zeilen stehen. Sie zu leeren wäre unumkehrbar,
+und der Gewinn wären ein paar Kilobyte.
+
 ## WASI-Components als Upstream
 
 Ein signiertes WebAssembly-Component läuft in einem eigenen Rust-Host-Prozess

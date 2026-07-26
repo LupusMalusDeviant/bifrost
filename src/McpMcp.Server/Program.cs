@@ -199,13 +199,15 @@ builder.Services.AddSingleton<IWebhookStore>(sp => new WebhookStore(
     sp.GetRequiredService<IDbContextFactory<McpMcpDbContext>>(),
     sp.GetRequiredService<IDataProtectionProvider>(),
     sp.GetRequiredService<TimeProvider>()));
-builder.Services.AddSingleton<IApprovalStore>(sp => new ApprovalStore(
-    sp.GetRequiredService<IDbContextFactory<McpMcpDbContext>>(), sp.GetRequiredService<TimeProvider>()));
-// ADR-0019: Der Task-Store haelt langlaufende Vorgaenge. Die Freigabe-Queue geht darin auf; solange
-// die Ablösung nicht vollzogen ist, stehen beide nebeneinander, und ApprovalStore bleibt der aktive
-// Weg auf dem heissen Pfad.
+// ADR-0019: Der Task-Store haelt langlaufende Vorgaenge.
 builder.Services.AddSingleton<ITaskStore>(sp => new TaskStore(
     sp.GetRequiredService<IDbContextFactory<McpMcpDbContext>>(), sp.GetRequiredService<TimeProvider>()));
+// Die Freigabe-Queue geht darin auf (ADR-0019, Entscheidung 1): IApprovalStore bleibt als Vertrag
+// fuer Invoker, REST und UI, laeuft aber auf der Task-Tabelle. Eine Tabelle, eine Liste.
+builder.Services.AddSingleton<IApprovalStore>(sp => new TaskBackedApprovalStore(
+    sp.GetRequiredService<ITaskStore>(), sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton<ApprovalToTaskMigration>(sp => new ApprovalToTaskMigration(
+    sp.GetRequiredService<IDbContextFactory<McpMcpDbContext>>()));
 
 builder.Services.AddSingleton<RedactionRuleStore>();
 builder.Services.AddSingleton<IRedactionRules>(sp => sp.GetRequiredService<RedactionRuleStore>());

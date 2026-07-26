@@ -81,6 +81,13 @@ public sealed class TaskStore : ITaskStore
             query = query.Where(r => r.Tool.StartsWith(prefix));
         }
 
+        if (filter.Claimed is { } claimed)
+        {
+            query = claimed
+                ? query.Where(r => r.ClaimedAtTicks != null)
+                : query.Where(r => r.ClaimedAtTicks == null);
+        }
+
         var total = await query.LongCountAsync(ct).ConfigureAwait(false);
         var page = Math.Max(1, filter.Page);
         var size = Math.Clamp(filter.PageSize, 1, 500);

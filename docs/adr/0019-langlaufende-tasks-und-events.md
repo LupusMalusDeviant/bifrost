@@ -51,6 +51,15 @@ Zwei Auflagen, die aus der Verallgemeinerung folgen:
 - **Bestehende Freigaben werden migriert**, nicht verworfen. Eine Installation mit wartenden
   Freigaben darf durch das Update keine verlieren.
 
+**Umsetzungsnachtrag 2026-07-26.** Die Zustandsliste oben deckt einen Fall nicht ab, der beim Bauen
+auffiel: Die Freigabe kannte `Approved` **und** `Consumed`, der Task-Automat hat für „freigegeben,
+aber noch nicht eingelöst" keinen eigenen Zustand — beides ist `working`. Ohne Unterscheidung liefe
+ein zweiter identischer Call erneut durch, und eine erteilte Zustimmung wäre der
+Dauerfreifahrtschein, den ADR-0012 ausschließt. Gelöst über einen **Claim-Zeitpunkt** am Vorgang,
+nicht über einen zusätzlichen Zustand: Das lässt diese Liste unverändert und macht die Einmaligkeit
+nachprüfbar. Der Hot-Path-Index war übrigens kein Neubau — `(Aufrufer, Tool, Fingerprint, Zustand)`
+gab es bei den Freigaben schon und ist mitgewandert.
+
 ### 2. Geholt wird, geschickt wird nur zur Beschleunigung
 
 **Der Vertrag ist Polling.** Der Zustand steht in der Datenbank; wer ihn will, holt ihn — über

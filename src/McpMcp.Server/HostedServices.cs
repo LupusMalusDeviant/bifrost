@@ -30,6 +30,7 @@ public sealed partial class GatewayStartupService : IHostedService
     private readonly McpMcp.Web.UiInternalIdentity _uiInternal;
     private readonly IUpstreamConfigStore _configStore;
     private readonly UpstreamSupervisor _supervisor;
+    private readonly ApprovalToTaskMigration _approvalMigration;
     private readonly ILogger<GatewayStartupService> _logger;
 
     public GatewayStartupService(
@@ -47,6 +48,7 @@ public sealed partial class GatewayStartupService : IHostedService
         McpMcp.Web.UiInternalIdentity uiInternal,
         IUpstreamConfigStore configStore,
         UpstreamSupervisor supervisor,
+        ApprovalToTaskMigration approvalMigration,
         ILogger<GatewayStartupService> logger)
     {
         _factory = factory;
@@ -63,6 +65,7 @@ public sealed partial class GatewayStartupService : IHostedService
         _uiInternal = uiInternal;
         _configStore = configStore;
         _supervisor = supervisor;
+        _approvalMigration = approvalMigration;
         _logger = logger;
     }
 
@@ -78,6 +81,16 @@ public sealed partial class GatewayStartupService : IHostedService
         // damit ein abgeschaltetes Muster abgeschaltet bleibt (ADR-0011).
         await _guardRules.LoadAsync(BuiltInGuardRules.All, cancellationToken);
         await _approvalPolicy.LoadAsync(cancellationToken);
+
+        // ADR-0019: Wartende Freigaben einmalig in das Task-Modell uebernehmen, BEVOR die
+        // Freigabe-Liste jemandem angezeigt wird — sonst sähe ein Operator nach dem Update eine
+        // leere Queue und hielte offene Anfragen für erledigt. Idempotent, ein zweiter Start ist
+        // harmlos.
+        var migratedApprovals = await _approvalMigration.RunAsync(cancellationToken);
+        if (migratedApprovals > 0)
+        {
+            Log.ApprovalsMigrated(_logger, migratedApprovals);
+        }
         await _publisherTrust.LoadAsync(cancellationToken);
         await BootstrapAdminIfEmptyAsync(cancellationToken);
         await EnsureUiInternalIdentityAsync(cancellationToken);
@@ -242,6 +255,10 @@ public sealed partial class GatewayStartupService : IHostedService
         [LoggerMessage(Level = LogLevel.Error,
             Message = "Restore von Upstream {Slug} fehlgeschlagen — Server bleibt inaktiv.")]
         public static partial void RestoreFailed(ILogger logger, Exception ex, string slug);
+
+        [LoggerMessage(Level = LogLevel.Information,
+            Message = "{Count} Freigabe-Anfragen in das Task-Modell übernommen (ADR-0019).")]
+        public static partial void ApprovalsMigrated(ILogger logger, int count);
 
         [LoggerMessage(Level = LogLevel.Warning,
             Message = "ERSTSTART: Bootstrap-Admin (Agent) angelegt. API-Key (wird NIE wieder angezeigt): {Key}")]

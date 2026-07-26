@@ -453,6 +453,153 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
             .Should().Be(1, "ohne Aufrufbezug bleibt die Id leer");
     }
 
+    /// <summary>
+    /// Die Freigabe-Queue läuft auf der Task-Tabelle (ADR-0019, Entscheidung 1). Derselbe Vertrag,
+    /// ein Unterbau — und die alte Tabelle bleibt dabei leer, weil nichts mehr dort landet.
+    /// </summary>
+    [Fact]
+    public async Task Approvals_run_on_the_task_table()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var tasks = new TaskStore(Factory);
+        var approvals = new TaskBackedApprovalStore(tasks);
+        approvals.Should().BeAssignableTo<IApprovalStore>(
+            "der Vertrag bleibt unverändert — Invoker, REST und UI merken vom Umbau nichts");
+        var caller = IdentityId.New();
+        var tool = NamespacedToolName.Create("srv", "delete_file");
+        var now = DateTimeOffset.UtcNow;
+
+        var id = await approvals.EnqueueAsync(new ApprovalRequest(
+            Guid.NewGuid(), caller, "agent-1", tool, "fp-1",
+            JsonSerializer.Deserialize<JsonElement>("""{"path":"***"}"""),
+            ApprovalState.Pending, now, now.AddHours(1)), ct);
+
+        // Der Vorgang liegt als Task, nicht in der alten Warteschlange.
+        (await tasks.GetAsync(id, ct))!.State.Should().Be(TaskState.InputRequired);
+        await using (var db = await Factory.CreateDbContextAsync(ct))
+        {
+            (await db.ApprovalRequests.CountAsync(ct))
+                .Should().Be(0, "die alte Tabelle bekommt keine neuen Zeilen mehr");
+        }
+
+        // Sicht der UI: wartend.
+        var pending = await approvals.ListAsync(ApprovalState.Pending, ct);
+        pending.Should().ContainSingle(r => r.Id == id);
+        pending[0].RedactedArguments!.Value.GetProperty("path").GetString().Should().Be("***");
+
+        // Freigeben → einlösbar, genau einmal.
+        await approvals.DecideAsync(id, approved: true, ct);
+        (await approvals.ListAsync(ApprovalState.Approved, ct)).Should().ContainSingle(r => r.Id == id);
+        (await approvals.TryConsumeApprovalAsync(caller, tool, "fp-1", ct)).Should().BeTrue();
+        (await approvals.TryConsumeApprovalAsync(caller, tool, "fp-1", ct))
+            .Should().BeFalse("eine Freigabe gilt einmalig (ADR-0012)");
+
+        // Danach gilt sie als verbraucht — und nicht mehr als freigegeben.
+        (await approvals.ListAsync(ApprovalState.Consumed, ct)).Should().ContainSingle(r => r.Id == id);
+        (await approvals.ListAsync(ApprovalState.Approved, ct)).Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Ablehnen ist kein stiller Zustand: Der Vorgang scheitert mit maschinenlesbarem Code, und die
+    /// Freigabe-Sicht zeigt ihn als abgelehnt. Ein nachträgliches Einlösen ist ausgeschlossen.
+    /// </summary>
+    [Fact]
+    public async Task A_denied_approval_fails_the_task_and_cannot_be_consumed()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var tasks = new TaskStore(Factory);
+        var approvals = new TaskBackedApprovalStore(tasks);
+        var caller = IdentityId.New();
+        var tool = NamespacedToolName.Create("srv", "drop_table");
+        var now = DateTimeOffset.UtcNow;
+
+        var id = await approvals.EnqueueAsync(new ApprovalRequest(
+            Guid.NewGuid(), caller, "agent-1", tool, "fp-2", null,
+            ApprovalState.Pending, now, now.AddHours(1)), ct);
+
+        await approvals.DecideAsync(id, approved: false, ct);
+
+        var task = await tasks.GetAsync(id, ct);
+        task!.State.Should().Be(TaskState.Failed);
+        task.Failure!.Code.Should().Be(TaskBackedApprovalStore.DeniedCode);
+        (await approvals.ListAsync(ApprovalState.Denied, ct)).Should().ContainSingle(r => r.Id == id);
+        (await approvals.TryConsumeApprovalAsync(caller, tool, "fp-2", ct)).Should().BeFalse();
+
+        // Idempotent: eine zweite Entscheidung ändert nichts mehr.
+        await approvals.DecideAsync(id, approved: true, ct);
+        (await tasks.GetAsync(id, ct))!.State.Should().Be(TaskState.Failed);
+    }
+
+    /// <summary>
+    /// Bestehende Freigaben gehen beim Update nicht verloren (ADR-0019): Sie werden übernommen, die
+    /// alte Tabelle bleibt stehen, und ein zweiter Start kopiert nichts doppelt.
+    /// </summary>
+    [Fact]
+    public async Task Existing_approvals_are_migrated_once_and_keep_their_state()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var caller = IdentityId.New();
+        var baseTicks = new DateTimeOffset(2026, 7, 26, 8, 0, 0, TimeSpan.Zero).UtcTicks;
+        var pendingId = Guid.NewGuid();
+        var consumedId = Guid.NewGuid();
+        var deniedId = Guid.NewGuid();
+
+        await using (var db = await Factory.CreateDbContextAsync(ct))
+        {
+            foreach (var (id, state) in new[]
+            {
+                (pendingId, ApprovalState.Pending),
+                (consumedId, ApprovalState.Consumed),
+                (deniedId, ApprovalState.Denied),
+            })
+            {
+                db.ApprovalRequests.Add(new ApprovalRequestRow
+                {
+                    Id = id,
+                    CallerId = caller.Value,
+                    CallerDescription = "agent-alt",
+                    Tool = "srv__legacy_tool",
+                    Fingerprint = $"fp-{state}",
+                    RedactedArgumentsJson = """{"secret":"***"}""",
+                    State = (int)state,
+                    RequestedAtTicks = baseTicks,
+                    ExpiresAtTicks = baseTicks + TimeSpan.FromHours(2).Ticks,
+                });
+            }
+
+            await db.SaveChangesAsync(ct);
+        }
+
+        var migration = new ApprovalToTaskMigration(Factory);
+        (await migration.RunAsync(ct)).Should().Be(3);
+        (await migration.RunAsync(ct)).Should().Be(0, "ein zweiter Start kopiert nichts doppelt");
+
+        var tasks = new TaskStore(Factory);
+        (await tasks.GetAsync(pendingId, ct))!.State.Should().Be(TaskState.InputRequired);
+        (await tasks.GetAsync(deniedId, ct))!.Failure!.Code.Should().Be(TaskBackedApprovalStore.DeniedCode);
+
+        // Der wichtigste Punkt der Übernahme: Eine bereits verbrauchte Freigabe darf nicht wieder
+        // einlösbar werden, sonst würde aus einer verbrauchten Zustimmung eine zweite.
+        var consumed = await tasks.GetAsync(consumedId, ct);
+        consumed!.ClaimedAt.Should().NotBeNull();
+        (await tasks.TryConsumeApprovedAsync(
+            caller, new NamespacedToolName("srv__legacy_tool"), $"fp-{ApprovalState.Consumed}", ct))
+            .Should().BeFalse();
+
+        // Und die redigierten Argumente sind lesbar mitgekommen — nie die rohen.
+        (await tasks.GetAsync(pendingId, ct))!.RedactedInput!.Value
+            .GetProperty("secret").GetString().Should().Be("***");
+
+        await using (var db = await Factory.CreateDbContextAsync(ct))
+        {
+            (await db.ApprovalRequests.CountAsync(ct))
+                .Should().Be(3, "die alte Tabelle bleibt stehen — Löschen wäre unumkehrbar");
+        }
+    }
+
     [Fact]
     public async Task AuditQuery_filters_and_pages()
     {

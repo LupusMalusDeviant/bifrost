@@ -115,6 +115,12 @@ public sealed record TaskFilter(
     IdentityId? Owner = null,
     TaskState? State = null,
     string? ToolPrefix = null,
+    /// <summary>
+    /// Filtert nach dem Claim: <c>false</c> = noch nicht eingelöst, <c>true</c> = schon. Nötig, weil
+    /// „freigegeben" und „eingelöst" beide <see cref="TaskState.Working"/> sind — ohne dieses Feld
+    /// müsste die Unterscheidung im Speicher passieren, und die Paginierung ginge daneben.
+    /// </summary>
+    bool? Claimed = null,
     int Page = 1,
     int PageSize = 100);
 
