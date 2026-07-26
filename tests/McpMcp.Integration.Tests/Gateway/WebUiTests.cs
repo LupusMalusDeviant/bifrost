@@ -95,6 +95,8 @@ public sealed class WebUiTests : IClassFixture<GatewayFixture>
 
         (await client.GetAsync("/servers")).StatusCode.Should().Be(HttpStatusCode.OK, "Operator darf Server verwalten");
         (await client.GetAsync("/rbac")).StatusCode.Should().Be(HttpStatusCode.Redirect, "Operator darf kein RBAC");
+        // Vorgangsliste (ADR-0019): dieselbe Rolle wie die Freigaben, denn Freigaben SIND Vorgänge.
+        (await client.GetAsync("/tasks")).StatusCode.Should().Be(HttpStatusCode.OK, "Operator darf Vorgänge sehen");
     }
 
     [Fact]

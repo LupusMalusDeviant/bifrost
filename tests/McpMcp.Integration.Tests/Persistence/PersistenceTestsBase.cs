@@ -218,6 +218,26 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
     }
 
     /// <summary>
+    /// Feste Uhr für die Vorgangs-Tests. Ohne sie prüfte <c>TaskStore</c> die Frist gegen die
+    /// Wanduhr, während die Fixtures ein festes Datum trugen — die Tests waren dann nur bis zu
+    /// diesem Zeitpunkt grün und schlugen danach fehl, ohne dass sich Code geändert hätte.
+    /// </summary>
+    private sealed class FixedClock : TimeProvider
+    {
+        private readonly DateTimeOffset _now;
+
+        public FixedClock(DateTimeOffset now) => _now = now;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+    }
+
+    /// <summary>Der Bezugszeitpunkt aller Vorgangs-Fixtures.</summary>
+    private static readonly DateTimeOffset TaskNow = new(2026, 7, 26, 10, 0, 0, TimeSpan.Zero);
+
+    /// <summary>Ein Store, dessen Uhr zum Fixture passt.</summary>
+    private TaskStore TaskStoreAtFixtureTime() => new(Factory, new FixedClock(TaskNow));
+
+    /// <summary>
     /// Baut einen Vorgang mit den Feldern, die ADR-0019 verlangt. `state` ist der Ausgangszustand.
     /// </summary>
     private static TaskRecord NewTask(
@@ -227,7 +247,7 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         TaskState state = TaskState.InputRequired,
         DateTimeOffset? expiresAt = null)
     {
-        var now = new DateTimeOffset(2026, 7, 26, 10, 0, 0, TimeSpan.Zero);
+        var now = TaskNow;
         return new TaskRecord(
             Guid.NewGuid(), owner, "agent-1", new NamespacedToolName(tool), null, CallOrigin.Mcp,
             CorrelationId: Guid.NewGuid(),
@@ -255,7 +275,7 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
     {
         MarkSkippedIfUnavailable();
         var ct = TestContext.Current.CancellationToken;
-        var store = new TaskStore(Factory);
+        var store = TaskStoreAtFixtureTime();
         var owner = IdentityId.New();
 
         var created = await store.CreateOrGetAsync(NewTask(owner), ct);
@@ -282,7 +302,7 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
     {
         MarkSkippedIfUnavailable();
         var ct = TestContext.Current.CancellationToken;
-        var store = new TaskStore(Factory);
+        var store = TaskStoreAtFixtureTime();
         var owner = IdentityId.New();
 
         var first = await store.CreateOrGetAsync(NewTask(owner), ct);
@@ -301,7 +321,7 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
     {
         MarkSkippedIfUnavailable();
         var ct = TestContext.Current.CancellationToken;
-        var store = new TaskStore(Factory);
+        var store = TaskStoreAtFixtureTime();
         var created = await store.CreateOrGetAsync(NewTask(IdentityId.New()), ct);
 
         (await store.UpdateAsync(new TaskUpdate(created.Id, State: TaskState.Working), 0, ct))
@@ -319,7 +339,7 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
     {
         MarkSkippedIfUnavailable();
         var ct = TestContext.Current.CancellationToken;
-        var store = new TaskStore(Factory);
+        var store = TaskStoreAtFixtureTime();
         var created = await store.CreateOrGetAsync(NewTask(IdentityId.New()), ct);
 
         var result = JsonSerializer.Deserialize<JsonElement>("""{"ok":true}""");
@@ -342,7 +362,7 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
     {
         MarkSkippedIfUnavailable();
         var ct = TestContext.Current.CancellationToken;
-        var store = new TaskStore(Factory);
+        var store = TaskStoreAtFixtureTime();
         var owner = IdentityId.New();
         var tool = new NamespacedToolName("srv__do_thing");
 
@@ -367,7 +387,7 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
     {
         MarkSkippedIfUnavailable();
         var ct = TestContext.Current.CancellationToken;
-        var store = new TaskStore(Factory);
+        var store = TaskStoreAtFixtureTime();
         var owner = IdentityId.New();
         var tool = new NamespacedToolName("srv__do_thing");
 
@@ -392,8 +412,8 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
     {
         MarkSkippedIfUnavailable();
         var ct = TestContext.Current.CancellationToken;
-        var past = new DateTimeOffset(2026, 7, 26, 9, 0, 0, TimeSpan.Zero);
-        var store = new TaskStore(Factory);
+        var past = TaskNow.AddHours(-1);
+        var store = TaskStoreAtFixtureTime();
         var owner = IdentityId.New();
         var tool = new NamespacedToolName("srv__do_thing");
 
@@ -462,7 +482,7 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
     {
         MarkSkippedIfUnavailable();
         var ct = TestContext.Current.CancellationToken;
-        var tasks = new TaskStore(Factory);
+        var tasks = TaskStoreAtFixtureTime();
         var approvals = new TaskBackedApprovalStore(tasks);
         approvals.Should().BeAssignableTo<IApprovalStore>(
             "der Vertrag bleibt unverändert — Invoker, REST und UI merken vom Umbau nichts");
@@ -509,7 +529,7 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
     {
         MarkSkippedIfUnavailable();
         var ct = TestContext.Current.CancellationToken;
-        var tasks = new TaskStore(Factory);
+        var tasks = TaskStoreAtFixtureTime();
         var approvals = new TaskBackedApprovalStore(tasks);
         var caller = IdentityId.New();
         var tool = NamespacedToolName.Create("srv", "drop_table");
@@ -577,7 +597,7 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         (await migration.RunAsync(ct)).Should().Be(3);
         (await migration.RunAsync(ct)).Should().Be(0, "ein zweiter Start kopiert nichts doppelt");
 
-        var tasks = new TaskStore(Factory);
+        var tasks = TaskStoreAtFixtureTime();
         (await tasks.GetAsync(pendingId, ct))!.State.Should().Be(TaskState.InputRequired);
         (await tasks.GetAsync(deniedId, ct))!.Failure!.Code.Should().Be(TaskBackedApprovalStore.DeniedCode);
 

@@ -134,6 +134,32 @@ eingelöst herüber und ist nicht erneut einlösbar.
 Die alte Tabelle `ApprovalRequests` bleibt mit ihren Zeilen stehen. Sie zu leeren wäre unumkehrbar,
 und der Gewinn wären ein paar Kilobyte.
 
+### Vorgänge ansehen und abbrechen
+
+Die Web-UI zeigt sie unter **Vorgänge** (Operator/Admin). Über REST:
+
+```bash
+curl -H "Authorization: Bearer $API_KEY" http://localhost:8080/api/v1/tasks
+```
+
+- `GET /api/v1/tasks` — Liste mit Offset-Paginierung (`page`, `pageSize`, Filter `state` und `tool`).
+  **Sichtbarkeit folgt der Eigentümerschaft:** Wer keinen Global-Grant hat, sieht ausschließlich
+  seine eigenen Vorgänge. Ein fremder Vorgang ist `404`, nicht `403` — sonst liesse sich über den
+  Statuscode abfragen, welche Ids existieren.
+- `GET /api/v1/tasks/{id}` — einzelner Vorgang.
+- `POST /api/v1/tasks/{id}/cancel` — Abbruch **verlangen**. Antwort `202`; der Vorgang steht danach
+  auf `Cancellation: Requested`. Bestätigt ist er erst, wenn der Ausführende aufgehört hat — bei
+  WASI seit IPC-Vertrag v4 nachweisbar, bei HTTP-Upstreams nicht. Ein abgeschlossener Vorgang
+  antwortet mit `409`.
+
+Der Zustand wird **geholt, nicht zugestellt** (ADR-0019). Es gibt kein Abo und keine Zusage, dass
+eine Benachrichtigung ankommt; wer den Stand braucht, fragt danach.
+
+**Verfall:** Ein Hintergrunddienst setzt überfällige Vorgänge alle fünf Minuten auf `expired`. Das
+ist Sichtbarkeit, keine Durchsetzung — eine verstrichene Frist wirkt schon vorher, weil der
+Einlöse-Pfad sie selbst prüft. Abgelaufene Vorgänge werden nicht gelöscht: Sie bleiben als
+Terminalzustand auditierbar stehen.
+
 ## WASI-Components als Upstream
 
 Ein signiertes WebAssembly-Component läuft in einem eigenen Rust-Host-Prozess

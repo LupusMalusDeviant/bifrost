@@ -322,6 +322,70 @@ internal static class ApiEndpoints
             return Results.NoContent();
         });
 
+        // ── Vorgänge (ADR-0019) ──────────────────────────────────────────────
+        // Bewusst NICHT hinter RequireAdminAsync: Vorgänge gehören ihrem Aufrufer, und der soll
+        // seine eigenen sehen dürfen. Die Sichtbarkeit folgt der Eigentümerschaft — ein Admin sieht
+        // alle, jeder andere ausschließlich seine (ADR-0019, Berechtigungen).
+        var tasks = api.MapGroup("/tasks");
+
+        tasks.MapGet("/", async (
+            HttpContext ctx, ITaskStore store, IAuthorizationService auth,
+            TaskState? state, string? tool, int? page, int? pageSize,
+            CancellationToken ct) =>
+        {
+            var caller = Identity(ctx);
+            // page/pageSize nullable, damit ein simples GET /tasks nicht mit 400 scheitert.
+            var result = await store.ListAsync(
+                new TaskFilter(
+                    Owner: IsAdmin(auth, caller) ? null : caller,
+                    State: state,
+                    ToolPrefix: tool,
+                    Page: page is { } p && p >= 1 ? p : 1,
+                    PageSize: pageSize is { } ps && ps >= 1 ? Math.Min(ps, 500) : 100),
+                ct);
+            return Results.Ok(result);
+        });
+
+        tasks.MapGet("/{id:guid}", async (
+            Guid id, HttpContext ctx, ITaskStore store, IAuthorizationService auth,
+            CancellationToken ct) =>
+        {
+            var task = await store.GetAsync(id, ct);
+            // Ein fremder Vorgang ist "nicht gefunden", nicht "verboten": Sonst liesse sich über den
+            // Statuscode abfragen, welche Ids existieren.
+            return task is null || !MaySee(auth, Identity(ctx), task)
+                ? Results.NotFound()
+                : Results.Ok(task);
+        });
+
+        tasks.MapPost("/{id:guid}/cancel", async (
+            Guid id, HttpContext ctx, ITaskStore store, IAuthorizationService auth,
+            IAuditSink audit, TimeProvider time, CancellationToken ct) =>
+        {
+            var task = await store.GetAsync(id, ct);
+            if (task is null || !MaySee(auth, Identity(ctx), task))
+            {
+                return Results.NotFound();
+            }
+
+            if (task.IsTerminal)
+            {
+                return Results.Conflict(new { error = "Der Vorgang ist abgeschlossen und nicht mehr abbrechbar." });
+            }
+
+            // `Requested`, nicht `Cancelled`: Ob der Upstream wirklich aufgehört hat, weiss hier
+            // niemand — das bestätigt der Ausführende (ADR-0019, Entscheidung 3).
+            var outcome = await store.UpdateAsync(
+                new TaskUpdate(id, Cancellation: TaskCancellation.Requested), task.Revision, ct);
+            if (outcome is TaskUpdateOutcome.RevisionMismatch)
+            {
+                return Results.Conflict(new { error = "Der Vorgang wurde zwischenzeitlich geändert — erneut lesen." });
+            }
+
+            AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null, $"task-cancel-requested:{id}");
+            return Results.Accepted($"/api/v1/tasks/{id}");
+        });
+
         MapPublisherManagement(api);
         MapWebhookManagement(api);
     }
@@ -426,6 +490,15 @@ internal static class ApiEndpoints
     private sealed record WebhookCreate(string Name, Guid CallerId, string Tool);
 
     private static IdentityId Identity(HttpContext ctx) => (IdentityId)ctx.Items[ApiKeyAuthMiddleware.IdentityItemKey]!;
+
+    private static bool IsAdmin(IAuthorizationService auth, IdentityId caller)
+        => auth.Evaluate(caller, new PermissionScope(null, null), ToolAction.UseTool).Allowed;
+
+    /// <summary>
+    /// Wer einen Vorgang sehen darf: sein Eigentümer, sonst nur eine Identität mit Global-Grant.
+    /// </summary>
+    private static bool MaySee(IAuthorizationService auth, IdentityId caller, TaskRecord task)
+        => task.Owner == caller || IsAdmin(auth, caller);
 
     /// <summary>Bis WP6 echte UI-Rollen bringt: Management verlangt einen Global-Grant (Plan-Änderungslog WP5).</summary>
     private static async ValueTask<object?> RequireAdminAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)

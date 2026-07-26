@@ -208,6 +208,10 @@ builder.Services.AddSingleton<IApprovalStore>(sp => new TaskBackedApprovalStore(
     sp.GetRequiredService<ITaskStore>(), sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<ApprovalToTaskMigration>(sp => new ApprovalToTaskMigration(
     sp.GetRequiredService<IDbContextFactory<McpMcpDbContext>>()));
+builder.Services.AddSingleton<TaskExpiryJob>(sp => new TaskExpiryJob(
+    sp.GetRequiredService<ITaskStore>(),
+    sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<ILogger<TaskExpiryJob>>()));
 
 builder.Services.AddSingleton<RedactionRuleStore>();
 builder.Services.AddSingleton<IRedactionRules>(sp => sp.GetRequiredService<RedactionRuleStore>());
@@ -324,6 +328,7 @@ builder.Services.AddAuthorizationBuilder()
 builder.Services.AddHostedService<GatewayStartupService>();
 builder.Services.AddHostedService<AuditWriterService>();
 builder.Services.AddHostedService<AuditRetentionService>();
+builder.Services.AddHostedService<TaskExpiryService>();
 builder.Services.AddHostedService<CatalogNotificationService>();
 
 var app = builder.Build();

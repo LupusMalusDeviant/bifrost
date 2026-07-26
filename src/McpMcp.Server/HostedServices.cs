@@ -312,6 +312,19 @@ public sealed class AuditRetentionService : BackgroundService
     protected override Task ExecuteAsync(CancellationToken stoppingToken) => _job.RunAsync(stoppingToken);
 }
 
+/// <summary>
+/// Setzt faellige Vorgaenge periodisch auf `expired` (ADR-0019). Ohne diesen Dienst blieben sie in
+/// der Liste als offen stehen, obwohl ihre Frist verstrichen ist.
+/// </summary>
+public sealed class TaskExpiryService : BackgroundService
+{
+    private readonly TaskExpiryJob _job;
+
+    public TaskExpiryService(TaskExpiryJob job) => _job = job;
+
+    protected override Task ExecuteAsync(CancellationToken stoppingToken) => _job.RunAsync(stoppingToken);
+}
+
 /// <summary>Übersetzt Katalog-Änderungen (Server/Inventar/RBAC) in tools/list_changed an alle Sessions (FR-07).</summary>
 public sealed class CatalogNotificationService : IHostedService
 {
