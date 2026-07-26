@@ -193,6 +193,33 @@ Der Unterschied ist im Ergebnis sichtbar: Ein abgebrochener Aufruf endet mit dem
 eine abgelaufene Frist mit dem gewohnten Timeout. Wer im Audit nachsieht, muss nicht raten, welches
 von beidem passiert ist.
 
+### Bereitschaft, Phasen und geordnetes Beenden
+
+`health` unterscheidet **Leben** von **Bereitschaft**. `status: "ok"` heißt nur, dass der Host
+antwortet; `ready: true` heißt, dass er Aufrufe annimmt. Dazwischen liegen echte Zustände, die das
+Feld `phase` nennt:
+
+| Phase | Bedeutung |
+|---|---|
+| `handshake` | Prozess läuft, Version noch nicht verhandelt |
+| `negotiated` | verhandelt, aber kein Component geladen — Aufrufe gingen ins Leere |
+| `ready` | geladen und annahmebereit |
+| `draining` | nimmt keine neuen Aufrufe mehr an; die laufenden dürfen zu Ende kommen |
+
+Dazu meldet `health` die Zahl der gerade laufenden Aufrufe (`inFlight`) und die offenen
+Resource-Handles.
+
+**Beim Beenden erst drainieren.** Das Gateway schickt `drain` (Vorgabe 5 s Frist) und danach
+`shutdown`. Ein `shutdown` ohne Drain bricht laufende Aufrufe ab — seit Vertrag v4 können mehrere
+gleichzeitig unterwegs sein, und der Host beendet sie, statt beliebig lange auf sie zu warten. Die
+Antwort auf `drain` sagt, ob es sauber war: `idle: true` heißt, es lief nichts mehr. Ein Aufruf, der
+nach dem Drain noch eintrifft, bekommt den Code `draining` — nicht einen allgemeinen Fehler.
+
+**Capability-Flags beim Handshake.** Der Host nennt in der `hello`-Antwort, was er kann
+(`cancellation`, `concurrency`, `drain`, `readiness`, `persistentInstances`, `resources`, `secrets`,
+`diskCache`) und was nicht (`streams: false`). Fehlt dem Gateway ein Pflichtfeature, kommt der
+Upstream gar nicht hoch — mit Nennung des fehlenden Namens, statt beim ersten Aufruf zu scheitern.
+
 ### Platten-Cache für Kompilate
 
 Ohne `Wasi.ModuleCacheDirectory` kompiliert **jeder Host-Start** neu — gemessen rund 2,3 ms je KiB,

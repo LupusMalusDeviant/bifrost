@@ -286,6 +286,8 @@ internal sealed class WasiUpstreamConnection
                 $"WASI-Host spricht Protokoll '{hostProtocol}', erwartet '{WasiRuntimeConnector.ProtocolVersion}'.");
         }
 
+        RequireFeatures(hello);
+
         var grants = _options.Grants ?? new WasiCapabilityGrants();
         var loadRequest = new
         {
@@ -402,12 +404,53 @@ internal sealed class WasiUpstreamConnection
     public Task<JsonElement> GetPromptAsync(string promptName, JsonElement? args, CancellationToken ct)
         => throw new NotSupportedException("WASI-Upstreams haben keine Prompts.");
 
+    /// <summary>
+    /// Pflichtfeatures, ohne die dieser Client nicht arbeiten kann (ADR-0016). Ein fehlendes
+    /// Feature ist ein Kompatibilitätsfehler beim Handshake — nicht eine Überraschung beim ersten
+    /// Aufruf. <c>streams</c> steht bewusst nicht darin: Der Host meldet dort <c>false</c>, und
+    /// das Gateway braucht sie nicht.
+    /// </summary>
+    private static readonly string[] RequiredFeatures =
+        ["typedDiscovery", "cancellation", "concurrency", "drain", "readiness"];
+
+    private static void RequireFeatures(JsonElement hello)
+    {
+        if (!hello.TryGetProperty("features", out var features)
+            || features.ValueKind is not JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                "WASI-Host nennt beim Handshake keine Capability-Flags — er ist älter als der Vertrag verlangt.");
+        }
+
+        var missing = RequiredFeatures
+            .Where(name => !features.TryGetProperty(name, out var flag)
+                || flag.ValueKind is not JsonValueKind.True)
+            .ToArray();
+        if (missing.Length > 0)
+        {
+            throw new InvalidOperationException(
+                $"WASI-Host unterstützt nicht: {string.Join(", ", missing)}.");
+        }
+    }
+
+    /// <summary>
+    /// Health im Sinne von <b>Bereitschaft</b>, nicht bloß Leben (ADR-0016). Ein Host, der gerade
+    /// drainiert, antwortet weiterhin — Aufrufe nimmt er nicht mehr an. Würde hier nur
+    /// <c>status</c> geprüft, hielte der Supervisor ihn für gesund und schickte weiter Arbeit an
+    /// eine sich schließende Tür.
+    /// </summary>
     public async Task PingAsync(CancellationToken ct)
     {
         var health = await RequestAsync(new { type = "health" }, ct).ConfigureAwait(false);
         if (health.GetProperty("status").GetString() != "ok")
         {
             throw new InvalidOperationException("WASI-Host meldet keinen gesunden Zustand.");
+        }
+
+        if (!health.TryGetProperty("ready", out var ready) || ready.ValueKind is not JsonValueKind.True)
+        {
+            var phase = health.TryGetProperty("phase", out var declared) ? declared.GetString() : "unbekannt";
+            throw new InvalidOperationException($"WASI-Host ist nicht bereit (Phase '{phase}').");
         }
     }
 
@@ -419,6 +462,21 @@ internal sealed class WasiUpstreamConnection
         }
 
         _disposed = true;
+        try
+        {
+            // Erst drainieren, dann beenden (ADR-0016: … → drain → stop). Ohne den Schritt
+            // schneidet `shutdown` laufende Aufrufe ab — seit Vertrag v4 können mehrere
+            // gleichzeitig unterwegs sein, und der Host bricht sie beim Beenden ab.
+            using var drainCts = new CancellationTokenSource(TimeSpan.FromSeconds(6));
+            await RequestAsync(
+                new { type = "drain", graceMs = 5000 }, drainCts.Token).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException
+            or OperationCanceledException or ObjectDisposedException or WasiHostException)
+        {
+            // Drain ist eine Höflichkeit, kein Muss — der Shutdown folgt so oder so.
+        }
+
         try
         {
             using var shutdownCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));

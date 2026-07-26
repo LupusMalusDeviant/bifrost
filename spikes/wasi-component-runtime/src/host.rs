@@ -5,11 +5,18 @@
 //! dem Protokoll (Logs strikt auf `stderr`, wie die MCP-stdio-Server). Die Verarbeitung liegt in
 //! einer reinen, testbaren [`Session`]; der Loop macht nur IO.
 //!
-//! Kommandos: `hello` (Versionsverhandlung), `load` (Signaturprüfung gegen gepinnte Publisher +
-//! Grants + Kompilierung als Gesundheitstest, fail-closed), `discover` (typisierte Beschreibung
-//! der aufrufbaren Exports), `invoke` (Aufruf eines Exports mit Limits und Truncation-Metadaten),
-//! `release` (Freigabe eines Resource-Handles), `health` (aktives Modul, Cache-Kennzahlen, offene
-//! Handles), `shutdown`. Fehler sind strukturiert (`code` + `message`) und beenden den Host nicht.
+//! Kommandos: `hello` (Versionsverhandlung **und Capability-Flags**), `load` (Signaturprüfung gegen
+//! gepinnte Publisher + Grants + Kompilierung als Gesundheitstest, fail-closed), `discover`
+//! (typisierte Beschreibung der aufrufbaren Exports), `invoke` (Aufruf eines Exports mit Limits und
+//! Truncation-Metadaten), `cancel` (bestätigter Abbruch eines laufenden Aufrufs), `release`
+//! (Freigabe eines Resource-Handles), `drain` (keine neuen Aufrufe mehr, auf die laufenden warten),
+//! `health` (Bereitschaft, Phase, laufende Aufrufe, aktives Modul, Cache, offene Handles),
+//! `shutdown`. Fehler sind strukturiert (`code` + `message`) und beenden den Host nicht.
+//!
+//! Der Lebenszyklus folgt ADR-0016: `handshake → load → discover → ready → invoke/cancel → drain →
+//! stop`. Die Phase steht in `health`, und **Bereitschaft ist nicht Leben**: Ein drainierender Host
+//! antwortet weiter, nimmt aber nichts mehr an. `shutdown` bricht ab, was noch läuft — wer sauber
+//! aussteigen will, schickt vorher `drain`.
 //!
 //! Die Sitzung hält den Modul-Cache: Kompiliert wird einmal pro Inhalt, Grant-Satz und
 //! Engine-Profil, nicht pro Aufruf (WP5).
@@ -55,6 +62,72 @@ pub const PROTOCOL_VERSION: &str = "4";
 
 /// Obergrenze für einen einzelnen Frame (Schutz gegen Memory-DoS über ein riesiges Längenpräfix).
 const MAX_FRAME_BYTES: u32 = 64 * 1024 * 1024;
+
+/// Was dieser Host kann (ADR-0016, WP6.1). Der Client liest die Flags beim Handshake und lehnt ab,
+/// wenn ein von ihm **benötigtes** Feature fehlt — statt es beim ersten Aufruf herauszufinden.
+///
+/// Bewusst benannte Felder statt einer Namensliste: Ein Tippfehler in `"cancle"` wäre in einer
+/// Liste ein stilles `false`, hier ein Compilerfehler. Fehlt das ganze Objekt in einer Antwort,
+/// spricht ein älterer Host — auch das ist eine verwertbare Auskunft.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostFeatures {
+    /// Typisierte Discovery mit Typbäumen (seit Vertrag 2/3).
+    pub typed_discovery: bool,
+    /// `cancel` bricht einen laufenden Aufruf ab und bestätigt das (Vertrag 4).
+    pub cancellation: bool,
+    /// Mehrere Aufrufe gleichzeitig, zugeordnet über die Korrelations-Id (Vertrag 4).
+    pub concurrency: bool,
+    /// `drain` beendet die Annahme neuer Aufrufe und wartet auf die laufenden.
+    pub drain: bool,
+    /// `health` unterscheidet Leben von Bereitschaft.
+    pub readiness: bool,
+    /// Persistente Instanz je Upstream — Voraussetzung für Resources.
+    pub persistent_instances: bool,
+    /// `resource`-Handles über die Leitung.
+    pub resources: bool,
+    /// Secret-Injektion beim Laden.
+    pub secrets: bool,
+    /// Kompilat-Cache auf Platte.
+    pub disk_cache: bool,
+    /// `stream<T>` und `future<T>` — **bewusst `false`** und auf absehbare Zeit auch nicht anders
+    /// (siehe `values`-Moduldoku): Ein dynamischer Host kann sie nur für fest einkompilierte
+    /// Payload-Typen lesen.
+    pub streams: bool,
+}
+
+impl HostFeatures {
+    /// Was dieser Host tatsächlich kann.
+    pub const fn current() -> Self {
+        Self {
+            typed_discovery: true,
+            cancellation: true,
+            concurrency: true,
+            drain: true,
+            readiness: true,
+            persistent_instances: true,
+            resources: true,
+            secrets: true,
+            disk_cache: true,
+            streams: false,
+        }
+    }
+}
+
+/// In welcher Lebensphase die Sitzung steht (ADR-0016: `… → ready → invoke/cancel → drain → stop`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Phase {
+    /// Handshake steht noch aus.
+    #[default]
+    Handshake,
+    /// Verhandelt, aber ohne Component — Aufrufe gingen ins Leere.
+    Negotiated,
+    /// Bereit: geladen, und neue Aufrufe werden angenommen.
+    Ready,
+    /// Nimmt keine neuen Aufrufe mehr an; die laufenden dürfen zu Ende kommen.
+    Draining,
+}
 
 /// Anfrage vom Gateway an den Host.
 #[derive(Debug, Deserialize)]
@@ -120,6 +193,13 @@ pub enum Request {
     Health,
     /// Bricht einen laufenden Aufruf ab. `target` ist die `id` der `invoke`-Anfrage.
     Cancel { target: u64 },
+    /// Beendet die Annahme neuer Aufrufe und wartet, bis die laufenden fertig sind. Der Weg vor
+    /// `shutdown`, wenn nichts abgeschnitten werden soll.
+    Drain {
+        /// Wie lange auf die laufenden Aufrufe gewartet wird. Fehlend = 5 Sekunden.
+        #[serde(default, rename = "graceMs")]
+        grace_ms: Option<u64>,
+    },
     /// Ordentlicher Shutdown.
     Shutdown,
 }
@@ -141,6 +221,8 @@ pub enum Response {
         protocol_version: String,
         runtime: String,
         host: String,
+        /// Was dieser Host kann — der Client prüft daran seine Pflichtfeatures.
+        features: HostFeatures,
     },
     Loaded {
         audit: GrantAuditRecord,
@@ -161,6 +243,13 @@ pub enum Response {
         /// Wie viele Handles die Sitzung danach noch hält.
         handles: usize,
     },
+    Drained {
+        /// Aufrufe, die nach der Gnadenfrist **noch** liefen. 0 heißt: sauber leer.
+        #[serde(rename = "inFlight")]
+        in_flight: usize,
+        /// `true`, wenn nichts mehr lief — dann kann `shutdown` niemanden mehr abschneiden.
+        idle: bool,
+    },
     Cancelled {
         target: u64,
         /// `true` nur, wenn der Aufruf wirklich geendet hat — nicht schon, wenn der Abbruch
@@ -178,6 +267,14 @@ pub enum Response {
         /// Offene Resource-Handles der persistenten Instanz; 0 ohne persistente Instanz.
         #[serde(default)]
         handles: usize,
+        /// **Bereitschaft**, nicht Leben: `true` nur, wenn ein Component geladen ist und der Host
+        /// neue Aufrufe annimmt. Ein Host, der gerade drainiert, lebt — bereit ist er nicht, und
+        /// wer beides verwechselt, schickt Aufrufe in eine sich schließende Tür.
+        ready: bool,
+        phase: Phase,
+        /// Wie viele Aufrufe gerade laufen.
+        #[serde(rename = "inFlight")]
+        in_flight: usize,
     },
     Bye,
     Error {
@@ -199,6 +296,30 @@ pub struct Session {
     negotiated: bool,
     loaded: Option<LoadedComponent>,
     cache: ModuleCache,
+    /// Gesetzt durch `drain`: Es werden keine neuen Aufrufe mehr angenommen.
+    draining: bool,
+    /// Die laufenden Aufrufe. Liegt hier statt nur im Loop, damit `health` sie melden kann.
+    in_flight: Arc<InFlight>,
+}
+
+impl Session {
+    /// Die Phase ergibt sich aus dem Zustand — bis auf `Draining`, das ein bewusster Schritt ist.
+    pub fn phase(&self) -> Phase {
+        if self.draining {
+            Phase::Draining
+        } else if self.loaded.is_some() {
+            Phase::Ready
+        } else if self.negotiated {
+            Phase::Negotiated
+        } else {
+            Phase::Handshake
+        }
+    }
+
+    /// Bereit heißt: geladen **und** annahmebereit. Nicht dasselbe wie „lebt".
+    pub fn is_ready(&self) -> bool {
+        matches!(self.phase(), Phase::Ready)
+    }
 }
 
 /// Ein verifiziertes, geladenes und kompiliertes Component samt den dafür erteilten Grants.
@@ -240,6 +361,8 @@ impl Session {
             negotiated: false,
             loaded: None,
             cache: ModuleCache::with_disk(disk),
+            draining: false,
+            in_flight: Arc::new(InFlight::default()),
         }
     }
 
@@ -264,6 +387,7 @@ impl Session {
                         protocol_version: PROTOCOL_VERSION.to_owned(),
                         runtime: RUNTIME_VERSION.to_owned(),
                         host: format!("mcpmcp-wasi-host/{}", env!("CARGO_PKG_VERSION")),
+                        features: HostFeatures::current(),
                     },
                     Control::Continue,
                 )
@@ -314,6 +438,18 @@ impl Session {
                 args,
                 limits,
                 caller,
+            } if self.draining => {
+                let _ = (tool, args, limits, caller);
+                error(
+                    "draining",
+                    "der Host nimmt keine neuen Aufrufe mehr an (drain läuft)",
+                )
+            }
+            Request::Invoke {
+                tool,
+                args,
+                limits,
+                caller,
             } => match self.loaded.as_ref().map(|loaded| loaded.persistent) {
                 None => error("not-loaded", "kein Component geladen — load zuerst senden"),
                 // Eine persistente Instanz gibt es genau einmal; ihr Aufruf läuft deshalb unter
@@ -340,6 +476,19 @@ impl Session {
                 },
                 Control::Continue,
             ),
+            // Wie `cancel`: Ohne Nebenläufigkeit gibt es nichts, worauf zu warten wäre. `serve`
+            // behandelt `drain` selbst und wartet dort wirklich.
+            Request::Drain { .. } => {
+                self.draining = true;
+                let in_flight = self.in_flight.len();
+                (
+                    Response::Drained {
+                        in_flight,
+                        idle: in_flight == 0,
+                    },
+                    Control::Continue,
+                )
+            }
             Request::Release { caller, handle } => {
                 let Some(session) = self
                     .loaded
@@ -367,6 +516,9 @@ impl Session {
                         .as_ref()
                         .map(|loaded| loaded.module_sha256.clone()),
                     cache: self.cache.stats().clone(),
+                    ready: self.is_ready(),
+                    phase: self.phase(),
+                    in_flight: self.in_flight.len(),
                     handles: self
                         .loaded
                         .as_ref()
@@ -641,9 +793,39 @@ impl InFlight {
         true
     }
 
+    fn len(&self) -> usize {
+        self.calls.lock().expect("laufende Aufrufe").len()
+    }
+
     fn finish(&self, id: u64) {
         self.calls.lock().expect("laufende Aufrufe").remove(&id);
         self.finished.notify_all();
+    }
+
+    /// Wartet, bis kein Aufruf mehr läuft. `true`, wenn das innerhalb der Frist gelang.
+    fn wait_idle(&self, grace: Duration) -> bool {
+        let mut calls = self.calls.lock().expect("laufende Aufrufe");
+        let deadline = Instant::now() + grace;
+        while !calls.is_empty() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            let (next, _) = self
+                .finished
+                .wait_timeout(calls, remaining)
+                .expect("auf das Ende warten");
+            calls = next;
+        }
+        true
+    }
+
+    /// Bricht alles ab, was noch läuft. Für `shutdown`: Ohne das wartet der Thread-Scope am Ende
+    /// von `serve` auf einen Guest, der vielleicht noch Minuten rechnet.
+    fn cancel_all(&self) {
+        for control in self.calls.lock().expect("laufende Aufrufe").values() {
+            control.cancel();
+        }
     }
 
     /// Bricht ab und wartet begrenzt darauf, dass der Aufruf wirklich endet. Rückgabe ist genau
@@ -674,6 +856,9 @@ impl InFlight {
 
 /// Wie lange `cancel` auf das tatsächliche Ende wartet, bevor es `confirmed: false` meldet.
 const CANCEL_GRACE: Duration = Duration::from_secs(5);
+
+/// Vorgabe für `drain`, wenn der Aufrufer keine Frist mitgibt.
+const DEFAULT_DRAIN_GRACE_MS: u64 = 5_000;
 
 fn too_many_calls() -> (Response, Control) {
     error(
@@ -716,7 +901,8 @@ pub fn serve<R: Read, W: Write + Send>(
         None => Session::default(),
     });
     let writer = std::sync::Mutex::new(writer);
-    let in_flight = InFlight::default();
+    // Dasselbe Register, das auch `health` meldet — sonst wären es zwei Wahrheiten.
+    let in_flight = Arc::clone(&session.lock().expect("Sitzung").in_flight);
 
     std::thread::scope(|scope| -> Result<()> {
         while let Some(body) = read_frame_bytes(reader)? {
@@ -749,6 +935,42 @@ pub fn serve<R: Read, W: Write + Send>(
                         let _ =
                             write_response(writer, id, &Response::Cancelled { target, confirmed });
                     });
+                }
+                // Drain wartet auf die laufenden Aufrufe — auf dem Leser-Thread wäre das ein
+                // Deadlock, denn deren Antworten müssen ja noch hinaus.
+                Request::Drain { grace_ms } => {
+                    session.lock().expect("Sitzung").draining = true;
+                    let grace = Duration::from_millis(grace_ms.unwrap_or(DEFAULT_DRAIN_GRACE_MS));
+                    let in_flight = &in_flight;
+                    let writer = &writer;
+                    scope.spawn(move || {
+                        let idle = in_flight.wait_idle(grace);
+                        let _ = write_response(
+                            writer,
+                            id,
+                            &Response::Drained {
+                                in_flight: in_flight.len(),
+                                idle,
+                            },
+                        );
+                    });
+                }
+                Request::Invoke {
+                    tool,
+                    args,
+                    limits,
+                    caller,
+                } if session.lock().expect("Sitzung").draining => {
+                    let _ = (tool, args, limits, caller);
+                    write_response(
+                        &writer,
+                        id,
+                        &error(
+                            "draining",
+                            "der Host nimmt keine neuen Aufrufe mehr an (drain läuft)",
+                        )
+                        .0,
+                    )?;
                 }
                 Request::Invoke {
                     tool,
@@ -827,6 +1049,11 @@ pub fn serve<R: Read, W: Write + Send>(
                     };
                     write_response(&writer, id, &response)?;
                     if control == Control::Stop {
+                        // Der Scope joint gleich alle Threads. Ein noch rechnender Guest hielte
+                        // den Prozess sonst so lange fest, wie sein Limit erlaubt — und das
+                        // Gateway würde ihn nach seiner eigenen Frist hart killen. Wer sauber
+                        // aussteigen will, schickt vorher `drain`.
+                        in_flight.cancel_all();
                         return Ok(());
                     }
                 }
@@ -899,10 +1126,18 @@ mod tests {
                 protocol_version,
                 runtime,
                 host,
+                features,
             } => {
                 assert_eq!(protocol_version, PROTOCOL_VERSION);
                 assert!(runtime.contains("wasmtime"));
                 assert!(host.starts_with("mcpmcp-wasi-host/"));
+                // Der Handshake nennt die Fähigkeiten (ADR-0016) — auch die fehlenden.
+                assert_eq!(features, HostFeatures::current());
+                assert!(features.cancellation && features.drain && features.readiness);
+                assert!(
+                    !features.streams,
+                    "Streams sind zurückgestellt, nicht offen"
+                );
             }
             other => panic!("expected hello, got {other:?}"),
         }
@@ -938,6 +1173,10 @@ mod tests {
                 loaded: false,
                 module_sha256: None,
                 cache: ModuleCacheStats::default(),
+                // Lebt, aber ohne Handshake nicht bereit — genau der Unterschied, um den es geht.
+                ready: false,
+                phase: Phase::Handshake,
+                in_flight: 0,
             }
         );
     }
@@ -1600,6 +1839,18 @@ mod tests {
         }
     }
 
+    /// Zerlegt einen fertigen Eingabestrom wieder in einzelne Frames.
+    fn split_frames(input: &[u8]) -> Vec<Vec<u8>> {
+        let mut rest = input;
+        let mut frames = Vec::new();
+        while rest.len() >= 4 {
+            let len = u32::from_be_bytes(rest[..4].try_into().unwrap()) as usize;
+            frames.push(rest[..4 + len].to_vec());
+            rest = &rest[4 + len..];
+        }
+        frames
+    }
+
     /// Zerlegt einen Ausgabestrom in (id, Antwort) — die Reihenfolge ist ab v4 nicht mehr die der
     /// Anfragen, also muss der Test über die Id zuordnen.
     fn responses(output: &[u8]) -> Vec<(u64, Response)> {
@@ -1764,6 +2015,183 @@ mod tests {
         assert!(
             health < invoke,
             "health muss vor dem hängenden Aufruf beantwortet sein, war {order:?}"
+        );
+    }
+
+    /// Bereitschaft ist nicht Leben. Ein Host ohne Component antwortet auf `health`, ist aber
+    /// nicht bereit — wer das verwechselt, schickt Aufrufe an einen Upstream ohne Component.
+    #[test]
+    fn readiness_is_not_liveness() {
+        let mut session = negotiated();
+        match session.handle(Request::Health).0 {
+            Response::Health {
+                status,
+                ready,
+                phase,
+                ..
+            } => {
+                assert_eq!(status, "ok", "der Host lebt");
+                assert!(!ready, "ohne Component ist er nicht bereit");
+                assert_eq!(phase, Phase::Negotiated);
+            }
+            other => panic!("expected health, got {other:?}"),
+        }
+
+        load_counter(&mut session, false);
+        match session.handle(Request::Health).0 {
+            Response::Health { ready, phase, .. } => {
+                assert!(ready);
+                assert_eq!(phase, Phase::Ready);
+            }
+            other => panic!("expected health, got {other:?}"),
+        }
+    }
+
+    /// `drain` beendet die Annahme neuer Aufrufe. Das ist der Schritt vor `shutdown`, und er muss
+    /// sichtbar sein: Ein Aufruf danach bekommt einen eigenen Code, keinen allgemeinen Fehler.
+    #[test]
+    fn draining_refuses_new_calls_and_shows_it_in_health() {
+        let mut session = counter_session(false);
+
+        match session.handle(Request::Drain { grace_ms: Some(0) }).0 {
+            Response::Drained { in_flight, idle } => {
+                assert_eq!(in_flight, 0);
+                assert!(idle, "es lief nichts, also ist der Drain sofort sauber");
+            }
+            other => panic!("expected drained, got {other:?}"),
+        }
+
+        match invoke(
+            &mut session,
+            "alice",
+            COUNTER_NEW,
+            vec![serde_json::json!(1)],
+        ) {
+            Response::Error { code, .. } => assert_eq!(code, "draining"),
+            other => panic!("expected error, got {other:?}"),
+        }
+
+        match session.handle(Request::Health).0 {
+            Response::Health { ready, phase, .. } => {
+                assert!(!ready, "wer drainiert, ist nicht mehr bereit");
+                assert_eq!(phase, Phase::Draining);
+            }
+            other => panic!("expected health, got {other:?}"),
+        }
+    }
+
+    /// Reader, der Frames **über die Zeit** liefert statt alle auf einmal. Bei einem Slice als
+    /// Quelle rast der Loop durch und die nebenläufigen Antworten überholen einander; ein echter
+    /// Client schickt gestaffelt. Nur so ist eine Reihenfolge prüfbar.
+    struct PacedReader {
+        frames: std::collections::VecDeque<Vec<u8>>,
+        pending: Vec<u8>,
+        gap: Duration,
+        first: bool,
+    }
+
+    impl PacedReader {
+        fn new(frames: Vec<Vec<u8>>, gap: Duration) -> Self {
+            Self {
+                frames: frames.into(),
+                pending: Vec::new(),
+                gap,
+                first: true,
+            }
+        }
+    }
+
+    impl Read for PacedReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.pending.is_empty() {
+                let Some(next) = self.frames.pop_front() else {
+                    return Ok(0);
+                };
+                if !std::mem::take(&mut self.first) {
+                    std::thread::sleep(self.gap);
+                }
+                self.pending = next;
+            }
+            let take = self.pending.len().min(buf.len());
+            buf[..take].copy_from_slice(&self.pending[..take]);
+            self.pending.drain(..take);
+            Ok(take)
+        }
+    }
+
+    /// Über den Loop: `drain` wartet wirklich auf den laufenden Aufruf, statt nur ein Flag zu
+    /// setzen. Der Aufruf dreht sich, wird abgebrochen — erst danach meldet der Drain `idle`.
+    #[test]
+    fn drain_waits_for_running_calls() {
+        let spinning = spinning_component();
+        let input = wire(
+            &spinning,
+            false,
+            &[
+                r#"{"id":30,"type":"invoke","tool":"spin","limits":{"fuel":null,"timeoutMs":60000,"maxMemoryBytes":null,"maxOutputBytes":65536}}"#.to_owned(),
+                // Kurze Frist: Der Aufruf laeuft noch, der Drain kann nicht sauber melden.
+                r#"{"id":31,"type":"drain","graceMs":100}"#.to_owned(),
+                r#"{"id":32,"type":"cancel","target":30}"#.to_owned(),
+                // Jetzt ist nichts mehr unterwegs.
+                r#"{"id":33,"type":"drain","graceMs":2000}"#.to_owned(),
+            ],
+        );
+        // Gestaffelt, damit die Frist des ersten Drains ablaeuft, bevor der Abbruch eintrifft.
+        let mut reader = PacedReader::new(split_frames(&input), Duration::from_millis(300));
+        let mut output = Vec::new();
+        serve(&mut reader, &mut output, None).unwrap();
+        let seen = responses(&output);
+
+        let first = seen.iter().find(|(id, _)| *id == 31).expect("erster Drain");
+        assert_eq!(
+            first.1,
+            Response::Drained {
+                in_flight: 1,
+                idle: false
+            },
+            "solange der Aufruf laeuft, ist der Drain nicht sauber"
+        );
+
+        let second = seen
+            .iter()
+            .find(|(id, _)| *id == 33)
+            .expect("zweiter Drain");
+        assert_eq!(
+            second.1,
+            Response::Drained {
+                in_flight: 0,
+                idle: true
+            }
+        );
+    }
+
+    /// `shutdown` darf nicht auf einen rechnenden Guest warten. Ohne den Abbruch hielte der
+    /// Thread-Scope den Prozess so lange fest, wie das Limit erlaubt — und das Gateway würde ihn
+    /// nach seiner eigenen Frist hart killen.
+    #[test]
+    fn shutdown_does_not_wait_for_a_running_call() {
+        let spinning = spinning_component();
+        let input = wire(
+            &spinning,
+            false,
+            &[
+                r#"{"id":40,"type":"invoke","tool":"spin","limits":{"fuel":null,"timeoutMs":60000,"maxMemoryBytes":null,"maxOutputBytes":65536}}"#.to_owned(),
+                r#"{"id":41,"type":"shutdown"}"#.to_owned(),
+            ],
+        );
+        let mut output = Vec::new();
+        let started = std::time::Instant::now();
+        serve(&mut &input[..], &mut output, None).unwrap();
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(30),
+            "shutdown wartete {elapsed:?} — der laufende Aufruf haette abgebrochen werden muessen"
+        );
+        let seen = responses(&output);
+        assert!(
+            seen.iter()
+                .any(|(id, response)| *id == 41 && *response == Response::Bye)
         );
     }
 }

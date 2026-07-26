@@ -497,6 +497,53 @@ public sealed class WasiRealHostCompatibilityTests
 
     private static JsonElement Args(string json) => JsonSerializer.Deserialize<JsonElement>(json);
 
+    /// <summary>
+    /// Die drei Zusagen aus WP6.1 am echten Binary: Der Handshake nennt Capability-Flags,
+    /// <c>health</c> unterscheidet Bereitschaft von Leben, und <c>drain</c> beendet die Annahme
+    /// neuer Aufrufe sichtbar.
+    /// </summary>
+    [Fact]
+    public async Task Features_readiness_and_drain_work_against_the_real_host()
+    {
+        using var wire = new HostWire(RequireHost());
+        var ct = TestContext.Current.CancellationToken;
+
+        var hello = await wire.RequestAsync(
+            new { type = "hello", protocolVersion = WasiRuntimeConnector.ProtocolVersion }, ct);
+        var features = hello.GetProperty("features");
+        features.GetProperty("cancellation").GetBoolean().Should().BeTrue();
+        features.GetProperty("drain").GetBoolean().Should().BeTrue();
+        features.GetProperty("readiness").GetBoolean().Should().BeTrue();
+        features.GetProperty("resources").GetBoolean().Should().BeTrue();
+        features.GetProperty("streams").GetBoolean().Should()
+            .BeFalse("Streams sind zurückgestellt — der Host sagt das, statt es offenzulassen");
+
+        // Vor dem Load: lebt, aber nicht bereit.
+        var before = await wire.RequestAsync(new { type = "health" }, ct);
+        before.GetProperty("status").GetString().Should().Be("ok");
+        before.GetProperty("ready").GetBoolean().Should().BeFalse();
+        before.GetProperty("phase").GetString().Should().Be("negotiated");
+
+        await wire.RequestAsync(await LoadRequestAsync(await PinnedPublisherAsync(ct), ct), ct);
+        var ready = await wire.RequestAsync(new { type = "health" }, ct);
+        ready.GetProperty("ready").GetBoolean().Should().BeTrue();
+        ready.GetProperty("phase").GetString().Should().Be("ready");
+        ready.GetProperty("inFlight").GetInt32().Should().Be(0);
+
+        // Drain: nichts läuft, also sofort sauber — und danach nimmt der Host nichts mehr an.
+        var drained = await wire.RequestAsync(new { type = "drain", graceMs = 1000 }, ct);
+        drained.GetProperty("type").GetString().Should().Be("drained");
+        drained.GetProperty("idle").GetBoolean().Should().BeTrue();
+
+        var refused = await wire.RequestAsync(
+            new { type = "invoke", tool = "wasi:cli/run@0.2.6" }, ct);
+        refused.GetProperty("code").GetString().Should().Be("draining");
+        var draining = await wire.RequestAsync(new { type = "health" }, ct);
+        draining.GetProperty("status").GetString().Should().Be("ok", "der Host lebt weiterhin");
+        draining.GetProperty("ready").GetBoolean().Should().BeFalse();
+        draining.GetProperty("phase").GetString().Should().Be("draining");
+    }
+
     private static async Task<object> LoadRequestAsync(string publisher, CancellationToken ct) => new
     {
         type = "load",

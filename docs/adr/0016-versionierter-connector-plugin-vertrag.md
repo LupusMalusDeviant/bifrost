@@ -1,7 +1,20 @@
 # ADR-0016: Versionierter Connector-/Plugin-Vertrag
 
-- **Status:** Vorgeschlagen
+- **Status:** Vorgeschlagen; der **Laufzeitvertrag** ist am 2026-07-25 am WASI-Host umgesetzt und
+  belegt (Plan 0003, WP6.1). Offen bleibt alles rund um **Pakete**.
 - **Datum:** 2026-07-24
+
+> **Umsetzungsstand 2026-07-25.** Der WASI-Host (ADR-0020) ist der erste Connector nach diesem
+> Vertrag und erfüllt den Laufzeitteil: versionierter Handshake mit **Capability-Flags**,
+> Correlation-Id auf jeder Antwort, normierte Fehlerhülle (`code` + `message`), Discovery mit
+> Schema-Normalisierung, Cancellation mit Bestätigung, Readiness getrennt von Liveness und der
+> Lifecycle `handshake → load → discover → ready → invoke/cancel → drain → stop`.
+>
+> **Nicht umgesetzt und weiterhin nur vorgeschlagen:** signiertes Connector-**Manifest**, Packaging
+> und Installation, Update/Rollback über Quarantäne, sowie die vier Vertrauensstufen. Der Host wird
+> heute mit dem Gateway ausgeliefert (Stufe 1, „Core"); es gibt keinen Weg, ein Fremdpaket zu
+> installieren. Solange das so ist, ist der Vertrag belegt, aber nicht erprobt — genau das war der
+> Zweck dieser ADR, und deshalb bleibt ihr Status offen.
 
 ## Kontext
 

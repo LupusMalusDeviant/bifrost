@@ -269,6 +269,30 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
             .WithMessage("*Protokoll*");
     }
 
+    /// <summary>
+    /// Ein Host ohne Pflichtfeature kommt nicht hoch (ADR-0016). Der Fehler fällt beim Handshake,
+    /// nicht beim ersten Aufruf, der das Feature gebraucht hätte.
+    /// </summary>
+    [Fact]
+    public async Task A_host_missing_a_required_feature_fails_the_connection()
+    {
+        var act = () => ConnectAsync("--no-drain");
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*drain*");
+    }
+
+    /// <summary>Health prüft Bereitschaft, nicht nur Leben — und der geladene Host ist bereit.</summary>
+    [Fact]
+    public async Task Ping_accepts_a_ready_host()
+    {
+        await using var connection = await ConnectAsync();
+
+        var act = () => connection.PingAsync(TestContext.Current.CancellationToken);
+
+        await act.Should().NotThrowAsync();
+    }
+
     [Fact]
     public async Task A_rejected_load_fails_the_connection()
     {

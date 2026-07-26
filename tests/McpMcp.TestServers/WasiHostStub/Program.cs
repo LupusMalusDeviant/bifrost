@@ -50,6 +50,20 @@ while (true)
             protocolVersion = mode == "--bad-protocol" ? "999" : "4",
             runtime = "stub",
             host = "wasi-host-stub/0.1.0",
+            // Capability-Flags (ADR-0016). --no-drain laesst absichtlich ein Pflichtfeature fehlen.
+            features = new
+            {
+                typedDiscovery = true,
+                cancellation = true,
+                concurrency = true,
+                drain = mode != "--no-drain",
+                readiness = true,
+                persistentInstances = true,
+                resources = true,
+                secrets = true,
+                diskCache = false,
+                streams = false,
+            },
         },
         "load" when mode == "--reject-load" => new
         {
@@ -71,7 +85,12 @@ while (true)
             moduleSha256 = moduleSha256,
             // Der Stub kompiliert nichts; die Felder existieren, damit die Wire-Form stimmt.
             cache = new { entries = loaded ? 1 : 0, hits = 0, misses = loaded ? 1 : 0, lastCompileMs = 0.0, totalCompileMs = 0.0 },
+            // Bereitschaft statt bloss Leben (ADR-0016).
+            ready = loaded,
+            phase = loaded ? "ready" : "negotiated",
+            inFlight = 0,
         },
+        "drain" => new { type = "drained", inFlight = 0, idle = true },
         "shutdown" => new { type = "bye" },
         _ => new { type = "error", code = "bad-request", message = $"unbekannter Typ '{type}'" },
     };
