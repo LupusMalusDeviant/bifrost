@@ -107,9 +107,19 @@ internal static class ContainerLaunchPolicy
     }
 
     /// <summary>
-    /// Prüft, ob die Container-Runtime erreichbar ist. <b>Kein stiller Rückfall</b> (ADR-0018): Wer
-    /// Container verlangt und keine Runtime hat, bekommt eine Absage — nicht heimlich einen
-    /// Host-Prozess ohne Isolation.
+    /// Prüft, ob die Container-Runtime die Policy <b>durchsetzen kann</b> — nicht bloß, ob sie
+    /// antwortet.
+    /// <para>
+    /// Der Unterschied ist keine Feinheit: Eine Docker-Installation im Windows-Container-Modus
+    /// antwortet bereitwillig und lehnt dann <c>--read-only</c>, <c>--cap-drop</c> und
+    /// <c>--user</c> ab. Ein Probe, der nur die Erreichbarkeit prüft, ließe den Upstream dort
+    /// hochkommen und die zugesagte Härtung stillschweigend ausfallen. Deshalb wird die
+    /// Server-Plattform abgefragt.
+    /// </para>
+    /// <para>
+    /// <b>Kein stiller Rückfall</b> (ADR-0018): Wer Container verlangt und sie nicht bekommen kann,
+    /// bekommt eine Absage — nicht heimlich einen Host-Prozess ohne Isolation.
+    /// </para>
     /// </summary>
     public static async Task<string?> ProbeAsync(CliIsolationOptions isolation, CancellationToken ct)
     {
@@ -119,7 +129,9 @@ internal static class ContainerLaunchPolicy
             using var probe = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
                 FileName = isolation.Runtime,
-                ArgumentList = { "version", "--format", "{{.Server.Version}}" },
+                // Die Plattform des *Servers*, nicht des Clients: Docker Desktop auf Windows kann
+                // beides, und nur der Linux-Modus trägt die Policy.
+                ArgumentList = { "version", "--format", "{{.Server.Os}}" },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -132,10 +144,19 @@ internal static class ContainerLaunchPolicy
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            var platform = await probe.StandardOutput.ReadToEndAsync(timeout.Token).ConfigureAwait(false);
             await probe.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
-            return probe.ExitCode == 0
+            if (probe.ExitCode != 0)
+            {
+                return $"Container-Runtime '{isolation.Runtime}' antwortet nicht (Exitcode {probe.ExitCode}).";
+            }
+
+            platform = platform.Trim();
+            return platform.Equals("linux", StringComparison.OrdinalIgnoreCase)
                 ? null
-                : $"Container-Runtime '{isolation.Runtime}' antwortet nicht (Exitcode {probe.ExitCode}).";
+                : $"Container-Runtime '{isolation.Runtime}' läuft im Modus '{platform}'. "
+                    + "Die Mindestpolicy aus ADR-0018 (read-only Wurzeldateisystem, cap-drop, "
+                    + "Nicht-root-Benutzer) trägt nur mit Linux-Containern.";
         }
         catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
             or InvalidOperationException or OperationCanceledException or IOException)

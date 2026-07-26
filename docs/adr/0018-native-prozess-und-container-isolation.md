@@ -20,8 +20,11 @@
 > wäre für jeden lesbar, der die Prozessliste sieht.
 >
 > **Kein stiller Rückfall** ist als Verhalten gebaut und getestet: Verlangt eine Konfiguration
-> Container und ist keine Runtime erreichbar, kommt der Upstream nicht hoch — mit einer Meldung, die
-> das sagt.
+> Container und ist keine passende Runtime da, kommt der Upstream nicht hoch — mit einer Meldung,
+> die das sagt. Geprüft wird dabei, ob die Runtime die Policy **durchsetzen kann**, nicht nur ob sie
+> antwortet: Docker im Windows-Container-Modus antwortet und lehnt danach read-only, cap-drop und
+> Nicht-root ab. Genau dieser Fall ist beim ersten CI-Lauf aufgefallen — der erste Probe fragte nur
+> die Erreichbarkeit ab und hätte den Upstream dort mit ausgefallener Härtung hochkommen lassen.
 >
 > **Zwei Punkte ausdrücklich offen**, statt halb gebaut: Die **Netzwerk-Allowlist** wird abgelehnt
 > statt als offenes Bridge-Netz durchgereicht — ein offenes Netz mit dem Etikett „Allowlist" wäre

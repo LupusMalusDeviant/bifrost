@@ -194,9 +194,14 @@ Wichtig für die Konfiguration:
   offenes Bridge-Netz durchgereicht — ein offenes Netz mit dem Etikett „Allowlist" wäre schlimmer
   als eine ehrliche Absage.
 
-**Kein stiller Rückfall.** Verlangt eine Konfiguration Container und ist keine Runtime erreichbar,
+**Kein stiller Rückfall.** Verlangt eine Konfiguration Container und ist keine passende Runtime da,
 kommt der Upstream **nicht** hoch, mit genau dieser Meldung. Ein Ausweichen auf den Host würde die
 Isolation abschalten, ohne dass es jemand merkt.
+
+Geprüft wird dabei nicht nur, *ob* die Runtime antwortet, sondern ob sie die Policy durchsetzen
+kann: **Docker im Windows-Container-Modus** antwortet bereitwillig und lehnt dann `--read-only`,
+`--cap-drop` und `--user` ab. Auf einem Windows-Host braucht der Container-Modus deshalb Docker im
+**Linux-Modus** (WSL2-Backend); sonst wird er abgelehnt statt ungeschützt ausgeführt.
 
 Nicht abgedeckt: **stdio-Upstreams**. Deren Vertrag ist eine langlebige Verbindung, kein Job je
 Aufruf — dafür braucht es einen eigenen Entwurf.
