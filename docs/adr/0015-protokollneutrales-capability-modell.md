@@ -1,7 +1,34 @@
 # ADR-0015: Protokollneutrales Capability-Modell
 
-- **Status:** Vorgeschlagen
+- **Status:** Vorgeschlagen; das **Vokabular** ist am 2026-07-26 umgesetzt und angeschlossen, die
+  Migration des Invocation-Pfads steht aus.
 - **Datum:** 2026-07-24
+
+> **Umsetzungsstand 2026-07-26.** Gebaut sind `CapabilityDescriptorV1`, `CapabilityResultV1` samt
+> strukturiertem Fehler, `SchemaRef` mit Dialekt/Herkunft/Hash und der `LegacyCapabilityAdapter`.
+> Angeschlossen ist es über `GET /api/v1/capabilities` — additiv neben `/tools`, RBAC-gefiltert.
+> Ein Vokabular ohne Abnehmer wäre genau das Muster „Struktur da, aber nie angeschlossen", an dem
+> dieses Repo schon 23 Lücken gefunden hat.
+>
+> **Drei Abweichungen von der Aufzählung oben**, alle in derselben Richtung — die Id soll stabil
+> sein, und die ADR sagt das selbst:
+>
+> 1. Die **Schema-Version** geht *nicht* in die Id ein. Sonst ergäbe jeder zusätzliche Parameter am
+>    Upstream eine neue Id, und RBAC-Grants sowie gepinnte Profile brächen bei jeder Schema-Pflege.
+>    Die Fassung steht als `SchemaRef.Hash` daneben und bleibt sichtbar.
+> 2. Die **Connector-Id** geht *nicht* ein: Die `ServerId` ist schon eindeutig, die Transportart ist
+>    eine Eigenschaft dieses Upstreams. Sie mitzuhashen hätte nur bedeutet, dass die Id ohne
+>    Konfigurationszugriff nicht mehr ableitbar ist — und die Capability-Sicht hätte Einträge ohne
+>    Konfiguration stillschweigend verschluckt.
+> 3. **Keine eigene Tabelle für Capability-Ids.** Die ADR verlangt „persistiert"; das Ziel dahinter
+>    ist Stabilität, und die liefert die deterministische Ableitung aus (`ServerId`, nativer Name)
+>    ohne Speicher. Eine Tabelle, die niemand liest, wäre Struktur ohne Abnehmer.
+>
+> **Was die Freigabe der Arten betrifft**, hält sich die Umsetzung an die Kompatibilitätsregel: Der
+> `Task`-Art ist die Tür seit der Umsetzung von ADR-0019 offen. `Event` und `Subscription` bleiben
+> zu — EventV1 mit Zustellzusage ist dort ausdrücklich vertagt, es gibt also keine Persistenz, auf
+> die man sie stellen könnte. `AgentDelegation` wartet auf A2A. Die Arten stehen trotzdem im Enum,
+> mit einer abrufbaren Begründung, warum sie nicht angeboten werden.
 
 ## Kontext
 

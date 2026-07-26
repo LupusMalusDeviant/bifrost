@@ -31,7 +31,7 @@ Ein Architecture Decision Record dokumentiert eine einzelne, wichtige Architektu
 | [0012](./0012-approval-flows-asynchron.md) | Approval-Flows asynchron (sofort ablehnen, Freigabe pro Call) statt blockierend | Akzeptiert | 2026-07-20 | — |
 | [0013](./0013-webhook-trigger.md) | Webhook-Trigger — HMAC-signiert, ein Tool, feste Identität (Ketten als v2) | Akzeptiert | 2026-07-20 | — |
 | [0014](./0014-cli-programme-als-upstream-transport.md) | CLI-Programme als vierter Upstream-Transport | Akzeptiert | 2026-07-24 | — |
-| [0015](./0015-protokollneutrales-capability-modell.md) | Protokollneutrales Capability-Modell | Vorgeschlagen | 2026-07-24 | — |
+| [0015](./0015-protokollneutrales-capability-modell.md) | Protokollneutrales Capability-Modell — Vokabular umgesetzt, Invocation-Migration offen | Vorgeschlagen | 2026-07-24 | — |
 | [0016](./0016-versionierter-connector-plugin-vertrag.md) | Versionierter Connector-/Plugin-Vertrag — Laufzeitteil umgesetzt, Packaging/Manifest/Trust-Stufen offen | Vorgeschlagen | 2026-07-24 | — |
 | [0017](./0017-wasi-component-runtime.md) | WASI Component Runtime als bevorzugter isolierter Pluginpfad | Akzeptiert (Vorrang unter Vorbehalt) | 2026-07-25 | — |
 | [0018](./0018-native-prozess-und-container-isolation.md) | Native Prozess- und Container-Isolation | Vorgeschlagen | 2026-07-24 | — |

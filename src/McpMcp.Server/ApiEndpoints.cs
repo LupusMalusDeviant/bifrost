@@ -1,5 +1,6 @@
 using System.Text.Json;
 using McpMcp.Abstractions;
+using McpMcp.Core.Capabilities;
 using McpMcp.Core.Upstreams;
 using McpMcp.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -31,6 +32,48 @@ internal static class ApiEndpoints
                     estimatedSchemaTokens = e.EstimatedSchemaTokens,
                 });
             return Results.Ok(new { tools });
+        });
+
+        // ── Capability-Sicht (ADR-0015) ──────────────────────────────────────
+        // Additiv neben /tools: dieselben Fähigkeiten, protokollneutral beschrieben. Der alte
+        // Endpunkt bleibt unverändert — die doppelte Deskriptorwelt ist der bewusst gewählte
+        // Übergang, kein Versehen.
+        api.MapGet("/capabilities", (
+            HttpContext ctx, IToolCatalog catalog, IAuthorizationService auth) =>
+        {
+            var identity = Identity(ctx);
+            var capabilities = auth.FilterVisible(identity, catalog.Snapshot)
+                // Die Transportart kommt hier NICHT mit: Sie steht in der Konfiguration, nicht im
+                // Katalog, und sie gehört nicht zur Id — die ServerId ist schon eindeutig. Ein
+                // Lookup nur für ein informatives Feld hätte die Sicht an den Config-Store
+                // gekettet und Einträge ohne Konfiguration (Meta-Tools) stillschweigend verschluckt.
+                .Select(entry => LegacyCapabilityAdapter.FromCatalogEntry(entry))
+                // Was das Gateway noch nicht anbieten darf, erscheint hier auch nicht — sonst
+                // stünde eine Fähigkeit im Katalog, die kein Aufrufweg bedient (ADR-0015 macht das
+                // an ADR-0019 fest).
+                .Where(capability => capability.IsPubliclyOffered)
+                .Select(capability => new
+                {
+                    id = capability.Id.Value,
+                    nativeName = capability.NativeName,
+                    catalogName = capability.CatalogName.Value,
+                    displayName = capability.DisplayName,
+                    description = capability.Description,
+                    kind = capability.Kind.ToString(),
+                    execution = capability.Execution.ToString(),
+                    sideEffect = capability.SideEffect.ToString(),
+                    requiresApproval = capability.RequiresApproval,
+                    idempotent = capability.Idempotent,
+                    supportsCancellation = capability.SupportsCancellation,
+                    inputSchema = capability.Input is null ? null : new
+                    {
+                        dialect = capability.Input.Dialect,
+                        provenance = capability.Input.Provenance.ToString(),
+                        hash = capability.Input.Hash,
+                        nativeVersion = capability.Input.NativeVersion,
+                    },
+                });
+            return Results.Ok(new { capabilities });
         });
 
         api.MapPost("/tools/{name}/invoke", async (

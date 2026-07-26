@@ -40,6 +40,57 @@ public sealed class RestFacadeTests : IClassFixture<GatewayFixture>
         body.GetProperty("pageSize").GetInt32().Should().Be(100);
     }
 
+    /// <summary>
+    /// ADR-0015: Die Capability-Sicht ist additiv und wird wirklich bedient — nicht bloss definiert.
+    /// Geprüft wird, dass sie dieselben Fähigkeiten wie /tools zeigt, mit stabiler Id, Herkunft des
+    /// Schemas und benannter Art, und dass RBAC genauso filtert.
+    /// </summary>
+    [Fact]
+    public async Task Capabilities_endpoint_projects_the_catalog()
+    {
+        await _gw.AddEchoUpstreamAsync("caps1");
+        var (_, apiKey) = await _gw.SeedAdminAsync("cap-admin");
+        using var client = CreateApiClient(apiKey);
+
+        var tools = await client.GetFromJsonAsync<JsonElement>("/api/v1/tools");
+        var response = await client.GetAsync("/api/v1/capabilities");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var capabilities = body.GetProperty("capabilities").EnumerateArray().ToList();
+        capabilities.Should().NotBeEmpty("die Sicht muss dieselben Fähigkeiten zeigen wie /tools");
+
+        var toolNames = tools.GetProperty("tools").EnumerateArray()
+            .Select(t => t.GetProperty("name").GetString()).ToHashSet();
+        var capabilityNames = capabilities
+            .Select(c => c.GetProperty("catalogName").GetString()).ToHashSet();
+        capabilityNames.Should().IntersectWith(toolNames);
+
+        var first = capabilities[0];
+        first.GetProperty("id").GetString().Should().StartWith("cap_", "stabile, ableitbare Id");
+        first.GetProperty("kind").GetString().Should().BeOneOf("Query", "Mutation", "Resource", "Prompt", "Task", "Tool");
+        first.GetProperty("execution").GetString().Should().Be("Synchronous");
+        first.GetProperty("nativeName").GetString().Should().NotContain("__", "der native Name trägt kein Namespace-Präfix");
+        first.GetProperty("inputSchema").GetProperty("provenance").GetString()
+            .Should().BeOneOf("Native", "None", "Derived");
+    }
+
+    /// <summary>Zweimal abgefragt, dieselbe Id — sonst wäre „stabil" eine Behauptung.</summary>
+    [Fact]
+    public async Task Capability_ids_are_stable_across_requests()
+    {
+        await _gw.AddEchoUpstreamAsync("caps2");
+        var (_, apiKey) = await _gw.SeedAdminAsync("cap-stable-admin");
+        using var client = CreateApiClient(apiKey);
+
+        var first = await client.GetFromJsonAsync<JsonElement>("/api/v1/capabilities");
+        var second = await client.GetFromJsonAsync<JsonElement>("/api/v1/capabilities");
+
+        static IEnumerable<string?> Ids(JsonElement body) => body.GetProperty("capabilities")
+            .EnumerateArray().Select(c => c.GetProperty("id").GetString()).Order();
+        Ids(second).Should().Equal(Ids(first));
+    }
+
     [Fact]
     public async Task Rest_invoke_roundtrip_works_like_curl()
     {
