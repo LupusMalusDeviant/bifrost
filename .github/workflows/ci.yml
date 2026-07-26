@@ -186,17 +186,34 @@ jobs:
       # sonst hängt der Befehl am dotnet-Entrypoint des Images.
       - name: WASI-Host liegt im Image und spricht den Vertrag (WP7.1)
         run: |
+          # Die Version kommt aus der Quelle, nicht aus diesem Skript. Vorher stand hier eine
+          # feste "2"; der Schritt ist beim Sprung auf Vertrag 3 stillschweigend falsch geworden
+          # und fiel erst Tage später auf, weil dazwischen nichts gepusht wurde.
+          VERSION=$(sed -n 's/^pub const PROTOCOL_VERSION: &str = "\(.*\)";$/\1/p' \
+            spikes/wasi-component-runtime/src/host.rs)
+          if [ -z "$VERSION" ]; then
+            echo "::error::PROTOCOL_VERSION liess sich nicht aus host.rs lesen."
+            exit 1
+          fi
+          echo "Erwartete Vertragsversion: $VERSION"
+
           ANSWER=$(python3 -c "
-          import struct,sys
-          msg=b'{\"type\":\"hello\",\"protocolVersion\":\"2\"}'
+          import json,struct,sys
+          msg=json.dumps({'id':1,'type':'hello','protocolVersion':'$VERSION'}).encode()
           sys.stdout.buffer.write(struct.pack('>I',len(msg))+msg)" \
             | docker run -i --rm --entrypoint /usr/local/bin/mcpmcp-wasi-host mcpmcp:ci host \
             | tr -d '\0')
           echo "Host-Antwort: $ANSWER"
-          case "$ANSWER" in
-            *'"protocolVersion":"2"'*) echo "Handshake im Image ok" ;;
-            *) echo "::error::WASI-Host im Image antwortet nicht auf den Handshake."; exit 1 ;;
-          esac
+
+          # Geprüft wird der ganze v4-Handshake: die Korrelations-Id kommt zurück, die Version
+          # stimmt, und die Capability-Flags stehen drin (ADR-0016).
+          for EXPECTED in '"id":1' "\"protocolVersion\":\"$VERSION\"" '"features"' '"cancellation":true'; do
+            case "$ANSWER" in
+              *"$EXPECTED"*) ;;
+              *) echo "::error::WASI-Host im Image: '$EXPECTED' fehlt in der Handshake-Antwort."; exit 1 ;;
+            esac
+          done
+          echo "Handshake im Image ok (Vertrag $VERSION, mit Korrelations-Id und Capability-Flags)"
 
       - name: Container läuft non-root (WP7.2)
         run: |
