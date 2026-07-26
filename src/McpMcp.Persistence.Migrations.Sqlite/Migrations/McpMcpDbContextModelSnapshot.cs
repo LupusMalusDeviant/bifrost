@@ -146,6 +146,9 @@ namespace McpMcp.Persistence.Migrations.Sqlite.Migrations
                     b.Property<string>("CallerRoles")
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("CorrelationId")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Detail")
                         .HasColumnType("TEXT");
 
@@ -366,6 +369,91 @@ namespace McpMcp.Persistence.Migrations.Sqlite.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Roles");
+                });
+
+            modelBuilder.Entity("McpMcp.Persistence.TaskRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Cancellation")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("ClaimedAtTicks")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("CorrelationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAtTicks")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ExpectedInputSchemaJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("ExpiresAtTicks")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FailureMessage")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InputFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Origin")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("OwnerDescription")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("Progress")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RedactedInputJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RedactedResultJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("ServerId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("State")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Tool")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("UpdatedAtTicks")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAtTicks");
+
+                    b.HasIndex("State", "ExpiresAtTicks");
+
+                    b.HasIndex("OwnerId", "Tool", "InputFingerprint", "State");
+
+                    b.ToTable("Tasks");
                 });
 
             modelBuilder.Entity("McpMcp.Persistence.ToolDescriptionOverrideRow", b =>

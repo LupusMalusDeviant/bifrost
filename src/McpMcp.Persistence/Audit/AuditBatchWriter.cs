@@ -145,6 +145,7 @@ public sealed partial class AuditBatchWriter
         CallerRoles = evt.CallerRoles,
         Detail = evt.Detail,
         RedactedResponseJson = evt.RedactedResponse?.GetRawText(),
+        CorrelationId = evt.CorrelationId,
     };
 
     internal static AuditEvent ToEvent(AuditEventRow row) => new(
@@ -161,7 +162,8 @@ public sealed partial class AuditBatchWriter
         row.DurationMs is { } d ? TimeSpan.FromMilliseconds(d) : null,
         row.CallerRoles,
         row.Detail,
-        row.RedactedResponseJson is { } resp ? JsonSerializer.Deserialize<JsonElement>(resp) : null);
+        row.RedactedResponseJson is { } resp ? JsonSerializer.Deserialize<JsonElement>(resp) : null,
+        row.CorrelationId);
 
     private static partial class Log
     {

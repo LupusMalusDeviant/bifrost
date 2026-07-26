@@ -45,6 +45,8 @@ public sealed class McpMcpDbContext : DbContext
 
     public DbSet<PublisherKeyRow> PublisherKeys => Set<PublisherKeyRow>();
 
+    public DbSet<TaskRow> Tasks => Set<TaskRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<ConfigVersionRow>(e =>
@@ -139,6 +141,24 @@ public sealed class McpMcpDbContext : DbContext
             e.Property(r => r.CallerDescription).HasMaxLength(500);
             // Der Consume-Pfad sucht nach genau dieser Kombination — auf dem Hot Path.
             e.HasIndex(r => new { r.CallerId, r.Tool, r.Fingerprint, r.State });
+        });
+
+        modelBuilder.Entity<TaskRow>(e =>
+        {
+            e.HasKey(r => r.Id);
+            e.Property(r => r.Tool).IsRequired().HasMaxLength(300);
+            e.Property(r => r.InputFingerprint).IsRequired().HasMaxLength(64);
+            e.Property(r => r.OwnerDescription).HasMaxLength(500);
+            e.Property(r => r.FailureCode).HasMaxLength(100);
+            e.Property(r => r.FailureMessage).HasMaxLength(2000);
+            // Derselbe Hot-Path-Index wie bei den Freigaben, die hier aufgehen (ADR-0019): Der
+            // Consume-Pfad läuft vor JEDEM Tool-Call und darf durch das allgemeinere Modell nicht
+            // langsamer werden.
+            e.HasIndex(r => new { r.OwnerId, r.Tool, r.InputFingerprint, r.State });
+            // Der Verfallslauf sucht nach fälligen, nicht-terminalen Vorgängen.
+            e.HasIndex(r => new { r.State, r.ExpiresAtTicks });
+            // Die Liste sortiert nach Alter.
+            e.HasIndex(r => r.CreatedAtTicks);
         });
 
         modelBuilder.Entity<ApprovalToolRow>(e =>
@@ -299,6 +319,9 @@ public sealed class AuditEventRow
 
     /// <summary>Maskierter Ergebnis-Payload — nur im Debug-Modus befüllt (FR-24).</summary>
     public string? RedactedResponseJson { get; set; }
+
+    /// <summary>Verbindet Ereignisse derselben Invocation (ADR-0019).</summary>
+    public Guid? CorrelationId { get; set; }
 }
 
 public sealed class UiUserRow
@@ -371,6 +394,63 @@ public sealed class ApprovalRequestRow
     public int State { get; set; }
 
     public long RequestedAtTicks { get; set; }
+
+    public long ExpiresAtTicks { get; set; }
+}
+
+/// <summary>
+/// Ein persistierter Vorgang (ADR-0019, TaskV1). Zeitstempel liegen als UTC-Ticks, weil SQLite
+/// <c>DateTimeOffset</c> nicht sortieren kann.
+/// </summary>
+public sealed class TaskRow
+{
+    public Guid Id { get; set; }
+
+    public Guid OwnerId { get; set; }
+
+    public string OwnerDescription { get; set; } = string.Empty;
+
+    public string Tool { get; set; } = string.Empty;
+
+    public Guid? ServerId { get; set; }
+
+    public int Origin { get; set; }
+
+    public Guid CorrelationId { get; set; }
+
+    public int State { get; set; }
+
+    public int Revision { get; set; }
+
+    public int? Progress { get; set; }
+
+    public string InputFingerprint { get; set; } = string.Empty;
+
+    /// <summary>Redigierte Eingabe als JSON — nie die rohe.</summary>
+    public string? RedactedInputJson { get; set; }
+
+    /// <summary>Redigiertes Ergebnis als JSON.</summary>
+    public string? RedactedResultJson { get; set; }
+
+    public string? FailureCode { get; set; }
+
+    public string? FailureMessage { get; set; }
+
+    public string? ExpectedInputSchemaJson { get; set; }
+
+    public int Cancellation { get; set; }
+
+    /// <summary>
+    /// Gesetzt, sobald ein Aufruf diesen Vorgang eingelöst hat. Die Freigabe-Semantik aus ADR-0012
+    /// ist <b>einmalig</b>; der Zustandsautomat von ADR-0019 kennt aber keinen Unterschied zwischen
+    /// „freigegeben" und „schon eingelöst" — beides ist `working`. Ohne diese Spalte liefe ein
+    /// zweiter identischer Call erneut durch, und eine erteilte Zustimmung würde zum Dauerfreifahrtschein.
+    /// </summary>
+    public long? ClaimedAtTicks { get; set; }
+
+    public long CreatedAtTicks { get; set; }
+
+    public long UpdatedAtTicks { get; set; }
 
     public long ExpiresAtTicks { get; set; }
 }

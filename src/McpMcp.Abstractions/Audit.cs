@@ -33,7 +33,13 @@ public sealed record AuditEvent(
     /// <summary>Klartext-Beschreibung bei Systemereignissen, z.B. Zustandswechsel eines Upstreams (FR-22).</summary>
     string? Detail = null,
     /// <summary>Maskierter Ergebnis-Payload — nur im Debug-Modus gefüllt (FR-24, <see cref="AuditOptions"/>).</summary>
-    JsonElement? RedactedResponse = null);
+    JsonElement? RedactedResponse = null,
+    /// <summary>
+    /// Verbindet mehrere Ereignisse mit **einer** Invocation (ADR-0019). Ein langlaufender Vorgang
+    /// erzeugt Zeilen zu verschiedenen Zeiten — ohne diese Id ließe sich hinterher nicht sagen,
+    /// welche davon zum selben Aufruf gehören. Null bei Ereignissen ohne Aufrufbezug.
+    /// </summary>
+    Guid? CorrelationId = null);
 
 /// <summary>Filter für die Log-Ansicht/den Export (FR-23).</summary>
 public sealed record AuditFilter(

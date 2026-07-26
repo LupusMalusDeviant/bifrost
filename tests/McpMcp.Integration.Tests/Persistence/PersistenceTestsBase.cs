@@ -217,6 +217,242 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         anyRow.RedactedArgumentsJson.Should().Contain(RedactionService.Mask);
     }
 
+    /// <summary>
+    /// Baut einen Vorgang mit den Feldern, die ADR-0019 verlangt. `state` ist der Ausgangszustand.
+    /// </summary>
+    private static TaskRecord NewTask(
+        IdentityId owner,
+        string tool = "srv__do_thing",
+        string fingerprint = "fp-1",
+        TaskState state = TaskState.InputRequired,
+        DateTimeOffset? expiresAt = null)
+    {
+        var now = new DateTimeOffset(2026, 7, 26, 10, 0, 0, TimeSpan.Zero);
+        return new TaskRecord(
+            Guid.NewGuid(), owner, "agent-1", new NamespacedToolName(tool), null, CallOrigin.Mcp,
+            CorrelationId: Guid.NewGuid(),
+            State: state,
+            Revision: 0,
+            Progress: null,
+            InputFingerprint: fingerprint,
+            RedactedInput: JsonSerializer.Deserialize<JsonElement>("""{"path":"***"}"""),
+            RedactedResult: null,
+            Failure: null,
+            ExpectedInputSchema: null,
+            Cancellation: TaskCancellation.None,
+            ClaimedAt: null,
+            CreatedAt: now,
+            UpdatedAt: now,
+            ExpiresAt: expiresAt ?? now.AddHours(1));
+    }
+
+    /// <summary>
+    /// Grundzüge von TaskV1: anlegen, lesen, fortschreiben. Die Revision steigt monoton — sie ist
+    /// die Grundlage der optimistischen Konkurrenzkontrolle.
+    /// </summary>
+    [Fact]
+    public async Task TaskStore_persists_and_advances_a_task()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = new TaskStore(Factory);
+        var owner = IdentityId.New();
+
+        var created = await store.CreateOrGetAsync(NewTask(owner), ct);
+        created.Revision.Should().Be(0);
+
+        var advanced = await store.UpdateAsync(
+            new TaskUpdate(created.Id, State: TaskState.Working, Progress: 40), created.Revision, ct);
+        advanced.Should().Be(TaskUpdateOutcome.Applied);
+
+        var reread = await store.GetAsync(created.Id, ct);
+        reread!.State.Should().Be(TaskState.Working);
+        reread.Progress.Should().Be(40);
+        reread.Revision.Should().Be(1, "jede Fortschreibung erhöht die Revision");
+        reread.RedactedInput!.Value.GetProperty("path").GetString()
+            .Should().Be("***", "persistiert wird nur die redigierte Eingabe");
+    }
+
+    /// <summary>
+    /// Ein Retry des Aufrufers darf keine zweite Warteschlangen-Zeile erzeugen — dasselbe Verhalten,
+    /// das die Freigabe-Queue schon hatte und das im Task-Modell aufgeht.
+    /// </summary>
+    [Fact]
+    public async Task TaskStore_does_not_duplicate_an_open_task_for_the_same_call()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = new TaskStore(Factory);
+        var owner = IdentityId.New();
+
+        var first = await store.CreateOrGetAsync(NewTask(owner), ct);
+        var second = await store.CreateOrGetAsync(NewTask(owner), ct);
+
+        second.Id.Should().Be(first.Id);
+        (await store.ListAsync(new TaskFilter(Owner: owner), ct)).TotalCount.Should().Be(1);
+    }
+
+    /// <summary>
+    /// Zwei Schreiber auf demselben Vorgang: Der zweite verliert, statt den ersten zu überschreiben.
+    /// Ohne diese Prüfung ginge ein Ergebnis oder ein Abbruch still verloren.
+    /// </summary>
+    [Fact]
+    public async Task TaskStore_rejects_a_stale_revision()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = new TaskStore(Factory);
+        var created = await store.CreateOrGetAsync(NewTask(IdentityId.New()), ct);
+
+        (await store.UpdateAsync(new TaskUpdate(created.Id, State: TaskState.Working), 0, ct))
+            .Should().Be(TaskUpdateOutcome.Applied);
+        (await store.UpdateAsync(new TaskUpdate(created.Id, Progress: 99), 0, ct))
+            .Should().Be(TaskUpdateOutcome.RevisionMismatch, "die Revision 0 ist verbraucht");
+    }
+
+    /// <summary>
+    /// Terminal heißt unveränderlich (ADR-0019). Ein spät eintreffender Schreiber darf ein
+    /// abgeschlossenes Ergebnis nicht überschreiben.
+    /// </summary>
+    [Fact]
+    public async Task TaskStore_freezes_a_terminal_task()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = new TaskStore(Factory);
+        var created = await store.CreateOrGetAsync(NewTask(IdentityId.New()), ct);
+
+        var result = JsonSerializer.Deserialize<JsonElement>("""{"ok":true}""");
+        (await store.UpdateAsync(
+            new TaskUpdate(created.Id, State: TaskState.Completed, RedactedResult: result),
+            created.Revision, ct)).Should().Be(TaskUpdateOutcome.Applied);
+
+        (await store.UpdateAsync(new TaskUpdate(created.Id, State: TaskState.Failed), 1, ct))
+            .Should().Be(TaskUpdateOutcome.Terminal);
+        (await store.GetAsync(created.Id, ct))!.State.Should().Be(TaskState.Completed);
+    }
+
+    /// <summary>
+    /// Der heiße Pfad: Ein freigegebener Vorgang ist **einmalig** einlösbar. Der Zustandsautomat aus
+    /// ADR-0019 kennt dafür keinen eigenen Zustand — deshalb der Claim-Zeitpunkt. Ohne ihn liefe ein
+    /// zweiter identischer Call erneut durch, und eine Zustimmung wäre ein Dauerfreifahrtschein.
+    /// </summary>
+    [Fact]
+    public async Task TaskStore_consumes_an_approved_task_exactly_once()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = new TaskStore(Factory);
+        var owner = IdentityId.New();
+        var tool = new NamespacedToolName("srv__do_thing");
+
+        var created = await store.CreateOrGetAsync(NewTask(owner), ct);
+        // Noch nicht freigegeben: nichts einzulösen.
+        (await store.TryConsumeApprovedAsync(owner, tool, "fp-1", ct)).Should().BeFalse();
+
+        // Freigabe = Übergang nach `working`.
+        await store.UpdateAsync(new TaskUpdate(created.Id, State: TaskState.Working), created.Revision, ct);
+
+        (await store.TryConsumeApprovedAsync(owner, tool, "fp-1", ct)).Should().BeTrue();
+        (await store.TryConsumeApprovedAsync(owner, tool, "fp-1", ct))
+            .Should().BeFalse("eine Freigabe gilt genau einmal");
+        (await store.GetAsync(created.Id, ct))!.ClaimedAt.Should().NotBeNull();
+    }
+
+    /// <summary>
+    /// Die Bindung an den Argument-Fingerprint: Eine Freigabe für einen Aufruf deckt keinen anderen.
+    /// </summary>
+    [Fact]
+    public async Task TaskStore_binds_an_approval_to_owner_tool_and_fingerprint()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = new TaskStore(Factory);
+        var owner = IdentityId.New();
+        var tool = new NamespacedToolName("srv__do_thing");
+
+        var created = await store.CreateOrGetAsync(NewTask(owner, fingerprint: "fp-erlaubt"), ct);
+        await store.UpdateAsync(new TaskUpdate(created.Id, State: TaskState.Working), created.Revision, ct);
+
+        (await store.TryConsumeApprovedAsync(owner, tool, "fp-anders", ct))
+            .Should().BeFalse("anderer Fingerprint");
+        (await store.TryConsumeApprovedAsync(IdentityId.New(), tool, "fp-erlaubt", ct))
+            .Should().BeFalse("anderer Aufrufer");
+        (await store.TryConsumeApprovedAsync(owner, new NamespacedToolName("srv__other"), "fp-erlaubt", ct))
+            .Should().BeFalse("anderes Tool");
+        (await store.TryConsumeApprovedAsync(owner, tool, "fp-erlaubt", ct)).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Ein abgelaufener Vorgang wird nicht still eingelöst und landet im Verfallslauf auf
+    /// <c>expired</c> — nicht auf einem Terminalzustand, der ein Ergebnis behauptet.
+    /// </summary>
+    [Fact]
+    public async Task TaskStore_expires_due_tasks_and_refuses_to_consume_them()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var past = new DateTimeOffset(2026, 7, 26, 9, 0, 0, TimeSpan.Zero);
+        var store = new TaskStore(Factory);
+        var owner = IdentityId.New();
+        var tool = new NamespacedToolName("srv__do_thing");
+
+        var created = await store.CreateOrGetAsync(NewTask(owner, expiresAt: past), ct);
+        await store.UpdateAsync(new TaskUpdate(created.Id, State: TaskState.Working), created.Revision, ct);
+
+        (await store.TryConsumeApprovedAsync(owner, tool, "fp-1", ct))
+            .Should().BeFalse("die Frist ist abgelaufen");
+
+        (await store.ExpireDueAsync(past.AddMinutes(1), ct)).Should().Be(1);
+        (await store.GetAsync(created.Id, ct))!.State.Should().Be(TaskState.Expired);
+        (await store.ExpireDueAsync(past.AddMinutes(2), ct))
+            .Should().Be(0, "ein terminaler Vorgang wird nicht erneut angefasst");
+    }
+
+    /// <summary>
+    /// Die Audit-Correlation, die ADR-0019 voraussetzt und die es im Code bisher nicht gab: Zwei
+    /// Ereignisse desselben Aufrufs tragen dieselbe Id und sind darüber wieder zusammenzuführen.
+    /// </summary>
+    [Fact]
+    public async Task Audit_events_carry_a_correlation_id()
+    {
+        MarkSkippedIfUnavailable();
+        var correlation = Guid.NewGuid();
+        var caller = IdentityId.New();
+        var tool = NamespacedToolName.Create("srv", "do_thing");
+        var sink = new ChannelAuditSink();
+        var writer = new AuditBatchWriter(sink, Factory, new PersistenceOptions
+        {
+            AuditFlushInterval = TimeSpan.FromMilliseconds(50),
+        });
+        using var cts = new CancellationTokenSource();
+        var run = writer.RunAsync(cts.Token);
+
+        // Zwei Zeilen zum selben Aufruf, eine ohne Bezug.
+        sink.Record(new AuditEvent(
+            DateTimeOffset.UtcNow, caller, CallOrigin.Mcp, AuditEventKind.ToolCall, null,
+            tool.Value, InvocationStatus.ApprovalRequired, null, null, null, null,
+            CorrelationId: correlation));
+        sink.Record(new AuditEvent(
+            DateTimeOffset.UtcNow, caller, CallOrigin.Mcp, AuditEventKind.ToolCall, null,
+            tool.Value, InvocationStatus.Success, null, null, null, null,
+            CorrelationId: correlation));
+        sink.Record(new AuditEvent(
+            DateTimeOffset.UtcNow, caller, CallOrigin.Mcp, AuditEventKind.ToolCall, null,
+            tool.Value, InvocationStatus.Success, null, null, null, null));
+
+        await WaitForRowCountAsync(3);
+        cts.Cancel();
+        await run;
+
+        await using var db = await Factory.CreateDbContextAsync();
+        var rows = await db.AuditEvents.AsNoTracking().ToListAsync();
+        rows.Count(r => r.CorrelationId == correlation)
+            .Should().Be(2, "beide Ereignisse gehören zum selben Aufruf");
+        rows.Count(r => r.CorrelationId == null)
+            .Should().Be(1, "ohne Aufrufbezug bleibt die Id leer");
+    }
+
     [Fact]
     public async Task AuditQuery_filters_and_pages()
     {
