@@ -100,6 +100,66 @@ internal static class ApiEndpoints
             };
         });
 
+        // Aufruf über die Capability-Id, mit CapabilityResultV1 als Antwort (ADR-0015). Derselbe
+        // Invocation-Kern wie /tools/{name}/invoke — kein zweiter Weg an der Governance vorbei,
+        // nur eine andere Hülle über demselben Ergebnis.
+        api.MapPost("/capabilities/{id}/invoke", async (
+            string id, HttpContext ctx, IToolCatalog catalog, IToolInvoker invoker,
+            CancellationToken ct) =>
+        {
+            // Auflösung über den Katalog-Snapshot: Die Id ist aus (ServerId, nativer Name)
+            // ableitbar, deshalb braucht es keine Tabelle. Linear über wenige Hundert Einträge —
+            // wird das je knapp, ist ein Index im Katalog die Antwort, nicht eine zweite Wahrheit.
+            var wanted = new CapabilityId(id);
+            var entry = catalog.Snapshot.FirstOrDefault(candidate =>
+                LegacyCapabilityAdapter.FromCatalogEntry(candidate).Id == wanted);
+            if (entry is null)
+            {
+                return Results.NotFound(new { error = new { gatewayCode = "not-found", message = $"Capability '{id}' existiert nicht." } });
+            }
+
+            JsonElement args = default;
+            if (ctx.Request.ContentLength > 0)
+            {
+                args = await JsonSerializer.DeserializeAsync<JsonElement>(ctx.Request.Body, cancellationToken: ct);
+            }
+
+            var result = await invoker.InvokeAsync(
+                new ToolInvocationRequest(Identity(ctx), CallOrigin.Rest, entry.Name, args, null), ct);
+            var capability = CapabilityResultMapper.From(result);
+
+            return capability.Kind switch
+            {
+                // Ein Vorgang ist kein Fehler: Der Aufruf läuft weiter, nur nicht jetzt. 202 mit
+                // dem Ort, an dem der Stand steht — vorher war das eine 409 mit Prosa.
+                CapabilityResultKind.Task => Results.Accepted(
+                    $"/api/v1/tasks/{capability.TaskId}",
+                    new { kind = "Task", taskId = capability.TaskId }),
+                CapabilityResultKind.Error => Results.Json(
+                    new
+                    {
+                        kind = "Error",
+                        error = new
+                        {
+                            gatewayCode = capability.Error!.GatewayCode,
+                            connectorCode = capability.Error.ConnectorCode,
+                            message = capability.Error.Message,
+                            retryable = capability.Error.Retryable,
+                        },
+                    },
+                    statusCode: StatusFor(result.Status)),
+                _ => Results.Ok(new
+                {
+                    kind = capability.Kind.ToString(),
+                    data = capability.Data,
+                    text = capability.Text,
+                    truncation = capability.Truncation is { } truncation
+                        ? new { originalChars = truncation.OriginalChars, truncatedChars = truncation.TruncatedChars }
+                        : null,
+                }),
+            };
+        });
+
         api.MapGet("/openapi.json", (HttpContext ctx, OpenApiDocumentGenerator generator) =>
             Results.Text(generator.GetJsonFor(Identity(ctx)), "application/json"));
 
@@ -554,6 +614,17 @@ internal static class ApiEndpoints
                 new { error = "Management-API erfordert eine Identität mit Global-Grant." },
                 statusCode: StatusCodes.Status403Forbidden);
     }
+
+    /// <summary>HTTP-Status je Invocation-Status — eine Quelle für beide Aufruf-Flächen.</summary>
+    private static int StatusFor(InvocationStatus status) => status switch
+    {
+        InvocationStatus.ValidationFailed => StatusCodes.Status400BadRequest,
+        InvocationStatus.Denied => StatusCodes.Status403Forbidden,
+        InvocationStatus.ApprovalRequired => StatusCodes.Status409Conflict,
+        InvocationStatus.ToolNotFound => StatusCodes.Status404NotFound,
+        InvocationStatus.Timeout => StatusCodes.Status504GatewayTimeout,
+        _ => StatusCodes.Status502BadGateway,
+    };
 
     private static IResult Error(int statusCode, ToolInvocationResult result)
         => Results.Json(new { status = result.Status.ToString(), error = result.ErrorMessage }, statusCode: statusCode);

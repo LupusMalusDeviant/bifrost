@@ -58,7 +58,13 @@ public sealed record ToolInvocationResult(
     /// Gesetzt, wenn das Ergebnis gekürzt wurde (FR-16). Truncation ist verlustbehaftet — ohne
     /// Kennzeichen hielte ein Agent das Bruchstück für die vollständige Antwort.
     /// </summary>
-    ResultTruncation? Truncation = null);
+    ResultTruncation? Truncation = null,
+    /// <summary>
+    /// Der Vorgang, unter dem dieser Aufruf weiterläuft (ADR-0019) — heute bei
+    /// <see cref="InvocationStatus.ApprovalRequired"/>. Vorher stand die Id nur im Meldungstext;
+    /// ein Agent hätte sie aus deutscher Prosa herauslesen müssen, um den Stand abzufragen.
+    /// </summary>
+    Guid? TaskId = null);
 
 /// <summary>
 /// Nachweis einer Ergebnis-Kürzung (FR-16): Original- und Endgröße in Zeichen.

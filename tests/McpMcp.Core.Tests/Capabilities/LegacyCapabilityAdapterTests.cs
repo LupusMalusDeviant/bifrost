@@ -186,4 +186,76 @@ public sealed class LegacyCapabilityAdapterTests
         var truncated = CapabilityResultV1.FromText("gekürzt", new ResultTruncation(1000, 100));
         truncated.Truncation!.OriginalChars.Should().Be(1000, "Truncation ist strukturiert, kein Textsuffix");
     }
+
+    /// <summary>
+    /// Die Gateway-Codes sind Teil des öffentlichen Vertrags. Sie hier festzunageln ist der Punkt:
+    /// Vorher stand die Lage nur im Meldungstext, der sich mit jeder Textpflege ändert.
+    /// </summary>
+    [Theory]
+    [InlineData(InvocationStatus.Success, "ok", false)]
+    [InlineData(InvocationStatus.Denied, "denied", false)]
+    [InlineData(InvocationStatus.ValidationFailed, "invalid-arguments", false)]
+    [InlineData(InvocationStatus.ToolNotFound, "not-found", false)]
+    [InlineData(InvocationStatus.Timeout, "timeout", true)]
+    [InlineData(InvocationStatus.UpstreamError, "upstream-error", true)]
+    [InlineData(InvocationStatus.GuardBlocked, "guard-blocked", false)]
+    [InlineData(InvocationStatus.ApprovalRequired, "approval-required", false)]
+    public void Every_status_has_a_stable_code_and_a_retry_verdict(
+        InvocationStatus status, string expectedCode, bool expectedRetryable)
+    {
+        CapabilityResultMapper.GatewayCodeFor(status).Should().Be(expectedCode);
+        CapabilityResultMapper.IsRetryable(status).Should().Be(expectedRetryable);
+    }
+
+    /// <summary>
+    /// Ein blockiertes Ergebnis ist nicht wiederholbar — der Upstream-Call ist da schon gelaufen,
+    /// der Seiteneffekt eingetreten. Ein Retry legte dasselbe Issue ein zweites Mal an.
+    /// </summary>
+    [Fact]
+    public void A_blocked_result_is_not_retryable_because_the_call_already_ran()
+    {
+        var blocked = new ToolInvocationResult(
+            InvocationStatus.GuardBlocked, null, "Zugangsdaten im Ergebnis", TimeSpan.Zero);
+
+        var capability = CapabilityResultMapper.From(blocked);
+
+        capability.Kind.Should().Be(CapabilityResultKind.Error);
+        capability.Error!.Retryable.Should().BeFalse(
+            "der Seiteneffekt ist eingetreten — Wiederholen wäre ein zweiter");
+        capability.Error.GatewayCode.Should().Be("guard-blocked");
+    }
+
+    /// <summary>
+    /// Ein freigabepflichtiger Aufruf ist kein Fehler, sondern ein Vorgang. Genau hier treffen sich
+    /// ADR-0015 und ADR-0019: Die Id ist maschinenlesbar, nicht in deutscher Prosa versteckt.
+    /// </summary>
+    [Fact]
+    public void An_approval_becomes_a_task_result_not_an_error()
+    {
+        var taskId = Guid.NewGuid();
+        var pending = new ToolInvocationResult(
+            InvocationStatus.ApprovalRequired, null, "Freigabe angefordert …", TimeSpan.Zero,
+            TaskId: taskId);
+
+        var capability = CapabilityResultMapper.From(pending);
+
+        capability.Kind.Should().Be(CapabilityResultKind.Task);
+        capability.TaskId.Should().Be(taskId);
+        capability.Error.Should().BeNull("ein Vorgang ist kein Fehler");
+    }
+
+    /// <summary>Erfolg reicht die Nutzlast des Upstreams durch — mitsamt strukturierter Kürzung.</summary>
+    [Fact]
+    public void Success_passes_the_payload_and_the_truncation_through()
+    {
+        var content = Schema("""{"ok":true}""");
+        var result = new ToolInvocationResult(
+            InvocationStatus.Success, content, null, TimeSpan.Zero, new ResultTruncation(900, 100));
+
+        var capability = CapabilityResultMapper.From(result);
+
+        capability.Kind.Should().Be(CapabilityResultKind.Structured);
+        capability.Data!.Value.GetProperty("ok").GetBoolean().Should().BeTrue();
+        capability.Truncation!.OriginalChars.Should().Be(900);
+    }
 }

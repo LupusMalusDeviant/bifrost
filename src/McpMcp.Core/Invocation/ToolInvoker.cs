@@ -169,9 +169,12 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         }
 
         // Freigabe-Pflicht (FR-32, ADR-0012): ebenfalls vor dem Upstream, kein Seiteneffekt.
-        if (await CheckApprovalAsync(entry, request, ct).ConfigureAwait(false) is { } approvalMessage)
+        if (await CheckApprovalAsync(entry, request, ct).ConfigureAwait(false) is { } approval)
         {
-            return Fail(InvocationStatus.ApprovalRequired, approvalMessage, started);
+            // Die Vorgangs-Id geht maschinenlesbar mit: Der Aufrufer kann den Stand unter
+            // /api/v1/tasks/{id} holen, statt auf den Meldungstext angewiesen zu sein.
+            return Fail(InvocationStatus.ApprovalRequired, approval.Message, started)
+                with { TaskId = approval.TaskId };
         }
 
         using var overrideCts = request.TimeoutOverride is { } t
@@ -278,7 +281,10 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// Prüft die Freigabe-Pflicht (FR-32, ADR-0012). Liefert eine Meldung, wenn der Call auf eine
     /// Freigabe warten muss — sonst null (frei oder nicht freigabepflichtig).
     /// </summary>
-    private async Task<string?> CheckApprovalAsync(
+    /// <summary>Ergebnis der Freigabe-Prüfung: Meldung und — wenn es einen gibt — der Vorgang.</summary>
+    private sealed record ApprovalOutcome(string Message, Guid? TaskId);
+
+    private async Task<ApprovalOutcome?> CheckApprovalAsync(
         CatalogEntry entry, ToolInvocationRequest request, CancellationToken ct)
     {
         var requiredByPolicy = _approvalPolicy?.RequiresApproval(request.Tool) == true;
@@ -289,7 +295,9 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
 
         if (_approvalStore is null)
         {
-            return "Dieses Tool erfordert eine menschliche Freigabe, aber der Approval-Store ist nicht verfügbar.";
+            return new ApprovalOutcome(
+                "Dieses Tool erfordert eine menschliche Freigabe, aber der Approval-Store ist nicht verfügbar.",
+                TaskId: null);
         }
 
         // Fingerprint über die REDIGIERTEN Argumente — die Queue soll keine Secrets im Klartext
@@ -318,9 +326,11 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
             ct).ConfigureAwait(false);
 
         Log.ApprovalRequired(_logger, request.Tool.Value, requestId);
-        return $"Dieses Tool erfordert eine menschliche Freigabe. Anfrage {requestId} wurde in die "
+        return new ApprovalOutcome(
+            $"Dieses Tool erfordert eine menschliche Freigabe. Anfrage {requestId} wurde in die "
             + "Warteschlange gelegt; nach Freigabe denselben Aufruf erneut absetzen. NICHT sofort "
-            + "wiederholen — die Freigabe erfolgt asynchron in der Verwaltungsoberfläche.";
+            + "wiederholen — die Freigabe erfolgt asynchron in der Verwaltungsoberfläche.",
+            requestId);
     }
 
     /// <summary>

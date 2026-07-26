@@ -1,7 +1,8 @@
 # ADR-0015: Protokollneutrales Capability-Modell
 
-- **Status:** Vorgeschlagen; das **Vokabular** ist am 2026-07-26 umgesetzt und angeschlossen, die
-  Migration des Invocation-Pfads steht aus.
+- **Status:** Vorgeschlagen; **Vokabular und Ergebnis-Hülle** sind am 2026-07-26 umgesetzt und
+  angeschlossen. Die bestehenden Fassaden bleiben unverändert — die doppelte Deskriptorwelt ist der
+  von dieser ADR gewählte Übergang.
 - **Datum:** 2026-07-24
 
 > **Umsetzungsstand 2026-07-26.** Gebaut sind `CapabilityDescriptorV1`, `CapabilityResultV1` samt
@@ -23,6 +24,24 @@
 > 3. **Keine eigene Tabelle für Capability-Ids.** Die ADR verlangt „persistiert"; das Ziel dahinter
 >    ist Stabilität, und die liefert die deterministische Ableitung aus (`ServerId`, nativer Name)
 >    ohne Speicher. Eine Tabelle, die niemand liest, wäre Struktur ohne Abnehmer.
+>
+> **Nachtrag am selben Tag: der Invocation-Pfad liefert die Hülle.** `CapabilityResultMapper`
+> bildet das Ergebnis des Kerns auf `CapabilityResultV1` ab, und
+> `POST /api/v1/capabilities/{id}/invoke` gibt sie heraus — über denselben `IToolInvoker`, also ohne
+> zweiten Weg an RBAC, Guardrail, Approval, Limits und Audit vorbei. Zwei Dinge werden dadurch
+> maschinenlesbar, die vorher nur als deutscher Text existierten:
+>
+> - **Stabile Gateway-Codes** je Fehlerlage plus ein `retryable`-Urteil. `guard-blocked` ist
+>   ausdrücklich *nicht* wiederholbar — der Upstream-Call ist da schon gelaufen, ein Retry legte
+>   dasselbe Issue ein zweites Mal an. Vorher stand diese Warnung in Prosa.
+> - **Ein freigabepflichtiger Aufruf ist ein Vorgang, kein Fehler**: `202` mit Task-Id und
+>   `Location: /api/v1/tasks/{id}` statt `409` mit einer Meldung, aus der ein Agent die Id
+>   herauslesen müsste. Hier treffen sich diese ADR und ADR-0019; ein Test belegt, dass der
+>   genannte Vorgang wirklich abrufbar ist.
+>
+> Nicht umgedeutet wird der Erfolgsfall: Er reicht die Nutzlast des Upstreams durch, nur in der
+> Hülle. Offen bleiben **Artifacts** und **Pagination** — beides hat heute keinen Produzenten, und
+> ein Feld ohne Produzenten wäre wieder Struktur ohne Abnehmer.
 >
 > **Was die Freigabe der Arten betrifft**, hält sich die Umsetzung an die Kompatibilitätsregel: Der
 > `Task`-Art ist die Tür seit der Umsetzung von ADR-0019 offen. `Event` und `Subscription` bleiben

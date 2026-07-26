@@ -91,6 +91,70 @@ public sealed class RestFacadeTests : IClassFixture<GatewayFixture>
         Ids(second).Should().Equal(Ids(first));
     }
 
+    /// <summary>
+    /// Der Punkt, an dem ADR-0015 und ADR-0019 sich treffen: Ein freigabepflichtiger Aufruf ist kein
+    /// Fehler mit Prosa, sondern ein <b>Vorgang</b> mit Id — und derselbe Vorgang ist unter
+    /// <c>/api/v1/tasks/{id}</c> abrufbar. Vorher hätte ein Agent die Id aus einem deutschen
+    /// Meldungstext herauslesen müssen.
+    /// </summary>
+    [Fact]
+    public async Task An_approval_required_capability_call_returns_a_retrievable_task()
+    {
+        await _gw.AddEchoUpstreamAsync("capappr");
+        var (_, apiKey) = await _gw.SeedAdminAsync("cap-approval-admin");
+        var policy = _gw.Services.GetRequiredService<McpMcp.Persistence.ApprovalPolicyStore>();
+        var tool = new NamespacedToolName("capappr__echo");
+        await policy.SetAsync(tool, required: true, TestContext.Current.CancellationToken);
+        using var client = CreateApiClient(apiKey);
+
+        try
+        {
+            // Die Capability-Id aus der Sicht holen, statt sie nachzurechnen — so ruft ein Client auf.
+            var listed = await client.GetFromJsonAsync<JsonElement>("/api/v1/capabilities");
+            var capabilityId = listed.GetProperty("capabilities").EnumerateArray()
+                .First(c => c.GetProperty("catalogName").GetString() == tool.Value)
+                .GetProperty("id").GetString();
+
+            var response = await client.PostAsync(
+                $"/api/v1/capabilities/{capabilityId}/invoke",
+                new StringContent("""{"message":"bitte freigeben"}""", Encoding.UTF8, "application/json"));
+
+            response.StatusCode.Should().Be(HttpStatusCode.Accepted,
+                "ein Vorgang ist kein Fehler — 202 statt 409 mit Prosa");
+            response.Headers.Location!.ToString().Should().StartWith("/api/v1/tasks/");
+
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            body.GetProperty("kind").GetString().Should().Be("Task");
+            var taskId = body.GetProperty("taskId").GetGuid();
+
+            // Und der Vorgang ist wirklich da — die Id ist keine Behauptung.
+            var task = await client.GetFromJsonAsync<JsonElement>($"/api/v1/tasks/{taskId}");
+            task.GetProperty("state").GetString().Should().Be("InputRequired");
+            task.GetProperty("tool").GetProperty("value").GetString().Should().Be(tool.Value);
+        }
+        finally
+        {
+            await policy.SetAsync(tool, required: false, TestContext.Current.CancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Fehler tragen einen stabilen Gateway-Code statt eines Meldungstexts, den ein Automat parsen
+    /// müsste — samt Aussage, ob ein Wiederholen Aussicht hat.
+    /// </summary>
+    [Fact]
+    public async Task A_capability_error_carries_a_stable_code()
+    {
+        var (_, apiKey) = await _gw.SeedAdminAsync("cap-error-admin");
+        using var client = CreateApiClient(apiKey);
+
+        var response = await client.PostAsync("/api/v1/capabilities/cap_gibtesnicht/invoke", null);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("error").GetProperty("gatewayCode").GetString().Should().Be("not-found");
+    }
+
     [Fact]
     public async Task Rest_invoke_roundtrip_works_like_curl()
     {
