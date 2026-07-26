@@ -1,9 +1,9 @@
 # Plan-0003: M5 — WASI-Runtime-Adapter (Out-of-Process) und Connector-SDK
 
-- **Status:** Umgesetzt (2026-07-25) — **mit einem offenen Erfolgskriterium**, siehe
-  [Erfolgskriterien](#erfolgskriterien). Alle Arbeitspakete WP1–WP7 sind geliefert und lokal
-  belegt; der CI-Nachweis auf Linux fehlt, weil seit dem 2026-07-24 nichts gepusht wurde.
-- **Datum:** 2026-07-24, abgeschlossen 2026-07-25
+- **Status:** Abgeschlossen und abgenommen (2026-07-26). Alle Arbeitspakete WP1–WP7 geliefert, alle
+  Erfolgskriterien erfüllt — einschließlich des CI-Nachweises auf Linux **und** Windows
+  (Run [30195270952](https://github.com/LupusMalusDeviant/mcp-mcp/actions/runs/30195270952)).
+- **Datum:** 2026-07-24, abgeschlossen 2026-07-25, abgenommen 2026-07-26
 - **Autor:** Senior-Tech-Specialist (Claude)
 - **Basis-PRD:** Standalone — gegründet auf [ADR-0020](../adr/0020-wasi-runtime-out-of-process-rust-host.md), Roadmap `docs/prompts/claude-hardening-and-protocol-roadmap.md` (M5)
 - **Verantwortlich:** Product Owner
@@ -244,12 +244,18 @@ Abnahme gegen benannte Tests, nicht gegen Häkchen — der Nachweis steht jeweil
 | Signiertes Component über MCP **und** REST aufrufbar, durch RBAC/Guardrail/Approval/Audit | **erfüllt** — `WasiUpstreamE2ETests` (6 Tests) und `WasiRealHostGovernanceTests` gegen das echte Binary |
 | Grants feingranular (Preopen/Socket/Env/Secret), default-deny, fail-closed mit Negativtests | **erfüllt** — deny-before-instantiation je Kategorie, Preopen-Auflösung, Allowlist; Validator weist nicht durchsetzbare Grants schon in der Konfiguration ab |
 | Publisher-Signatur gegen den persistierten Trust-Store; jeder Load im Audit | **erfüllt** — `PublisherTrustTests` (7), leerer Store lädt nichts, Entzug wirkt sofort, Grant-Audit-Zeile je Load |
-| Host unter Supervisor, Win+Linux, non-root; **CI grün auf beiden** | **offen** — lokal auf Windows vollständig grün (Rust 110, .NET 433); Linux und der CI-Nachweis fehlen. Der letzte CI-Lauf datiert auf den 2026-07-24 (WP2); die 23 Commits danach sind **nicht gepusht**, CI hat sie also nie gesehen. Die CI-Matrix deckt `ubuntu-latest` und `windows-latest` ab und erzwingt dort `MCPMCP_REQUIRE_WASI_HOST=1` und auf Linux `MCPMCP_REQUIRE_POSTGRES=1` — der Nachweis entsteht mit dem Push, nicht vorher |
+| Host unter Supervisor, Win+Linux, non-root; **CI grün auf beiden** | **erfüllt** (2026-07-26, Run [30195270952](https://github.com/LupusMalusDeviant/mcp-mcp/actions/runs/30195270952) auf `9165405`) — `build-test` und `wasi-component-spike` je auf `ubuntu-latest` **und** `windows-latest` grün, dazu der `docker`-Job: Host im Image, non-root (UID-Prüfung), Image < 300 MB, arm64 baut, Compose-Beispiele gültig, `/healthz` antwortet. Auf Linux erzwingt CI `MCPMCP_REQUIRE_POSTGRES=1`, in den Vertragstests `MCPMCP_REQUIRE_WASI_HOST=1` — ein Skip wäre dort ein Fehlschlag. Übersprungen bleiben nur `benchmark` und `isolation-comparison`, beide bewusst an `schedule`/`workflow_dispatch` gebunden (geteilte Runner sind keine Referenz-Hardware) |
 | Kein Governance-Bypass; der Host nutzt nie direkt DB/Stores | **erfüllt** — Security-Review 2026-07-25, Aufrufe erreichen den Host nur über den `IToolInvoker` |
 | ADR-0017 auf Basis der Belege entschieden | **erfüllt** — akzeptiert als Isolations- und Grant-Modell, Vorrang unter benanntem Vorbehalt |
 
-**Damit ist der Plan inhaltlich abgeschlossen, die Abnahme aber nicht.** Das letzte Kriterium hängt
-an einem Push, und Pushen ist in diesem Projekt eine Entscheidung des Product Owners.
+**Der Push am 2026-07-26 hat die Abnahme geschlossen — und dabei einen echten Defekt aufgedeckt:**
+Der CI-Schritt „WASI-Host liegt im Image und spricht den Vertrag" schickte einen Frame mit fest
+verdrahteter `protocolVersion: "2"` und ohne Korrelations-Id; der Host antwortete
+`bad-request: missing field 'id'`. Kaputt war der Schritt nicht erst seit Vertrag v4, sondern schon
+seit v3 — er stand nur nie unter Beobachtung, weil zwischen beiden Änderungen nichts gepusht wurde.
+Behoben in `9165405`: Der Schritt liest `PROTOCOL_VERSION` aus `host.rs` und prüft den ganzen
+v4-Handshake samt Korrelations-Id und Capability-Flags. **Das ist die Lehre aus diesem Plan** — eine
+lokal grüne Suite belegt nicht, was ein Prüfskript in CI behauptet.
 
 ## Zeitschätzung (Gesamt) — im Rückblick
 

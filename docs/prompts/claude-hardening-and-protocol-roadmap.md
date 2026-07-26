@@ -48,9 +48,9 @@
 - [x] **M5:** Produktionsfähiger WASI-Pluginpfad (Plan 0003, abgeschlossen 2026-07-25):
   Produktionshost im Image, Publisher-Trust-Store mit sofortigem Entzug, feingranulare WASI-P2-Grants,
   Modul- und Platten-Cache, IPC-Vertrag v4, Resources, Readiness/Lifecycle/Capability-Flags.
-  **Ein Erfolgskriterium bleibt offen:** der CI-Nachweis auf Linux — der letzte CI-Lauf datiert auf
-  den 2026-07-24, die Commits danach sind nicht gepusht. Das **Connector-SDK** aus dem
-  M5-Titel meint nur den Laufzeitvertrag; Packaging von Fremdconnectoren ist nicht Teil davon.
+  Abgenommen am 2026-07-26: CI gruen auf ubuntu-latest **und** windows-latest, inklusive
+  Image-Pruefung, non-root und arm64. Das **Connector-SDK** aus dem M5-Titel meint nur den
+  Laufzeitvertrag; Packaging von Fremdconnectoren ist nicht Teil davon.
 - [ ] **M6–M10:** Nicht beginnen, bevor die jeweiligen Vorgänger und Sicherheitsmodelle erfüllt sind.
 
 ### Wichtige Implementierungsartefakte
