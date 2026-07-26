@@ -157,7 +157,8 @@ Zustellung als Zusage braucht — dann als eigene ADR, weil sie ein eigenes Betr
 - **WASI-Streams** (Plan 0003) sind damit auf einer Seite entschieden: Chunks werden geholt, Abbruch
   ist persistiert. **Nachtrag 2026-07-25:** Der IPC-Vertrag v4 ist gebaut — Korrelations-Ids,
   nebenläufige Aufrufe und ein `cancel`, das seine Wirkung belegt. Damit ist WASI in der Tabelle
-  oben von „nein" auf „ja" gewechselt. Offen bleibt für Streams nur noch der asynchrone Umbau des
-  Rust-Hosts (`component-model-async` zieht `async` nach sich) samt Chunk-Frames — und die
-  Erkenntnis, dass ein dynamischer Host Streams ohnehin nur für fest einkompilierte Payload-Typen
-  lesen kann (`StreamReader<T>` verlangt ein statisches `T`; `Val` erfüllt das nicht).
+  oben von „nein" auf „ja" gewechselt. **Die Streams selbst sind am selben Tag zurückgestellt
+  worden:** Ein dynamischer Host kann sie nur für fest einkompilierte Payload-Typen lesen
+  (`StreamReader<T>` verlangt ein statisches `T`, `Val` erfüllt das nicht), am Ende des
+  asynchronen Umbaus stünde also `stream<u8>` und nicht „Streams". Die Polling-Entscheidung dieser
+  ADR bleibt davon unberührt — sie gilt für Tasks, und die kommen ohne Streams aus.

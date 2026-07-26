@@ -20,8 +20,14 @@
 //! setzt eine persistente Instanz voraus — ein Handle ist ein Index in die Instanz, die es
 //! ausgegeben hat. Ohne Sitzung meldet die Abbildung genau das.
 //!
-//! Nicht abgebildet bleiben Futures und Streams — sie meldet die Discovery als nicht unterstützt,
-//! statt sie im Katalog anzubieten.
+//! **Nicht abgebildet bleiben `future` und `stream`** — die Discovery meldet sie als nicht
+//! unterstützt, statt sie im Katalog anzubieten. Das ist eine Festlegung, kein Rückstand
+//! (Product Owner, 2026-07-25): Sie brauchen die asynchrone Component-Model-ABI, und die zieht
+//! `async` durch den ganzen Host. Der Ertrag wäre trotzdem schmal, denn ein **dynamischer** Host
+//! kann Streams nur für fest einkompilierte Payload-Typen lesen: `StreamAny` — das, was
+//! `Val::Stream` trägt — kann nur `close()`, und Lesen verlangt `StreamReader<T>` mit
+//! `T: ComponentType + 'static`, was `Val` nicht erfüllt. `stream<u8>` wäre machbar,
+//! `stream<record-aus-dem-Katalog>` nie.
 
 use std::collections::HashMap;
 

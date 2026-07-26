@@ -31,8 +31,10 @@ erhält standardmäßig:
 Der Host liest WIT-Exports zur Discovery und bildet WIT-Typen möglichst verlustarm auf den
 Capability-Katalog ab. Imports werden vor Instanziierung gegen den Connector-Grant geprüft.
 `list<u8>` wird als begrenzte Binärdaten oder Artifact behandelt; `result<T,E>` bleibt ein
-strukturierter Result-/Fehlervertrag. Resources, Futures und Streams werden erst aktiviert, wenn
-Ownership, Cancellation und das Task-/Event-Modell implementiert sind.
+strukturierter Result-/Fehlervertrag. **Nachtrag 2026-07-25:** Resources sind aktiviert (Handles
+über eine persistente Instanz, Abbruch über IPC-Vertrag v4). **`future` und `stream` sind
+zurückgestellt** — nicht wegen Ownership oder Cancellation, die stehen inzwischen, sondern weil ein
+dynamischer Host sie nur für fest einkompilierte Payload-Typen lesen kann.
 
 Jedes Modul wird über SHA-256 identifiziert. Produktion verlangt erlaubten Herausgeber oder
 administrativ gepinnten Hash; Cache-Keys enthalten Runtime-, Component- und Grant-Version.
@@ -114,11 +116,19 @@ Seit demselben Tag sind auch Funktionen in **exportierten Interfaces** aufrufbar
 eines aus WIT gebauten Components. Damit greift die Typabbildung an realen Components und nicht
 nur an handgeschriebenen Top-Level-Exports.
 
-**Offen bleiben Resources, Futures und Streams**; sie hängen unverändert am Task-/Event-Modell
-([ADR-0019](0019-langlaufende-tasks-und-events.md)). Das ist der verbleibende Grund für den
-Vorbehalt: Ein Interface mit Handles ist heute nicht bedienbar. Für Interfaces ohne Handles trägt
-der Vorrang. Bis dahin ist WASI der bevorzugte Pfad für **Tools, die in diese Form
-passen**, und nicht die Vorgabe für jeden neuen Connector.
+**Nachtrag 2026-07-25 — Resources sind erledigt, Streams sind entschieden.** Ein Interface mit
+Handles ist seither bedienbar: Die Instanz lebt pro Upstream, Handles gehören je einem Aufrufer,
+und mit IPC-Vertrag v4 ist ein Aufruf abbrechbar. Damit ist der ursprüngliche Grund für den
+Vorbehalt weg.
+
+**`future` und `stream` bleiben draußen — als Festlegung, nicht als Rückstand.** Ein dynamischer
+Host kann Streams nur für Payload-Typen lesen, die in ihn hineinkompiliert sind (`StreamReader<T>`
+verlangt ein statisches `T`, `Val` erfüllt das nicht). Am Ende des asynchronen Umbaus stünde
+`stream<u8>`, und das reicht als Gegenwert für einen Umbau des Host-Kerns nicht.
+
+Für den Vorrang heißt das: WASI trägt jetzt den Normalfall eines aus WIT gebauten Components
+einschließlich Resources. Wer **Streams** braucht, ist hier weiterhin falsch — das bleibt der
+verbleibende Vorbehalt.
 
 Sicherheitsstand und akzeptierte Restrisiken stehen im
 [Threat-Model](../security/threat-model.md); der Review dazu in

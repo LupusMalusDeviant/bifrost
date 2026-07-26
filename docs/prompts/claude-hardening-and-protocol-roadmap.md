@@ -26,7 +26,7 @@
 | 3 – Gateway-CLI | **ABGESCHLOSSEN** | Offizielle `mcp-mcp`-CLI ausschließlich über öffentliche HTTP-Verträge, inklusive JSON-Modus, Pipelines, Exitcodes und Administration. |
 | 4 – Capability-Modell | **TEILWEISE** | ADR-0015 sowie additive Risk-/Approval-/Truncation-Metadaten vorhanden. Vollständige Queries, Events, Streams, Tasks, Artifacts und Delegation fehlen. |
 | 5 – Connector-/Plugin-Vertrag | **TEILWEISE** | ADR-0016 vorhanden. SDK, Handshake, Packaging, Installation, Signierung, Update/Rollback und isolierte Drittanbieter-Runtime fehlen. |
-| 6 – WASI/Component Model | **TEILWEISE; M4-Spike ausführbar** | ADR-0017 und separates Wasmtime-47-Projekt mit WIT-Mapping, binärer Component-Reflection, Hash, deny-by-default Imports, Fuel, Epoch-Timeout, Memory-/Output-Limits und CI-Matrix. Produktionshost, Publisher-Signatur und echte WASI-P2-Grants fehlen. |
+| 6 – WASI/Component Model | **WEITGEHEND; Streams zurückgestellt** | Produktionshost im Image, Publisher-Trust-Store mit sofortigem Entzug, feingranulare WASI-P2-Grants (deny-before-instantiation), Modul- und Platten-Cache, IPC-Vertrag v4 mit Korrelation, Nebenläufigkeit und bestätigtem Abbruch. Aufrufbreite deckt alle WIT-Typen ab **außer** `future`/`stream` — die sind am 2026-07-25 zurückgestellt worden, weil ein dynamischer Host sie nur für fest einkompilierte Payload-Typen lesen kann. ADR-0017 akzeptiert, ADR-0020 akzeptiert. |
 | 7 – Container-Isolation | **TEILWEISE** | ADR-0018, Mindestpolicy und reproduzierbarer OCI-Startupvergleich vorhanden. Kein Container-Runtimeadapter. |
 | 8 – OpenRPC | **TEILWEISE / Design-Spike** | Import-/Security-Spike und Roadmap vorhanden; kein Connector. |
 | 9 – gRPC | **TEILWEISE / Design-Spike** | Unary-/Reflection-/Descriptor-Set-Spike und Roadmap vorhanden; kein Connector. |
@@ -479,7 +479,7 @@ Kläre:
 
 Kein Connector darf Governance umgehen oder direkt auf interne Datenbanken zugreifen.
 
-## Phase 6 – WASI und WebAssembly Component Model — TEILWEISE, M4-SPIKE AUSFÜHRBAR
+## Phase 6 – WASI und WebAssembly Component Model — WEITGEHEND, STREAMS ZURÜCKGESTELLT
 
 Behandle WASI nicht als Netzwerkprotokoll, sondern als bevorzugte sichere Ausführungsplattform für lokale Tools und externe Connectoren.
 

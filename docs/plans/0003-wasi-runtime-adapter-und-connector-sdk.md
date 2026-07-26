@@ -184,18 +184,19 @@ Offen und ausdrücklich **nicht** behauptet:
   ADR-0016 fehlen weiterhin.
 - **WP3, Rest** — Preopens bleiben **nur lesend**; Schreibrechte sind im Grant-Modell nach wie vor
   nicht ausdrückbar.
-- **Aufrufbreite, Rest** — offen bleiben nur noch **Futures und Streams**. Modellseite und
-  Vertragsseite sind erledigt: ADR-0019 hat entschieden, dass Chunks **geholt** werden, und
-  IPC-Vertrag v4 bringt Korrelations-Ids, Nebenläufigkeit und einen bestätigten Abbruch. Offen ist
-  damit nur noch der **asynchrone Umbau des Rust-Hosts**: `component-model-async` zieht `async`
-  nach sich, also asynchroner Store, `call_async` statt `Func::call` und ein umgebauter stdio-Loop.
-- **Streams, harte Grenze** — ein **dynamischer** Host kann Streams nur für Payload-Typen lesen,
-  die in ihn hineinkompiliert sind. `StreamAny` (was `Val::Stream` trägt) kann nur `close()`;
-  Lesen verlangt `StreamReader<T>` mit `T: ComponentType + 'static`, und `Val` erfüllt das nicht.
-  `stream<u8>` wäre also machbar, `stream<irgendein-record-aus-dem-Katalog>` nie — dafür bräuchte
-  jedes Component seinen eigenen generierten Host. Das ist die Bauart der wasmtime-API, keine
-  Lücke, und es sollte vor dem async-Umbau bewertet werden: Der Umbau kostet den Kern des Hosts,
-  der Nutzen ist schmaler als „Streams" vermuten lässt.
+- **Streams und Futures — zurückgestellt, nicht offen** (Product Owner, 2026-07-25). Modell- und
+  Vertragsseite wären fertig: ADR-0019 hat entschieden, dass Chunks **geholt** werden, und
+  IPC-Vertrag v4 bringt Korrelation, Nebenläufigkeit und bestätigten Abbruch. Gestoppt hat die
+  Sache der **Ertrag**: Ein dynamischer Host kann Streams nur für Payload-Typen lesen, die in ihn
+  hineinkompiliert sind. `StreamAny` — das, was `Val::Stream` trägt — kann nur `close()`; Lesen
+  verlangt `StreamReader<T>` mit `T: ComponentType + 'static`, und `Val` erfüllt das nicht. Damit
+  stünde am Ende des asynchronen Umbaus `stream<u8>`, nicht „Streams". Der Umbau selbst kostet den
+  Kern des Hosts (asynchroner Store, `call_async`, umgebauter stdio-Loop samt Fuel-Nachfüllung,
+  Epochen-Callback und persistenter Instanz). Entscheidung: **`stream<u8>` reicht nicht, der
+  async-Umbau wird zurückgestellt.** Die Discovery meldet `stream` und `future` weiterhin als nicht
+  aufrufbar — mit genau dieser Begründung, damit niemand auf ein baldiges Update wartet.
+  Wieder aufzugreifen wäre der Punkt, wenn wasmtime einen dynamischen Lesepfad bekommt (`Val`-
+  basierter Reader) oder ein konkreter Connector `stream<u8>` allein rechtfertigt.
 - **Resources, Restrisiko** — eine persistente Instanz teilt ihren **internen** Zustand (Globals,
   linearer Speicher) zwischen allen Aufrufern desselben Upstreams. Die Handle-Trennung schützt
   davor nicht: Sie verhindert, dass ein Aufrufer ein fremdes Handle *benennt*, nicht, dass ein
@@ -247,7 +248,7 @@ neu abzuwägen:
 
 - **IPC-Form** (WP1.1): length-prefixed JSON über stdio vs. lokaler Socket (Named Pipe/UDS) — braucht evtl. ein Mini-ADR-0021.
 - **Packaging** (WP7.1): ein Container mit .NET + Rust-Host vs. getrennte Artefakte — Ops-Auswirkung.
-- **Binärdaten/Streaming** über den Vertrag: begrenzte Blobs sind umgesetzt (`list<u8>` als Base64 mit eigener Längengrenze), IPC-Vertrag v4 steht. Echte Streams brauchen nur noch den asynchronen Host-Umbau — und bleiben auf fest einkompilierte Payload-Typen begrenzt, siehe Stand-Abschnitt.
+- **Binärdaten/Streaming** über den Vertrag: **geschlossen.** Begrenzte Blobs sind umgesetzt (`list<u8>` als Base64 mit eigener Längengrenze), IPC-Vertrag v4 steht. Echte Streams sind zurückgestellt — Begründung im Stand-Abschnitt.
 
 ## Referenzen
 

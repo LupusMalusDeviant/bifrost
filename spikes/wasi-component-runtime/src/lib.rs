@@ -990,9 +990,9 @@ pub fn describe_cached_module(module: &CachedModule) -> Vec<ToolDescriptor> {
     tools
 }
 
-/// Warum ein Funktions-Export heute nicht aufrufbar ist — `None`, wenn er es ist. Die Bedingung
-/// spiegelt exakt den typisierten Pfad in [`invoke_component_tool`]: eine `s32`-Eingabe, eine
-/// `s32`-Ausgabe. Sie muss mitwandern, wenn dieser Pfad erweitert wird.
+/// Warum ein Funktions-Export nicht aufrufbar ist — `None`, wenn er es ist. Entschieden wird über
+/// die beteiligten Typen, nicht über die Form der Signatur; die Menge der abbildbaren Typen steht
+/// in [`values`].
 fn unsupported_function_reason(
     params: &[ToolParameter],
     results: &[crate::values::TypeDescriptor],
@@ -1013,8 +1013,13 @@ fn unsupported_function_reason(
     if unmapped.is_empty() {
         None
     } else {
+        // Die Meldung nennt den Grund, nicht bloß den Befund: `stream` und `future` sind die
+        // einzigen offenen Fälle, und sie bleiben es auf absehbare Zeit (siehe Modul-Doku in
+        // `values`). Wer sie hier trifft, soll nicht auf ein baldiges Update warten.
         Some(format!(
-            "nicht abbildbare Typen: {} (Records, Varianten, Enums, Flags, Tupel und Resources              bildet dieser Host noch nicht ab)",
+            "nicht abbildbare Typen: {} — dieser Host bildet 'stream' und 'future' nicht ab; \
+             sie brauchen die asynchrone Component-Model-ABI und wären auch dann auf fest \
+             einkompilierte Payload-Typen begrenzt. Alle übrigen WIT-Typen sind abgebildet.",
             unmapped.join(", ")
         ))
     }
