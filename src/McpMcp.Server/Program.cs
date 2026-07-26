@@ -125,6 +125,7 @@ builder.Services.AddSingleton<IUpstreamConnector, StdioUpstreamConnector>();
 builder.Services.AddSingleton<IUpstreamConnector, StreamableHttpUpstreamConnector>();
 builder.Services.AddSingleton<IUpstreamConnector, McpMcp.Upstream.OpenApi.OpenApiUpstreamConnector>();
 builder.Services.AddSingleton<IUpstreamConnector, McpMcp.Upstream.Cli.CliUpstreamConnector>(); // ADR-0014
+builder.Services.AddSingleton<IUpstreamConnector, McpMcp.Upstream.OpenRpc.OpenRpcUpstreamConnector>(); // Roadmap Phase 8
 // Der WASI-Connector holt die gepinnten Publisher aus dem Trust-Store (WP4) und schreibt den
 // Grant-Audit-Datensatz jedes Loads in den Audit-Pfad.
 builder.Services.AddSingleton<IUpstreamConnector>(sp => new McpMcp.Upstream.Wasi.WasiRuntimeConnector(

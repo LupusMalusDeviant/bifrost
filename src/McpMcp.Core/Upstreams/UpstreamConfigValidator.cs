@@ -77,6 +77,7 @@ public static partial class UpstreamConfigValidator
             UpstreamTransportKind.OpenApi => ("OpenApi", config.OpenApi is not null),
             UpstreamTransportKind.Cli => ("Cli", config.Cli is not null),
             UpstreamTransportKind.Wasi => ("Wasi", config.Wasi is not null),
+            UpstreamTransportKind.OpenRpc => ("OpenRpc", config.OpenRpc is not null),
             _ => throw new ArgumentException($"Unbekannter Transport: {config.Kind}.", nameof(config)),
         };
 
@@ -93,6 +94,7 @@ public static partial class UpstreamConfigValidator
             (Name: "OpenApi", Set: config.OpenApi is not null, For: UpstreamTransportKind.OpenApi),
             (Name: "Cli", Set: config.Cli is not null, For: UpstreamTransportKind.Cli),
             (Name: "Wasi", Set: config.Wasi is not null, For: UpstreamTransportKind.Wasi),
+            (Name: "OpenRpc", Set: config.OpenRpc is not null, For: UpstreamTransportKind.OpenRpc),
         };
         foreach (var extra in extras)
         {
@@ -117,6 +119,11 @@ public static partial class UpstreamConfigValidator
         if (config.Kind == UpstreamTransportKind.Cli)
         {
             ValidateCli(config.Cli!, config);
+        }
+
+        if (config.Kind == UpstreamTransportKind.OpenRpc)
+        {
+            ValidateOpenRpc(config.OpenRpc!, config);
         }
     }
 
@@ -284,6 +291,40 @@ public static partial class UpstreamConfigValidator
                 throw new ArgumentException(
                     "Wasi.Grants.Secrets darf keinen leeren Namen enthalten.", nameof(config));
             }
+        }
+    }
+
+    /// <summary>
+    /// Prüft die OpenRPC-Optionen, bevor der Upstream startet. Was hier durchfällt, fiele sonst
+    /// beim ersten Import auf — mit einer Meldung des fremden Dienstes statt einer, die sagt,
+    /// welches Feld falsch ist.
+    /// </summary>
+    private static void ValidateOpenRpc(OpenRpcTransportOptions openRpc, UpstreamServerConfig config)
+    {
+        if (openRpc.Endpoint.Scheme is not ("http" or "https"))
+        {
+            throw new ArgumentException(
+                "OpenRpc.Endpoint muss http oder https sein.", nameof(config));
+        }
+
+        if (openRpc.SpecLocation is { } location
+            && location.Scheme is not ("http" or "https" or "file"))
+        {
+            throw new ArgumentException(
+                "OpenRpc.SpecLocation muss http, https oder file sein.", nameof(config));
+        }
+
+        if (openRpc.TimeoutSeconds <= 0)
+        {
+            throw new ArgumentException(
+                "OpenRpc.TimeoutSeconds muss positiv sein.", nameof(config));
+        }
+
+        if (openRpc.AuthKind is not OpenApiAuthKind.None
+            && string.IsNullOrWhiteSpace(openRpc.Credential))
+        {
+            throw new ArgumentException(
+                $"OpenRpc.AuthKind={openRpc.AuthKind} verlangt ein Credential.", nameof(config));
         }
     }
 

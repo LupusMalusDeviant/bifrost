@@ -1,5 +1,12 @@
 # Spike: OpenRPC-Import
 
+> **Umgesetzt am 2026-07-26.** Der Connector steht (`UpstreamTransportKind.OpenRpc`), das Mapping
+> unten ist die Umsetzung, und die sechs Security-Fixtures sind Tests. Zwei Abweichungen vom
+> Spike-Text: Der Import folgt **keiner** externen Referenz (statt sie zu validieren, wird sie
+> abgewiesen — ein `$ref` nach außen wäre ein zweiter, ungeprüfter Ladevorgang mitten im Schema),
+> und die Zielprüfung greift auch am **Aufruf-Endpunkt**, nicht nur an der Dokumentquelle: Sonst
+> umginge man sie über ein lokales Dokument, das auf eine interne Adresse zeigt.
+
 ## Frage und Grenze
 
 Lässt sich ein statisches OpenRPC-Dokument ohne Netzauflösung in stabile Capabilities überführen?

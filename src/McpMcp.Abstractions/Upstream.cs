@@ -9,6 +9,7 @@ public enum UpstreamTransportKind
     OpenApi = 2,
     Cli = 3,
     Wasi = 4,
+    OpenRpc = 5,
 }
 
 public enum UpstreamState
@@ -84,6 +85,40 @@ public sealed record OpenApiTransportOptions(
     OpenApiAuthKind AuthKind = OpenApiAuthKind.None,
     string? Credential = null,
     string? ApiKeyHeaderName = null);
+
+/// <summary>
+/// OpenRPC-Dienst als virtueller Upstream (Roadmap Phase 8, Spike `docs/spikes/openrpc-import.md`).
+/// <para>
+/// Die Beschreibung kommt entweder aus einem statischen Dokument (<see cref="SpecLocation"/>) oder
+/// über den standardisierten Discovery-Aufruf <c>rpc.discover</c> am Endpunkt selbst. Beide Wege
+/// werden gleich behandelt, <b>nachdem</b> Ziel, Größe und Schema geprüft sind — der Discovery-Weg
+/// ist kein Vertrauensvorschuss.
+/// </para>
+/// <para>
+/// <b>Batch-Requests und Notifications sind in v1 ausdrücklich ausgenommen.</b> Ein Batch bündelt
+/// mehrere Aufrufe in einer Nachricht; jeder davon müsste einzeln durch RBAC, Guardrail, Approval
+/// und Audit — sonst entstünde ein Weg, an der Governance vorbei mehrere Dinge zu tun. Eine
+/// Notification hat definitionsgemäß keine Antwort und passt damit nicht auf einen Tool-Call.
+/// </para>
+/// </summary>
+/// <param name="Endpoint">Die JSON-RPC-Adresse, an die Aufrufe gehen.</param>
+/// <param name="SpecLocation">
+/// Statisches OpenRPC-Dokument. Ohne Angabe wird <c>rpc.discover</c> am <paramref name="Endpoint"/>
+/// versucht.
+/// </param>
+/// <param name="AllowPrivateTargets">
+/// Erlaubt Ziele in privaten, Loopback- oder Link-Local-Netzen. Vorgabe ist <c>false</c>: Ein
+/// Gateway, das beliebige URLs abruft, ist sonst ein Werkzeug, um interne Dienste zu erreichen
+/// (SSRF). Für einen Dienst im eigenen Netz bewusst einschalten.
+/// </param>
+public sealed record OpenRpcTransportOptions(
+    Uri Endpoint,
+    Uri? SpecLocation = null,
+    OpenApiAuthKind AuthKind = OpenApiAuthKind.None,
+    string? Credential = null,
+    string? ApiKeyHeaderName = null,
+    bool AllowPrivateTargets = false,
+    int TimeoutSeconds = 30);
 
 /// <summary>
 /// CLI-Programm als virtueller Upstream (ADR-0014). <see cref="Executable"/> ist pro Upstream fix
@@ -225,7 +260,8 @@ public sealed record UpstreamServerConfig(
     RestartPolicy? Restart = null,
     TimeSpan? CallTimeout = null,
     CliTransportOptions? Cli = null,
-    WasiTransportOptions? Wasi = null);
+    WasiTransportOptions? Wasi = null,
+    OpenRpcTransportOptions? OpenRpc = null);
 
 /// <summary>
 /// Ein signiertes WebAssembly-Component als Upstream (ADR-0020, Plan 0003/WP2). Die Ausführung

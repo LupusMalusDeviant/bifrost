@@ -160,6 +160,43 @@ ist Sichtbarkeit, keine Durchsetzung — eine verstrichene Frist wirkt schon vor
 Einlöse-Pfad sie selbst prüft. Abgelaufene Vorgänge werden nicht gelöscht: Sie bleiben als
 Terminalzustand auditierbar stehen.
 
+## OpenRPC-Dienste als Upstream
+
+Ein JSON-RPC-Dienst mit OpenRPC-Beschreibung wird ein normaler Upstream. Die Beschreibung kommt
+entweder aus einem Dokument oder über den Discovery-Aufruf des Dienstes:
+
+```json
+"OpenRpc": {
+  "Endpoint": "https://dienst.example/rpc",
+  "SpecLocation": "https://dienst.example/openrpc.json",
+  "AuthKind": "Bearer",
+  "Credential": "…"
+}
+```
+
+Ohne `SpecLocation` versucht der Gateway `rpc.discover` am Endpunkt. Beide Wege laufen durch
+dieselbe Prüfung von Ziel, Größe und Schema — Discovery bekommt keinen Vertrauensvorschuss.
+
+**Was beim Import abgewiesen wird**, statt es zu laden oder zu raten:
+
+- **Externe `$ref`.** Ein Verweis nach außen wäre ein zweiter, ungeprüfter Ladevorgang mitten in der
+  Schemaverarbeitung. Lokale Verweise werden aufgelöst, mit Tiefen- und Zyklenprüfung.
+- **Doppelte Methodennamen.** Beim Aufruf wäre nicht bestimmbar, welche Signatur gilt.
+- **Dokumente über 10 MB.**
+- **Ziele in privaten, Loopback- oder Link-Local-Netzen** — einschließlich der Adressen hinter einer
+  Weiterleitung, die einzeln geprüft werden. Sonst wäre der Gateway ein Werkzeug, um interne Dienste
+  zu erreichen (etwa den Cloud-Metadatendienst). Für einen Dienst im eigenen Netz setzt man
+  `AllowPrivateTargets: true` — ausdrücklich und pro Upstream.
+
+**Nicht unterstützt in v1:** Batch-Requests und Notifications. Ein Batch bündelt mehrere Aufrufe in
+einer Nachricht; jeder müsste einzeln durch RBAC, Guardrail, Approval und Audit, sonst entstünde ein
+Weg, an der Governance vorbei mehrere Dinge zu tun. Eine Notification hat definitionsgemäß keine
+Antwort und passt nicht auf einen Tool-Call.
+
+Zu den Parametern: `paramStructure: by-name` schickt ein Objekt, `by-position` ein **geordnetes
+Array** in der Reihenfolge aus dem Dokument. Der Aufrufer nennt in beiden Fällen die Namen; die
+Reihenfolge kommt aus der Beschreibung, nicht aus der Reihenfolge im Aufruf.
+
 ## CLI-Programme im Container ausführen
 
 Ein CLI-Upstream läuft standardmäßig als Host-Prozess: gehärtet (absolute Pfade, Root-Allowlist,
