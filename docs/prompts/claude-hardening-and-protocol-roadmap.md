@@ -41,10 +41,17 @@
 
 - [x] **M1:** CLI-Prototyp abgesichert und Secret-Leaks geschlossen.
 - [x] **M2:** Offizielle Gateway-CLI umgesetzt.
-- [ ] **M3:** ADRs vorhanden, Capability-V1-Modell und Connector-Handshake noch nicht vollständig.
-- [ ] **M4:** Ausführbarer Spike vorhanden; Publisher-Signatur, echte WASI-P2-Grants und externer
-  Linux-CI-Nachweis fehlen.
-- [ ] **M5–M10:** Nicht beginnen, bevor die jeweiligen Vorgänger und Sicherheitsmodelle erfüllt sind.
+- [ ] **M3:** ADRs vorhanden; das Capability-V1-Modell (ADR-0015) fehlt weiterhin. Der
+  **Connector-Handshake** ist seit dem 2026-07-25 umgesetzt — der Laufzeitteil von ADR-0016 am
+  WASI-Host, siehe Plan 0003. Offen bleibt der Paketteil (Manifest, Installation, Trust-Stufen).
+- [x] **M4:** WASI-Component-Spike mit WIT-Discovery — erfüllt und inzwischen von M5 überholt.
+- [x] **M5:** Produktionsfähiger WASI-Pluginpfad (Plan 0003, abgeschlossen 2026-07-25):
+  Produktionshost im Image, Publisher-Trust-Store mit sofortigem Entzug, feingranulare WASI-P2-Grants,
+  Modul- und Platten-Cache, IPC-Vertrag v4, Resources, Readiness/Lifecycle/Capability-Flags.
+  **Ein Erfolgskriterium bleibt offen:** der CI-Nachweis auf Linux — der letzte CI-Lauf datiert auf
+  den 2026-07-24, die Commits danach sind nicht gepusht. Das **Connector-SDK** aus dem
+  M5-Titel meint nur den Laufzeitvertrag; Packaging von Fremdconnectoren ist nicht Teil davon.
+- [ ] **M6–M10:** Nicht beginnen, bevor die jeweiligen Vorgänger und Sicherheitsmodelle erfüllt sind.
 
 ### Wichtige Implementierungsartefakte
 

@@ -1,7 +1,9 @@
 # Plan-0003: M5 — WASI-Runtime-Adapter (Out-of-Process) und Connector-SDK
 
-- **Status:** Entwurf
-- **Datum:** 2026-07-24
+- **Status:** Umgesetzt (2026-07-25) — **mit einem offenen Erfolgskriterium**, siehe
+  [Erfolgskriterien](#erfolgskriterien). Alle Arbeitspakete WP1–WP7 sind geliefert und lokal
+  belegt; der CI-Nachweis auf Linux fehlt, weil seit dem 2026-07-24 nichts gepusht wurde.
+- **Datum:** 2026-07-24, abgeschlossen 2026-07-25
 - **Autor:** Senior-Tech-Specialist (Claude)
 - **Basis-PRD:** Standalone — gegründet auf [ADR-0020](../adr/0020-wasi-runtime-out-of-process-rust-host.md), Roadmap `docs/prompts/claude-hardening-and-protocol-roadmap.md` (M5)
 - **Verantwortlich:** Product Owner
@@ -151,10 +153,10 @@ WP3/WP4/WP5 laufen nach WP2 weitgehend parallel — der kritische Pfad ist WP1 �
 
 ## Meilensteine
 
-- **M1 (~2026-08-08):** WP1 fertig — der Rust-Host spricht den Vertrag; load/verify/instantiate/invoke/discover lokal grün, Framing-Tests in CI (Win+Linux). Startup-Latenz gemessen.
-- **M2 (~2026-08-22):** WP2 fertig — ein signiertes Component erscheint als Upstream und wird durch die **volle** Governance-Pipeline aufgerufen (Integrationstest R6).
-- **M3 (~2026-09-12):** WP3 + WP4 + WP5 fertig — feingranulare Grants, persistierter Trust-Store + Load-Signaturprüfung, Modul-Cache/Rollback.
-- **M4 (~2026-09-30):** WP6 + WP7 fertig — Connector-Vertrag formalisiert, Packaging + CI + Security-Review; ADR-0017 neu bewertet.
+- [x] **M1** (geplant ~2026-08-08, erreicht 2026-07-24): WP1 fertig — der Rust-Host spricht den Vertrag; load/verify/instantiate/invoke/discover lokal grün, Framing-Tests in CI (Win+Linux). Startup-Latenz gemessen.
+- [x] **M2** (geplant ~2026-08-22, erreicht 2026-07-25): WP2 fertig — ein signiertes Component erscheint als Upstream und wird durch die **volle** Governance-Pipeline aufgerufen (Integrationstest R6).
+- [x] **M3** (geplant ~2026-09-12, erreicht 2026-07-25): WP3 + WP4 + WP5 fertig — feingranulare Grants, persistierter Trust-Store + Load-Signaturprüfung, Modul-Cache/Rollback.
+- [x] **M4** (geplant ~2026-09-30, erreicht 2026-07-25): WP6 + WP7 fertig — Connector-Vertrag formalisiert, Packaging + CI + Security-Review; ADR-0017 neu bewertet.
 
 ## Stand (2026-07-25)
 
@@ -234,14 +236,30 @@ neu abzuwägen:
 
 ## Erfolgskriterien
 
-- Ein signiertes WASI-P2-Component ist über MCP **und** REST aufrufbar, durch RBAC/Guardrail/Approval/Audit — im Integrationstest belegt.
-- Grants sind feingranular (per-Preopen/-Socket/-Env/-Secret), default-deny; nicht gewährte Zugriffe werden fail-closed abgewiesen (Negativtests).
-- Publisher-Signatur wird beim Laden gegen den persistierten Trust-Store geprüft; jeder Load steht im Audit-Log.
-- Host läuft unter Supervisor (Start/Restart/Kill), Win+Linux, non-root; CI grün auf beiden.
-- Kein Governance-Bypass; der Host nutzt nie direkt DB/Stores.
-- ADR-0017 ist auf Basis dieser Belege entschieden.
+Abnahme gegen benannte Tests, nicht gegen Häkchen — der Nachweis steht jeweils im
+[Stand](#stand-2026-07-25).
 
-## Zeitschätzung (Gesamt)
+| Kriterium | Stand |
+|---|---|
+| Signiertes Component über MCP **und** REST aufrufbar, durch RBAC/Guardrail/Approval/Audit | **erfüllt** — `WasiUpstreamE2ETests` (6 Tests) und `WasiRealHostGovernanceTests` gegen das echte Binary |
+| Grants feingranular (Preopen/Socket/Env/Secret), default-deny, fail-closed mit Negativtests | **erfüllt** — deny-before-instantiation je Kategorie, Preopen-Auflösung, Allowlist; Validator weist nicht durchsetzbare Grants schon in der Konfiguration ab |
+| Publisher-Signatur gegen den persistierten Trust-Store; jeder Load im Audit | **erfüllt** — `PublisherTrustTests` (7), leerer Store lädt nichts, Entzug wirkt sofort, Grant-Audit-Zeile je Load |
+| Host unter Supervisor, Win+Linux, non-root; **CI grün auf beiden** | **offen** — lokal auf Windows vollständig grün (Rust 110, .NET 433); Linux und der CI-Nachweis fehlen. Der letzte CI-Lauf datiert auf den 2026-07-24 (WP2); die 23 Commits danach sind **nicht gepusht**, CI hat sie also nie gesehen. Die CI-Matrix deckt `ubuntu-latest` und `windows-latest` ab und erzwingt dort `MCPMCP_REQUIRE_WASI_HOST=1` und auf Linux `MCPMCP_REQUIRE_POSTGRES=1` — der Nachweis entsteht mit dem Push, nicht vorher |
+| Kein Governance-Bypass; der Host nutzt nie direkt DB/Stores | **erfüllt** — Security-Review 2026-07-25, Aufrufe erreichen den Host nur über den `IToolInvoker` |
+| ADR-0017 auf Basis der Belege entschieden | **erfüllt** — akzeptiert als Isolations- und Grant-Modell, Vorrang unter benanntem Vorbehalt |
+
+**Damit ist der Plan inhaltlich abgeschlossen, die Abnahme aber nicht.** Das letzte Kriterium hängt
+an einem Push, und Pushen ist in diesem Projekt eine Entscheidung des Product Owners.
+
+## Zeitschätzung (Gesamt) — im Rückblick
+
+**Geschätzt waren ~100 Tage bei 1 FTE, gebraucht wurden zwei Tage** (2026-07-24 bis 2026-07-25).
+Die Schätzung stehenzulassen ist ehrlicher als sie zu korrigieren: Sie war für einen Menschen
+gerechnet und taugt nicht als Maßstab für diesen Verlauf. Was sie richtig eingeordnet hat, sind die
+**Risiken** — R1 (Cross-Platform-Build) und R2 (IPC-Robustheit) haben tatsächlich den meisten
+Aufwand verursacht, nur in Stunden statt in Wochen.
+
+
 
 - **Summe Arbeitspakete:** ~78 Tage (L≈15, M≈7; WP1 L, WP2 L, WP3 M, WP4 M, WP5 M, WP6 L, WP7 L).
 - **Puffer (25 % + je 1–2 Tage pro Hoch-Risiko R1/R2/R7):** ~24 Tage.
@@ -249,8 +267,17 @@ neu abzuwägen:
 
 ## Offene Punkte
 
-- **IPC-Form** (WP1.1): length-prefixed JSON über stdio vs. lokaler Socket (Named Pipe/UDS) — braucht evtl. ein Mini-ADR-0021.
-- **Packaging** (WP7.1): ein Container mit .NET + Rust-Host vs. getrennte Artefakte — Ops-Auswirkung.
+- **IPC-Form** (WP1.1): **entschieden und gebaut** — length-prefixed JSON über stdio, inzwischen in
+  Version 4 (Korrelation, Nebenläufigkeit, Abbruch). Ein Mini-ADR-0021 wurde nicht nötig; die Form
+  ist in ADR-0020 und im Modulkopf von `host.rs` festgehalten. Wird der Host je zum Sidecar über
+  einen Socket, ist die IPC-Fläche neu zu bewerten (steht so im Security-Review).
+- **Packaging** (WP7.1): **entschieden und gebaut** — ein Image mit .NET **und** Rust-Host
+  (`/usr/local/bin/mcpmcp-wasi-host`), damit ein Image genau einen Vertragsstand trägt. Belegt auf
+  amd64 und arm64.
+- **Verbleibend nach diesem Plan:** der **Paketteil** von ADR-0016 — signiertes Connector-Manifest,
+  Installation, Update/Rollback in Quarantäne, die vier Vertrauensstufen. Das ist ein eigenes
+  Vorhaben, kein Rest dieses Plans: Der WASI-Host erfüllt den Laufzeitvertrag, ist aber keine
+  Paketverwaltung.
 - **Binärdaten/Streaming** über den Vertrag: **geschlossen.** Begrenzte Blobs sind umgesetzt (`list<u8>` als Base64 mit eigener Längengrenze), IPC-Vertrag v4 steht. Echte Streams sind zurückgestellt — Begründung im Stand-Abschnitt.
 
 ## Referenzen
