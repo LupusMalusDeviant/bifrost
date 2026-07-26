@@ -12,7 +12,7 @@ public sealed class CliUpstreamConnector : IUpstreamConnector
 {
     public UpstreamTransportKind Kind => UpstreamTransportKind.Cli;
 
-    public Task<IUpstreamConnection> ConnectAsync(
+    public async Task<IUpstreamConnection> ConnectAsync(
         ServerId id, UpstreamServerConfig config, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(config);
@@ -20,7 +20,19 @@ public sealed class CliUpstreamConnector : IUpstreamConnector
         var options = config.Cli
             ?? throw new ArgumentException(
                 $"Config '{config.Slug}' hat keine Cli-Optionen.", nameof(config));
-        return Task.FromResult<IUpstreamConnection>(new CliUpstreamConnection(id, options));
+
+        // Kein stiller Rückfall (ADR-0018): Wer Container verlangt und keine Runtime hat, bekommt
+        // hier eine Absage. Auf den Host auszuweichen hiesse, die Isolation abzuschalten, ohne dass
+        // es jemand merkt — der Upstream liefe weiter, nur ungeschützt.
+        if (options.Isolation is { Mode: CliIsolationMode.Container } isolation
+            && await ContainerLaunchPolicy.ProbeAsync(isolation, ct).ConfigureAwait(false) is { } problem)
+        {
+            throw new InvalidOperationException(
+                $"Upstream '{config.Slug}' verlangt Container-Isolation, aber {problem} "
+                + "Ein Rückfall auf den Host findet nicht statt (ADR-0018).");
+        }
+
+        return new CliUpstreamConnection(id, options);
     }
 }
 

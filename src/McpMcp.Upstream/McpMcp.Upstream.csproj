@@ -5,6 +5,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Die Container-Policy (ADR-0018) ist Implementierungsdetail, muss aber pruefbar sein:
+         Was der Aufruf an Haertung mitgibt, gehoert in einen Test und nicht in eine Sichtpruefung. -->
+    <InternalsVisibleTo Include="McpMcp.Upstream.Tests" />
+    <InternalsVisibleTo Include="McpMcp.Integration.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\McpMcp.Abstractions\McpMcp.Abstractions.csproj" />
     <PackageReference Include="ModelContextProtocol" />
   </ItemGroup>

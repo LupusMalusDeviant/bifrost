@@ -16,6 +16,34 @@ internal static class CliProcessPolicy
     {
         ArgumentNullException.ThrowIfNull(options);
 
+        // Im Container-Modus liegt das Programm IM IMAGE, nicht auf diesem Dateisystem. Es gegen
+        // Host-Pfade zu prüfen wäre nicht nur sinnlos, sondern falsch: Die Pfad-Policy des
+        // Host-Modus (absolute Wurzeln, Hash-Pin) ist gerade das, was der Container ersetzt — die
+        // Isolation kommt hier vom Container, nicht vom Pfad.
+        if (options.Isolation is { Mode: CliIsolationMode.Container } container)
+        {
+            if (string.IsNullOrWhiteSpace(container.Image))
+            {
+                throw new ArgumentException("Container-Modus verlangt ein Image.", nameof(options));
+            }
+
+            if (options.ExecutableSha256 is not null)
+            {
+                throw new ArgumentException(
+                    "ExecutableSha256 prüft eine Datei auf DIESEM Host; im Container-Modus liegt das "
+                    + "Programm im Image. Der passende Pin ist ein Image-Digest.");
+            }
+
+            return new ResolvedCliProcess(
+                options.Executable,
+                // Das Arbeitsverzeichnis gilt im Container und wird dort gesetzt.
+                options.WorkingDirectory ?? string.Empty,
+                Encoding.GetEncoding(
+                    options.OutputEncoding,
+                    EncoderFallback.ExceptionFallback,
+                    DecoderFallback.ReplacementFallback));
+        }
+
         var executable = options.AllowPathLookup
             ? options.Executable
             : ResolveExistingPath(options.Executable, isDirectory: false);
@@ -55,14 +83,22 @@ internal static class CliProcessPolicy
     public static ProcessStartInfo CreateStartInfo(
         CliTransportOptions options, ResolvedCliProcess resolved)
     {
+        var container = options.Isolation is { Mode: CliIsolationMode.Container } isolation
+            ? isolation
+            : null;
+
         var startInfo = new ProcessStartInfo
         {
-            FileName = resolved.Executable,
+            // Im Container-Modus wird die Runtime gestartet, nicht das Programm — das Programm
+            // steht am Ende der Argumentliste, hinter dem Image.
+            FileName = container is null ? resolved.Executable : container.Runtime,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
-            WorkingDirectory = resolved.WorkingDirectory,
+            // Das Arbeitsverzeichnis gilt im Container-Modus *innen* und wird dort gesetzt; der
+            // Runtime-Prozess selbst startet neutral.
+            WorkingDirectory = container is null ? resolved.WorkingDirectory : null,
             StandardOutputEncoding = resolved.Encoding,
             StandardErrorEncoding = resolved.Encoding,
         };
@@ -73,7 +109,21 @@ internal static class CliProcessPolicy
                  ?? new Dictionary<string, string>())
         {
             ValidateEnvironmentName(key);
+            // Auch im Container-Modus steht der Wert in der Umgebung des Runtime-Prozesses: Von
+            // dort liest die Runtime ihn zu `--env NAME`, ohne dass er je in einer Kommandozeile
+            // auftaucht.
             startInfo.Environment[key] = value;
+        }
+
+        if (container is not null)
+        {
+            foreach (var argument in ContainerLaunchPolicy.BuildRunArguments(options, container))
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
+
+            // Hinter dem Image folgt das Programm; die Tool-Argumente hängt der Aufrufer an.
+            startInfo.ArgumentList.Add(resolved.Executable);
         }
 
         return startInfo;

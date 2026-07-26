@@ -160,6 +160,47 @@ ist Sichtbarkeit, keine Durchsetzung — eine verstrichene Frist wirkt schon vor
 Einlöse-Pfad sie selbst prüft. Abgelaufene Vorgänge werden nicht gelöscht: Sie bleiben als
 Terminalzustand auditierbar stehen.
 
+## CLI-Programme im Container ausführen
+
+Ein CLI-Upstream läuft standardmäßig als Host-Prozess: gehärtet (absolute Pfade, Root-Allowlist,
+minimale Umgebung, Prozessbaum-Kill), aber **keine Sandbox**. Für Programme, denen man nicht
+vertraut, gibt es seit [ADR-0018](adr/0018-native-prozess-und-container-isolation.md) den
+Container-Modus:
+
+```json
+"Cli": {
+  "Executable": "/usr/bin/werkzeug",
+  "Isolation": { "Mode": "Container", "Image": "meine-registry/werkzeug@sha256:…" },
+  "AllowedReadRoots": ["/daten/ein"],
+  "AllowedWriteRoots": ["/daten/aus"]
+}
+```
+
+Was der Container mitbringt, ohne dass man es einstellen muss: read-only Wurzeldateisystem, fester
+Nicht-root-Benutzer, alle Linux-Capabilities entfernt, `no-new-privileges`, CPU-/RAM-/PID-Grenzen,
+ein beschreibbares `/tmp` als tmpfs, **kein Netzwerk**, und ein Container je Aufruf, der danach
+verschwindet.
+
+Wichtig für die Konfiguration:
+
+- **`Executable` liegt im Image**, nicht auf dem Host. Ein `ExecutableSha256` wird abgelehnt — er
+  prüfte eine Datei auf diesem Rechner. Der passende Pin ist ein **Image-Digest** im Image-Namen
+  (`@sha256:…`), so wie oben.
+- **Mounts kommen aus `AllowedReadRoots`/`AllowedWriteRoots`** — denselben Listen, die der
+  Host-Modus schon durchsetzt. Was nicht darin steht, sieht das Programm nicht.
+- **Secrets** aus `EnvironmentVariables` erreichen das Programm über die Umgebung. Sie stehen nie in
+  der Kommandozeile des Container-Prozesses, wo jeder sie über die Prozessliste läse.
+- **Netzwerk ist aus und bleibt es vorerst.** Eine `NetworkAllow`-Liste wird abgelehnt statt als
+  offenes Bridge-Netz durchgereicht — ein offenes Netz mit dem Etikett „Allowlist" wäre schlimmer
+  als eine ehrliche Absage.
+
+**Kein stiller Rückfall.** Verlangt eine Konfiguration Container und ist keine Runtime erreichbar,
+kommt der Upstream **nicht** hoch, mit genau dieser Meldung. Ein Ausweichen auf den Host würde die
+Isolation abschalten, ohne dass es jemand merkt.
+
+Nicht abgedeckt: **stdio-Upstreams**. Deren Vertrag ist eine langlebige Verbindung, kein Job je
+Aufruf — dafür braucht es einen eigenen Entwurf.
+
 ## WASI-Components als Upstream
 
 Ein signiertes WebAssembly-Component läuft in einem eigenen Rust-Host-Prozess

@@ -26,11 +26,21 @@ jobs:
       - name: Build (warnings are errors)
         run: dotnet build --configuration Release
 
+      # ADR-0018: Die Container-Isolation laeuft gegen eine echte Runtime. Das Image vorher holen,
+      # damit der Pull nicht in das Zeitlimit des Aufrufs faellt.
+      - name: Pull image for the container isolation tests
+        if: matrix.os == 'ubuntu-latest'
+        run: docker pull alpine:3.20
+
       - name: Test with coverage
         env:
           # Auf Linux ist Docker da — ein nicht startbarer Postgres-Container ist dort ein
           # echter Fehler und darf nicht zum stillen Skip werden.
           MCPMCP_REQUIRE_POSTGRES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+          # Ebenso fuer die Container-Isolation: Auf Linux ist die Runtime da, ein Skip waere ein
+          # stiller Ausfall des Nachweises. Auf Windows fehlen Linux-Container — dort wird
+          # uebersprungen, und das Skip-Gate laeuft ohnehin nur auf Linux.
+          MCPMCP_REQUIRE_CONTAINER: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
         # Alle WasiRealHost*-Tests brauchen das gebaute Rust-Binary und laufen deshalb im Job
         # wasi-component-spike (dort mit MCPMCP_REQUIRE_WASI_HOST=1, also ohne Skip-Option).
         # Hier ausgeschlossen statt übersprungen: sonst reißt das Skip-Gate unten.

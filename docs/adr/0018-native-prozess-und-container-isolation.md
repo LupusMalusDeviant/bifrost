@@ -1,6 +1,36 @@
 # ADR-0018: Native Prozess- und Container-Isolation
 
-- **Status:** Vorgeschlagen
+- **Status:** Vorgeschlagen; der **Container-Modus für CLI-Upstreams** ist am 2026-07-26 umgesetzt
+  und an einer laufenden Runtime belegt. Offen bleiben die Netzwerk-Allowlist und der Modus für
+  stdio-Upstreams.
+
+> **Umsetzungsstand 2026-07-26.** Der Modus hängt am bestehenden CLI-Transport
+> (`Cli.Isolation.Mode = Container`), nicht an einem neuen Transport: Was sich ändert, ist die
+> **Ausführung**, nicht der Vertrag — typisierte Manifeste, Argumentbindung, Ausgabegrenzen und
+> Prozessbaum-Kill bleiben dieselben. Ohne den Abschnitt verhält sich eine bestehende Konfiguration
+> unverändert.
+>
+> Umgesetzt aus der Mindestpolicy: read-only Wurzeldateisystem, fester Nicht-root-Benutzer, alle
+> Capabilities entfernt, `no-new-privileges`, CPU-/RAM-/PID-Grenzen, beschreibbares `/tmp` als
+> tmpfs, Netzwerk **aus**, Mounts ausschließlich aus den kanonischen Read-/Write-Allowlisten (den
+> gleichen, die der Host-Modus schon durchsetzt), ein Job je Aufruf (`--rm`).
+>
+> Secrets gehen als `--env NAME` **ohne Wert** mit: Die Runtime liest den Wert aus ihrer eigenen
+> Umgebung. Mit `NAME=wert` stünde das Geheimnis in der Kommandozeile des Container-Prozesses und
+> wäre für jeden lesbar, der die Prozessliste sieht.
+>
+> **Kein stiller Rückfall** ist als Verhalten gebaut und getestet: Verlangt eine Konfiguration
+> Container und ist keine Runtime erreichbar, kommt der Upstream nicht hoch — mit einer Meldung, die
+> das sagt.
+>
+> **Zwei Punkte ausdrücklich offen**, statt halb gebaut: Die **Netzwerk-Allowlist** wird abgelehnt
+> statt als offenes Bridge-Netz durchgereicht — ein offenes Netz mit dem Etikett „Allowlist" wäre
+> schlimmer als eine ehrliche Absage. Und **stdio-Upstreams** laufen weiterhin nur im Hostmodus;
+> ihr Vertrag ist eine langlebige Verbindung, kein Job je Aufruf, und das ist ein eigener Entwurf.
+>
+> Belegt an einer laufenden Runtime: 7 Tests (Ausführung im Container, Nicht-root, read-only,
+> beschreibbares `/tmp`, kein Netz, Secret-Zustellung ohne Kommandozeile, verweigerter Rückfall)
+> plus 8 Tests auf den Aufbau der Argumente, die ohne Runtime laufen.
 - **Datum:** 2026-07-24
 
 ## Kontext

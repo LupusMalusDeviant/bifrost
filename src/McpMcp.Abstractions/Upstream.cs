@@ -106,7 +106,67 @@ public sealed record CliTransportOptions(
     IReadOnlyList<string>? AllowedWriteRoots = null,
     int MaxConcurrency = 4,
     string OutputEncoding = "utf-8",
-    string? ExecutableSha256 = null);
+    string? ExecutableSha256 = null,
+    /// <summary>
+    /// Wie das Programm ausgeführt wird (ADR-0018). Ohne Angabe gilt der bisherige
+    /// <see cref="CliIsolationMode.Host"/>-Modus — bestehende Konfigurationen ändern ihr Verhalten
+    /// nicht dadurch, dass es die Option jetzt gibt.
+    /// </summary>
+    CliIsolationOptions? Isolation = null);
+
+/// <summary>Ausführungsmodus eines CLI-Upstreams (ADR-0018).</summary>
+public enum CliIsolationMode
+{
+    /// <summary>
+    /// Direkt im Host-Prozessraum. Gehärtet (absolute Pfade, Root-Allowlist, minimale Umgebung,
+    /// Prozessbaum-Kill), aber <b>keine Sandbox</b> — nur für ausdrücklich vertrauenswürdige
+    /// Programme.
+    /// </summary>
+    Host = 0,
+
+    /// <summary>
+    /// In einem Container je Aufruf. Der Default für vorhandene, nicht vertrauenswürdige Programme.
+    /// </summary>
+    Container = 1,
+}
+
+/// <summary>
+/// Container-Ausführung eines CLI-Upstreams (ADR-0018).
+/// <para>
+/// Die Mount-Allowlisten kommen aus <see cref="CliTransportOptions.AllowedReadRoots"/> und
+/// <see cref="CliTransportOptions.AllowedWriteRoots"/> — dieselben kanonischen Wurzeln, die der
+/// Host-Modus schon durchsetzt. Zwei getrennte Listen wären zwei Wahrheiten über dieselbe Frage.
+/// </para>
+/// <para>
+/// <b>Kein stiller Rückfall.</b> Ist der Modus <see cref="CliIsolationMode.Container"/> und keine
+/// Container-Runtime erreichbar, kommt der Upstream nicht hoch. Ein Ausweichen auf den Host wäre
+/// eine stille Herabstufung der Isolation — genau das verbietet ADR-0018.
+/// </para>
+/// </summary>
+/// <param name="Image">Das Image, in dem das Programm läuft. Pflicht im Container-Modus.</param>
+/// <param name="Runtime">Ausführbare Container-Runtime, z. B. <c>docker</c> oder <c>podman</c>.</param>
+/// <param name="User">Benutzer im Container; Vorgabe ist ein fester Nicht-root-Benutzer.</param>
+/// <param name="MemoryLimitMb">Arbeitsspeicher-Obergrenze in MiB.</param>
+/// <param name="CpuLimit">CPU-Anteil, z. B. <c>1.0</c> für einen Kern.</param>
+/// <param name="PidLimit">Obergrenze der Prozesse im Container — begrenzt Fork-Bomben.</param>
+/// <param name="NetworkAllow">
+/// Erlaubte Netzwerkziele. <b>Leer heißt: kein Netzwerk.</b> Nicht andersherum — ein vergessenes
+/// Feld darf keinen Netzzugang öffnen.
+/// </param>
+/// <param name="TmpfsSizeMb">
+/// Größe des beschreibbaren <c>/tmp</c>. Das Wurzeldateisystem ist read-only; ohne diesen Bereich
+/// scheitern Programme, die Temporärdateien anlegen — mit einer Meldung, die niemand versteht.
+/// </param>
+public sealed record CliIsolationOptions(
+    CliIsolationMode Mode = CliIsolationMode.Host,
+    string? Image = null,
+    string Runtime = "docker",
+    string User = "65532:65532",
+    int MemoryLimitMb = 512,
+    double CpuLimit = 1.0,
+    int PidLimit = 128,
+    IReadOnlyList<string>? NetworkAllow = null,
+    int TmpfsSizeMb = 64);
 
 /// <summary>
 /// Ein benanntes CLI-Kommando = ein Tool. <see cref="FixedArguments"/> stehen fest; ist

@@ -294,7 +294,13 @@ public static partial class UpstreamConfigValidator
             throw new ArgumentException("Cli.Executable darf nicht leer sein.", nameof(config));
         }
 
-        if (!cli.AllowPathLookup && !Path.IsPathFullyQualified(cli.Executable))
+        // Container-Modus zuerst: Dort gelten die Pfadregeln des Host-Modus nicht, weil das
+        // Programm im Image liegt und die Isolation nicht vom Pfad kommt (ADR-0018).
+        if (cli.Isolation is { Mode: CliIsolationMode.Container } isolation)
+        {
+            ValidateContainerIsolation(isolation, cli, config);
+        }
+        else if (!cli.AllowPathLookup && !Path.IsPathFullyQualified(cli.Executable))
         {
             throw new ArgumentException(
                 "Cli.Executable muss im sicheren Modus ein absoluter Pfad sein. "
@@ -372,6 +378,62 @@ public static partial class UpstreamConfigValidator
             {
                 throw new ArgumentException(
                     $"CLI-Environment-Name '{name}' ist plattformübergreifend ungültig.", nameof(config));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Prüft die Container-Optionen, bevor ein Upstream überhaupt startet (ADR-0018). Was hier
+    /// durchfällt, würde sonst erst beim ersten Aufruf auffallen — mit einer Meldung der
+    /// Container-Runtime statt einer, die sagt, welches Feld falsch ist.
+    /// </summary>
+    private static void ValidateContainerIsolation(
+        CliIsolationOptions isolation, CliTransportOptions cli, UpstreamServerConfig config)
+    {
+        if (string.IsNullOrWhiteSpace(isolation.Image))
+        {
+            throw new ArgumentException(
+                "Cli.Isolation.Image ist im Container-Modus Pflicht.", nameof(config));
+        }
+
+        if (string.IsNullOrWhiteSpace(isolation.Runtime))
+        {
+            throw new ArgumentException(
+                "Cli.Isolation.Runtime darf nicht leer sein (z. B. 'docker' oder 'podman').", nameof(config));
+        }
+
+        if (isolation.MemoryLimitMb <= 0 || isolation.PidLimit <= 0 || isolation.CpuLimit <= 0
+            || isolation.TmpfsSizeMb < 0)
+        {
+            throw new ArgumentException(
+                "Cli.Isolation-Limits müssen positiv sein — ein Limit von 0 wäre keine Grenze, sondern ein Stillstand.",
+                nameof(config));
+        }
+
+        if (isolation.NetworkAllow is { Count: > 0 })
+        {
+            throw new ArgumentException(
+                "Cli.Isolation.NetworkAllow ist noch nicht umgesetzt. Der Container läuft ohne Netzwerk; "
+                + "ein offenes Netz mit dem Etikett 'Allowlist' wäre schlimmer als eine ehrliche Absage.",
+                nameof(config));
+        }
+
+        if (cli.ExecutableSha256 is not null)
+        {
+            throw new ArgumentException(
+                "Cli.ExecutableSha256 prüft eine Datei auf dem Host; im Container-Modus liegt das Programm "
+                + "im Image. Der passende Pin ist ein Image-Digest im Image-Namen.",
+                nameof(config));
+        }
+
+        // Mounts müssen absolut sein — ein relativer Pfad im Volume-Argument bezöge sich auf das
+        // Arbeitsverzeichnis der Runtime und träfe im Container etwas anderes als gedacht.
+        foreach (var root in (cli.AllowedReadRoots ?? []).Concat(cli.AllowedWriteRoots ?? []))
+        {
+            if (!Path.IsPathFullyQualified(root))
+            {
+                throw new ArgumentException(
+                    $"Mount-Wurzel '{root}' muss absolut sein.", nameof(config));
             }
         }
     }
