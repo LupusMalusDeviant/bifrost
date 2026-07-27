@@ -44,6 +44,13 @@
                                 }
                                 <button class="btn-sm btn-ghost" @onclick="() => StartEdit(s.Id)">Bearbeiten</button>
                                 <button class="btn-sm btn-ghost" @onclick="() => ShowHistory(s.Id, s.Slug)">Versionen</button>
+                                @if (_oauthServers.Contains(s.Id))
+                                {
+                                    @* Echte Navigation statt Blazor-Klick: Der Autorisierungsvorgang
+                                       endet in einer Weiterleitung aus dem Browser zurück, und ein
+                                       Circuit kann das nicht. *@
+                                    <a class="btn-sm btn-ghost" href="@($"/oauth/upstream/{s.Id.Value}/connect")">Verbinden</a>
+                                }
                                 <button class="btn-sm btn-danger" @onclick="() => Remove(s.Id, s.Slug)">Entfernen</button>
                             </td>
                         </tr>
@@ -274,6 +281,9 @@
 
 @code {
     private IReadOnlyList<UpstreamStatus> _statuses = [];
+
+    /// <summary>Upstreams, für die eine OAuth-Anbindung konfiguriert ist — nur die zeigen den Knopf.</summary>
+    private HashSet<ServerId> _oauthServers = [];
     private UpstreamTransportKind _kind = UpstreamTransportKind.Stdio;
     private string _slug = "", _displayName = "", _command = "", _args = "", _env = "";
     private string _httpUrl = "", _headers = "";
@@ -303,7 +313,14 @@
 
     protected override void OnInitialized() => Reload();
 
-    private void Reload() => _statuses = Supervisor.Statuses.OrderBy(s => s.Slug).ToList();
+    private void Reload()
+    {
+        _statuses = Supervisor.Statuses.OrderBy(s => s.Slug).ToList();
+        // Ob ein Upstream OAuth braucht, steht in seiner Konfiguration, nicht im Status.
+        _oauthServers = [.. ConfigStore.GetAllLatestAsync(CancellationToken.None).GetAwaiter().GetResult()
+            .Where(kv => kv.Value.Config.Http?.OAuth is not null)
+            .Select(kv => kv.Key)];
+    }
 
     private async Task<string> UserAsync()
         => (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "?";
