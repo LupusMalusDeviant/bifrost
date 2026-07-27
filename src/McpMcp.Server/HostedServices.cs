@@ -26,6 +26,7 @@ public sealed partial class GatewayStartupService : IHostedService
     private readonly ApprovalPolicyStore _approvalPolicy;
     private readonly PublisherTrustStore _publisherTrust;
     private readonly ConnectorPackageResolver _packages;
+    private readonly ToolDefinitionPinStore _toolPins;
     private readonly IAuditSink _audit;
     private readonly IApiKeyService _apiKeys;
     private readonly IUiUserService _uiUsers;
@@ -45,6 +46,7 @@ public sealed partial class GatewayStartupService : IHostedService
         ApprovalPolicyStore approvalPolicy,
         PublisherTrustStore publisherTrust,
         ConnectorPackageResolver packages,
+        ToolDefinitionPinStore toolPins,
         IAuditSink audit,
         IApiKeyService apiKeys,
         IUiUserService uiUsers,
@@ -63,6 +65,7 @@ public sealed partial class GatewayStartupService : IHostedService
         _approvalPolicy = approvalPolicy;
         _publisherTrust = publisherTrust;
         _packages = packages;
+        _toolPins = toolPins;
         _audit = audit;
         _apiKeys = apiKeys;
         _uiUsers = uiUsers;
@@ -96,6 +99,11 @@ public sealed partial class GatewayStartupService : IHostedService
             Log.ApprovalsMigrated(_logger, migratedApprovals);
         }
         await _publisherTrust.LoadAsync(cancellationToken);
+
+        // Die festgehaltenen Tool-Definitionen ebenfalls vor dem Start der Upstreams — sonst
+        // liefe die erste Discovery gegen einen leeren Cache und nähme jede Änderung stillschweigend
+        // als Erstsichtung an.
+        await _toolPins.LoadAsync(cancellationToken);
 
         // ADR-0016: Die aktiven Paketversionen müssen stehen, BEVOR Upstreams starten — ein
         // Upstream, der auf ein Paket zeigt, findet sonst keine Dateien und bliebe unten, obwohl

@@ -19,6 +19,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     private readonly TimeProvider _time;
     private readonly ILogger<UpstreamSupervisor> _logger;
     private readonly IAuditSink? _audit;
+    private readonly IToolDefinitionPinStore? _pins;
     private readonly ConcurrentDictionary<ServerId, Entry> _entries = new();
 
     public UpstreamSupervisor(
@@ -27,7 +28,8 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         SupervisorOptions? options = null,
         TimeProvider? timeProvider = null,
         ILogger<UpstreamSupervisor>? logger = null,
-        IAuditSink? audit = null)
+        IAuditSink? audit = null,
+        IToolDefinitionPinStore? pins = null)
     {
         ArgumentNullException.ThrowIfNull(connectors);
         ArgumentNullException.ThrowIfNull(store);
@@ -37,6 +39,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         _time = timeProvider ?? TimeProvider.System;
         _logger = logger ?? NullLogger<UpstreamSupervisor>.Instance;
         _audit = audit;
+        _pins = pins;
     }
 
     public event EventHandler<UpstreamChangedEventArgs>? Changed;
@@ -301,11 +304,18 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
                     throw;
                 }
 
+                // Rug-Pull-Erkennung: Was der Upstream jetzt meldet, wird gegen den festgehaltenen
+                // Stand geprüft. Geänderte Tools erreichen den Katalog gar nicht erst — Filtern an
+                // der Quelle statt einer zweiten Prüfung im Aufrufpfad.
+                var (screened, quarantined) = await ScreenInventoryAsync(entry, inventory, ct)
+                    .ConfigureAwait(false);
+
                 lock (entry.Gate)
                 {
                     entry.Connection = guarded;
-                    entry.Inventory = inventory;
-                    entry.ToolCount = inventory.Tools.Count;
+                    entry.Inventory = screened;
+                    entry.QuarantinedTools = quarantined;
+                    entry.ToolCount = screened.Tools.Count;
                     entry.LastHealthyAt = _time.GetUtcNow();
                 }
 
@@ -415,6 +425,93 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         }
     }
 
+    /// <summary>
+    /// Prüft jede gemeldete Tool-Definition gegen den festgehaltenen Fingerabdruck und nimmt
+    /// geänderte aus dem Inventar.
+    /// <para>
+    /// <b>Warum nur das einzelne Tool und nicht der ganze Upstream:</b> Ein Rug Pull zielt auf ein
+    /// Tool. Den ganzen Server abzuschalten wäre Kollateralschaden bei jedem normalen Update — und
+    /// ein Schutz, der bei jedem Update den Betrieb anhält, wird abgeschaltet. Das geänderte Tool
+    /// ist bis zur Annahme weder sichtbar noch aufrufbar; die übrigen laufen weiter.
+    /// </para>
+    /// <para>
+    /// Ohne Pin-Store passiert nichts — dann verhält sich der Supervisor wie vorher.
+    /// </para>
+    /// </summary>
+    /// <summary>
+    /// Fragt den Katalog eines laufenden Upstreams neu ab und wendet die Definitionsprüfung erneut
+    /// an. Wird nach der Annahme einer geänderten Definition aufgerufen: Das Tool kommt damit zurück,
+    /// ohne dass der Upstream neu verbinden muss — und die Prüfung läuft gegen die <em>echte</em>
+    /// aktuelle Definition, nicht gegen eine zwischengespeicherte Kopie.
+    /// </summary>
+    public async Task RediscoverAsync(ServerId id, CancellationToken ct)
+    {
+        if (!_entries.TryGetValue(id, out var entry))
+        {
+            return;
+        }
+
+        GuardedUpstreamConnection? connection;
+        lock (entry.Gate)
+        {
+            connection = entry.Connection;
+        }
+
+        if (connection is null)
+        {
+            return;
+        }
+
+        var inventory = await connection.DiscoverAsync(ct).ConfigureAwait(false);
+        var (screened, quarantined) = await ScreenInventoryAsync(entry, inventory, ct).ConfigureAwait(false);
+        lock (entry.Gate)
+        {
+            entry.Inventory = screened;
+            entry.QuarantinedTools = quarantined;
+            entry.ToolCount = screened.Tools.Count;
+        }
+
+        Raise(entry, UpstreamChangeKind.InventoryChanged);
+    }
+
+    private async Task<(UpstreamInventory Inventory, IReadOnlyList<string> Quarantined)>
+        ScreenInventoryAsync(Entry entry, UpstreamInventory inventory, CancellationToken ct)
+    {
+        if (_pins is null)
+        {
+            return (inventory, []);
+        }
+
+        var kept = new List<ToolDescriptor>(inventory.Tools.Count);
+        var quarantined = new List<string>();
+        foreach (var tool in inventory.Tools)
+        {
+            var hash = ToolDefinitionHash.Compute(tool);
+            var verdict = await _pins.VerifyAsync(entry.Id, tool.Name, hash, ct).ConfigureAwait(false);
+            if (verdict is ToolDefinitionVerdict.Changed)
+            {
+                quarantined.Add(tool.Name);
+                Log.ToolDefinitionChanged(_logger, entry.Config.Slug, tool.Name);
+                // Eigene Audit-Zeile statt nur eines Logeintrags: Eine stillschweigend geänderte
+                // Tool-Definition ist ein sicherheitsrelevantes Ereignis, kein Betriebsdetail.
+                _audit?.Record(new AuditEvent(
+                    _time.GetUtcNow(), Caller: null, CallOrigin.System, AuditEventKind.ServerLifecycle,
+                    entry.Id, Tool: NamespacedToolName.Create(entry.Config.Slug, tool.Name).Value,
+                    Status: null, RedactedArguments: null,
+                    RequestBytes: null, ResponseBytes: null, Duration: null,
+                    Detail: $"{entry.Config.Slug}: Tool-Definition von '{tool.Name}' hat sich geändert "
+                        + "— zurückgehalten bis zur Annahme (Rug-Pull-Schutz)."));
+                continue;
+            }
+
+            kept.Add(tool);
+        }
+
+        return quarantined.Count == 0
+            ? (inventory, [])
+            : (inventory with { Tools = kept }, quarantined);
+    }
+
     private async Task DisposeQuietlyAsync(GuardedUpstreamConnection connection)
     {
         try
@@ -500,6 +597,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
 
         public object Gate { get; } = new();
 
+        /// <summary>Tools, deren Definition sich geändert hat und die deshalb zurückgehalten werden.</summary>
+        public IReadOnlyList<string> QuarantinedTools { get; set; } = [];
+
         public SemaphoreSlim AdminLock { get; } = new(1, 1);
 
         public UpstreamServerConfig Config { get; set; }
@@ -526,7 +626,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         {
             lock (Gate)
             {
-                return new UpstreamStatus(Id, Config.Slug, State, LastError, ToolCount, LastHealthyAt);
+                return new UpstreamStatus(
+                    Id, Config.Slug, State, LastError, ToolCount, LastHealthyAt,
+                    QuarantinedTools.Count == 0 ? null : QuarantinedTools);
             }
         }
     }
@@ -536,6 +638,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         [LoggerMessage(Level = LogLevel.Information,
             Message = "Upstream {Slug}: Healthy mit {ToolCount} Tools.")]
         public static partial void UpstreamHealthy(ILogger logger, string slug, int toolCount);
+
+        [LoggerMessage(Level = LogLevel.Warning,
+            Message = "Upstream {Slug}: Definition von Tool {Tool} weicht vom angenommenen Stand ab — zurueckgehalten.")]
+        public static partial void ToolDefinitionChanged(ILogger logger, string slug, string tool);
 
         [LoggerMessage(Level = LogLevel.Warning,
             Message = "Upstream {Slug}: Verbindung verloren, Restart-Versuch {Attempt}/{MaxRetries} in {Delay}.")]

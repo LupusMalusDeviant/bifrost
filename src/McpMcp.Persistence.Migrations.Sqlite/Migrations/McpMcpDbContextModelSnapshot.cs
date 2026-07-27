@@ -521,6 +521,35 @@ namespace McpMcp.Persistence.Migrations.Sqlite.Migrations
                     b.ToTable("Tasks");
                 });
 
+            modelBuilder.Entity("McpMcp.Persistence.ToolDefinitionPinRow", b =>
+                {
+                    b.Property<Guid>("ServerId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Tool")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("AcceptedAtTicks")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AcceptedHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PendingHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("PendingSinceTicks")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("ServerId", "Tool");
+
+                    b.ToTable("ToolDefinitionPins");
+                });
+
             modelBuilder.Entity("McpMcp.Persistence.ToolDescriptionOverrideRow", b =>
                 {
                     b.Property<string>("Tool")

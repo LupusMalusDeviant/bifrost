@@ -952,6 +952,41 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         Path.Combine("packages", "com.example.paket", version), PackageState.Quarantined, at, null,
         ["env:TOKEN", "fs-read:/daten"]);
 
+    /// <summary>
+    /// Die festgehaltenen Tool-Definitionen müssen einen Neustart überleben — sonst nähme die erste
+    /// Discovery nach jedem Neustart jede Änderung stillschweigend als Erstsichtung an, und der
+    /// Rug-Pull-Schutz wäre genau dann wirkungslos, wenn er gebraucht wird.
+    /// </summary>
+    [Fact]
+    public async Task ToolDefinitionPins_survive_a_restart_and_track_pending_changes()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var server = ServerId.New();
+        var store = new ToolDefinitionPinStore(Factory, TimeProvider.System);
+
+        (await store.VerifyAsync(server, "read_file", new string('a', 64), ct))
+            .Should().Be(ToolDefinitionVerdict.FirstSeen);
+        (await store.VerifyAsync(server, "read_file", new string('a', 64), ct))
+            .Should().Be(ToolDefinitionVerdict.Unchanged);
+        (await store.VerifyAsync(server, "read_file", new string('b', 64), ct))
+            .Should().Be(ToolDefinitionVerdict.Changed);
+
+        // Ein frischer Store auf derselben Datenbank: genau der Neustart-Fall.
+        var afterRestart = new ToolDefinitionPinStore(Factory, TimeProvider.System);
+        await afterRestart.LoadAsync(ct);
+        var pin = afterRestart.All.Single(p => p.Server == server && p.Tool == "read_file");
+        pin.AcceptedHash.Should().Be(new string('a', 64));
+        pin.HasPendingChange.Should().BeTrue("die Abweichung ist noch offen");
+
+        await afterRestart.AcceptAsync(server, "read_file", ct);
+        (await afterRestart.VerifyAsync(server, "read_file", new string('b', 64), ct))
+            .Should().Be(ToolDefinitionVerdict.Unchanged, "die neue Fassung ist jetzt der Bezugspunkt");
+
+        await afterRestart.ForgetServerAsync(server, ct);
+        afterRestart.All.Should().NotContain(p => p.Server == server);
+    }
+
     private async Task WaitForRowCountAsync(int expected, int timeoutMs = 30000)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();

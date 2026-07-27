@@ -3,6 +3,8 @@
 @using System.Text.Json
 @using System.Text.Json.Serialization
 @inject IUpstreamSupervisor Supervisor
+@inject McpMcp.Core.Upstreams.UpstreamSupervisor ConcreteSupervisor
+@inject IToolDefinitionPinStore ToolPins
 @inject IUpstreamConfigStore ConfigStore
 @inject IUpstreamConnectionTester Tester
 @inject IAuditSink Audit
@@ -45,6 +47,26 @@
                                 <button class="btn-sm btn-danger" @onclick="() => Remove(s.Id, s.Slug)">Entfernen</button>
                             </td>
                         </tr>
+                        @if (s.QuarantinedTools is { Count: > 0 } held)
+                        {
+                            @* Ein zurückgehaltenes Tool muss sichtbar sein. Sonst sucht jemand ein
+                               Tool, das ohne Erklärung verschwunden ist — und schaltet am Ende den
+                               Schutz ab, statt die Änderung anzusehen. *@
+                            <tr>
+                                <td colspan="5" class="muted">
+                                    <strong>Definition geändert:</strong>
+                                    Diese Tools werden zurückgehalten, bis die neue Fassung
+                                    angenommen ist — sie sind weder sichtbar noch aufrufbar.
+                                    @foreach (var tool in held)
+                                    {
+                                        <span class="mono" style="margin-left:.5rem">@tool</span>
+                                        <button class="btn-sm" style="margin-left:.3rem"
+                                                @onclick="() => AcceptDefinition(s.Id, s.Slug, tool)"
+                                                disabled="@_busy">Neue Fassung annehmen</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
                     }
                 </tbody>
             </table>
@@ -509,6 +531,27 @@
         await Supervisor.SetEnabledAsync(id, enabled, CancellationToken.None);
         UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged, enabled ? "server-enabled" : "server-disabled", id);
         Reload();
+    }
+
+    /// <summary>
+    /// Nimmt die geänderte Definition an und fragt den Katalog neu ab. Erst danach ist das Tool
+    /// wieder da — mit der neuen Fassung, die jemand angesehen hat.
+    /// </summary>
+    private async Task AcceptDefinition(ServerId id, string slug, string tool)
+    {
+        _busy = true;
+        try
+        {
+            await ToolPins.AcceptAsync(id, tool, CancellationToken.None);
+            await ConcreteSupervisor.RediscoverAsync(id, CancellationToken.None);
+            UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged,
+                $"tool-definition-accepted:{slug}__{tool}", id);
+        }
+        finally
+        {
+            _busy = false;
+            Reload();
+        }
     }
 
     private async Task ShowHistory(ServerId id, string slug)

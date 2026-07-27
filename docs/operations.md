@@ -197,6 +197,43 @@ Zu den Parametern: `paramStructure: by-name` schickt ein Objekt, `by-position` e
 Array** in der Reihenfolge aus dem Dokument. Der Aufrufer nennt in beiden Fällen die Namen; die
 Reihenfolge kommt aus der Beschreibung, nicht aus der Reihenfolge im Aufruf.
 
+## Geänderte Tool-Definitionen (Rug-Pull-Schutz)
+
+Ein Upstream, dem einmal vertraut wurde, kann später still die **Beschreibung** eines Tools ändern.
+Die Beschreibung landet unverändert im Kontext des Modells — sie ist damit der bequemste Weg,
+Anweisungen einzuschleusen, ohne die Konfiguration anzufassen. Kein MCP-Standard verlangt Integrität
+von Tool-Definitionen; das OWASP-Cheat-Sheet fordert sie ausdrücklich, und CVE-2025-54136 zeigt den
+Fall in freier Wildbahn.
+
+Der Gateway hält deshalb bei jeder Discovery einen Fingerabdruck über **Name, Beschreibung und
+Eingabeschema** fest und vergleicht ihn:
+
+| Fall | Verhalten |
+|---|---|
+| Erstsichtung | Wird übernommen (Trust-on-first-use) und ist ab dann der Bezugspunkt. |
+| Unverändert | Nichts passiert. |
+| **Abweichend** | Das Tool wird **zurückgehalten** — nicht sichtbar, nicht aufrufbar — und die Abweichung landet im Audit. |
+| Zurück zum angenommenen Stand | Die Abweichung gilt als erledigt. |
+
+**Zurückgehalten wird nur das geänderte Tool, nicht der ganze Server.** Ein Rug Pull zielt auf ein
+Tool; den Upstream komplett abzuschalten wäre bei jedem normalen Update Kollateralschaden — und ein
+Schutz, der bei jedem Update den Betrieb anhält, wird abgeschaltet.
+
+Die neue Fassung nimmt ein Administrator an, in der UI unter *Server* (das zurückgehaltene Tool
+steht dort mit Knopf) oder über die API:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/tool-definitions/<serverId>/<tool>/accept \
+  -H "Authorization: Bearer $KEY"
+```
+
+Danach wird der Katalog des Upstreams neu abgefragt, und das Tool ist mit der neuen Fassung wieder
+da — ohne Neustart.
+
+> **Was das nicht leistet:** Trust-on-first-use schützt gegen Änderungen **nach** der Aufnahme, nicht
+> gegen einen von Anfang an bösartigen Upstream. Dafür sind Herausgeber-Signaturen zuständig (siehe
+> Connector-Pakete unten) und die Entscheidung, wen man überhaupt anschließt.
+
 ## Connector-Pakete installieren
 
 Ein Connector kann als signiertes Paket kommen statt als Pfad in der Konfiguration

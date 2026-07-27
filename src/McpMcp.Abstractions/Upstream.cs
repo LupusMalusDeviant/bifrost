@@ -396,7 +396,13 @@ public sealed record UpstreamStatus(
     UpstreamState State,
     string? LastError,
     int ToolCount,
-    DateTimeOffset LastHealthyAt);
+    DateTimeOffset LastHealthyAt,
+    /// <summary>
+    /// Tools, deren Definition sich gegenüber dem angenommenen Stand geändert hat und die deshalb
+    /// zurückgehalten werden (Rug-Pull-Schutz). Sie zählen nicht in <see cref="ToolCount"/> — sie
+    /// sind weder sichtbar noch aufrufbar, bis jemand die neue Fassung annimmt.
+    /// </summary>
+    IReadOnlyList<string>? QuarantinedTools = null);
 
 /// <summary>Drain-Verhalten beim Entfernen/Stoppen unter Last (WP1.4): Gnadenfrist für In-Flight-Calls, danach Cancel.</summary>
 public sealed record DrainPolicy(TimeSpan GracePeriod)

@@ -492,7 +492,67 @@ internal static class ApiEndpoints
 
         MapPublisherManagement(api);
         MapConnectorPackages(api);
+        MapToolDefinitionPins(api);
         MapWebhookManagement(api);
+    }
+
+    /// <summary>
+    /// Festgehaltene Tool-Definitionen (Rug-Pull-Schutz). Ändert ein Upstream still die Beschreibung
+    /// oder das Schema eines Tools, wird es zurückgehalten, bis hier jemand die neue Fassung annimmt.
+    /// Nur Admins — es ist dieselbe Entscheidung wie „diesem Server vertraue ich".
+    /// </summary>
+    private static void MapToolDefinitionPins(RouteGroupBuilder api)
+    {
+        var pins = api.MapGroup("/tool-definitions").AddEndpointFilter(RequireAdminAsync);
+
+        pins.MapGet("/", (IToolDefinitionPinStore store, IUpstreamSupervisor supervisor) =>
+        {
+            var slugs = supervisor.Statuses.ToDictionary(s => s.Id, s => s.Slug);
+            return Results.Ok(new
+            {
+                pins = store.All.Select(pin => new
+                {
+                    server = pin.Server.Value,
+                    slug = slugs.TryGetValue(pin.Server, out var slug) ? slug : null,
+                    tool = pin.Tool,
+                    acceptedHash = pin.AcceptedHash,
+                    acceptedAt = pin.AcceptedAt,
+                    pendingHash = pin.PendingHash,
+                    pendingSince = pin.PendingSince,
+                    quarantined = pin.HasPendingChange,
+                }),
+            });
+        });
+
+        // Annahme der geänderten Fassung. Danach wird der Katalog des Upstreams neu abgefragt,
+        // damit das Tool ohne Neustart zurückkommt — und die Prüfung gegen die echte aktuelle
+        // Definition läuft, nicht gegen eine zwischengespeicherte Kopie.
+        pins.MapPost("/{serverId:guid}/{tool}/accept", async (
+            Guid serverId, string tool, HttpContext ctx, IToolDefinitionPinStore store,
+            UpstreamSupervisor supervisor, IAuditSink audit, TimeProvider time,
+            CancellationToken ct) =>
+        {
+            var server = new ServerId(serverId);
+            var pin = store.All.FirstOrDefault(p => p.Server == server && p.Tool == tool);
+            if (pin is null)
+            {
+                return Results.NotFound();
+            }
+
+            if (!pin.HasPendingChange)
+            {
+                return Results.BadRequest(new
+                {
+                    error = $"Für '{tool}' steht keine geänderte Definition an.",
+                });
+            }
+
+            await store.AcceptAsync(server, tool, ct);
+            await supervisor.RediscoverAsync(server, ct);
+            AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, server,
+                $"tool-definition-accepted:{tool}");
+            return Results.NoContent();
+        });
     }
 
     /// <summary>

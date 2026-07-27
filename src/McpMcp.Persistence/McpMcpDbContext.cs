@@ -50,6 +50,8 @@ public sealed class McpMcpDbContext : DbContext
 
     public DbSet<ConnectorPackageRow> ConnectorPackages => Set<ConnectorPackageRow>();
 
+    public DbSet<ToolDefinitionPinRow> ToolDefinitionPins => Set<ToolDefinitionPinRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<ConfigVersionRow>(e =>
@@ -183,6 +185,16 @@ public sealed class McpMcpDbContext : DbContext
             // hätte damit jedem bereits gepinnten Schlüssel stillschweigend mehr Rechte gegeben,
             // als er je hatte.
             e.Property(r => r.TrustLevel).HasDefaultValue((int)ConnectorTrustLevel.ThirdParty);
+        });
+
+        modelBuilder.Entity<ToolDefinitionPinRow>(e =>
+        {
+            // Ein Pin je Upstream und Tool-Name. Der Name ist der native, nicht der namespaced —
+            // ein Slug-Wechsel darf den festgehaltenen Stand nicht verlieren.
+            e.HasKey(r => new { r.ServerId, r.Tool });
+            e.Property(r => r.Tool).HasMaxLength(300);
+            e.Property(r => r.AcceptedHash).IsRequired().HasMaxLength(64);
+            e.Property(r => r.PendingHash).HasMaxLength(64);
         });
 
         modelBuilder.Entity<ConnectorPackageRow>(e =>
@@ -533,6 +545,26 @@ public sealed class PublisherKeyRow
     /// stillschweigend zu „offiziell" werden.
     /// </summary>
     public int TrustLevel { get; set; } = (int)ConnectorTrustLevel.ThirdParty;
+}
+
+/// <summary>
+/// Der festgehaltene Fingerabdruck einer Tool-Definition (Rug-Pull-Erkennung). Eine Zeile je
+/// Upstream und Tool; <see cref="PendingHash"/> gesetzt heißt: abweichende Fassung gesehen, Tool
+/// ist bis zur Annahme aus dem Katalog genommen.
+/// </summary>
+public sealed class ToolDefinitionPinRow
+{
+    public Guid ServerId { get; set; }
+
+    public string Tool { get; set; } = string.Empty;
+
+    public string AcceptedHash { get; set; } = string.Empty;
+
+    public long AcceptedAtTicks { get; set; }
+
+    public string? PendingHash { get; set; }
+
+    public long? PendingSinceTicks { get; set; }
 }
 
 /// <summary>

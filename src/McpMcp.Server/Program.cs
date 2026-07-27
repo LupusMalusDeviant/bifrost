@@ -136,13 +136,18 @@ builder.Services.AddSingleton<IUpstreamConnector>(sp => new McpMcp.Upstream.Wasi
 builder.Services.AddSingleton<IUpstreamConfigStore, EfUpstreamConfigStore>();
 builder.Services.AddSingleton<IUpstreamConnectionTester, UpstreamConnectionTester>();
 builder.Services.AddSingleton(new SupervisorOptions());
+// Rug-Pull-Schutz: festgehaltene Tool-Definitionen. Der Supervisor prueft jede Discovery dagegen.
+builder.Services.AddSingleton<ToolDefinitionPinStore>(sp => new ToolDefinitionPinStore(
+    sp.GetRequiredService<IDbContextFactory<McpMcpDbContext>>(), sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton<IToolDefinitionPinStore>(sp => sp.GetRequiredService<ToolDefinitionPinStore>());
 builder.Services.AddSingleton<UpstreamSupervisor>(sp => new UpstreamSupervisor(
     sp.GetServices<IUpstreamConnector>(),
     sp.GetRequiredService<IUpstreamConfigStore>(),
     sp.GetRequiredService<SupervisorOptions>(),
     sp.GetRequiredService<TimeProvider>(),
     sp.GetRequiredService<ILogger<UpstreamSupervisor>>(),
-    sp.GetRequiredService<IAuditSink>()));
+    sp.GetRequiredService<IAuditSink>(),
+    sp.GetRequiredService<IToolDefinitionPinStore>()));
 builder.Services.AddSingleton<IUpstreamSupervisor>(sp => sp.GetRequiredService<UpstreamSupervisor>());
 builder.Services.AddSingleton<ToolDescriptionOverrideStore>();
 builder.Services.AddSingleton<IToolDescriptionOverrides>(sp => sp.GetRequiredService<ToolDescriptionOverrideStore>());
