@@ -21,6 +21,7 @@ using Microsoft.EntityFrameworkCore;
 using ModelContextProtocol.Protocol;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 // Container-Healthcheck (chiseled-Image hat kein curl): als separater Prozess gegen den laufenden Server.
 if (args.Contains("--healthcheck"))
@@ -305,11 +306,11 @@ builder.Services.AddMcpServer(options =>
     .WithListPromptsHandler(GatewayMcpHandlers.ListPromptsAsync)
     .WithGetPromptHandler(GatewayMcpHandlers.GetPromptAsync);
 
-// ── Metriken-Export (FR-26) ──────────────────────────────────────────────────
-// Der Invoker misst Calls, Fehler und Latenzen; hier gehen sie nach draußen. Export nur, wenn ein
-// OTLP-Ziel konfiguriert ist — sonst würde der Exporter dauerhaft gegen localhost:4317 laufen und
-// Fehler loggen. Prometheus-Nutzer scrapen den OTel-Collector (eigener Prometheus-Exporter ist
-// nicht stabil veröffentlicht).
+// ── Telemetrie-Export (FR-26) ────────────────────────────────────────────────
+// Der Invoker misst Calls, Fehler und Latenzen und öffnet je Aufruf einen Span; hier geht beides
+// nach draußen. Export nur, wenn ein OTLP-Ziel konfiguriert ist — sonst würde der Exporter dauerhaft
+// gegen localhost:4317 laufen und Fehler loggen. Prometheus-Nutzer scrapen den OTel-Collector
+// (eigener Prometheus-Exporter ist nicht stabil veröffentlicht).
 var otlpEndpoint = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
 if (!string.IsNullOrWhiteSpace(otlpEndpoint))
 {
@@ -319,7 +320,22 @@ if (!string.IsNullOrWhiteSpace(otlpEndpoint))
         .WithMetrics(metrics => metrics
             .AddMeter(ToolInvoker.MeterName)
             .AddAspNetCoreInstrumentation()
+            .AddOtlpExporter())
+        // Traces zeigen, was die Metriken nur aggregiert beantworten: wo die Zeit eines einzelnen
+        // Aufrufs geblieben ist. Der Kind-Span um den Upstream-Aufruf trennt Gateway-Anteil vom
+        // Fremdanteil. Spans tragen bewusst KEINE Argumente oder Ergebnisse — das Audit-Log ist
+        // redigiert, ein Telemetrie-Backend ist es nicht.
+        .WithTracing(tracing => tracing
+            .AddSource(ToolInvoker.ActivitySourceName)
+            .AddAspNetCoreInstrumentation()
             .AddOtlpExporter());
+
+    // Health- und Readiness-Probes laufen im Sekundentakt und sagen über einen Tool-Aufruf nichts
+    // aus; ohne Filter fluten sie den Trace-Strom und machen ihn unbrauchbar.
+    builder.Services.Configure<OpenTelemetry.Instrumentation.AspNetCore.AspNetCoreTraceInstrumentationOptions>(
+        options => options.Filter = context =>
+            !context.Request.Path.StartsWithSegments("/healthz")
+            && !context.Request.Path.StartsWithSegments("/readyz"));
 }
 
 // ── Web-UI (WP6, Blazor Interactive Server, ADR-0004) ────────────────────────

@@ -32,7 +32,7 @@ Beide Werte sofort sichern. Verloren? Siehe [Zugang zurücksetzen](#zugang-zurü
 | `ASPNETCORE_URLS` | `http://+:8080` (Container) | Bind-Adresse/Port |
 | `MCPMCP_KEYRING_CERT_PATH` | *(nicht gesetzt)* | PFX-Zertifikat zum Verschlüsseln des Key-Rings (siehe [Key-Ring schützen](#key-ring-schützen)) |
 | `MCPMCP_KEYRING_CERT_PASSWORD` | *(nicht gesetzt)* | Passwort des PFX |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | *(nicht gesetzt)* | Ziel für den Metriken-Export (siehe [Metriken](#metriken)) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | *(nicht gesetzt)* | Ziel für Metriken **und** Traces (siehe [Metriken und Traces](#metriken-und-traces)) |
 | `MCPMCP_AUDIT_DEBUG_PAYLOADS` | *(aus)* | `1`/`true` schaltet den Debug-Modus des Audits ein (siehe [Audit-Debug-Modus](#audit-debug-modus)) |
 | `MCPMCP_AUDIT_RETENTION_DAYS` | `30` | Aufbewahrung der Audit-Ereignisse in Tagen; ältere werden täglich gelöscht (FR-25) |
 | `MCPMCP_MAX_RESULT_CHARS` | *(aus)* | Kürzt Tool-Ergebnisse oberhalb dieser Zeichenzahl (FR-16, siehe [Ergebnis-Kompression](#ergebnis-kompression)) |
@@ -647,7 +647,7 @@ Beide **zusammen** sichern (Volume-Snapshot bei gestopptem Container oder DB-Dum
 
 Das Audit-Log wächst mit jedem Call. Default-Aufbewahrung: 30 Tage, stündlicher Bereinigungs-Job (FR-25). Bei SQLite ist Retention **Betriebspflicht** (ADR-0007) — sehr große Logs (> ~10 GB) sind ein Grund, auf PostgreSQL zu wechseln.
 
-## Metriken
+## Metriken und Traces
 
 Der Gateway misst jeden Tool-Call (FR-26) unter dem Meter `McpMcp.Gateway`:
 
@@ -663,6 +663,32 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317
 ```
 
 Exportiert wird per **OTLP** — der OpenTelemetry-Standard. Für **Prometheus** einen OTel-Collector davorschalten, der OTLP annimmt und einen Scrape-Endpoint anbietet; ein direkter Prometheus-Exporter ist im .NET-Ökosystem noch nicht stabil veröffentlicht, deshalb bewusst dieser Weg.
+
+### Traces
+
+Derselbe Schalter aktiviert **Traces** aus der Quelle `McpMcp.Gateway`. Metriken beantworten „wie
+viele und wie schnell im Mittel", Traces beantworten „wo ist die Zeit *dieses einen* Aufrufs
+geblieben":
+
+| Span | Bedeutung | Tags |
+|---|---|---|
+| `mcpmcp.tool_call` | Der gesamte Aufruf durch die Pipeline | `mcpmcp.tool`, `mcpmcp.server`, `mcpmcp.status`, `mcpmcp.origin`, `mcpmcp.caller` |
+| `mcpmcp.upstream_call` | Nur der Fremdanteil, als Kind-Span | `mcpmcp.server`, `mcpmcp.upstream_tool` |
+
+Die Differenz zwischen beiden ist der **Gateway-Overhead** — genau die Frage, die NFR-01 stellt.
+Ohne die Trennung sieht man in einer langsamen Antwort nicht, wer sie verursacht hat.
+
+Ein Aufruf, der nicht mit `Success` endet, wird als Fehler-Span markiert. Ein Deny oder ein
+Guardrail-Treffer ist kein Serverfehler, aber auch kein gelungener Aufruf — in einer Fehlersuche
+will man ihn sehen.
+
+> **Spans tragen keine Argumente und keine Ergebnisse.** Das Audit-Log ist redigiert, ein
+> Telemetrie-Backend ist es nicht — ein Payload im Span wäre der bequemste Weg, die Redaction zu
+> umgehen, und zwar an eine Stelle, die oft weniger geschützt ist als die Datenbank. Ein Test hält
+> das fest.
+
+`/healthz` und `/readyz` sind vom Tracing ausgenommen; im Sekundentakt laufende Probes würden den
+Trace-Strom fluten, ohne etwas über einen Tool-Aufruf zu sagen.
 
 ## Health / Readiness
 

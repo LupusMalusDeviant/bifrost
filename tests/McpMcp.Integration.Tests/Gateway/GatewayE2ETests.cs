@@ -38,7 +38,15 @@ public sealed class GatewayE2ETests : IClassFixture<GatewayFixture>
     public async Task Negotiated_protocol_version_meets_the_required_spec_revision()
     {
         // NFR-09: Die Protokollversion kommt vollständig aus dem SDK — ohne Test verschiebt ein
-        // SDK-Upgrade sie still, und die Zusicherung "2025-06-18 oder neuer" wäre unbelegt.
+        // SDK-Upgrade sie still.
+        //
+        // Die Untergrenze ist der Stand, den wir TATSÄCHLICH sprechen, nicht der historisch einmal
+        // zugesagte: Sie stand fünf Monate lang auf 2025-06-18, während das SDK längst 2025-11-25
+        // aushandelte. Eine Untergrenze weit unter dem Ist prüft nichts — ein Rückschritt des SDK
+        // wäre glatt durchgegangen. Steigt die Version, schlägt dieser Test an und will bewusst
+        // nachgezogen werden; das ist der Zweck.
+        const string RequiredRevision = "2025-11-25";
+
         var (_, apiKey) = await _gw.SeedAdminAsync("protocol");
 
         await using var client = await _gw.ConnectClientAsync(apiKey);
@@ -47,8 +55,8 @@ public sealed class GatewayE2ETests : IClassFixture<GatewayFixture>
         negotiated.Should().NotBeNullOrWhiteSpace();
 
         // Die Revisionen sind datumssortiert benannt, ein Stringvergleich reicht darum aus.
-        string.CompareOrdinal(negotiated, "2025-06-18").Should().BeGreaterThanOrEqualTo(0,
-            $"NFR-09 verlangt 2025-06-18 oder neuer, ausgehandelt wurde '{negotiated}'");
+        string.CompareOrdinal(negotiated, RequiredRevision).Should().BeGreaterThanOrEqualTo(0,
+            $"NFR-09 verlangt {RequiredRevision} oder neuer, ausgehandelt wurde '{negotiated}'");
     }
 
     [Fact]

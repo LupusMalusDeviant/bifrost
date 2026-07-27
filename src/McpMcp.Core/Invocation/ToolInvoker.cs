@@ -23,7 +23,20 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// <summary>Meter-Name für den Metriken-Export (FR-26) — vom Host bei OpenTelemetry registriert.</summary>
     public const string MeterName = "McpMcp.Gateway";
 
+    /// <summary>
+    /// Quelle der Traces. Gleicher Name wie der Meter: Es ist dieselbe Komponente, und ein zweiter
+    /// Name zwänge jeden Betreiber, zwei Dinge zu registrieren.
+    /// <para>
+    /// <b>In Spans stehen niemals Argumente oder Ergebnisse.</b> Das Audit-Log ist redigiert, ein
+    /// Telemetrie-Backend ist es nicht — ein Payload im Span wäre der bequemste Weg, die Redaction
+    /// zu umgehen, und zwar an eine Stelle, die oft weniger geschützt ist als die Datenbank.
+    /// </para>
+    /// </summary>
+    public const string ActivitySourceName = "McpMcp.Gateway";
+
     private static readonly Meter Meter = new(MeterName);
+
+    private static readonly ActivitySource Activity = new(ActivitySourceName);
 
     private readonly IAuthorizationService _authorization;
     private readonly IRateLimiter _rateLimiter;
@@ -90,6 +103,14 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         CatalogEntry? entry = null;
         ToolInvocationResult result;
 
+        // Ein Span je Aufruf. Er umfasst die ganze Pipeline; der Upstream-Aufruf bekommt darin einen
+        // eigenen Kind-Span, sodass sich Gateway-Anteil und Fremdanteil trennen lassen — genau die
+        // Frage, die NFR-01 stellt.
+        using var activity = Activity.StartActivity("mcpmcp.tool_call", ActivityKind.Internal);
+        activity?.SetTag("mcpmcp.tool", request.Tool.Value);
+        activity?.SetTag("mcpmcp.origin", request.Origin.ToString());
+        activity?.SetTag("mcpmcp.caller", request.Caller.Value.ToString());
+
         try
         {
             if (!_rateLimiter.TryAcquire(request.Caller))
@@ -128,6 +149,20 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
 
         // FR-26 verlangt Auswertung pro Server UND Tool — der Server-Slug steckt im Namespace.
         var server = request.Tool.TrySplit(out var slug, out _) ? slug : "unknown";
+
+        if (activity is not null)
+        {
+            activity.SetTag("mcpmcp.server", server);
+            activity.SetTag("mcpmcp.status", result.Status.ToString());
+            // Nur Erfolg ist Ok. Ein Deny oder ein Guard-Treffer ist kein Serverfehler, aber auch
+            // kein gelungener Aufruf — als Error markiert taucht er in jeder Fehlersuche auf, und
+            // genau dort will man ihn haben. Die Beschreibung ist die Fehlermeldung des Invokers,
+            // die keine Argumente enthält.
+            activity.SetStatus(
+                result.Status is InvocationStatus.Success ? ActivityStatusCode.Ok : ActivityStatusCode.Error,
+                result.Status is InvocationStatus.Success ? null : result.ErrorMessage);
+        }
+
         _calls.Add(1,
             new KeyValuePair<string, object?>("server", server),
             new KeyValuePair<string, object?>("tool", request.Tool.Value),
@@ -187,6 +222,13 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
 
         try
         {
+            // Eigener Span nur um den Fremdanteil. Die Differenz zum Elternspan ist der
+            // Gateway-Overhead — ohne diese Trennung sieht man in einer langsamen Antwort nicht,
+            // wer sie verursacht hat.
+            using var upstreamActivity = Activity.StartActivity("mcpmcp.upstream_call", ActivityKind.Client);
+            upstreamActivity?.SetTag("mcpmcp.server", entry.Server.Value.ToString());
+            upstreamActivity?.SetTag("mcpmcp.upstream_tool", upstreamToolName);
+
             // Wo die Identität zählt, geht sie mit (Plan 0003, Resources): Ein WASI-Upstream mit
             // persistenter Instanz schreibt seine Handles auf diesen Namen. Alle anderen
             // Connectoren kennen das Merkmal nicht und bekommen den bisherigen Aufruf.
