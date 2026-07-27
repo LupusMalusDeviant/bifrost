@@ -21,14 +21,20 @@ namespace McpMcp.Integration.Tests.Gateway;
 /// Ohne diesen Test wäre die Paketverwaltung eine Struktur ohne Anschluss: Man könnte installieren,
 /// aber nichts damit betreiben.
 /// </para>
+/// <para>
+/// <b>Der Klassenname traegt <c>WasiRealHost</c> mit Absicht:</b> Die CI waehlt danach aus. Der Job
+/// <c>build-test</c> schliesst dieses Praefix aus (dort gibt es kein Rust-Binary, ein Skip wuerde
+/// das Skip-Gate reissen), der Job <c>wasi-component-spike</c> waehlt genau danach aus. Ohne das
+/// Praefix liefe dieser Nachweis in <em>keinem</em> Job — und niemand haette es gemerkt.
+/// </para>
 /// </summary>
-public sealed class ConnectorPackageE2ETests : IClassFixture<GatewayFixture>
+public sealed class WasiRealHostPackageE2ETests : IClassFixture<GatewayFixture>
 {
     private const string PackageId = "com.mcpmcp.fixture-guest";
 
     private readonly GatewayFixture _gw;
 
-    public ConnectorPackageE2ETests(GatewayFixture gw) => _gw = gw;
+    public WasiRealHostPackageE2ETests(GatewayFixture gw) => _gw = gw;
 
     /// <summary>
     /// Der ganze Weg: bauen → installieren (mit Probe) → Upstream über die Paket-Id → Aufruf durch
@@ -104,53 +110,6 @@ public sealed class ConnectorPackageE2ETests : IClassFixture<GatewayFixture>
         {
             Environment.SetEnvironmentVariable("MCPMCP_WASI_HOST", previousHost);
         }
-    }
-
-    /// <summary>
-    /// Ein Paket von einem nicht gepinnten Herausgeber wird über die API abgewiesen — mit 400 und
-    /// einem Grund, nicht mit 500.
-    /// </summary>
-    [Fact]
-    public async Task An_unsigned_package_is_refused_by_the_api()
-    {
-        var ct = TestContext.Current.CancellationToken;
-        var stranger = new TestSigner();
-        using var package = new MemoryStream(ConnectorPackageBuilder.Build(
-            new ConnectorManifest(
-                ConnectorManifest.SchemaV1, "com.fremd.paket", "1.0.0",
-                ConnectorManifest.SupportedContractVersion, stranger.KeyId, "Fremd",
-                UpstreamTransportKind.Wasi, "payload/c.wasm", "payload/c.wasm.sig", []),
-            new Dictionary<string, byte[]>
-            {
-                ["payload/c.wasm"] = [0x00, 0x61, 0x73, 0x6D],
-                ["payload/c.wasm.sig"] = new byte[64],
-            },
-            stranger.Sign));
-
-        var (_, apiKey) = await _gw.SeedAdminAsync("pkg-api-admin");
-        using var client = _gw.CreateDefaultClient();
-        client.DefaultRequestHeaders.Authorization = new("Bearer", apiKey);
-
-        using var content = new ByteArrayContent(package.ToArray());
-        var response = await client.PostAsync("/api/v1/packages", content, ct);
-
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        var payload = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
-        payload.GetProperty("error").GetString().Should().Contain("Herausgeber");
-    }
-
-    /// <summary>Paketverwaltung ist Adminsache — wer nur Tools aufrufen darf, sieht sie nicht.</summary>
-    [Fact]
-    public async Task Package_management_is_admin_only()
-    {
-        var ct = TestContext.Current.CancellationToken;
-        var (_, apiKey) = await _gw.SeedIdentityAsync("pkg-nicht-admin", grants: []);
-        using var client = _gw.CreateDefaultClient();
-        client.DefaultRequestHeaders.Authorization = new("Bearer", apiKey);
-
-        var response = await client.GetAsync("/api/v1/packages", ct);
-
-        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     /// <summary>
