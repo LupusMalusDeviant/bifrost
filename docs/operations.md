@@ -32,6 +32,7 @@ Beide Werte sofort sichern. Verloren? Siehe [Zugang zurücksetzen](#zugang-zurü
 | `ASPNETCORE_URLS` | `http://+:8080` (Container) | Bind-Adresse/Port |
 | `MCPMCP_KEYRING_CERT_PATH` | *(nicht gesetzt)* | PFX-Zertifikat zum Verschlüsseln des Key-Rings (siehe [Key-Ring schützen](#key-ring-schützen)) |
 | `MCPMCP_KEYRING_CERT_PASSWORD` | *(nicht gesetzt)* | Passwort des PFX |
+| `MCPMCP_PUBLIC_BASE_URL` | *(nicht gesetzt)* | Öffentliche Adresse des Gateways; nötig für die Redirect-URI der Upstream-Autorisierung (siehe [OAuth gegen Upstreams](#oauth-gegen-upstreams)) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | *(nicht gesetzt)* | Ziel für Metriken **und** Traces (siehe [Metriken und Traces](#metriken-und-traces)) |
 | `MCPMCP_AUDIT_DEBUG_PAYLOADS` | *(aus)* | `1`/`true` schaltet den Debug-Modus des Audits ein (siehe [Audit-Debug-Modus](#audit-debug-modus)) |
 | `MCPMCP_AUDIT_RETENTION_DAYS` | `30` | Aufbewahrung der Audit-Ereignisse in Tagen; ältere werden täglich gelöscht (FR-25) |
@@ -202,6 +203,57 @@ Antwort und passt nicht auf einen Tool-Call.
 Zu den Parametern: `paramStructure: by-name` schickt ein Objekt, `by-position` ein **geordnetes
 Array** in der Reihenfolge aus dem Dokument. Der Aufrufer nennt in beiden Fällen die Namen; die
 Reihenfolge kommt aus der Beschreibung, nicht aus der Reihenfolge im Aufruf.
+
+## OAuth gegen Upstreams
+
+Ein HTTP-Upstream, der OAuth verlangt, war bisher nicht anbindbar — statische Header reichen dafür
+nicht. Mit `Http.OAuth` holt sich der Gateway ein Token beim Authorization Server des Upstreams:
+
+```json
+"Http": {
+  "Endpoint": "https://upstream.example.com/mcp",
+  "OAuth": { "ClientId": "mcpmcp-gateway", "ClientSecret": "…" }
+}
+```
+
+**Voraussetzung:** Der Gateway ist als Client beim Authorization Server registriert, mit der
+Redirect-URI `<MCPMCP_PUBLIC_BASE_URL>/oauth/upstream/callback`. Dynamic Client Registration ist im
+Standard abgelöst, und Client-ID-Metadata-Documents verlangen ein öffentlich abrufbares Dokument —
+ein selbst gehosteter Gateway steht oft nicht im Netz. Vorregistrierung ist deshalb der Weg, der
+ohne öffentliche Erreichbarkeit funktioniert.
+
+**Verbinden** ist ein einmaliger Schritt eines Administrators: In der Server-Verwaltung *Verbinden*
+klicken, beim Authorization Server zustimmen, fertig. Danach erneuert der Gateway das Token selbst,
+mit zwei Minuten Sicherheitsabstand vor dem Ablauf.
+
+Was dabei passiert, in der Reihenfolge des Standards: unautorisiert anfragen → `WWW-Authenticate`
+lesen → Protected Resource Metadata (RFC 9728) holen → Authorization Server bestimmen → dessen
+Metadaten holen → Authorization Code mit **PKCE S256** und dem `resource`-Parameter (RFC 8707), der
+das Token an genau diesen Upstream bindet.
+
+**Wo abgebrochen wird, statt es irgendwie hinzubiegen:**
+
+- Der Authorization Server weist **S256 nicht aus** → keine Autorisierung. Ohne PKCE ist der Code
+  abfangbar, und ein stiller Verzicht fiele niemandem auf.
+- Die Metadaten nennen einen **anderen Issuer** als den angefragten → Abbruch. Sonst liefe die
+  spätere Prüfung gegen einen Wert, den die Gegenseite vorgegeben hat.
+- Der `iss`-Parameter der Antwort **passt nicht** zum notierten Issuer (RFC 9207) → Abbruch, auch
+  bei Fehlerantworten. Das ist der Schutz gegen untergeschobene Antworten eines fremden Servers.
+- Discovery- oder Token-Endpunkt zeigen **ins interne Netz** → Abbruch. Diese Adressen kommen vom
+  Upstream; es ist derselbe SSRF-Weg wie bei importierten Schemabeschreibungen, und es greift
+  dieselbe Prüfung. `AllowPrivateTargets` ist die ausdrückliche Ausnahme.
+- **Kein HTTPS** → Abbruch. Ein Token über Klartext ist keins.
+- Die **Erneuerung scheitert** → der Upstream kommt nicht hoch, statt es mit dem alten Token zu
+  versuchen. Ein 401 im Betrieb wäre schwerer zu deuten als eine klare Meldung beim Start.
+
+Token liegen DataProtection-verschlüsselt in einer eigenen Tabelle, getrennt von der
+Konfigurationshistorie — ein Token erneuert sich laufend, und jede Erneuerung als
+Konfigurationsversion zu führen wäre Unsinn.
+
+> **Was das nicht ist:** Alle Agenten teilen sich weiterhin die Identität, unter der der Gateway
+> beim Upstream angemeldet ist. Ein Token **je Nutzer** würde jedem Agenten einen zugeordneten
+> Menschen abverlangen, der selbst zustimmt — das ändert das Modell und ist bewusst nicht Teil
+> dieses Schritts.
 
 ## Geänderte Tool-Definitionen (Rug-Pull-Schutz)
 

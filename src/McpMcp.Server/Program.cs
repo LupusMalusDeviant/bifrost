@@ -124,7 +124,12 @@ builder.Services.AddSingleton<McpMcp.Web.UiInternalIdentity>();
 
 // ── Upstreams & Katalog (ADR-0005, WP2) ──────────────────────────────────────
 builder.Services.AddSingleton<IUpstreamConnector, StdioUpstreamConnector>();
-builder.Services.AddSingleton<IUpstreamConnector, StreamableHttpUpstreamConnector>();
+// Upstream-OAuth: Token-Ablage verschluesselt wie jedes andere Credential (NFR-04).
+builder.Services.AddSingleton<IUpstreamOAuthTokenStore, UpstreamOAuthTokenStore>();
+builder.Services.AddSingleton<IUpstreamConnector>(sp => new StreamableHttpUpstreamConnector(
+    sp.GetService<GatewayIdentity>(),
+    sp.GetRequiredService<IUpstreamOAuthTokenStore>(),
+    sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<IUpstreamConnector, McpMcp.Upstream.OpenApi.OpenApiUpstreamConnector>();
 builder.Services.AddSingleton<IUpstreamConnector, McpMcp.Upstream.Cli.CliUpstreamConnector>(); // ADR-0014
 builder.Services.AddSingleton<IUpstreamConnector, McpMcp.Upstream.OpenRpc.OpenRpcUpstreamConnector>(); // Roadmap Phase 8
@@ -399,6 +404,7 @@ app.UseMiddleware<ApiKeyAuthMiddleware>();
 app.MapMcp("/mcp");
 app.MapGatewayApi();
 app.MapAuthEndpoints();
+app.MapUpstreamOAuth();
 app.MapWebhookEndpoint();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 

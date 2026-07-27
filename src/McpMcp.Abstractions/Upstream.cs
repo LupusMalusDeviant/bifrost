@@ -71,7 +71,13 @@ public sealed record HttpTransportOptions(
     /// Streamable HTTP spricht (FR-02). Default an: genau diese Transport-Heterogenität
     /// wegzukapseln ist Aufgabe eines Gateways. Abschaltbar, sobald SSE aus dem Standard fällt.
     /// </summary>
-    bool AllowLegacySse = true);
+    bool AllowLegacySse = true,
+    /// <summary>
+    /// OAuth-Anbindung nach der MCP-Autorisierung. Gesetzt heißt: Der Gateway holt sich ein Token
+    /// beim Authorization Server des Upstreams, statt einen festen Header mitzuschicken. Beides
+    /// zugleich ist zulässig — Header für Zusatzangaben, das Token für die Autorisierung.
+    /// </summary>
+    UpstreamOAuthOptions? OAuth = null);
 
 /// <summary>
 /// OpenAPI-Quelle als virtueller Upstream (FR-19). <see cref="Credential"/> liegt im Config-Blob,

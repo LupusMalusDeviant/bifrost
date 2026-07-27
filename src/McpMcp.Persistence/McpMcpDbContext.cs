@@ -52,6 +52,8 @@ public sealed class McpMcpDbContext : DbContext
 
     public DbSet<ToolDefinitionPinRow> ToolDefinitionPins => Set<ToolDefinitionPinRow>();
 
+    public DbSet<UpstreamOAuthTokenRow> UpstreamOAuthTokens => Set<UpstreamOAuthTokenRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<ConfigVersionRow>(e =>
@@ -185,6 +187,15 @@ public sealed class McpMcpDbContext : DbContext
             // hätte damit jedem bereits gepinnten Schlüssel stillschweigend mehr Rechte gegeben,
             // als er je hatte.
             e.Property(r => r.TrustLevel).HasDefaultValue((int)ConnectorTrustLevel.ThirdParty);
+        });
+
+        modelBuilder.Entity<UpstreamOAuthTokenRow>(e =>
+        {
+            // Ein Token je Upstream. Getrennt von der Konfigurationshistorie, weil sich ein Token
+            // laufend erneuert — jede Erneuerung als Konfigurationsversion zu führen wäre Unsinn.
+            e.HasKey(r => r.ServerId);
+            e.Property(r => r.Payload).IsRequired();
+            e.Property(r => r.Issuer).IsRequired().HasMaxLength(500);
         });
 
         modelBuilder.Entity<ToolDefinitionPinRow>(e =>
@@ -545,6 +556,25 @@ public sealed class PublisherKeyRow
     /// stillschweigend zu „offiziell" werden.
     /// </summary>
     public int TrustLevel { get; set; } = (int)ConnectorTrustLevel.ThirdParty;
+}
+
+/// <summary>
+/// Ein OAuth-Token für einen Upstream. <see cref="Payload"/> ist der DataProtection-verschlüsselte
+/// Blob mit Access- und Refresh-Token — dieselbe Behandlung wie Upstream-Credentials (NFR-04).
+/// Ablaufzeit und Issuer stehen im Klartext daneben, weil danach gefiltert und entschieden wird,
+/// ohne den Blob zu entschlüsseln.
+/// </summary>
+public sealed class UpstreamOAuthTokenRow
+{
+    public Guid ServerId { get; set; }
+
+    public byte[] Payload { get; set; } = [];
+
+    public string Issuer { get; set; } = string.Empty;
+
+    public long? ExpiresAtTicks { get; set; }
+
+    public long ObtainedAtTicks { get; set; }
 }
 
 /// <summary>

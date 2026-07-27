@@ -595,6 +595,32 @@ namespace McpMcp.Persistence.Migrations.Sqlite.Migrations
                     b.ToTable("UiUsers");
                 });
 
+            modelBuilder.Entity("McpMcp.Persistence.UpstreamOAuthTokenRow", b =>
+                {
+                    b.Property<Guid>("ServerId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("ExpiresAtTicks")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Issuer")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("ObtainedAtTicks")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<byte[]>("Payload")
+                        .IsRequired()
+                        .HasColumnType("BLOB");
+
+                    b.HasKey("ServerId");
+
+                    b.ToTable("UpstreamOAuthTokens");
+                });
+
             modelBuilder.Entity("McpMcp.Persistence.WebhookRow", b =>
                 {
                     b.Property<Guid>("Id")

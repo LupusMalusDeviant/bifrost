@@ -1081,6 +1081,52 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
             .Should().Be(TaskUpdateOutcome.Terminal);
     }
 
+    /// <summary>
+    /// Upstream-OAuth-Token liegen verschlüsselt (NFR-04) — es sind Zugangsdaten wie jede andere.
+    /// Ablaufzeit und Issuer stehen im Klartext daneben, damit ohne Entschlüsselung entschieden
+    /// werden kann, ob erneuert werden muss.
+    /// </summary>
+    [Fact]
+    public async Task UpstreamOAuthTokens_are_stored_encrypted_and_roundtrip()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = new UpstreamOAuthTokenStore(Factory, DataProtection);
+        var server = ServerId.New();
+        const string AccessToken = "at_streng_geheim_4711";
+        const string RefreshToken = "rt_auch_geheim_0815";
+        var expires = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+
+        await store.SaveAsync(
+            new UpstreamOAuthToken(
+                server, AccessToken, RefreshToken, expires, ["mcp:read"],
+                "https://as.example.com", DateTimeOffset.UnixEpoch),
+            ct);
+
+        var read = await store.GetAsync(server, ct);
+        read!.AccessToken.Should().Be(AccessToken);
+        read.RefreshToken.Should().Be(RefreshToken);
+        read.ExpiresAt.Should().Be(expires);
+        read.Issuer.Should().Be("https://as.example.com");
+        read.Scopes.Should().Equal("mcp:read");
+
+        // Der persistierte Blob darf die Token nicht im Klartext enthalten.
+        await using (var db = await Factory.CreateDbContextAsync(ct))
+        {
+            var row = await db.UpstreamOAuthTokens.AsNoTracking().SingleAsync(r => r.ServerId == server.Value, ct);
+            ContainsSubsequence(row.Payload, Encoding.UTF8.GetBytes(AccessToken)).Should().BeFalse();
+            ContainsSubsequence(row.Payload, Encoding.UTF8.GetBytes(RefreshToken)).Should().BeFalse();
+            row.Issuer.Should().Be("https://as.example.com", "der Issuer wird zum Filtern gebraucht");
+        }
+
+        read.NeedsRefresh(expires.AddMinutes(-1), TimeSpan.FromMinutes(2)).Should().BeTrue(
+            "mit Sicherheitsabstand gilt ein Token kurz vor Ablauf schon als erneuerungsbedürftig");
+        read.NeedsRefresh(expires.AddHours(-1), TimeSpan.FromMinutes(2)).Should().BeFalse();
+
+        await store.RemoveAsync(server, ct);
+        (await store.GetAsync(server, ct)).Should().BeNull();
+    }
+
     private async Task WaitForRowCountAsync(int expected, int timeoutMs = 30000)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
