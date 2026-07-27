@@ -40,11 +40,24 @@ public sealed record ApprovalRequest(
 public interface IApprovalStore
 {
     /// <summary>
-    /// Sucht eine gültige (freigegebene, nicht abgelaufene) Freigabe für genau diesen Aufruf und
-    /// verbraucht sie. Liefert true, wenn der Call durchlaufen darf. Kein Match: false.
+    /// Sucht eine gültige (freigegebene, nicht abgelaufene, nicht widerrufene) Freigabe für genau
+    /// diesen Aufruf und verbraucht sie.
+    /// <para>
+    /// Liefert die <b>Id des verbrauchten Vorgangs</b>, wenn der Call durchlaufen darf, sonst
+    /// <c>null</c>. Die Id statt eines <c>bool</c>, damit der Aufrufer den Vorgang nach dem Aufruf
+    /// abschließen kann — ohne sie blieb ein eingelöster Vorgang für immer auf <c>Working</c> stehen
+    /// und lief still in den Verfall, obwohl er erfolgreich war.
+    /// </para>
     /// </summary>
-    Task<bool> TryConsumeApprovalAsync(
+    Task<Guid?> TryConsumeApprovalAsync(
         IdentityId caller, NamespacedToolName tool, string argumentFingerprint, CancellationToken ct);
+
+    /// <summary>
+    /// Schließt einen eingelösten Vorgang ab. <paramref name="failure"/> gesetzt heißt: gescheitert,
+    /// sonst erfolgreich. Fehler beim Abschließen dürfen den Aufruf nicht beeinflussen — er ist zu
+    /// diesem Zeitpunkt bereits gelaufen.
+    /// </summary>
+    Task CompleteAsync(Guid taskId, TaskFailure? failure, CancellationToken ct);
 
     /// <summary>
     /// Legt eine neue wartende Anfrage an (oder liefert die bestehende, wenn schon eine identische

@@ -204,7 +204,8 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         }
 
         // Freigabe-Pflicht (FR-32, ADR-0012): ebenfalls vor dem Upstream, kein Seiteneffekt.
-        if (await CheckApprovalAsync(entry, request, ct).ConfigureAwait(false) is { } approval)
+        var (approval, consumedTask) = await CheckApprovalAsync(entry, request, ct).ConfigureAwait(false);
+        if (approval is not null)
         {
             // Die Vorgangs-Id geht maschinenlesbar mit: Der Aufrufer kann den Stand unter
             // /api/v1/tasks/{id} holen, statt auf den Meldungstext angewiesen zu sein.
@@ -220,6 +221,10 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
             : CancellationTokenSource.CreateLinkedTokenSource(ct, overrideCts.Token);
         var effectiveCt = linked?.Token ?? ct;
 
+        // Der eigentliche Aufruf als lokale Funktion, damit der Abschluss eines eingelösten
+        // Vorgangs danach an EINER Stelle steht — statt an jedem der fünf Rückgabepfade.
+        async Task<ToolInvocationResult> RunAsync()
+        {
         try
         {
             // Eigener Span nur um den Fremdanteil. Die Differenz zum Elternspan ist der
@@ -274,6 +279,24 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         {
             return Fail(InvocationStatus.UpstreamError, $"Upstream-Fehler: {ex.Message}", started);
         }
+        }
+
+        var result = await RunAsync().ConfigureAwait(false);
+
+        // Ein eingelöster Vorgang bekommt einen Abschluss. Ohne ihn blieb er auf `Working` stehen
+        // und lief still in den Verfall — die Vorgangsliste zeigte für einen erfolgreichen Aufruf
+        // dauerhaft „läuft" und später „abgelaufen".
+        if (consumedTask is { } taskId && _approvalStore is not null)
+        {
+            await _approvalStore.CompleteAsync(
+                taskId,
+                result.Status is InvocationStatus.Success
+                    ? null
+                    : new TaskFailure(result.Status.ToString(), result.ErrorMessage ?? result.Status.ToString()),
+                ct).ConfigureAwait(false);
+        }
+
+        return result;
     }
 
     /// <summary>Serverseitige Argument-Validierung — Pflicht für den Lazy-Pfad ohne Client-Schema (ADR-0003).</summary>
@@ -326,20 +349,25 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// <summary>Ergebnis der Freigabe-Prüfung: Meldung und — wenn es einen gibt — der Vorgang.</summary>
     private sealed record ApprovalOutcome(string Message, Guid? TaskId);
 
-    private async Task<ApprovalOutcome?> CheckApprovalAsync(
+    /// <summary>
+    /// Prüft die Freigabepflicht. <c>Outcome</c> gesetzt heißt: Der Aufruf läuft nicht.
+    /// <c>ConsumedTask</c> gesetzt heißt: Er läuft, und dieser Vorgang gehört dazu — er will nach
+    /// dem Aufruf abgeschlossen werden.
+    /// </summary>
+    private async Task<(ApprovalOutcome? Outcome, Guid? ConsumedTask)> CheckApprovalAsync(
         CatalogEntry entry, ToolInvocationRequest request, CancellationToken ct)
     {
         var requiredByPolicy = _approvalPolicy?.RequiresApproval(request.Tool) == true;
         if (!entry.RequiresApproval && !requiredByPolicy)
         {
-            return null;
+            return (null, null);
         }
 
         if (_approvalStore is null)
         {
-            return new ApprovalOutcome(
+            return (new ApprovalOutcome(
                 "Dieses Tool erfordert eine menschliche Freigabe, aber der Approval-Store ist nicht verfügbar.",
-                TaskId: null);
+                TaskId: null), null);
         }
 
         // Fingerprint über die REDIGIERTEN Argumente — die Queue soll keine Secrets im Klartext
@@ -348,9 +376,11 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         var fingerprint = ApprovalFingerprint.Compute(request.Caller, request.Tool, redacted);
 
         if (await _approvalStore.TryConsumeApprovalAsync(request.Caller, request.Tool, fingerprint, ct)
-            .ConfigureAwait(false))
+            .ConfigureAwait(false) is { } consumedTask)
         {
-            return null; // freigegeben — der Call läuft einmalig durch
+            // Freigegeben — der Call läuft einmalig durch. Die Id geht mit, damit der Vorgang danach
+            // einen Abschluss bekommt statt still in den Verfall zu laufen.
+            return (null, consumedTask);
         }
 
         var now = _time.GetUtcNow();
@@ -368,11 +398,11 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
             ct).ConfigureAwait(false);
 
         Log.ApprovalRequired(_logger, request.Tool.Value, requestId);
-        return new ApprovalOutcome(
+        return (new ApprovalOutcome(
             $"Dieses Tool erfordert eine menschliche Freigabe. Anfrage {requestId} wurde in die "
             + "Warteschlange gelegt; nach Freigabe denselben Aufruf erneut absetzen. NICHT sofort "
             + "wiederholen — die Freigabe erfolgt asynchron in der Verwaltungsoberfläche.",
-            requestId);
+            requestId), null);
     }
 
     /// <summary>

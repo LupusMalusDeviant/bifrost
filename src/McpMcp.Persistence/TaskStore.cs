@@ -208,7 +208,7 @@ public sealed class TaskStore : ITaskStore
         return TaskUpdateOutcome.Applied;
     }
 
-    public async Task<bool> TryConsumeApprovedAsync(
+    public async Task<Guid?> TryConsumeApprovedAsync(
         IdentityId owner, NamespacedToolName tool, string inputFingerprint, CancellationToken ct)
     {
         await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
@@ -234,14 +234,14 @@ public sealed class TaskStore : ITaskStore
             .ConfigureAwait(false);
         if (match is null)
         {
-            return false;
+            return null;
         }
 
         match.ClaimedAtTicks = nowTicks;
         match.Revision++;
         match.UpdatedAtTicks = nowTicks;
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
-        return true;
+        return match.Id;
     }
 
     public async Task<int> ExpireDueAsync(DateTimeOffset now, CancellationToken ct)

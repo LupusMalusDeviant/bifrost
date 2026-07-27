@@ -368,14 +368,17 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
 
         var created = await store.CreateOrGetAsync(NewTask(owner), ct);
         // Noch nicht freigegeben: nichts einzulösen.
-        (await store.TryConsumeApprovedAsync(owner, tool, "fp-1", ct)).Should().BeFalse();
+        (await store.TryConsumeApprovedAsync(owner, tool, "fp-1", ct))
+.Should().BeNull();
 
         // Freigabe = Übergang nach `working`.
         await store.UpdateAsync(new TaskUpdate(created.Id, State: TaskState.Working), created.Revision, ct);
 
-        (await store.TryConsumeApprovedAsync(owner, tool, "fp-1", ct)).Should().BeTrue();
         (await store.TryConsumeApprovedAsync(owner, tool, "fp-1", ct))
-            .Should().BeFalse("eine Freigabe gilt genau einmal");
+.Should().NotBeNull();
+        (await store.TryConsumeApprovedAsync(owner, tool, "fp-1", ct))
+            
+.Should().BeNull("eine Freigabe gilt genau einmal");
         (await store.GetAsync(created.Id, ct))!.ClaimedAt.Should().NotBeNull();
     }
 
@@ -395,12 +398,16 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         await store.UpdateAsync(new TaskUpdate(created.Id, State: TaskState.Working), created.Revision, ct);
 
         (await store.TryConsumeApprovedAsync(owner, tool, "fp-anders", ct))
-            .Should().BeFalse("anderer Fingerprint");
+            
+.Should().BeNull("anderer Fingerprint");
         (await store.TryConsumeApprovedAsync(IdentityId.New(), tool, "fp-erlaubt", ct))
-            .Should().BeFalse("anderer Aufrufer");
+            
+.Should().BeNull("anderer Aufrufer");
         (await store.TryConsumeApprovedAsync(owner, new NamespacedToolName("srv__other"), "fp-erlaubt", ct))
-            .Should().BeFalse("anderes Tool");
-        (await store.TryConsumeApprovedAsync(owner, tool, "fp-erlaubt", ct)).Should().BeTrue();
+            
+.Should().BeNull("anderes Tool");
+        (await store.TryConsumeApprovedAsync(owner, tool, "fp-erlaubt", ct))
+.Should().NotBeNull();
     }
 
     /// <summary>
@@ -421,7 +428,8 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         await store.UpdateAsync(new TaskUpdate(created.Id, State: TaskState.Working), created.Revision, ct);
 
         (await store.TryConsumeApprovedAsync(owner, tool, "fp-1", ct))
-            .Should().BeFalse("die Frist ist abgelaufen");
+            
+.Should().BeNull("die Frist ist abgelaufen");
 
         (await store.ExpireDueAsync(past.AddMinutes(1), ct)).Should().Be(1);
         (await store.GetAsync(created.Id, ct))!.State.Should().Be(TaskState.Expired);
@@ -511,9 +519,11 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         // Freigeben → einlösbar, genau einmal.
         await approvals.DecideAsync(id, approved: true, ct);
         (await approvals.ListAsync(ApprovalState.Approved, ct)).Should().ContainSingle(r => r.Id == id);
-        (await approvals.TryConsumeApprovalAsync(caller, tool, "fp-1", ct)).Should().BeTrue();
         (await approvals.TryConsumeApprovalAsync(caller, tool, "fp-1", ct))
-            .Should().BeFalse("eine Freigabe gilt einmalig (ADR-0012)");
+.Should().NotBeNull();
+        (await approvals.TryConsumeApprovalAsync(caller, tool, "fp-1", ct))
+            
+.Should().BeNull("eine Freigabe gilt einmalig (ADR-0012)");
 
         // Danach gilt sie als verbraucht — und nicht mehr als freigegeben.
         (await approvals.ListAsync(ApprovalState.Consumed, ct)).Should().ContainSingle(r => r.Id == id);
@@ -545,7 +555,8 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         task!.State.Should().Be(TaskState.Failed);
         task.Failure!.Code.Should().Be(TaskBackedApprovalStore.DeniedCode);
         (await approvals.ListAsync(ApprovalState.Denied, ct)).Should().ContainSingle(r => r.Id == id);
-        (await approvals.TryConsumeApprovalAsync(caller, tool, "fp-2", ct)).Should().BeFalse();
+        (await approvals.TryConsumeApprovalAsync(caller, tool, "fp-2", ct))
+.Should().BeNull();
 
         // Idempotent: eine zweite Entscheidung ändert nichts mehr.
         await approvals.DecideAsync(id, approved: true, ct);
@@ -607,7 +618,8 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         consumed!.ClaimedAt.Should().NotBeNull();
         (await tasks.TryConsumeApprovedAsync(
             caller, new NamespacedToolName("srv__legacy_tool"), $"fp-{ApprovalState.Consumed}", ct))
-            .Should().BeFalse();
+            
+.Should().BeNull();
 
         // Und die redigierten Argumente sind lesbar mitgekommen — nie die rohen.
         (await tasks.GetAsync(pendingId, ct))!.RedactedInput!.Value
@@ -1020,7 +1032,8 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         cancelled.IsTerminal.Should().BeTrue();
 
         (await store.TryConsumeApprovedAsync(owner, task.Tool, task.InputFingerprint, ct))
-            .Should().BeFalse("eine widerrufene Freigabe ist nicht mehr einlösbar");
+            
+.Should().BeNull("eine widerrufene Freigabe ist nicht mehr einlösbar");
     }
 
     /// <summary>
@@ -1040,7 +1053,8 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         var created = await store.CreateOrGetAsync(task, ct);
         await store.UpdateAsync(new TaskUpdate(created.Id, State: TaskState.Working), created.Revision, ct);
         (await store.TryConsumeApprovedAsync(owner, task.Tool, task.InputFingerprint, ct))
-            .Should().BeTrue("Vorbedingung: die Freigabe wird eingelöst");
+            
+.Should().NotBeNull("Vorbedingung: die Freigabe wird eingelöst");
 
         var consumed = (await store.GetAsync(created.Id, ct))!;
         (await store.CancelAsync(consumed.Id, consumed.Revision, ct))

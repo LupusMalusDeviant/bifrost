@@ -179,7 +179,7 @@ public interface ITaskStore
     /// ihn. Liegt auf dem <b>heißen Pfad jedes Tool-Calls</b> — deshalb ein eigener, indexgestützter
     /// Weg statt einer allgemeinen Abfrage.
     /// </summary>
-    Task<bool> TryConsumeApprovedAsync(
+    Task<Guid?> TryConsumeApprovedAsync(
         IdentityId owner, NamespacedToolName tool, string inputFingerprint, CancellationToken ct);
 
     /// <summary>

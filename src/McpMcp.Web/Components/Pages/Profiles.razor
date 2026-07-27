@@ -127,14 +127,16 @@
         return max <= 0 ? 0 : (int)Math.Round(100.0 * calls / max);
     }
 
+    /// <summary>
+    /// Kontextkosten eines Profils. Bewusst <b>ohne</b> RBAC-Filter: Ein Profil gehört keiner
+    /// einzelnen Identität, also ist das die nominale Größe. Was ein konkreter Agent bekommt, kann
+    /// kleiner sein, wenn ihm Grants für gepinnte Tools fehlen — dieselbe Formel, andere Menge
+    /// (<c>IToolCatalog.GetViewFor</c>).
+    /// </summary>
     private int EstimateTokens(ToolProfile p)
-    {
-        var pinnedTokens = p.PinnedTools
-            .Select(n => Catalog.Find(n))
-            .Where(e => e is not null)
-            .Sum(e => e!.EstimatedSchemaTokens);
-        return pinnedTokens + (p.LazyToolsEnabled ? McpMcp.Core.Catalog.ToolCatalog.MetaToolTokenEstimate : 0);
-    }
+        => McpMcp.Core.Catalog.ToolCatalog.EstimateContextTokens(
+            p.PinnedTools.Select(n => Catalog.Find(n)).Where(e => e is not null).Select(e => e!),
+            p.LazyToolsEnabled);
 
     private int EstimateFromInputs()
     {

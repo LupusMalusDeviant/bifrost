@@ -76,8 +76,9 @@ Tool-Ergebnissen herauszuhalten.
 
 Zwei weitere Punkte:
 
-- **Befunde enthalten nie den gefundenen Wert.** Protokolliert werden Regel-Id, Fingerabdruck
-  (Hash), Position und Länge. Eine Secret-Erkennung, die ihre Funde im Klartext loggt, kopiert
+- **Befunde enthalten nie den gefundenen Wert.** Protokolliert werden Regel-Id, Richtung, Modus und
+  Fingerabdruck (Hash). Position und Länge stehen im Befund selbst, gehen aber nicht ins Log —
+  beides zusammen grenzt eine Zeichenkette weiter ein, als für das Wiedererkennen nötig ist. Eine Secret-Erkennung, die ihre Funde im Klartext loggt, kopiert
   Secrets in ein zweites und meist schwächer geschütztes System.
 - **Über der Prüfgrenze wird abgewiesen**, nicht durchgelassen — sonst wäre die Grenze genau der
   blinde Fleck, den man ansteuert. Wer große Ergebnisse erwartet, kombiniert das mit

@@ -117,6 +117,14 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             await StopLoopAsync(entry, drain, ct).ConfigureAwait(false);
             _entries.TryRemove(id, out _);
             await _store.RemoveAsync(id, ct).ConfigureAwait(false);
+
+            // Mit dem Upstream gehen auch seine festgehaltenen Tool-Definitionen. Sonst bleiben
+            // Pins auf einen Server zurück, den es nicht mehr gibt — sie wachsen mit jedem
+            // Hinzufügen und Entfernen und stehen für immer in der Verwaltungsansicht.
+            if (_pins is not null)
+            {
+                await _pins.ForgetServerAsync(id, ct).ConfigureAwait(false);
+            }
         }
         finally
         {

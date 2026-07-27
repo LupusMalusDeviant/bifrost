@@ -162,6 +162,23 @@ public sealed class ToolDefinitionPinScreeningTests : IAsyncDisposable
         plain.GetStatus(id)!.QuarantinedTools.Should().BeNull();
     }
 
+    /// <summary>
+    /// Mit dem Upstream gehen seine Pins. Sonst bleiben Einträge auf einen Server zurück, den es
+    /// nicht mehr gibt — sie wachsen mit jedem Hinzufügen und Entfernen und stehen für immer in der
+    /// Verwaltungsansicht.
+    /// </summary>
+    [Fact]
+    public async Task Removing_an_upstream_forgets_its_pins()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (id, _) = await StartAsync("Liest eine Datei.");
+        _pins.All.Should().Contain(p => p.Server == id);
+
+        await _supervisor.RemoveAsync(id, DrainPolicy.Immediate, ct);
+
+        _pins.All.Should().NotContain(p => p.Server == id);
+    }
+
     /// <summary>Pin-Store ohne Datenbank; die EF-Variante ist an ihrem eigenen Ort geprüft.</summary>
     private sealed class InMemoryPinStore : IToolDefinitionPinStore
     {

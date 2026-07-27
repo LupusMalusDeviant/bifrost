@@ -37,9 +37,31 @@ public sealed class TaskBackedApprovalStore : IApprovalStore
         _time = time ?? TimeProvider.System;
     }
 
-    public Task<bool> TryConsumeApprovalAsync(
+    public Task<Guid?> TryConsumeApprovalAsync(
         IdentityId caller, NamespacedToolName tool, string argumentFingerprint, CancellationToken ct)
         => _tasks.TryConsumeApprovedAsync(caller, tool, argumentFingerprint, ct);
+
+    /// <summary>
+    /// Schließt den Vorgang ab. Ein Fehlschlag hier wird verschluckt: Der Aufruf ist bereits
+    /// gelaufen, und ihn nachträglich scheitern zu lassen, weil eine Statuszeile nicht schrieb,
+    /// wäre die falsche Reihenfolge.
+    /// </summary>
+    public async Task CompleteAsync(Guid taskId, TaskFailure? failure, CancellationToken ct)
+    {
+        var task = await _tasks.GetAsync(taskId, ct).ConfigureAwait(false);
+        if (task is null || task.IsTerminal)
+        {
+            return;
+        }
+
+        await _tasks.UpdateAsync(
+            new TaskUpdate(
+                taskId,
+                State: failure is null ? TaskState.Completed : TaskState.Failed,
+                Failure: failure),
+            task.Revision,
+            ct).ConfigureAwait(false);
+    }
 
     public async Task<Guid> EnqueueAsync(ApprovalRequest request, CancellationToken ct)
     {

@@ -16,6 +16,21 @@ public sealed partial class ToolCatalog : IToolCatalog, IDisposable
     /// <summary>Konservative Schätzung für die drei Meta-Tool-Schemas (search/describe/invoke, ADR-0003).</summary>
     public const int MetaToolTokenEstimate = 700;
 
+    /// <summary>
+    /// Die Kontextkosten eines Profils: Summe der gepinnten Schemas plus die Meta-Tools, wenn der
+    /// Lazy-Pfad an ist.
+    /// <para>
+    /// Öffentlich, weil die Oberfläche dieselbe Zahl zeigt. Vorher stand die Formel zweimal da —
+    /// einmal hier, einmal im Token-Cockpit; zwei Rechnungen für dieselbe Frage driften
+    /// auseinander, sobald eine davon angefasst wird.
+    /// </para>
+    /// </summary>
+    public static int EstimateContextTokens(IEnumerable<CatalogEntry> pinned, bool lazyEnabled)
+    {
+        ArgumentNullException.ThrowIfNull(pinned);
+        return pinned.Sum(e => e.EstimatedSchemaTokens) + (lazyEnabled ? MetaToolTokenEstimate : 0);
+    }
+
     private readonly IUpstreamSupervisor _supervisor;
     private readonly IAuthorizationService _authorization;
     private readonly IRbacDirectory _directory;
@@ -71,7 +86,7 @@ public sealed partial class ToolCatalog : IToolCatalog, IDisposable
         var pinnedSet = new HashSet<NamespacedToolName>(pinnedNames);
         var pinned = visible.Where(e => pinnedSet.Contains(e.Name)).ToList();
 
-        var estimated = pinned.Sum(e => e.EstimatedSchemaTokens) + (lazyEnabled ? MetaToolTokenEstimate : 0);
+        var estimated = EstimateContextTokens(pinned, lazyEnabled);
         return new ProfileView(pinned, lazyEnabled, estimated);
     }
 

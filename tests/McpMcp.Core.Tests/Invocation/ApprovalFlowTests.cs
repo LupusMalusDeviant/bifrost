@@ -27,27 +27,39 @@ public class ApprovalFlowTests
     private sealed class FakeStore : IApprovalStore
     {
         private readonly ConcurrentDictionary<string, ApprovalState> _byKey = new();
+        private readonly ConcurrentDictionary<string, Guid> _ids = new();
+
         public int Enqueued { get; private set; }
+
+        /// <summary>Vorgänge, die nach dem Aufruf abgeschlossen wurden — mit ihrem Ergebnis.</summary>
+        public ConcurrentDictionary<Guid, TaskFailure?> Completed { get; } = new();
 
         private static string Key(IdentityId c, NamespacedToolName t, string fp) => $"{c.Value:N}|{t.Value}|{fp}";
 
-        public Task<bool> TryConsumeApprovalAsync(IdentityId caller, NamespacedToolName tool, string fp, CancellationToken ct)
+        public Task<Guid?> TryConsumeApprovalAsync(IdentityId caller, NamespacedToolName tool, string fp, CancellationToken ct)
         {
             var key = Key(caller, tool, fp);
             if (_byKey.TryGetValue(key, out var s) && s == ApprovalState.Approved)
             {
                 _byKey[key] = ApprovalState.Consumed; // einmalig
-                return Task.FromResult(true);
+                return Task.FromResult<Guid?>(_ids.GetOrAdd(key, _ => Guid.NewGuid()));
             }
 
-            return Task.FromResult(false);
+            return Task.FromResult<Guid?>(null);
+        }
+
+        public Task CompleteAsync(Guid taskId, TaskFailure? failure, CancellationToken ct)
+        {
+            Completed[taskId] = failure;
+            return Task.CompletedTask;
         }
 
         public Task<Guid> EnqueueAsync(ApprovalRequest r, CancellationToken ct)
         {
             Enqueued++;
-            _byKey.TryAdd(Key(r.Caller, r.Tool, r.ArgumentFingerprint), ApprovalState.Pending);
-            return Task.FromResult(Guid.NewGuid());
+            var key = Key(r.Caller, r.Tool, r.ArgumentFingerprint);
+            _byKey.TryAdd(key, ApprovalState.Pending);
+            return Task.FromResult(_ids.GetOrAdd(key, _ => Guid.NewGuid()));
         }
 
         public void Approve(IdentityId caller, NamespacedToolName tool, string fp)
@@ -103,6 +115,67 @@ public class ApprovalFlowTests
             InvokerTestWorld.Request(admin, _w.Echo, new { message = "hi" }),
             TestContext.Current.CancellationToken);
         third.Status.Should().Be(InvocationStatus.ApprovalRequired);
+    }
+
+    /// <summary>
+    /// Ein eingelöster Vorgang bekommt einen Abschluss. Vorher blieb er auf <c>Working</c> stehen
+    /// und lief still in den Verfall — die Vorgangsliste zeigte für einen erfolgreichen Aufruf
+    /// dauerhaft „läuft" und später „abgelaufen". <c>TaskState.Completed</c> hatte damit gar keinen
+    /// Produzenten.
+    /// </summary>
+    [Fact]
+    public async Task A_consumed_task_is_completed_after_the_call()
+    {
+        var admin = _w.RegisterAdmin();
+        var store = new FakeStore();
+        var invoker = _w.WithApproval(new FakePolicy(_w.Echo), store);
+
+        await invoker.InvokeAsync(
+            InvokerTestWorld.Request(admin, _w.Echo, new { message = "hi" }),
+            TestContext.Current.CancellationToken);
+
+        var redacted = _w.Redaction.RedactArguments(
+            _w.Echo, System.Text.Json.JsonSerializer.SerializeToElement(new { message = "hi" }));
+        var fp = McpMcp.Core.Approvals.ApprovalFingerprint.Compute(admin, _w.Echo, redacted);
+        store.Approve(admin, _w.Echo, fp);
+
+        var result = await invoker.InvokeAsync(
+            InvokerTestWorld.Request(admin, _w.Echo, new { message = "hi" }),
+            TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(InvocationStatus.Success);
+        store.Completed.Should().ContainSingle()
+            .Which.Value.Should().BeNull("ein erfolgreicher Aufruf schließt den Vorgang ohne Fehler ab");
+    }
+
+    /// <summary>
+    /// Scheitert der Aufruf nach der Freigabe, wird der Vorgang als gescheitert abgeschlossen — mit
+    /// dem Status als maschinenlesbarem Code. Ihn als „erledigt" zu führen wäre falsch, ihn offen zu
+    /// lassen ebenso.
+    /// </summary>
+    [Fact]
+    public async Task A_failing_call_fails_the_task_too()
+    {
+        var admin = _w.RegisterAdmin();
+        var store = new FakeStore();
+        var invoker = _w.WithApproval(new FakePolicy(_w.Echo), store);
+        await invoker.InvokeAsync(
+            InvokerTestWorld.Request(admin, _w.Echo, new { message = "hi" }),
+            TestContext.Current.CancellationToken);
+
+        var redacted = _w.Redaction.RedactArguments(
+            _w.Echo, System.Text.Json.JsonSerializer.SerializeToElement(new { message = "hi" }));
+        var fp = McpMcp.Core.Approvals.ApprovalFingerprint.Compute(admin, _w.Echo, redacted);
+        store.Approve(admin, _w.Echo, fp);
+        _w.Connection.CallException = new IOException("Upstream weg (Test).");
+
+        var result = await invoker.InvokeAsync(
+            InvokerTestWorld.Request(admin, _w.Echo, new { message = "hi" }),
+            TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(InvocationStatus.UpstreamError);
+        store.Completed.Should().ContainSingle()
+            .Which.Value.Should().NotBeNull();
     }
 
     [Fact]
