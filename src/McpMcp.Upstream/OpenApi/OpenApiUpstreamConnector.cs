@@ -2,15 +2,23 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using McpMcp.Abstractions;
+using McpMcp.Upstream.Http;
 
 namespace McpMcp.Upstream.OpenApi;
 
 /// <summary>
 /// API→MCP-Brücke (FR-19, ADR-0008): eine per OpenAPI-Spec beschriebene REST-API erscheint
 /// als normaler Upstream — hot-swappable, profilierbar und auditiert wie jeder MCP-Server.
+/// <para>
+/// Spec-Quelle und Ziel-API laufen durch dieselbe Zielprüfung wie beim OpenRPC-Konnektor
+/// (<see cref="RemoteSpecFetcher"/>). Vorgabe ist fail-closed: Ein Ziel im internen Netz verlangt
+/// <see cref="OpenApiTransportOptions.AllowPrivateTargets"/>.
+/// </para>
 /// </summary>
 public sealed class OpenApiUpstreamConnector : IUpstreamConnector
 {
+    private static readonly TimeSpan SpecTimeout = TimeSpan.FromSeconds(30);
+
     public UpstreamTransportKind Kind => UpstreamTransportKind.OpenApi;
 
     public async Task<IUpstreamConnection> ConnectAsync(ServerId id, UpstreamServerConfig config, CancellationToken ct)
@@ -19,7 +27,12 @@ public sealed class OpenApiUpstreamConnector : IUpstreamConnector
         var options = config.OpenApi
             ?? throw new ArgumentException($"Config '{config.Slug}' hat keine OpenApi-Optionen.", nameof(config));
 
-        var specJson = await LoadSpecAsync(options.SpecLocation, ct).ConfigureAwait(false);
+        // Größenbegrenzung UND Zielprüfung (Security-Audit WP7.2, nachgezogen mit Phase 8):
+        // Eine vom Betreiber genannte URL abzurufen, ohne das Ziel zu prüfen, macht das Gateway zum
+        // Werkzeug, interne Dienste zu erreichen. Weiterleitungen prüft der Fetcher einzeln.
+        var specJson = await RemoteSpecFetcher.FetchAsync(
+                options.SpecLocation, options.AllowPrivateTargets, SpecTimeout, Fail, ct)
+            .ConfigureAwait(false);
         var (operations, serverUrl) = OpenApiSpecParser.Parse(specJson);
 
         var baseAddress = options.BaseAddress
@@ -27,56 +40,36 @@ public sealed class OpenApiUpstreamConnector : IUpstreamConnector
             ?? throw new OpenApiImportException(
                 "Weder BaseAddress konfiguriert noch eine absolute Server-URL in der Spec — Ziel-API unbekannt.");
 
-        var http = new HttpClient { BaseAddress = baseAddress, Timeout = Timeout.InfiniteTimeSpan };
-        ApplyAuth(http, options);
+        // Auch die Ziel-API wird geprüft, nicht nur die Spec-Quelle. Sonst genügte eine Spec von
+        // einer harmlosen Adresse — oder aus einer lokalen Datei —, deren `servers`-Eintrag nach
+        // innen zeigt, und die Prüfung an der Quelle wäre eine Formalie.
+        await RemoteSpecFetcher
+            .EnsureTargetAllowedAsync(baseAddress, options.AllowPrivateTargets, Fail, ct)
+            .ConfigureAwait(false);
+
+        // Weiterleitungen im Aufrufpfad werden nicht verfolgt: Sonst führte ein 302 der Ziel-API an
+        // der eben geprüften Adresse vorbei — auf 127.0.0.1 oder den Metadatendienst. Ein 3xx
+        // kommt stattdessen als Fehler beim Aufrufer an.
+        var handler = new HttpClientHandler { AllowAutoRedirect = false };
+        var http = new HttpClient(handler)
+        {
+            BaseAddress = baseAddress,
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+        try
+        {
+            ApplyAuth(http, options);
+        }
+        catch
+        {
+            http.Dispose();
+            throw;
+        }
+
         return new OpenApiUpstreamConnection(id, operations, http);
     }
 
-    private const long MaxSpecBytes = 10 * 1024 * 1024;
-
-    private static async Task<string> LoadSpecAsync(Uri location, CancellationToken ct)
-    {
-        if (location.IsFile)
-        {
-            var info = new FileInfo(location.LocalPath);
-            if (info.Exists && info.Length > MaxSpecBytes)
-            {
-                throw new OpenApiImportException($"Spec-Datei überschreitet {MaxSpecBytes / (1024 * 1024)} MB.");
-            }
-
-            return await File.ReadAllTextAsync(location.LocalPath, ct).ConfigureAwait(false);
-        }
-
-        if (location.Scheme is "http" or "https")
-        {
-            // Größenbegrenzung gegen Memory-Exhaustion-DoS über eine riesige Spec (Security-Audit WP7.2).
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-            using var response = await http.GetAsync(location, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
-            if (response.Content.Headers.ContentLength is > MaxSpecBytes)
-            {
-                throw new OpenApiImportException($"Spec überschreitet {MaxSpecBytes / (1024 * 1024)} MB.");
-            }
-
-            await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            using var limited = new StreamReader(stream);
-            var buffer = new char[8192];
-            var sb = new System.Text.StringBuilder();
-            int read;
-            while ((read = await limited.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
-            {
-                sb.Append(buffer, 0, read);
-                if (sb.Length > MaxSpecBytes)
-                {
-                    throw new OpenApiImportException($"Spec überschreitet {MaxSpecBytes / (1024 * 1024)} MB.");
-                }
-            }
-
-            return sb.ToString();
-        }
-
-        throw new OpenApiImportException($"Spec-Quelle '{location}' wird nicht unterstützt (nur file:// und http(s)://).");
-    }
+    private static Exception Fail(string message) => new OpenApiImportException(message);
 
     private static void ApplyAuth(HttpClient http, OpenApiTransportOptions options)
     {
@@ -141,18 +134,32 @@ internal sealed class OpenApiUpstreamConnection : IUpstreamConnection
 
         using var request = BuildRequest(operation, args);
         using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
-        var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 
-        // CallToolResult-Form wie bei echten MCP-Upstreams — der Rest des Gateways bleibt uniform.
-        return JsonSerializer.SerializeToElement(new
+        // Eine Weiterleitung wird bewusst nicht verfolgt (siehe Konnektor): Sie zeigt auf eine
+        // Adresse, die nie geprüft wurde. Der Aufrufer bekommt den Grund genannt statt eines leeren
+        // Rumpfs mit Statuscode.
+        if ((int)response.StatusCode is >= 300 and < 400)
         {
-            content = new[]
-            {
-                new { type = "text", text = body.Length > 0 ? body : $"HTTP {(int)response.StatusCode}" },
-            },
-            isError = !response.IsSuccessStatusCode,
-        });
+            return Result(
+                $"Die API antwortet mit einer Weiterleitung auf '{response.Headers.Location}'. "
+                + "Weiterleitungen werden nicht verfolgt — das Ziel dahinter ist ungeprüft. "
+                + "Wenn es beabsichtigt ist, gehört die Zieladresse als BaseAddress in die Konfiguration.",
+                isError: true);
+        }
+
+        var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        return Result(
+            body.Length > 0 ? body : $"HTTP {(int)response.StatusCode}",
+            isError: !response.IsSuccessStatusCode);
     }
+
+    /// <summary>CallToolResult-Form wie bei echten MCP-Upstreams — der Rest des Gateways bleibt uniform.</summary>
+    private static JsonElement Result(string text, bool isError)
+        => JsonSerializer.SerializeToElement(new
+        {
+            content = new[] { new { type = "text", text } },
+            isError,
+        });
 
     public Task<JsonElement> ReadResourceAsync(Uri uri, CancellationToken ct)
         => throw new NotSupportedException("OpenAPI-Upstreams haben keine Resources.");

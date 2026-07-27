@@ -33,7 +33,10 @@ public sealed class OpenRpcUpstreamConnector : IUpstreamConnector
         await SpecFetcher.EnsureTargetAllowedAsync(options.Endpoint, options.AllowPrivateTargets, ct)
             .ConfigureAwait(false);
 
-        var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        // Keine automatischen Weiterleitungen im Aufrufpfad: Ein 302 der Gegenstelle führte sonst an
+        // der eben geprüften Adresse vorbei — genau der Weg, den die Zielprüfung schließen soll.
+        var handler = new HttpClientHandler { AllowAutoRedirect = false };
+        var http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
         ApplyAuth(http, options);
 
         try
@@ -237,6 +240,14 @@ internal sealed class OpenRpcUpstreamConnection : IUpstreamConnection
 
         using var content = JsonContent.Create(request);
         using var httpResponse = await http.PostAsync(endpoint, content, ct).ConfigureAwait(false);
+        if ((int)httpResponse.StatusCode is >= 300 and < 400)
+        {
+            throw new OpenRpcImportException(
+                $"Der Dienst leitet auf '{httpResponse.Headers.Location}' weiter. Weiterleitungen "
+                + "werden nicht verfolgt — das Ziel dahinter ist ungeprüft. Wenn es beabsichtigt ist, "
+                + "gehört die Zieladresse als Endpoint in die Konfiguration.");
+        }
+
         httpResponse.EnsureSuccessStatusCode();
 
         var body = await httpResponse.Content.ReadFromJsonAsync<JsonElement>(ct).ConfigureAwait(false);

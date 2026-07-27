@@ -197,6 +197,35 @@ Zu den Parametern: `paramStructure: by-name` schickt ein Objekt, `by-position` e
 Array** in der Reihenfolge aus dem Dokument. Der Aufrufer nennt in beiden Fällen die Namen; die
 Reihenfolge kommt aus der Beschreibung, nicht aus der Reihenfolge im Aufruf.
 
+## Ziele im internen Netz (OpenAPI und OpenRPC)
+
+Beide Konnektoren rufen Adressen ab, die ein Administrator konfiguriert hat. Ohne Prüfung wäre der
+Gateway damit ein Werkzeug, um **interne** Dienste zu erreichen — den Cloud-Metadatendienst auf
+`169.254.169.254`, einen Admin-Port auf `127.0.0.1`, einen Nachbarn im Firmennetz. Geprüft wird
+deshalb beides: die **Quelle der Beschreibung** und die **Ziel-API**. Der Hostname wird aufgelöst
+und *alle* seine Adressen geprüft; Weiterleitungen beim Laden werden einzeln erneut geprüft.
+
+Im **Aufrufpfad** folgt kein Konnektor einer Weiterleitung. Ein `302` der Gegenstelle zeigte sonst
+auf eine Adresse, die nie geprüft wurde; stattdessen kommt der Aufruf mit einem Fehler zurück, der
+das Ziel nennt. Ist die Weiterleitung beabsichtigt, gehört die Zieladresse in die Konfiguration.
+
+Für einen Dienst im eigenen Netz — in Entwicklungsaufbauten der Normalfall — setzt man den Schalter
+ausdrücklich und pro Upstream:
+
+```json
+"OpenApi": {
+  "SpecLocation": "http://localhost:8080/openapi.json",
+  "AllowPrivateTargets": true
+}
+```
+
+In der UI ist es das Häkchen „Ziele im internen Netz erlauben" im OpenAPI-Formular.
+
+> **Umstellung:** Vorgabe ist `false`. Bestehende OpenAPI-Upstreams, die auf `localhost` oder ein
+> privates Netz zeigen, kommen nach dem Update nicht mehr hoch, bis der Schalter gesetzt ist. Die
+> Fehlermeldung nennt die Adresse und den Schalter beim Namen — der Upstream steht auf `Failed`,
+> nichts läuft still weiter.
+
 ## CLI-Programme im Container ausführen
 
 Ein CLI-Upstream läuft standardmäßig als Host-Prozess: gehärtet (absolute Pfade, Root-Allowlist,

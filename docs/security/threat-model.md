@@ -28,7 +28,7 @@ Der Gateway ist der zentrale Vertrauensanker (ADR-0001): Er terminiert jeden Cal
 | # | Finding | Fix |
 |---|---|---|
 | 1 | UI-Cookie ohne `Secure`-Flag | `SecurePolicy = Always` außerhalb Development |
-| 3 | OpenAPI-Spec ohne Größenlimit (Memory-DoS) + SSRF/File-Read | 10-MB-Cap beim Laden (Datei + HTTP-Stream), 30-s-Timeout beim Spec-Fetch |
+| 3 | OpenAPI-Spec ohne Größenlimit (Memory-DoS) + SSRF/File-Read | 10-MB-Cap beim Laden (Datei + HTTP-Stream), 30-s-Timeout beim Spec-Fetch. ⚠️ **Der SSRF-Teil war damit nicht behoben** — siehe Finding 8. |
 | 4 | Username-Enumeration per Timing | Dummy-PBKDF2-Verify im „User nicht gefunden"-Pfad |
 | 5 | Header-Parameter-Injection (CR/LF) im OpenAPI-Connector | CR/LF-Werte werden abgelehnt |
 | 6 | `/readyz` gab Upstream-Topologie anonym preis | nur noch aggregierte Zahlen |
@@ -38,6 +38,7 @@ Der Gateway ist der zentrale Vertrauensanker (ADR-0001): Er terminiert jeden Cal
 | # | Finding | Fix |
 |---|---|---|
 | 7 | **Klartext-Secrets im Audit-Log über den Meta-Tool-Pfad.** `MetaToolService` schrieb die Argumente ungefiltert; bei `invoke_tool` enthält `args.arguments` die kompletten Ziel-Argumente. Ein Call über den Lazy-Pfad persistierte damit Passwörter/Tokens im Klartext, während derselbe Call über `tools/call` korrekt maskiert wurde. Gefunden bei einem unabhängigen Abgleich aller Muss-FRs gegen den Code, nicht durch den ursprünglichen Security-Audit. | Der Meta-Pfad läuft durch denselben `IRedactionService`; Regressionstest hält die Invariante. Betroffen sind Bestands-Logs aus v1.0/v1.1 — wer den Lazy-Pfad genutzt hat, sollte die Audit-Tabelle prüfen und ggf. betroffene Zeilen löschen sowie die dort sichtbar gewordenen Credentials rotieren. |
+| 8 | **SSRF über den OpenAPI-Konnektor.** Finding 3 hatte nur die Größengrenze geschlossen; die Zielprüfung fehlte weiter. Ein Admin-konfigurierter Upstream konnte damit auf `169.254.169.254`, `127.0.0.1` oder einen Nachbarn im Firmennetz zeigen — und zwar auf drei Wegen: über die Spec-URL, über den `servers`-Eintrag einer harmlos wirkenden (auch lokalen) Spec, und über eine Weiterleitung, der `HttpClient` von sich aus folgte. Aufgefallen beim Bau des OpenRPC-Konnektors, der die Prüfung von Anfang an hatte. | Beide Konnektoren teilen sich `RemoteSpecFetcher`: Auflösung **aller** Adressen des Namens, Abweisung von Loopback/privat/Link-Local/CGNAT, Weiterleitungen einzeln geprüft. Geprüft werden **Spec-Quelle und Ziel-API**. Im Aufrufpfad folgt kein Konnektor mehr automatisch einer Weiterleitung — ein 3xx kommt als Fehler beim Aufrufer an. **Verhaltensänderung:** Ziele im internen Netz brauchen jetzt `AllowPrivateTargets: true` (UI: Häkchen im OpenAPI-Formular); bestehende Upstreams auf `localhost` bleiben ohne diese Angabe stehen und melden es beim Namen. |
 
 ## WASI-Pluginpfad (Review 2026-07-25)
 

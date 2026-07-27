@@ -226,6 +226,10 @@
                 <div><label>Header-Name</label><input @bind="_apiKeyHeader" placeholder="X-Api-Key" /></div>
             }
         </div>
+        <label title="Ohne diese Freigabe werden Spec-Quelle und Ziel-API im internen Netz abgewiesen.">
+            <input type="checkbox" @bind="_allowPrivateTargets" style="width:auto" />
+            Ziele im internen Netz erlauben (Loopback, privates Netz, Link-Local)
+        </label>
     }
 
     <div class="toolbar" style="margin-top:1rem">
@@ -259,6 +263,8 @@
     private bool _allowLegacySse = true;
     private string _specUrl = "", _baseUrl = "", _credential = "", _apiKeyHeader = "X-Api-Key";
     private OpenApiAuthKind _openApiAuth = OpenApiAuthKind.None;
+    // Vorgabe fail-closed wie im Konnektor: Wer ein internes Ziel einbindet, hakt es bewusst an.
+    private bool _allowPrivateTargets;
     private bool _busy, _ok;
     private string? _message;
     private static readonly JsonSerializerOptions CliManifestJson = CreateCliManifestJson();
@@ -325,7 +331,8 @@
                         string.IsNullOrWhiteSpace(_baseUrl) ? null : new Uri(_baseUrl.Trim()),
                         _openApiAuth,
                         string.IsNullOrWhiteSpace(_credential) ? null : _credential,
-                        _openApiAuth == OpenApiAuthKind.ApiKeyHeader ? _apiKeyHeader.Trim() : null)),
+                        _openApiAuth == OpenApiAuthKind.ApiKeyHeader ? _apiKeyHeader.Trim() : null,
+                        _allowPrivateTargets)),
             };
         }
         catch (Exception ex)
@@ -436,6 +443,7 @@
         _baseUrl = current.OpenApi?.BaseAddress?.ToString() ?? "";
         _openApiAuth = current.OpenApi?.AuthKind ?? OpenApiAuthKind.None;
         _apiKeyHeader = current.OpenApi?.ApiKeyHeaderName ?? "X-Api-Key";
+        _allowPrivateTargets = current.OpenApi?.AllowPrivateTargets ?? false;
         _credential = "";
     }
 
@@ -480,6 +488,7 @@
             _cliExecutableRoots = _cliWorkingRoots = _cliReadRoots = _cliWriteRoots = "";
         _cliToolsJson = "[]";
         _clearCliEnvironment = false;
+        _allowPrivateTargets = false;
     }
 
     private static string JoinLines(IReadOnlyList<string>? values)

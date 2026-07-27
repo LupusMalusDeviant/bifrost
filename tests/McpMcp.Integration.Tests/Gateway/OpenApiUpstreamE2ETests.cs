@@ -56,6 +56,9 @@ public sealed class OpenApiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAs
             var body = await JsonSerializer.DeserializeAsync<JsonElement>(ctx.Request.Body);
             return Results.Json(new { created = body.GetProperty("name").GetString() });
         });
+        // Lockvogel: Die API antwortet mit einer Weiterleitung auf den Cloud-Metadatendienst. Würde
+        // der Konnektor ihr folgen, ginge der Aufruf an eine nie geprüfte Adresse.
+        _petApi.MapGet("/lure", () => Results.Redirect("http://169.254.169.254/latest/meta-data/"));
         _petApi.MapGet("/openapi.json", () => Results.Text(SpecJson(), "application/json"));
 
         await _petApi.StartAsync();
@@ -80,7 +83,10 @@ public sealed class OpenApiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAs
                     BaseAddress: new Uri($"http://127.0.0.1:{_port}"),
                     AuthKind: OpenApiAuthKind.ApiKeyHeader,
                     Credential: ApiKeySecret,
-                    ApiKeyHeaderName: ApiKeyHeader)),
+                    ApiKeyHeaderName: ApiKeyHeader,
+                    // Der Testdienst läuft auf Loopback — genau das, was die Zielprüfung sonst
+                    // abweist. So sieht auch die Umstellung einer bestehenden lokalen API aus.
+                    AllowPrivateTargets: true)),
             TestContext.Current.CancellationToken);
         await IntegrationSupport.WaitUntilAsync(
             () => _gw.Supervisor.GetStatus(serverId)?.State == UpstreamState.Healthy,
@@ -114,6 +120,53 @@ public sealed class OpenApiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAs
             "/api/v1/tools/petapi__getPet/invoke",
             new StringContent("""{"petId":1}""", Encoding.UTF8, "application/json"));
         afterRemove.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// Eine Weiterleitung der Ziel-API wird nicht verfolgt. Sonst führte ein 302 an der beim
+    /// Verbinden geprüften Adresse vorbei — hier auf den Cloud-Metadatendienst — und die Zielprüfung
+    /// wäre nur so lange wirksam, wie die API mitspielt.
+    /// </summary>
+    [Fact]
+    public async Task A_redirect_from_the_api_is_not_followed()
+    {
+        var serverId = await _gw.Supervisor.AddAsync(
+            new UpstreamServerConfig(
+                "lureapi", "Weiterleitende API", UpstreamTransportKind.OpenApi, Enabled: true,
+                OpenApi: new OpenApiTransportOptions(
+                    new Uri($"http://127.0.0.1:{_port}/openapi.json"),
+                    BaseAddress: new Uri($"http://127.0.0.1:{_port}"),
+                    AuthKind: OpenApiAuthKind.ApiKeyHeader,
+                    Credential: ApiKeySecret,
+                    ApiKeyHeaderName: ApiKeyHeader,
+                    AllowPrivateTargets: true)),
+            TestContext.Current.CancellationToken);
+        try
+        {
+            await IntegrationSupport.WaitUntilAsync(
+                () => _gw.Supervisor.GetStatus(serverId)?.State == UpstreamState.Healthy,
+                because: "der Import selbst muss gelingen");
+
+            var (_, apiKey) = await _gw.SeedAdminAsync("lure-admin");
+            using var client = _gw.CreateDefaultClient();
+            client.DefaultRequestHeaders.Authorization = new("Bearer", apiKey);
+
+            var response = await client.PostAsync(
+                "/api/v1/tools/lureapi__lure/invoke",
+                new StringContent("{}", Encoding.UTF8, "application/json"));
+            var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var content = payload.GetProperty("content");
+
+            content.GetProperty("isError").GetBoolean().Should().BeTrue();
+            content.GetProperty("content")[0].GetProperty("text").GetString()
+                .Should().Contain("Weiterleitung").And.Contain("169.254.169.254",
+                    "die Meldung nennt das Ziel, dem nicht gefolgt wurde");
+        }
+        finally
+        {
+            await _gw.Supervisor.RemoveAsync(
+                serverId, DrainPolicy.Immediate, TestContext.Current.CancellationToken);
+        }
     }
 
     [Fact]
@@ -183,6 +236,7 @@ public sealed class OpenApiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAs
                 }
               }
             },
+            "/lure": { "get": { "operationId": "lure", "summary": "Leitet weiter" } },
             "/pets/{petId}": {
               "get": {
                 "operationId": "getPet",

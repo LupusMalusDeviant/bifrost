@@ -79,12 +79,20 @@ public sealed record HttpTransportOptions(
 /// Bearer: Credential = Token; Basic: Credential = "user:pass"; ApiKeyHeader: Credential = Key,
 /// Header-Name über <see cref="ApiKeyHeaderName"/> (Default X-Api-Key).
 /// </summary>
+/// <param name="AllowPrivateTargets">
+/// Erlaubt Spec-Quelle und Ziel-API im privaten, Loopback- oder Link-Local-Netz. Vorgabe ist
+/// <c>false</c>: Ohne die Prüfung ist das Gateway ein Werkzeug, um interne Dienste zu erreichen —
+/// vom Cloud-Metadatendienst auf <c>169.254.169.254</c> bis zum Admin-Port auf <c>127.0.0.1</c>.
+/// Wer eine API im eigenen Netz einbindet, setzt den Schalter ausdrücklich; die Absage nennt ihn
+/// beim Namen, damit die Umstellung nicht zum Rätsel wird.
+/// </param>
 public sealed record OpenApiTransportOptions(
     Uri SpecLocation,
     Uri? BaseAddress = null,
     OpenApiAuthKind AuthKind = OpenApiAuthKind.None,
     string? Credential = null,
-    string? ApiKeyHeaderName = null);
+    string? ApiKeyHeaderName = null,
+    bool AllowPrivateTargets = false);
 
 /// <summary>
 /// OpenRPC-Dienst als virtueller Upstream (Roadmap Phase 8, Spike `docs/spikes/openrpc-import.md`).
