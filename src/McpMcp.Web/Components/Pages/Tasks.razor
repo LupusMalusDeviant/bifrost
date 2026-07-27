@@ -107,17 +107,19 @@
         => (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "?";
 
     /// <summary>
-    /// Der Abbruch wird <em>verlangt</em>, nicht behauptet: Ob der Upstream wirklich aufhört,
-    /// bestätigt der Ausführende (ADR-0019, Entscheidung 3).
+    /// Bricht einen Vorgang ab. Läuft nichts, ist der Abbruch endgültig — und eine so beendete
+    /// Freigabe ist nicht mehr einlösbar. Ist der Vorgang bereits eingelöst, sagt die Meldung das:
+    /// Der Aufruf ist gelaufen, da ist nichts mehr zu stoppen.
     /// </summary>
     private async Task RequestCancel(TaskRecord task)
     {
-        var outcome = await TaskStore.UpdateAsync(
-            new TaskUpdate(task.Id, Cancellation: TaskCancellation.Requested), task.Revision, CancellationToken.None);
+        var outcome = await TaskStore.CancelAsync(task.Id, task.Revision, CancellationToken.None);
         _message = outcome switch
         {
             TaskUpdateOutcome.Applied =>
-                "Abbruch verlangt. Bestätigt ist er erst, wenn der Upstream aufgehört hat.",
+                "Abgebrochen. Eine Freigabe dazu ist nicht mehr einlösbar.",
+            TaskUpdateOutcome.NotCancellable =>
+                "Bereits eingelöst — der Aufruf ist gelaufen und lässt sich nicht mehr abbrechen.",
             TaskUpdateOutcome.RevisionMismatch =>
                 "Der Vorgang hat sich zwischenzeitlich geändert — bitte neu laden.",
             TaskUpdateOutcome.Terminal => "Der Vorgang ist schon abgeschlossen.",

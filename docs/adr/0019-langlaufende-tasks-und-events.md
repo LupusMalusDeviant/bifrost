@@ -88,6 +88,14 @@ unterscheidet `requested` von `confirmed`.
 | OpenAPI/HTTP | nein — Verbindungsabbruch ohne Zusage über die Gegenseite |
 | WASI ([ADR-0020](0020-wasi-runtime-out-of-process-rust-host.md)) | ja, seit IPC-Vertrag v4 (2026-07-25) — `cancel` trappt den Guest über die Epoche, und `confirmed` wird erst gemeldet, wenn der Aufruf wirklich geendet hat. Bleibt das binnen fünf Sekunden aus, steht `confirmed: false`, und es greifen wieder nur Fuel und Frist |
 
+> **Nachtrag 2026-07-27.** Diese Tabelle beschreibt Vorgänge, bei denen etwas *läuft*. Für einen
+> Vorgang, bei dem **nichts** läuft — eine wartende Freigabe oder eine erteilte, noch nicht
+> eingelöste — ist der Abbruch sofort belegbar und wird deshalb unmittelbar `confirmed`, Zustand
+> `cancelled`. Der Grund ist derselbe wie für die Tabelle: Bestätigt wird, was sich bestätigen
+> lässt. Bis dahin war der Abbruch dort ein Vermerk **ohne Wirkung** — eine widerrufene Freigabe
+> blieb einlösbar, weil niemand das Feld auswertete. Das war kein Teil dieser Entscheidung, sondern
+> eine Lücke in ihrer Umsetzung.
+
 Ein Transport ohne Bestätigung bleibt bei `requested` stehen. Das ist ausdrücklich so gewollt: Ein
 `confirmed`, das niemand einlöst, wäre ein Feld, das Sicherheit vortäuscht — und im Audit ist
 „wurde der Upstream wirklich gestoppt" genau die Frage, die gestellt wird.

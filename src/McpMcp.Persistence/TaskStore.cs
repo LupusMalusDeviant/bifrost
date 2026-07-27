@@ -166,6 +166,48 @@ public sealed class TaskStore : ITaskStore
         return TaskUpdateOutcome.Applied;
     }
 
+    /// <summary>
+    /// Bricht einen Vorgang ab (siehe <see cref="ITaskStore.CancelAsync"/>). Läuft nichts, ist der
+    /// Abbruch sofort endgültig; ein bereits eingelöster Vorgang lässt sich nicht mehr abbrechen.
+    /// </summary>
+    public async Task<TaskUpdateOutcome> CancelAsync(Guid id, int expectedRevision, CancellationToken ct)
+    {
+        await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var row = await db.Tasks.FirstOrDefaultAsync(r => r.Id == id, ct).ConfigureAwait(false);
+        if (row is null)
+        {
+            return TaskUpdateOutcome.NotFound;
+        }
+
+        if (row.Revision != expectedRevision)
+        {
+            return TaskUpdateOutcome.RevisionMismatch;
+        }
+
+        if (IsTerminal(row.State))
+        {
+            return TaskUpdateOutcome.Terminal;
+        }
+
+        // Eingelöst heißt: Der Aufruf ist bereits durch die Pipeline gegangen. Da ist nichts mehr
+        // zu stoppen, und es als abgebrochen zu führen wäre eine Unwahrheit über einen Aufruf, der
+        // stattgefunden hat.
+        if (row.ClaimedAtTicks is not null)
+        {
+            return TaskUpdateOutcome.NotCancellable;
+        }
+
+        var now = _time.GetUtcNow().UtcTicks;
+        row.State = (int)TaskState.Cancelled;
+        // Bestätigt, nicht nur verlangt: Es gibt keinen Ausführenden, der noch etwas bestätigen
+        // müsste — es läuft nichts. Genau das meint ADR-0019 mit „confirmed nur wo belegbar".
+        row.Cancellation = (int)TaskCancellation.Confirmed;
+        row.Revision++;
+        row.UpdatedAtTicks = now;
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return TaskUpdateOutcome.Applied;
+    }
+
     public async Task<bool> TryConsumeApprovedAsync(
         IdentityId owner, NamespacedToolName tool, string inputFingerprint, CancellationToken ct)
     {
@@ -180,6 +222,12 @@ public sealed class TaskStore : ITaskStore
                 && r.InputFingerprint == inputFingerprint
                 && r.State == (int)TaskState.Working
                 && r.ClaimedAtTicks == null
+                // Ein widerrufener Vorgang ist nicht einlösbar. Der Zustandsvergleich oben würde
+                // das schon abdecken, weil ein Abbruch auf `Cancelled` setzt — aber diese Bedingung
+                // hält auch dann, wenn ein späterer Pfad einen Abbruch nur vermerkt, ohne den
+                // Zustand zu wechseln. An einer Freigabe ist das die Bedingung, die man doppelt
+                // haben will.
+                && r.Cancellation == (int)TaskCancellation.None
                 && r.ExpiresAtTicks > nowTicks)
             .OrderBy(r => r.CreatedAtTicks)
             .FirstOrDefaultAsync(ct)

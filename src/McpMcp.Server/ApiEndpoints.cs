@@ -477,17 +477,36 @@ internal static class ApiEndpoints
                 return Results.Conflict(new { error = "Der Vorgang ist abgeschlossen und nicht mehr abbrechbar." });
             }
 
-            // `Requested`, nicht `Cancelled`: Ob der Upstream wirklich aufgehört hat, weiss hier
-            // niemand — das bestätigt der Ausführende (ADR-0019, Entscheidung 3).
-            var outcome = await store.UpdateAsync(
-                new TaskUpdate(id, Cancellation: TaskCancellation.Requested), task.Revision, ct);
-            if (outcome is TaskUpdateOutcome.RevisionMismatch)
+            var outcome = await store.CancelAsync(id, task.Revision, ct);
+            switch (outcome)
             {
-                return Results.Conflict(new { error = "Der Vorgang wurde zwischenzeitlich geändert — erneut lesen." });
+                case TaskUpdateOutcome.RevisionMismatch:
+                    return Results.Conflict(new
+                    {
+                        error = "Der Vorgang wurde zwischenzeitlich geändert — erneut lesen.",
+                    });
+                case TaskUpdateOutcome.NotCancellable:
+                    // Ehrlich statt bequem: Der Aufruf ist bereits gelaufen. Ein 202 wäre hier die
+                    // Behauptung, es sei etwas gestoppt worden.
+                    return Results.Conflict(new
+                    {
+                        error = "Der Vorgang wurde bereits eingelöst — der Aufruf ist gelaufen und "
+                            + "lässt sich nicht mehr abbrechen.",
+                    });
+                case TaskUpdateOutcome.Terminal:
+                    return Results.Conflict(new
+                    {
+                        error = "Der Vorgang ist abgeschlossen und nicht mehr abbrechbar.",
+                    });
+                case TaskUpdateOutcome.NotFound:
+                    return Results.NotFound();
             }
 
-            AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null, $"task-cancel-requested:{id}");
-            return Results.Accepted($"/api/v1/tasks/{id}");
+            AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null, $"task-cancelled:{id}");
+
+            // 200 statt 202: Der Abbruch ist endgültig, nicht bloß angenommen. Eine Freigabe, die
+            // so beendet wurde, ist nicht mehr einlösbar.
+            return Results.Ok(await store.GetAsync(id, ct));
         });
 
         MapPublisherManagement(api);

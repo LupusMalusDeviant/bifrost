@@ -151,6 +151,30 @@ public interface ITaskStore
     Task<TaskUpdateOutcome> UpdateAsync(TaskUpdate update, int expectedRevision, CancellationToken ct);
 
     /// <summary>
+    /// Bricht einen Vorgang ab. Eigene Operation statt einer Fortschreibung über
+    /// <see cref="UpdateAsync"/>, weil die Regel an <b>einer</b> Stelle stehen muss — ein Abbruch,
+    /// den jeder Aufrufer selbst zusammensetzt, ist ein Abbruch, den irgendwann jemand vergisst.
+    /// <para>
+    /// Läuft nichts (Vorgang wartet oder ist freigegeben, aber nicht eingelöst), ist der Abbruch
+    /// <b>sofort endgültig</b>: Zustand <see cref="TaskState.Cancelled"/> und
+    /// <see cref="TaskCancellation.Confirmed"/>. Genau hier ist die Bestätigung belegbar im Sinne
+    /// von ADR-0019 — es gibt keinen Ausführenden, der noch etwas bestätigen müsste, weil nichts
+    /// ausgeführt wird.
+    /// </para>
+    /// <para>
+    /// Ist der Vorgang bereits eingelöst, liefert die Operation
+    /// <see cref="TaskUpdateOutcome.NotCancellable"/>. Der Aufruf ist dann gelaufen; ihn als
+    /// abgebrochen zu führen wäre falsch.
+    /// </para>
+    /// <para>
+    /// <b>Wirkung auf die Freigabe:</b> Ein abgebrochener Vorgang ist nicht mehr einlösbar. Vor
+    /// dieser Operation konnte eine widerrufene Freigabe weiterhin verbraucht werden — der
+    /// Abbruch war ein Vermerk ohne Folgen.
+    /// </para>
+    /// </summary>
+    Task<TaskUpdateOutcome> CancelAsync(Guid id, int expectedRevision, CancellationToken ct);
+
+    /// <summary>
     /// Sucht einen freigegebenen, nicht abgelaufenen Vorgang für genau diesen Aufruf und verbraucht
     /// ihn. Liegt auf dem <b>heißen Pfad jedes Tool-Calls</b> — deshalb ein eigener, indexgestützter
     /// Weg statt einer allgemeinen Abfrage.
@@ -189,4 +213,11 @@ public enum TaskUpdateOutcome
 
     /// <summary>Der Vorgang ist terminal und damit unveränderlich.</summary>
     Terminal = 3,
+
+    /// <summary>
+    /// Ein Abbruch ist nicht mehr möglich, weil der Vorgang bereits eingelöst wurde — der Aufruf
+    /// ist gelaufen. Ein „angenommen" zurückzugeben wäre hier eine Unwahrheit: Es gibt nichts mehr
+    /// zu stoppen, und der Aufrufer würde eine Wirkung annehmen, die es nicht gibt.
+    /// </summary>
+    NotCancellable = 4,
 }

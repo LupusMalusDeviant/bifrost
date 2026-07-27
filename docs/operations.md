@@ -147,10 +147,15 @@ curl -H "Authorization: Bearer $API_KEY" http://localhost:8080/api/v1/tasks
   seine eigenen Vorgänge. Ein fremder Vorgang ist `404`, nicht `403` — sonst liesse sich über den
   Statuscode abfragen, welche Ids existieren.
 - `GET /api/v1/tasks/{id}` — einzelner Vorgang.
-- `POST /api/v1/tasks/{id}/cancel` — Abbruch **verlangen**. Antwort `202`; der Vorgang steht danach
-  auf `Cancellation: Requested`. Bestätigt ist er erst, wenn der Ausführende aufgehört hat — bei
-  WASI seit IPC-Vertrag v4 nachweisbar, bei HTTP-Upstreams nicht. Ein abgeschlossener Vorgang
-  antwortet mit `409`.
+- `POST /api/v1/tasks/{id}/cancel` — Abbruch. Solange **nichts läuft** (der Vorgang wartet oder ist
+  freigegeben, aber noch nicht eingelöst), ist er **endgültig**: Antwort `200`, Zustand `Cancelled`,
+  `Cancellation: Confirmed`. Es gibt hier keinen Ausführenden, der noch etwas bestätigen müsste.
+  **Eine so abgebrochene Freigabe ist nicht mehr einlösbar** — das ist der eigentliche Zweck.
+  Ein bereits **eingelöster** Vorgang antwortet `409`: Der Aufruf ist gelaufen, da ist nichts mehr zu
+  stoppen. Ein abgeschlossener Vorgang ebenfalls `409`.
+
+  Für künftige, wirklich laufende Vorgänge bleibt die Unterscheidung aus ADR-0019 bestehen —
+  `Requested` bis der Ausführende bestätigt. Einen solchen Ausführenden gibt es heute noch nicht.
 
 Der Zustand wird **geholt, nicht zugestellt** (ADR-0019). Es gibt kein Abo und keine Zusage, dass
 eine Benachrichtigung ankommt; wer den Stand braucht, fragt danach.

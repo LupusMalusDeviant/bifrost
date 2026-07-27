@@ -95,11 +95,17 @@ public sealed class TaskFacadeTests : IClassFixture<GatewayFixture>
     }
 
     /// <summary>
-    /// Abbruch über REST wird <b>verlangt</b>, nicht behauptet: Der Vorgang steht danach auf
-    /// <c>Requested</c>, und erst der Ausführende bestätigt (ADR-0019, Entscheidung 3).
+    /// Abbruch über REST ist <b>endgültig</b>, solange nichts läuft.
+    /// <para>
+    /// Dieser Test stand bis zum 2026-07-27 andersherum da: Er hielt fest, dass der Abbruch nur
+    /// „verlangt" wird und der Vorgang auf <c>Working</c> stehen bleibt. Das war die Beschreibung
+    /// eines Defekts, nicht einer Entscheidung — niemand las das Feld je aus, und eine widerrufene
+    /// Freigabe blieb einlösbar. ADR-0019 verlangt eine Bestätigung nur dort, wo ein Ausführender
+    /// sie geben kann; bei einem Vorgang, bei dem nichts läuft, ist der Abbruch sofort belegbar.
+    /// </para>
     /// </summary>
     [Fact]
-    public async Task Cancel_requests_but_does_not_confirm()
+    public async Task Cancel_is_final_when_nothing_is_running()
     {
         var (identity, apiKey) = await _gw.SeedAdminAsync("task-cancel-admin");
         var task = await SeedTaskAsync(identity, "srv__cancel_job");
@@ -107,10 +113,11 @@ public sealed class TaskFacadeTests : IClassFixture<GatewayFixture>
 
         var response = await client.PostAsync($"/api/v1/tasks/{task.Id}/cancel", null);
 
-        response.StatusCode.Should().Be(HttpStatusCode.Accepted);
+        response.StatusCode.Should().Be(HttpStatusCode.OK, "endgültig, nicht bloß angenommen");
         var reread = await Tasks.GetAsync(task.Id, TestContext.Current.CancellationToken);
-        reread!.Cancellation.Should().Be(TaskCancellation.Requested);
-        reread.State.Should().Be(TaskState.Working, "der Abbruch allein beendet den Vorgang nicht");
+        reread!.State.Should().Be(TaskState.Cancelled);
+        reread.Cancellation.Should().Be(TaskCancellation.Confirmed);
+        reread.IsTerminal.Should().BeTrue();
     }
 
     /// <summary>Ein abgeschlossener Vorgang lässt sich nicht mehr abbrechen — Terminal ist terminal.</summary>

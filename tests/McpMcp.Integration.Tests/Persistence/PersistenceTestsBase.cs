@@ -987,6 +987,86 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         afterRestart.All.Should().NotContain(p => p.Server == server);
     }
 
+    /// <summary>
+    /// Der Kern des Befunds vom 2026-07-27: Ein <b>widerrufener</b> Vorgang darf nicht mehr
+    /// einlösbar sein.
+    /// <para>
+    /// Vorher setzte der Abbruch nur ein Feld, das niemand las — eine zurückgezogene Freigabe ließ
+    /// sich anschließend trotzdem verbrauchen. Der Operator sah einen Abbruch-Knopf, drückte ihn,
+    /// und der nächste Versuch des Agenten lief durch.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_cancelled_approval_can_no_longer_be_consumed()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = TaskStoreAtFixtureTime();
+        var owner = IdentityId.New();
+        var task = NewTask(owner);
+
+        var created = await store.CreateOrGetAsync(task, ct);
+        // Freigegeben, aber noch nicht eingelöst — genau der gefährliche Zustand.
+        (await store.UpdateAsync(new TaskUpdate(created.Id, State: TaskState.Working), created.Revision, ct))
+            .Should().Be(TaskUpdateOutcome.Applied);
+
+        var approved = (await store.GetAsync(created.Id, ct))!;
+        (await store.CancelAsync(approved.Id, approved.Revision, ct)).Should().Be(TaskUpdateOutcome.Applied);
+
+        var cancelled = (await store.GetAsync(created.Id, ct))!;
+        cancelled.State.Should().Be(TaskState.Cancelled, "der Abbruch ist endgültig, wenn nichts läuft");
+        cancelled.Cancellation.Should().Be(TaskCancellation.Confirmed,
+            "es gibt keinen Ausführenden, der noch etwas bestätigen müsste");
+        cancelled.IsTerminal.Should().BeTrue();
+
+        (await store.TryConsumeApprovedAsync(owner, task.Tool, task.InputFingerprint, ct))
+            .Should().BeFalse("eine widerrufene Freigabe ist nicht mehr einlösbar");
+    }
+
+    /// <summary>
+    /// Die Gegenrichtung: Was bereits eingelöst wurde, lässt sich nicht nachträglich abbrechen. Der
+    /// Aufruf ist gelaufen — ihn als abgebrochen zu führen wäre eine Unwahrheit über etwas, das
+    /// stattgefunden hat.
+    /// </summary>
+    [Fact]
+    public async Task An_already_consumed_task_cannot_be_cancelled()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = TaskStoreAtFixtureTime();
+        var owner = IdentityId.New();
+        var task = NewTask(owner);
+
+        var created = await store.CreateOrGetAsync(task, ct);
+        await store.UpdateAsync(new TaskUpdate(created.Id, State: TaskState.Working), created.Revision, ct);
+        (await store.TryConsumeApprovedAsync(owner, task.Tool, task.InputFingerprint, ct))
+            .Should().BeTrue("Vorbedingung: die Freigabe wird eingelöst");
+
+        var consumed = (await store.GetAsync(created.Id, ct))!;
+        (await store.CancelAsync(consumed.Id, consumed.Revision, ct))
+            .Should().Be(TaskUpdateOutcome.NotCancellable);
+        (await store.GetAsync(created.Id, ct))!.State.Should().Be(TaskState.Working,
+            "der Zustand bleibt, wie er ist — es wurde nichts abgebrochen");
+    }
+
+    /// <summary>Eine wartende Anfrage lässt sich abbrechen und ist danach nicht mehr freigebbar.</summary>
+    [Fact]
+    public async Task A_waiting_request_can_be_cancelled()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = TaskStoreAtFixtureTime();
+        var created = await store.CreateOrGetAsync(NewTask(IdentityId.New()), ct);
+
+        (await store.CancelAsync(created.Id, created.Revision, ct)).Should().Be(TaskUpdateOutcome.Applied);
+
+        // Terminal heisst unveraenderlich: Eine nachtraegliche Freigabe prallt ab.
+        (await store.UpdateAsync(
+            new TaskUpdate(created.Id, State: TaskState.Working),
+            (await store.GetAsync(created.Id, ct))!.Revision, ct))
+            .Should().Be(TaskUpdateOutcome.Terminal);
+    }
+
     private async Task WaitForRowCountAsync(int expected, int timeoutMs = 30000)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
