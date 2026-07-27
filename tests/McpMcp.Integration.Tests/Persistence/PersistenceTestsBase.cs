@@ -747,7 +747,7 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         (await store.GetAsync(id, null, TestContext.Current.CancellationToken)).Content.Should().Be("Version-2-Inhalt", "latest");
         (await store.GetAsync(id, new AssetVersion(1), TestContext.Current.CancellationToken)).Content.Should().Be("Version-1-Inhalt");
 
-        var list = await store.ListAsync(IdentityId.New(), TestContext.Current.CancellationToken);
+        var list = await store.ListAsync(TestContext.Current.CancellationToken);
         list.Should().ContainSingle(a => a.Id == id).Which.LatestVersion.Value.Should().Be(2);
     }
 

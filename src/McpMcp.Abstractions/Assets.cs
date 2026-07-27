@@ -45,19 +45,23 @@ public sealed record AssetContent(
 /// <summary>
 /// Zentrale Verwaltung versionierter Text-Assets (Skills/Prompts/Instructions, FR-40).
 /// Auslieferung an Agenten erfolgt MCP-nativ als Prompts/Resources über den Katalog.
+/// <para>
+/// <b>Assets sind für jede authentifizierte Identität sichtbar</b> — es gibt keine per-Asset-RBAC,
+/// und FR-40 verlangt sie nicht. Sie sind zentrale Instruktionstexte und eröffnen keinen Zugriff auf
+/// Fremdsysteme. Wer hier Schutz annimmt, irrt: <b>keine Secrets in Assets ablegen.</b>
+/// </para>
+/// <para>
+/// Deshalb nimmt <see cref="ListAsync"/> <b>keine Identität</b> entgegen. Ein Parameter, der nie
+/// ausgewertet wird, sieht an jeder Aufrufstelle wie eine Berechtigungsprüfung aus und ist keine —
+/// das ist genau die Sorte Struktur-ohne-Wirkung, die dieses Projekt mehrfach teuer bezahlt hat. Wird
+/// eine Einschränkung später beschlossen, kommt der Parameter zurück; das ist eine mechanische
+/// Änderung, die der Compiler an jeder Stelle anzeigt.
+/// </para>
 /// </summary>
 public interface IAssetStore
 {
-    /// <summary>
-    /// Alle Assets in ihrer neuesten Version.
-    ///
-    /// <para><b>Keine RBAC-Filterung.</b> <paramref name="identity"/> wird bewusst nicht ausgewertet:
-    /// Assets sind zentrale Instruktionstexte, für jede authentifizierte Identität sichtbar, und
-    /// eröffnen keinen Zugriff auf Fremdsysteme — per-Asset-RBAC ist nicht Teil von FR-40.
-    /// Der Parameter bleibt im Vertrag, damit eine spätere Einschränkung keine Signaturänderung
-    /// braucht. Wer hier Schutz annimmt, irrt: <b>keine Secrets in Assets ablegen.</b></para>
-    /// </summary>
-    Task<IReadOnlyList<AssetInfo>> ListAsync(IdentityId identity, CancellationToken ct);
+    /// <summary>Alle Assets in ihrer neuesten Version — ungefiltert, siehe Hinweis am Interface.</summary>
+    Task<IReadOnlyList<AssetInfo>> ListAsync(CancellationToken ct);
 
     Task<AssetContent> GetAsync(AssetId id, AssetVersion? version, CancellationToken ct);
 

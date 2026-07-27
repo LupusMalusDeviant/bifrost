@@ -21,7 +21,7 @@ public sealed class EfAssetStore : IAssetStore
         _time = timeProvider ?? TimeProvider.System;
     }
 
-    public async Task<IReadOnlyList<AssetInfo>> ListAsync(IdentityId identity, CancellationToken ct)
+    public async Task<IReadOnlyList<AssetInfo>> ListAsync(CancellationToken ct)
     {
         await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
         var latest = await db.Assets.AsNoTracking()

@@ -95,7 +95,7 @@ internal static class GatewayMcpHandlers
 
         // Zentrale Assets (FR-40): zusätzlich zu den Upstream-Resources, unter reserviertem URI-Schema.
         var assets = ctx.Services!.GetRequiredService<IAssetStore>();
-        foreach (var asset in await assets.ListAsync(identity, ct).ConfigureAwait(false))
+        foreach (var asset in await assets.ListAsync(ct).ConfigureAwait(false))
         {
             resources.Add(new Resource
             {
@@ -168,7 +168,7 @@ internal static class GatewayMcpHandlers
         // Zentrale Assets (FR-40): der eigentliche Zweck von Keyfeature 7 — ein Ort, von dem sich
         // alle Agenten ihre Skills/Instructions ziehen.
         var assets = ctx.Services!.GetRequiredService<IAssetStore>();
-        prompts.AddRange((await assets.ListAsync(identity, ct).ConfigureAwait(false))
+        prompts.AddRange((await assets.ListAsync(ct).ConfigureAwait(false))
             .Select(a => new Prompt
             {
                 Name = AssetDelivery.PromptName(a.Name),
@@ -257,7 +257,7 @@ internal static class GatewayMcpHandlers
         IServiceProvider services, IdentityId identity, string assetName, CancellationToken ct)
     {
         var assets = services.GetRequiredService<IAssetStore>();
-        var info = (await assets.ListAsync(identity, ct).ConfigureAwait(false))
+        var info = (await assets.ListAsync(ct).ConfigureAwait(false))
             .FirstOrDefault(a => string.Equals(a.Name, assetName, StringComparison.Ordinal));
 
         if (info is null)

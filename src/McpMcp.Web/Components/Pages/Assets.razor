@@ -68,7 +68,7 @@
 
     protected override Task OnInitializedAsync() => Reload();
 
-    private async Task Reload() => _assets = await AssetStore.ListAsync(default, CancellationToken.None);
+    private async Task Reload() => _assets = await AssetStore.ListAsync(CancellationToken.None);
 
     private async Task<string> UserAsync()
         => (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "?";

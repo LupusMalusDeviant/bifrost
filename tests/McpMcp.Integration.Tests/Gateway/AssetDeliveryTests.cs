@@ -39,6 +39,36 @@ public sealed class AssetDeliveryTests : IClassFixture<GatewayFixture>
             .Which.Text.Should().Be("## Regeln\nImmer zuerst suchen.");
     }
 
+    /// <summary>
+    /// Assets sind für <b>jede</b> authentifizierte Identität sichtbar — auch für eine ohne jeden
+    /// Grant. Das ist so entschieden (FR-40 kennt keine per-Asset-RBAC), und genau deshalb steht es
+    /// als Test da: Ohne ihn wäre es eine Aussage in einem Kommentar, die jemand versehentlich
+    /// ändert. Wer Zugriff einschränken will, ändert diesen Test bewusst mit.
+    /// </summary>
+    [Fact]
+    public async Task Every_authenticated_identity_sees_the_same_assets()
+    {
+        var name = $"skill-offen-{Guid.NewGuid():N}";
+        await Assets.CreateAsync(name, "Für alle", "Inhalt", TestContext.Current.CancellationToken);
+        var expectedName = AssetDelivery.PromptName(name);
+
+        var (_, adminKey) = await _gw.SeedAdminAsync($"asset-admin-{Guid.NewGuid():N}");
+        var (_, ohneGrantKey) = await _gw.SeedIdentityAsync($"asset-ohne-grant-{Guid.NewGuid():N}", grants: []);
+
+        await using var admin = await _gw.ConnectClientAsync(adminKey);
+        await using var ohneGrant = await _gw.ConnectClientAsync(ohneGrantKey);
+
+        (await admin.ListPromptsAsync()).Should().Contain(p => p.Name == expectedName);
+        (await ohneGrant.ListPromptsAsync()).Should().Contain(p => p.Name == expectedName,
+            "eine Identität ohne jeden Grant sieht Assets trotzdem — sie sind zentrale Instruktionen, "
+            + "keine Zugriffe auf Fremdsysteme");
+
+        var prompt = await ohneGrant.GetPromptAsync(expectedName);
+        prompt.Messages.Should().ContainSingle()
+            .Which.Content.Should().BeOfType<TextContentBlock>()
+            .Which.Text.Should().Be("Inhalt");
+    }
+
     [Fact]
     public async Task Asset_is_readable_as_resource_and_serves_the_latest_version()
     {
