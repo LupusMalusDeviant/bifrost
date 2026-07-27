@@ -1,5 +1,6 @@
 using McpMcp.Abstractions;
 using McpMcp.Core.Guardrails;
+using McpMcp.Core.Packaging;
 using McpMcp.Core.Upstreams;
 using McpMcp.Persistence;
 using McpMcp.Persistence.Audit;
@@ -24,6 +25,7 @@ public sealed partial class GatewayStartupService : IHostedService
     private readonly GuardRuleStore _guardRules;
     private readonly ApprovalPolicyStore _approvalPolicy;
     private readonly PublisherTrustStore _publisherTrust;
+    private readonly ConnectorPackageResolver _packages;
     private readonly IAuditSink _audit;
     private readonly IApiKeyService _apiKeys;
     private readonly IUiUserService _uiUsers;
@@ -42,6 +44,7 @@ public sealed partial class GatewayStartupService : IHostedService
         GuardRuleStore guardRules,
         ApprovalPolicyStore approvalPolicy,
         PublisherTrustStore publisherTrust,
+        ConnectorPackageResolver packages,
         IAuditSink audit,
         IApiKeyService apiKeys,
         IUiUserService uiUsers,
@@ -59,6 +62,7 @@ public sealed partial class GatewayStartupService : IHostedService
         _guardRules = guardRules;
         _approvalPolicy = approvalPolicy;
         _publisherTrust = publisherTrust;
+        _packages = packages;
         _audit = audit;
         _apiKeys = apiKeys;
         _uiUsers = uiUsers;
@@ -92,6 +96,12 @@ public sealed partial class GatewayStartupService : IHostedService
             Log.ApprovalsMigrated(_logger, migratedApprovals);
         }
         await _publisherTrust.LoadAsync(cancellationToken);
+
+        // ADR-0016: Die aktiven Paketversionen müssen stehen, BEVOR Upstreams starten — ein
+        // Upstream, der auf ein Paket zeigt, findet sonst keine Dateien und bliebe unten, obwohl
+        // alles installiert ist.
+        await _packages.RefreshAsync(cancellationToken);
+
         await BootstrapAdminIfEmptyAsync(cancellationToken);
         await EnsureUiInternalIdentityAsync(cancellationToken);
         await BootstrapUiAdminIfEmptyAsync(cancellationToken);

@@ -28,12 +28,17 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
 
     private readonly IPublisherTrustStore _trust;
     private readonly IAuditSink? _audit;
+    private readonly IConnectorPackageResolver? _packages;
 
-    public WasiRuntimeConnector(IPublisherTrustStore trust, IAuditSink? audit = null)
+    public WasiRuntimeConnector(
+        IPublisherTrustStore trust,
+        IAuditSink? audit = null,
+        IConnectorPackageResolver? packages = null)
     {
         ArgumentNullException.ThrowIfNull(trust);
         _trust = trust;
         _audit = audit;
+        _packages = packages;
     }
 
     public UpstreamTransportKind Kind => UpstreamTransportKind.Wasi;
@@ -49,10 +54,12 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
         // Ist er leer, gehen null Schlüssel an den Host, und der lehnt fail-closed ab.
         var pinned = _trust.ActivePublicKeys;
 
+        var (componentPath, signaturePath) = ResolvePaths(config, options);
+
         // Component und Signatur werden hier gelesen, aber NICHT hier geprüft: die Verifikation
         // gegen die gepinnten Publisher passiert im Host, direkt vor dem Instanziieren.
-        var component = await File.ReadAllBytesAsync(options.ComponentPath, ct).ConfigureAwait(false);
-        var signature = await File.ReadAllBytesAsync(options.SignaturePath, ct).ConfigureAwait(false);
+        var component = await File.ReadAllBytesAsync(componentPath, ct).ConfigureAwait(false);
+        var signature = await File.ReadAllBytesAsync(signaturePath, ct).ConfigureAwait(false);
 
         ProcessHygiene.EnsureInitialized();
         var startInfo = new ProcessStartInfo
@@ -107,6 +114,41 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
         }
 
         return connection;
+    }
+
+    /// <summary>
+    /// Woher Component und Signatur kommen: aus einem installierten Paket (ADR-0016) oder aus
+    /// Pfaden in der Konfiguration.
+    /// <para>
+    /// Ein <c>PackageId</c>, zu dem es keine aktive Version gibt, wird <b>abgelehnt</b> statt auf
+    /// die Pfade zurückzufallen. Ein stiller Rückfall führte dazu, dass nach einem misslungenen
+    /// Update eine alte Datei liefe, während die Oberfläche das Paket als Quelle ausweist.
+    /// </para>
+    /// </summary>
+    private (string ComponentPath, string SignaturePath) ResolvePaths(
+        UpstreamServerConfig config, WasiTransportOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(options.PackageId))
+        {
+            return string.IsNullOrWhiteSpace(options.ComponentPath)
+                ? throw new ArgumentException(
+                    $"Config '{config.Slug}' nennt weder ein Paket noch einen ComponentPath.",
+                    nameof(config))
+                : (options.ComponentPath, options.SignaturePath);
+        }
+
+        if (_packages is null)
+        {
+            throw new InvalidOperationException(
+                $"Config '{config.Slug}' verweist auf das Paket '{options.PackageId}', aber in dieser "
+                + "Zusammenstellung ist keine Paketverwaltung eingebunden.");
+        }
+
+        return _packages.ResolveActive(options.PackageId)
+            ?? throw new InvalidOperationException(
+                $"Für das Paket '{options.PackageId}' gibt es keine aktive Version. Der Upstream "
+                + $"'{config.Slug}' kommt deshalb nicht hoch — ein Rückfall auf andere Dateien wäre "
+                + "eine stille Abweichung von dem, was konfiguriert ist.");
     }
 
     /// <summary>

@@ -119,6 +119,37 @@ public sealed class PublisherTrustStore : IPublisherTrustStore
     }
 
     /// <summary>
+    /// Setzt die Vertrauensstufe (ADR-0016). Eigener Schritt wie <see cref="ReinstateAsync"/>:
+    /// Vertrauen zu erhöhen darf kein Nebeneffekt des Pinnens sein.
+    /// <para>
+    /// Wirkt nur auf <b>künftige</b> Installationen. Eine bereits installierte Paketversion behält
+    /// die Stufe, unter der sie geprüft wurde — sonst änderte ein Klick rückwirkend die Bedingungen,
+    /// unter denen ein Administrator einmal zugestimmt hat.
+    /// </para>
+    /// </summary>
+    public async Task SetTrustLevelAsync(string keyId, ConnectorTrustLevel level, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(keyId);
+        if (level is ConnectorTrustLevel.Core)
+        {
+            throw new ArgumentException(
+                "'Core' ist mit dem Produkt ausgelieferter Code und keine Stufe, die ein "
+                + "Herausgeber bekommen kann.", nameof(level));
+        }
+
+        await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var row = await db.PublisherKeys.FindAsync([keyId], ct).ConfigureAwait(false);
+        if (row is null)
+        {
+            return;
+        }
+
+        row.TrustLevel = (int)level;
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        _cache[keyId] = ToKey(row);
+    }
+
+    /// <summary>
     /// Übernimmt Schlüssel aus Upstream-Konfigurationen (Migrationspfad, WP4). Liefert die
     /// tatsächlich neu aufgenommenen Schlüssel zurück — nur die gehören ins Audit, sonst stünde
     /// bei jedem Start dieselbe Zeile.
@@ -155,5 +186,6 @@ public sealed class PublisherTrustStore : IPublisherTrustStore
         row.PublicKey,
         row.Label,
         new DateTimeOffset(row.AddedAtTicks, TimeSpan.Zero),
-        row.RevokedAtTicks is { } revoked ? new DateTimeOffset(revoked, TimeSpan.Zero) : null);
+        row.RevokedAtTicks is { } revoked ? new DateTimeOffset(revoked, TimeSpan.Zero) : null,
+        (ConnectorTrustLevel)row.TrustLevel);
 }

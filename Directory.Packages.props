@@ -23,6 +23,12 @@
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.17.0" />
 
+    <!-- Ed25519-Verifikation der Connector-Manifeste (ADR-0016). .NET 10 bringt Ed25519 nicht
+         öffentlich mit; BouncyCastle ist MIT, rein verwaltet (kein natives Beipack, also auch auf
+         arm64 unverändert) und geprüfter Code. Eine eigene Kurvenarithmetik an einer
+         Vertrauensgrenze wäre die schlechtere Wahl, egal wie kurz sie ausfiele. -->
+    <PackageVersion Include="BouncyCastle.Cryptography" Version="2.6.2" />
+
     <!-- Persistenz (ADR-0007) + Secret-Verschlüsselung (NFR-04) -->
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10" />

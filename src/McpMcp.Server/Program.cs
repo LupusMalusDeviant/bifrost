@@ -8,6 +8,7 @@ using McpMcp.Core.Guardrails;
 using McpMcp.Core.Invocation;
 using McpMcp.Core.Rbac;
 using McpMcp.Core.Upstreams;
+using McpMcp.Core.Packaging;
 using McpMcp.Persistence;
 using McpMcp.Persistence.Audit;
 using McpMcp.Server;
@@ -129,7 +130,9 @@ builder.Services.AddSingleton<IUpstreamConnector, McpMcp.Upstream.OpenRpc.OpenRp
 // Der WASI-Connector holt die gepinnten Publisher aus dem Trust-Store (WP4) und schreibt den
 // Grant-Audit-Datensatz jedes Loads in den Audit-Pfad.
 builder.Services.AddSingleton<IUpstreamConnector>(sp => new McpMcp.Upstream.Wasi.WasiRuntimeConnector(
-    sp.GetRequiredService<IPublisherTrustStore>(), sp.GetRequiredService<IAuditSink>())); // ADR-0020
+    sp.GetRequiredService<IPublisherTrustStore>(),
+    sp.GetRequiredService<IAuditSink>(),
+    sp.GetRequiredService<IConnectorPackageResolver>())); // ADR-0020, Pakete nach ADR-0016
 builder.Services.AddSingleton<IUpstreamConfigStore, EfUpstreamConfigStore>();
 builder.Services.AddSingleton<IUpstreamConnectionTester, UpstreamConnectionTester>();
 builder.Services.AddSingleton(new SupervisorOptions());
@@ -190,6 +193,22 @@ builder.Services.AddSingleton<IContentGuard>(sp => sp.GetRequiredService<SecretG
 builder.Services.AddSingleton<PublisherTrustStore>(sp => new PublisherTrustStore(
     sp.GetRequiredService<IDbContextFactory<McpMcpDbContext>>(), sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<IPublisherTrustStore>(sp => sp.GetRequiredService<PublisherTrustStore>());
+
+// ── Connector-Pakete (ADR-0016) ──────────────────────────────────────────────
+builder.Services.AddSingleton<IConnectorPackageStore, ConnectorPackageStore>();
+builder.Services.AddSingleton<ConnectorPackageResolver>();
+builder.Services.AddSingleton<IConnectorPackageResolver>(
+    sp => sp.GetRequiredService<ConnectorPackageResolver>());
+builder.Services.AddSingleton(sp => new ConnectorPackageInstaller(
+    Path.Combine(dataDir, "packages"),
+    sp.GetRequiredService<IConnectorPackageStore>(),
+    sp.GetRequiredService<IPublisherTrustStore>(),
+    // Die Probe startet den Connector wirklich — aus der Quarantäne, mit denselben Dateien, die
+    // gleich aktiv werden. Ein Paket, das hier nicht antwortet, wird nie aktiv.
+    WasiPackageProbe.Create(sp),
+    sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<IAuditSink>(),
+    sp.GetRequiredService<ILogger<ConnectorPackageInstaller>>()));
 
 // ── Freigabe-Flows (FR-32, ADR-0012) ─────────────────────────────────────────
 builder.Services.AddSingleton<ApprovalPolicyStore>();

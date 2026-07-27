@@ -1,20 +1,27 @@
 # ADR-0016: Versionierter Connector-/Plugin-Vertrag
 
-- **Status:** Vorgeschlagen; der **Laufzeitvertrag** ist am 2026-07-25 am WASI-Host umgesetzt und
-  belegt (Plan 0003, WP6.1). Offen bleibt alles rund um **Pakete**.
+- **Status:** **Akzeptiert.** Laufzeitvertrag am 2026-07-25 am WASI-Host umgesetzt (Plan 0003,
+  WP6.1), Paketteil am 2026-07-27.
 - **Datum:** 2026-07-24
 
-> **Umsetzungsstand 2026-07-25.** Der WASI-Host (ADR-0020) ist der erste Connector nach diesem
-> Vertrag und erfüllt den Laufzeitteil: versionierter Handshake mit **Capability-Flags**,
-> Correlation-Id auf jeder Antwort, normierte Fehlerhülle (`code` + `message`), Discovery mit
-> Schema-Normalisierung, Cancellation mit Bestätigung, Readiness getrennt von Liveness und der
-> Lifecycle `handshake → load → discover → ready → invoke/cancel → drain → stop`.
+> **Umsetzungsstand 2026-07-27.** Beide Teile stehen.
 >
-> **Nicht umgesetzt und weiterhin nur vorgeschlagen:** signiertes Connector-**Manifest**, Packaging
-> und Installation, Update/Rollback über Quarantäne, sowie die vier Vertrauensstufen. Der Host wird
-> heute mit dem Gateway ausgeliefert (Stufe 1, „Core"); es gibt keinen Weg, ein Fremdpaket zu
-> installieren. Solange das so ist, ist der Vertrag belegt, aber nicht erprobt — genau das war der
-> Zweck dieser ADR, und deshalb bleibt ihr Status offen.
+> **Laufzeit** (WASI-Host, ADR-0020, erster Connector nach diesem Vertrag): versionierter Handshake
+> mit **Capability-Flags**, Correlation-Id auf jeder Antwort, normierte Fehlerhülle
+> (`code` + `message`), Discovery mit Schema-Normalisierung, Cancellation mit Bestätigung,
+> Readiness getrennt von Liveness, Lifecycle `handshake → load → discover → ready → invoke/cancel →
+> drain → stop`.
+>
+> **Pakete:** `.mcpkg` als ZIP mit signiertem Manifest, Installation über Quarantäne mit echter
+> Probe, atomarer Aktivierung, Update und Rollback, dazu die vier Vertrauensstufen mit Zustimmung
+> je Zugriff. Ein Upstream verweist über `Wasi.PackageId` auf ein Paket statt auf Dateipfade — ein
+> Update wechselt damit die Dateien, ohne dass jemand die Konfiguration anfasst.
+>
+> **Bewusst noch nicht:** Nur der WASI-Transport ist paketierbar. Ein Paket mit einem anderen
+> Transport wird abgewiesen statt halb unterstützt — für native Connectoren fehlt die
+> Prozessgrenze aus dem Abschnitt unten, und ohne sie wäre „installierbar" ein leeres Versprechen.
+> Es gibt außerdem keine Bezugsquelle: Pakete werden hochgeladen, nicht aus einem Verzeichnisdienst
+> geholt. Ein Registry-Client ohne Betreiber wäre Code ohne Gegenstelle.
 
 ## Kontext
 
@@ -51,6 +58,25 @@ Install, Update und Rollback erfolgen transaktional: Paket prüfen, parallel in 
 validieren, Health/Discovery testen, atomar aktivieren, vorherige Version bis zum erfolgreichen
 Drain behalten. Connector-Konfiguration und Secrets bleiben im Gateway; Connectoren erhalten nur
 kurzlebige, auditierte Grants.
+
+## Paketformat und Prüfreihenfolge (umgesetzt)
+
+Ein `.mcpkg` ist ein ZIP mit `manifest.json`, der detached Ed25519-Signatur `manifest.sig` und den
+Nutzdateien. **Signiert wird das Manifest**, und das Manifest nennt den SHA-256 jeder Nutzdatei.
+Damit deckt eine Signatur das ganze Paket ab, ohne dass das Archivformat selbst signiert werden
+müsste: Archive sind formbar (Reihenfolge, Kommentare, doppelte Einträge), eine Hash-Liste ist es
+nicht. Ein Eintrag, den das Manifest nicht nennt, ist unsigniert und führt zur Ablehnung — sonst
+reisten unsignierte Dateien im selben Archiv mit.
+
+Die Reihenfolge ist Teil der Entscheidung: **Archivgrenzen → Signatur → Manifest → Hashes.** Wer das
+Manifest vor der Signatur auswertet, trifft Entscheidungen auf Daten, die noch niemand bestätigt hat.
+
+Zwei Signaturen mit zwei Prüfern, und das ist Absicht: Das **Manifest** prüft das Gateway gegen den
+Trust-Store; die **Component-Bytes** prüft der WASI-Host unmittelbar vor dem Instanziieren
+(ADR-0020). Keine der beiden Prüfungen ersetzt die andere.
+
+Die Zustimmung zu Zugriffen bezieht sich auf genau die Einträge des Manifests. Eine pauschale
+„ja zu allem"-Angabe gibt es nicht — sie machte die Liste im Manifest bedeutungslos.
 
 ## Prozessgrenze
 

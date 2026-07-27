@@ -8,6 +8,8 @@
     <ProjectReference Include="..\McpMcp.Abstractions\McpMcp.Abstractions.csproj" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="JsonSchema.Net" />
+    <!-- Nur für die Signaturprüfung der Connector-Manifeste (ADR-0016). -->
+    <PackageReference Include="BouncyCastle.Cryptography" />
   </ItemGroup>
 
 </Project>

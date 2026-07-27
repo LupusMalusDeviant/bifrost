@@ -25,7 +25,7 @@
 | 2 – CLI-Prozesshärtung | **ABGESCHLOSSEN für Trusted Host Process** | Streaming-Bytecaps, getrenntes stdout/stderr, minimale Umgebung, Pfad-/Root-/Hash-Policy, Lifecycle, Prozessbaum-Kill, Parallelitätslimits, typisierte Manifeste und Approval-Defaults. Direkter Hostmodus bleibt ausdrücklich **keine Sandbox**. |
 | 3 – Gateway-CLI | **ABGESCHLOSSEN** | Offizielle `mcp-mcp`-CLI ausschließlich über öffentliche HTTP-Verträge, inklusive JSON-Modus, Pipelines, Exitcodes und Administration. |
 | 4 – Capability-Modell | **WEITGEHEND** | CapabilityDescriptorV1, CapabilityResultV1 mit strukturiertem Fehler, SchemaRef mit Herkunft und Hash, stabile Capability-Ids, LegacyCapabilityAdapter und CapabilityResultMapper sind gebaut und angeschlossen: GET /api/v1/capabilities zeigt sie, POST /api/v1/capabilities/{id}/invoke ruft ueber denselben Invocation-Kern auf und liefert die Huelle. Stabile Gateway-Codes mit retryable-Urteil; ein freigabepflichtiger Aufruf ist ein Vorgang (202 + Task-Id) statt eines Fehlers. Query/Mutation/Resource/Prompt/Task sind anbietbar; Event, Subscription und AgentDelegation bleiben gesperrt (EventV1 vertagt, A2A offen). Offen: Artifacts und Pagination — beide haben heute keinen Produzenten. |
-| 5 – Connector-/Plugin-Vertrag | **TEILWEISE; Laufzeitvertrag steht** | Der WASI-Host erfuellt den Laufzeitteil von ADR-0016: Handshake mit Capability-Flags, Correlation-Id, normierte Fehlerhuelle, Discovery mit Schema-Normalisierung, bestaetigte Cancellation, Readiness getrennt von Liveness, Lifecycle bis drain/stop. Offen bleibt der Paketteil: signiertes Manifest, Packaging, Installation, Update/Rollback in Quarantaene, Vertrauensstufen. |
+| 5 – Connector-/Plugin-Vertrag | **UMGESETZT fuer WASI** | Laufzeitteil am WASI-Host: Handshake mit Capability-Flags, Correlation-Id, normierte Fehlerhuelle, Discovery mit Schema-Normalisierung, bestaetigte Cancellation, Readiness getrennt von Liveness, Lifecycle bis drain/stop. Paketteil seit 2026-07-27: .mcpkg als ZIP mit signiertem Manifest (Ed25519 ueber die Manifest-Bytes, SHA-256 je Nutzdatei), Pruefreihenfolge Archivgrenzen -> Signatur -> Manifest -> Hashes, nicht deklarierte Eintraege abgewiesen, Zip-Slip und doppelte Eintraege abgewiesen. Installation ueber Quarantaene mit echter Probe (Host startet, Katalog wird abgefragt), atomare Aktivierung, Update und Rollback auf die liegengebliebene Vorversion. Vier Vertrauensstufen mit Zustimmung je Zugriff; Core ist nicht installierbar. Upstreams zeigen ueber Wasi.PackageId auf ein Paket statt auf Pfade. Offen: nur WASI-Transport paketierbar, keine Bezugsquelle (Upload statt Registry). |
 | 6 – WASI/Component Model | **WEITGEHEND; Streams zurückgestellt** | Produktionshost im Image, Publisher-Trust-Store mit sofortigem Entzug, feingranulare WASI-P2-Grants (deny-before-instantiation), Modul- und Platten-Cache, IPC-Vertrag v4 mit Korrelation, Nebenläufigkeit und bestätigtem Abbruch. Aufrufbreite deckt alle WIT-Typen ab **außer** `future`/`stream` — die sind am 2026-07-25 zurückgestellt worden, weil ein dynamischer Host sie nur für fest einkompilierte Payload-Typen lesen kann. ADR-0017 akzeptiert, ADR-0020 akzeptiert. |
 | 7 – Container-Isolation | **WEITGEHEND fuer CLI** | Container-Modus am CLI-Transport umgesetzt (Cli.Isolation.Mode=Container) und an laufender Runtime belegt: read-only Rootfs, Nicht-root, Capabilities entfernt, no-new-privileges, CPU-/RAM-/PID-Grenzen, tmpfs-/tmp, kein Netz, Mounts nur aus den Allowlisten, Secrets ohne Kommandozeile, Job je Aufruf. Kein stiller Rueckfall — ohne Runtime kommt der Upstream nicht hoch. Offen: Netzwerk-Allowlist (wird abgelehnt statt vorgetaeuscht) und stdio-Upstreams. |
 | 8 – OpenRPC | **UMGESETZT fuer v1** | Connector als UpstreamTransportKind.OpenRpc: Dokumentimport oder rpc.discover, Methoden als Tools mit JSON-Schema, by-name als Objekt und by-position als geordnetes Array, strukturierte JSON-RPC-Fehler, selbst erzeugte Request-Id mit Abgleich der Antwort, Auth-Header aus dem verschluesselten Config-Blob, Timeout und Cancellation. Schemaimport fail-closed: keine externen $ref, Zyklen- und Tiefenlimit, Groessengrenze, SSRF-Pruefung von Ziel und Weiterleitungen. Batch und Notifications sind fuer v1 ausdruecklich ausgenommen. Die SSRF-Pruefung ist inzwischen geteilt: Der OpenAPI-Konnektor nutzt dieselbe (Threat-Model Finding 8), Vorgabe fail-closed mit `AllowPrivateTargets` als ausdruecklicher Freigabe. |
@@ -41,16 +41,17 @@
 
 - [x] **M1:** CLI-Prototyp abgesichert und Secret-Leaks geschlossen.
 - [x] **M2:** Offizielle Gateway-CLI umgesetzt.
-- [ ] **M3:** ADRs vorhanden; das Capability-V1-Modell (ADR-0015) fehlt weiterhin. Der
-  **Connector-Handshake** ist seit dem 2026-07-25 umgesetzt — der Laufzeitteil von ADR-0016 am
-  WASI-Host, siehe Plan 0003. Offen bleibt der Paketteil (Manifest, Installation, Trust-Stufen).
+- [x] **M3:** Capability-V1-Modell (ADR-0015) gebaut und angeschlossen; ADR-0016 vollstaendig —
+  Laufzeitteil seit 2026-07-25 am WASI-Host (Plan 0003), Paketteil seit 2026-07-27 (signiertes
+  Manifest, Quarantaene-Installation mit Probe, Update/Rollback, Vertrauensstufen). Paketierbar ist
+  bisher nur der WASI-Transport.
 - [x] **M4:** WASI-Component-Spike mit WIT-Discovery — erfüllt und inzwischen von M5 überholt.
 - [x] **M5:** Produktionsfähiger WASI-Pluginpfad (Plan 0003, abgeschlossen 2026-07-25):
   Produktionshost im Image, Publisher-Trust-Store mit sofortigem Entzug, feingranulare WASI-P2-Grants,
   Modul- und Platten-Cache, IPC-Vertrag v4, Resources, Readiness/Lifecycle/Capability-Flags.
   Abgenommen am 2026-07-26: CI gruen auf ubuntu-latest **und** windows-latest, inklusive
   Image-Pruefung, non-root und arm64. Das **Connector-SDK** aus dem M5-Titel meint nur den
-  Laufzeitvertrag; Packaging von Fremdconnectoren ist nicht Teil davon.
+  Laufzeitvertrag; Packaging von Fremdconnectoren kam am 2026-07-27 nach (ADR-0016, Paketteil).
 - [ ] **M6–M10:** Nicht beginnen, bevor die jeweiligen Vorgänger und Sicherheitsmodelle erfüllt sind.
 
 ### Wichtige Implementierungsartefakte

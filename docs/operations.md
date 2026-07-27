@@ -197,6 +197,65 @@ Zu den Parametern: `paramStructure: by-name` schickt ein Objekt, `by-position` e
 Array** in der Reihenfolge aus dem Dokument. Der Aufrufer nennt in beiden Fällen die Namen; die
 Reihenfolge kommt aus der Beschreibung, nicht aus der Reihenfolge im Aufruf.
 
+## Connector-Pakete installieren
+
+Ein Connector kann als signiertes Paket kommen statt als Pfad in der Konfiguration
+([ADR-0016](adr/0016-versionierter-connector-plugin-vertrag.md)). Ein `.mcpkg` ist ein ZIP mit
+`manifest.json`, dessen Ed25519-Signatur `manifest.sig` und den Nutzdateien; das Manifest nennt den
+SHA-256 jeder Datei.
+
+**Voraussetzung ist ein gepinnter Herausgeber.** Ohne ihn wird nichts installiert — ein leerer
+Trust-Store heißt fail-closed, nicht „keine Einschränkung":
+
+```bash
+curl -X POST http://localhost:8080/api/v1/publishers -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"publicKey":"<base64-32-byte>","label":"Beispiel GmbH"}'
+```
+
+Die **Vertrauensstufe** entscheidet, wie viel ein Paket dieses Herausgebers ohne Rückfrage bekommt.
+Vorgabe ist `ThirdParty`; ein gepinnter Schlüssel heißt „dieser Herausgeber ist echt", nicht
+„dieser Herausgeber darf ins Dateisystem":
+
+| Stufe | Was ohne Rückfrage gilt |
+|---|---|
+| `Core` | Mit dem Produkt ausgeliefert. **Nicht installierbar** — ein Paket kann das nicht sein. |
+| `Official` | Die Zugriffe aus dem signierten Manifest werden erteilt. |
+| `ThirdParty` | Jeder Zugriff nach außen ist beim Installieren einzeln zu bestätigen. |
+| `Community` | Wie `ThirdParty`, zusätzlich muss das Paket selbst freigegeben werden. |
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/publishers/<keyId>/trust-level \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{"level":"Official"}'
+```
+
+Installiert wird über die UI (*Connector-Pakete*) oder die API:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/packages?grant=env:TOKEN \
+  -H "Authorization: Bearer $KEY" --data-binary @connector.mcpkg
+```
+
+**Was beim Installieren passiert**, in dieser Reihenfolge: Signatur gegen die gepinnten Herausgeber
+prüfen → Manifest lesen → Hash jeder Datei vergleichen → in **Quarantäne** auspacken → den Connector
+dort **wirklich starten** und seinen Katalog abfragen → erst dann atomar aktivieren. Ein Paket, das
+die Probe nicht besteht, hat nie in Betrieb gestanden; der Fehlschlag bleibt mit Begründung sichtbar.
+
+Die vorherige Version bleibt liegen. Ein Rollback ist deshalb ein Schalter und kein neuer Download:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/packages/com.example.connector/rollback \
+  -H "Authorization: Bearer $KEY"
+```
+
+Ein Upstream verweist über `Wasi.PackageId` auf das Paket statt auf Dateipfade — ein Update
+wechselt damit die Dateien, ohne dass jemand die Konfiguration anfasst. Gibt es keine aktive
+Version, kommt der Upstream **nicht** hoch; ein Rückfall auf alte Pfade wäre eine stille Abweichung
+von dem, was konfiguriert ist.
+
+> **Grenzen heute:** Nur WASI-Connectoren sind paketierbar, und Pakete werden hochgeladen, nicht
+> aus einem Verzeichnisdienst geholt.
+
 ## Ziele im internen Netz (OpenAPI und OpenRPC)
 
 Beide Konnektoren rufen Adressen ab, die ein Administrator konfiguriert hat. Ohne Prüfung wäre der

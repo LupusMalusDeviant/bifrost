@@ -227,6 +227,66 @@ namespace McpMcp.Persistence.Migrations.Postgres.Migrations
                     b.ToTable("ConfigVersions");
                 });
 
+            modelBuilder.Entity("McpMcp.Persistence.ConnectorPackageRow", b =>
+                {
+                    b.Property<string>("PackageId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Version")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<long?>("ActivatedAtTicks")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Directory")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("GrantedCapabilities")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<long>("InstalledAtTicks")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ManifestSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("PublisherKeyId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Transport")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TrustLevel")
+                        .HasColumnType("integer");
+
+                    b.HasKey("PackageId", "Version");
+
+                    b.HasIndex("PackageId", "State");
+
+                    b.ToTable("ConnectorPackages");
+                });
+
             modelBuilder.Entity("McpMcp.Persistence.GuardRuleRow", b =>
                 {
                     b.Property<string>("Id")
@@ -334,6 +394,11 @@ namespace McpMcp.Persistence.Migrations.Postgres.Migrations
 
                     b.Property<long?>("RevokedAtTicks")
                         .HasColumnType("bigint");
+
+                    b.Property<int>("TrustLevel")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(2);
 
                     b.HasKey("KeyId");
 

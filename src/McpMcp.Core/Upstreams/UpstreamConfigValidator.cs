@@ -139,16 +139,32 @@ public static partial class UpstreamConfigValidator
             throw new ArgumentException("Wasi.HostExecutable darf nicht leer sein.", nameof(config));
         }
 
-        if (string.IsNullOrWhiteSpace(wasi.ComponentPath))
-        {
-            throw new ArgumentException("Wasi.ComponentPath darf nicht leer sein.", nameof(config));
-        }
-
-        if (string.IsNullOrWhiteSpace(wasi.SignaturePath))
+        // Zwei zulässige Quellen: ein installiertes Paket (ADR-0016) oder Pfade in der
+        // Konfiguration. Genau eine davon muss dastehen — beides zugleich wäre zweideutig, und die
+        // Zweideutigkeit fiele erst beim Start auf, wenn eine der beiden ins Leere zeigt.
+        var fromPackage = !string.IsNullOrWhiteSpace(wasi.PackageId);
+        var fromPaths = !string.IsNullOrWhiteSpace(wasi.ComponentPath);
+        if (fromPackage && fromPaths)
         {
             throw new ArgumentException(
-                "Wasi.SignaturePath darf nicht leer sein — unsignierte Components werden nicht geladen.",
-                nameof(config));
+                "Wasi.PackageId und Wasi.ComponentPath schließen einander aus — die Quelle muss "
+                + "eindeutig sein.", nameof(config));
+        }
+
+        if (!fromPackage)
+        {
+            if (!fromPaths)
+            {
+                throw new ArgumentException(
+                    "Wasi braucht entweder eine PackageId oder einen ComponentPath.", nameof(config));
+            }
+
+            if (string.IsNullOrWhiteSpace(wasi.SignaturePath))
+            {
+                throw new ArgumentException(
+                    "Wasi.SignaturePath darf nicht leer sein — unsignierte Components werden nicht geladen.",
+                    nameof(config));
+            }
         }
 
         // Seit WP4 ist der Trust-Store die Vertrauensquelle; das Feld hier ist nur noch der

@@ -331,7 +331,18 @@ public sealed record WasiTransportOptions(
     /// Handle-Trennung schützt davor nicht. Nur einschalten, wenn der Upstream Resources braucht.
     /// </para>
     /// </summary>
-    bool PersistentInstance = false);
+    bool PersistentInstance = false,
+    /// <summary>
+    /// Id eines installierten Connector-Pakets (ADR-0016). Ist sie gesetzt, kommen Component und
+    /// Signatur aus der <b>aktiven</b> Version dieses Pakets, und <see cref="ComponentPath"/> sowie
+    /// <see cref="SignaturePath"/> dürfen leer bleiben.
+    /// <para>
+    /// Der Sinn: Ein Update wechselt die Dateien, ohne dass jemand die Upstream-Konfiguration
+    /// anfasst — und ein Rollback ebenso. Pfade in der Konfiguration wären nach jedem Update falsch,
+    /// und jemand müsste daran denken.
+    /// </para>
+    /// </summary>
+    string? PackageId = null);
 
 /// <summary>
 /// Die Host-Capabilities, die ein Component erhält — Spiegel des Grant-Modells im Rust-Host.

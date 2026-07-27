@@ -255,7 +255,7 @@ Jedes WP ist als GitHub-Issue anlegbar (Titel = WP-Titel, Body = Schritte + DoD)
 - WP7.3 (S): Dockerfile (multi-arch), docker-compose-Beispiel, Betriebs-Doku (Env-Vars, Backup, Reverse-Proxy/TLS, Retention), README + Quickstart.
 - WP7.4 (S): Federation-Smoke (FR-05, Should): MCP-MCP als Upstream eines zweiten MCP-MCP, Loop-Detection via Server-Fingerprint.
 
-**DoD:** Alle 7 PRD-Abnahmekriterien dokumentiert erfüllt (je Kriterium: Test oder protokollierter Nachweis); Docker-Image < 300 MB; Security-Audit ohne offene High/Critical; v1.0.0-Tag.
+**DoD:** Alle 7 PRD-Abnahmekriterien dokumentiert erfüllt (je Kriterium: Test oder protokollierter Nachweis); Docker-Image < 300 MB; Security-Audit ohne offene High/Critical; Release-Tag.
 
 ## 6. Abhängigkeiten
 

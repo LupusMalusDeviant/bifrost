@@ -1,0 +1,246 @@
+@page "/packages"
+@attribute [Authorize(Policy = UiPolicies.Admin)]
+@inject IConnectorPackageStore Store
+@inject IPublisherTrustStore Trust
+@inject ConnectorPackageInstaller Installer
+@inject ConnectorPackageResolver Resolver
+@using System.Globalization
+@using McpMcp.Abstractions
+@using McpMcp.Core.Packaging
+
+<h1>Connector-Pakete</h1>
+<p class="muted">
+    Signierte Connector-Pakete
+    (<a href="https://github.com/LupusMalusDeviant/mcp-mcp/blob/main/docs/adr/0016-versionierter-connector-plugin-vertrag.md">ADR-0016</a>).
+    Installiert wird nur, was von einem gepinnten Herausgeber signiert ist und die Probe in
+    Quarantäne besteht. Die vorherige Version bleibt liegen — deshalb ist ein Rollback ein Schalter
+    und kein neuer Download.
+</p>
+
+@if (_message is { Length: > 0 })
+{
+    <p class="@(_failed ? "error" : "muted")">@_message</p>
+}
+
+<div class="card">
+    <h2>Paket installieren</h2>
+    <p class="muted">
+        Eine <span class="mono">.mcpkg</span>-Datei. Verlangt das Manifest Zugriffe nach außen, sind
+        sie unten je Zeile zu bestätigen — bei einem nicht eingestuften Herausgeber zusätzlich das
+        Paket selbst.
+    </p>
+    <InputFile OnChange="OnFileSelected" accept=".mcpkg,.zip" />
+    @if (_pending is not null)
+    {
+        <p class="mono" style="margin-top:.5rem">@_pending.Name (@Kilobytes(_pending.Size) KB)</p>
+    }
+
+    <div class="row" style="margin-top:.5rem">
+        <div style="flex:2">
+            <label>Zugestimmte Zugriffe (eine je Zeile, z.&nbsp;B. <span class="mono">env:TOKEN</span>)</label>
+            <textarea class="mono" rows="3" @bind="_grants"></textarea>
+        </div>
+    </div>
+    <label>
+        <input type="checkbox" @bind="_allowUntrusted" style="width:auto" />
+        Nicht eingestuften Herausgeber (Community) ausdrücklich freigeben
+    </label>
+    <div class="toolbar" style="margin-top:.5rem">
+        <button @onclick="Install" disabled="@(_busy || _pending is null)">Installieren</button>
+    </div>
+</div>
+
+<div class="card">
+    @if (_packages.Count == 0)
+    {
+        <p class="muted">Kein Paket installiert.</p>
+    }
+    else
+    {
+        <table>
+            <thead>
+                <tr>
+                    <th>Paket</th><th>Version</th><th>Zustand</th><th>Herausgeber</th>
+                    <th>Stufe</th><th>Zugriffe</th><th>Installiert</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var package in _packages)
+                {
+                    <tr>
+                        <td>
+                            <div>@package.DisplayName</div>
+                            <div class="mono muted">@package.PackageId</div>
+                        </td>
+                        <td class="mono">@package.Version</td>
+                        <td><span class="badge @StateClass(package.State)">@package.State</span></td>
+                        <td class="mono" title="@package.PublisherKeyId">
+                            @Label(package.PublisherKeyId)
+                        </td>
+                        <td>@package.TrustLevel</td>
+                        <td class="mono">
+                            @(package.GrantedCapabilities.Count == 0
+                                ? "—"
+                                : string.Join(", ", package.GrantedCapabilities))
+                        </td>
+                        <td>@package.InstalledAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)</td>
+                        <td>
+                            @if (package.State is PackageState.Superseded)
+                            {
+                                <button class="btn-sm" @onclick="() => Rollback(package.PackageId)"
+                                        disabled="@_busy">Aktivieren</button>
+                            }
+                            @if (package.State is not PackageState.Active)
+                            {
+                                <button class="btn-sm btn-ghost"
+                                        @onclick="() => RemoveVersion(package)"
+                                        disabled="@_busy">Entfernen</button>
+                            }
+                            else
+                            {
+                                <button class="btn-sm btn-ghost"
+                                        @onclick="() => RemovePackage(package.PackageId)"
+                                        disabled="@_busy">Paket entfernen</button>
+                            }
+                        </td>
+                    </tr>
+                    @if (package.FailureReason is { Length: > 0 } reason)
+                    {
+                        <tr>
+                            <td colspan="8" class="muted">Probe gescheitert: @reason</td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    /// <summary>Obergrenze beim Hochladen — dieselbe wie im Reader, nur früher wirksam.</summary>
+    private const long MaxUploadBytes = ConnectorPackageReader.MaxArchiveBytes;
+
+    private List<InstalledConnectorPackage> _packages = [];
+    private IBrowserFile? _pending;
+    private string _grants = "";
+    private bool _allowUntrusted, _busy, _failed;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+        => _packages = [.. (await Store.ListAsync(CancellationToken.None))
+            .OrderBy(p => p.PackageId, StringComparer.Ordinal)
+            .ThenByDescending(p => p.InstalledAt)];
+
+    private void OnFileSelected(InputFileChangeEventArgs args)
+    {
+        _pending = args.File;
+        _message = null;
+        _failed = false;
+    }
+
+    private async Task Install()
+    {
+        if (_pending is null)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            using var buffer = new MemoryStream();
+            await using (var stream = _pending.OpenReadStream(MaxUploadBytes))
+            {
+                await stream.CopyToAsync(buffer);
+            }
+
+            buffer.Position = 0;
+            var installed = await Installer.InstallAsync(
+                buffer,
+                new ConnectorInstallOptions(ParseGrants(_grants), _allowUntrusted),
+                caller: null,
+                CancellationToken.None);
+            await Resolver.RefreshAsync(CancellationToken.None);
+            Report($"{installed.PackageId} {installed.Version} ist aktiv.", failed: false);
+            _pending = null;
+            _grants = "";
+            _allowUntrusted = false;
+        }
+        catch (Exception exception) when (exception is ConnectorPackageException or IOException
+            or InvalidOperationException)
+        {
+            // Der Grund gehört auf den Bildschirm: Ein abgewiesenes Paket ist fast immer eine
+            // fehlende Zustimmung oder ein nicht gepinnter Herausgeber, und beides ist behebbar.
+            Report(exception.Message, failed: true);
+        }
+        finally
+        {
+            _busy = false;
+            await Reload();
+        }
+    }
+
+    private async Task Rollback(string packageId) => await Guarded(async () =>
+    {
+        var active = await Installer.RollbackAsync(packageId, null, CancellationToken.None);
+        await Resolver.RefreshAsync(CancellationToken.None);
+        Report($"{packageId} läuft wieder auf {active.Version}.", failed: false);
+    });
+
+    private async Task RemoveVersion(InstalledConnectorPackage package) => await Guarded(async () =>
+    {
+        await Installer.RemoveVersionAsync(
+            package.PackageId, package.Version, null, CancellationToken.None);
+        await Resolver.RefreshAsync(CancellationToken.None);
+        Report($"{package.PackageId} {package.Version} entfernt.", failed: false);
+    });
+
+    private async Task RemovePackage(string packageId) => await Guarded(async () =>
+    {
+        await Installer.RemovePackageAsync(packageId, null, CancellationToken.None);
+        await Resolver.RefreshAsync(CancellationToken.None);
+        Report($"{packageId} vollständig entfernt.", failed: false);
+    });
+
+    private async Task Guarded(Func<Task> action)
+    {
+        _busy = true;
+        try
+        {
+            await action();
+        }
+        catch (ConnectorPackageException exception)
+        {
+            Report(exception.Message, failed: true);
+        }
+        finally
+        {
+            _busy = false;
+            await Reload();
+        }
+    }
+
+    private void Report(string message, bool failed)
+    {
+        _message = message;
+        _failed = failed;
+    }
+
+    private static IReadOnlyList<string> ParseGrants(string text)
+        => [.. text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+
+    private static string Kilobytes(long bytes)
+        => (bytes / 1024).ToString(CultureInfo.InvariantCulture);
+
+    private string Label(string keyId)
+        => Trust.All.FirstOrDefault(k => k.KeyId == keyId)?.Label ?? keyId[..Math.Min(keyId.Length, 12)];
+
+    private static string StateClass(PackageState state) => state switch
+    {
+        PackageState.Active => "badge-ok",
+        PackageState.Failed => "badge-error",
+        _ => "badge-muted",
+    };
+}

@@ -1,3 +1,4 @@
+using McpMcp.Abstractions;
 using Microsoft.EntityFrameworkCore;
 
 namespace McpMcp.Persistence;
@@ -46,6 +47,8 @@ public sealed class McpMcpDbContext : DbContext
     public DbSet<PublisherKeyRow> PublisherKeys => Set<PublisherKeyRow>();
 
     public DbSet<TaskRow> Tasks => Set<TaskRow>();
+
+    public DbSet<ConnectorPackageRow> ConnectorPackages => Set<ConnectorPackageRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -175,6 +178,28 @@ public sealed class McpMcpDbContext : DbContext
             e.Property(r => r.KeyId).HasMaxLength(64);
             e.Property(r => r.PublicKey).IsRequired().HasMaxLength(64);
             e.Property(r => r.Label).IsRequired().HasMaxLength(200);
+            // Ausdrücklicher Default, damit die Migration bestehende Zeilen auf ThirdParty setzt.
+            // Ohne ihn nähme EF die 0 — und die heißt 'Core', also die höchste Stufe. Ein Update
+            // hätte damit jedem bereits gepinnten Schlüssel stillschweigend mehr Rechte gegeben,
+            // als er je hatte.
+            e.Property(r => r.TrustLevel).HasDefaultValue((int)ConnectorTrustLevel.ThirdParty);
+        });
+
+        modelBuilder.Entity<ConnectorPackageRow>(e =>
+        {
+            // Paket-Id plus Version: Genau eine Zeile je ausgelieferter Fassung, und ein Rollback
+            // findet die vorherige, weil sie noch dasteht.
+            e.HasKey(r => new { r.PackageId, r.Version });
+            e.Property(r => r.PackageId).HasMaxLength(128);
+            e.Property(r => r.Version).HasMaxLength(128);
+            e.Property(r => r.DisplayName).IsRequired().HasMaxLength(200);
+            e.Property(r => r.PublisherKeyId).IsRequired().HasMaxLength(64);
+            e.Property(r => r.ManifestSha256).IsRequired().HasMaxLength(64);
+            e.Property(r => r.Directory).IsRequired().HasMaxLength(500);
+            e.Property(r => r.GrantedCapabilities).HasMaxLength(4000);
+            e.Property(r => r.FailureReason).HasMaxLength(2000);
+            // Die Auflösung „Paket → aktive Version" läuft bei jedem Upstream-Start.
+            e.HasIndex(r => new { r.PackageId, r.State });
         });
 
         modelBuilder.Entity<WebhookRow>(e =>
@@ -500,6 +525,54 @@ public sealed class PublisherKeyRow
 
     /// <summary>Gesetzt = entzogen. Null = vertrauenswürdig.</summary>
     public long? RevokedAtTicks { get; set; }
+
+    /// <summary>
+    /// Vertrauensstufe nach ADR-0016 als <see cref="ConnectorTrustLevel"/>. Vorgabe 2
+    /// (<c>ThirdParty</c>): Ein gepinnter Schlüssel darf laufen, aber nicht alles verlangen — und
+    /// bestehende Zeilen aus der Zeit vor den Paketen dürfen durch die Migration nicht
+    /// stillschweigend zu „offiziell" werden.
+    /// </summary>
+    public int TrustLevel { get; set; } = (int)ConnectorTrustLevel.ThirdParty;
+}
+
+/// <summary>
+/// Eine installierte Connector-Paketversion (ADR-0016). Die Dateien liegen auf der Platte unter
+/// <see cref="Directory"/>; diese Zeile sagt, welche Fassung gilt und woher sie kommt.
+/// </summary>
+public sealed class ConnectorPackageRow
+{
+    public string PackageId { get; set; } = string.Empty;
+
+    public string Version { get; set; } = string.Empty;
+
+    public string DisplayName { get; set; } = string.Empty;
+
+    /// <summary>Transport nach <see cref="UpstreamTransportKind"/>.</summary>
+    public int Transport { get; set; }
+
+    /// <summary>Fingerprint des Herausgebers, dessen Signatur das Manifest getragen hat.</summary>
+    public string PublisherKeyId { get; set; } = string.Empty;
+
+    /// <summary>Stufe zum Zeitpunkt der Installation — eine spätere Änderung wertet nicht rückwirkend auf.</summary>
+    public int TrustLevel { get; set; }
+
+    /// <summary>SHA-256 über die signierten Manifest-Bytes; identifiziert die Fassung eindeutig.</summary>
+    public string ManifestSha256 { get; set; } = string.Empty;
+
+    public string Directory { get; set; } = string.Empty;
+
+    /// <summary>Zustand nach <see cref="PackageState"/>.</summary>
+    public int State { get; set; }
+
+    public long InstalledAtTicks { get; set; }
+
+    public long? ActivatedAtTicks { get; set; }
+
+    /// <summary>Erteilte Zugriffe, mit '\n' getrennt — Anzeige und Audit, keine Durchsetzung.</summary>
+    public string? GrantedCapabilities { get; set; }
+
+    /// <summary>Warum die Probe gescheitert ist. Nur bei <see cref="PackageState.Failed"/> gesetzt.</summary>
+    public string? FailureReason { get; set; }
 }
 
 /// <summary>Versioniertes Text-Asset (Skill/Prompt/Instruction, FR-40, WP6.4). Append-only pro Version.</summary>

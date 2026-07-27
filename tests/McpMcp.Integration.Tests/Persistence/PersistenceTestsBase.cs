@@ -890,6 +890,68 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
             .Should().Be(DatabaseInitOutcome.Migrated, "Initialisierung ist idempotent");
     }
 
+    /// <summary>
+    /// Connector-Pakete (ADR-0016): Der Wechsel der aktiven Version muss auf <b>beiden</b> Providern
+    /// atomar sein — zwei aktive Versionen desselben Pakets könnte kein Aufrufer auflösen.
+    /// </summary>
+    [Fact]
+    public async Task ConnectorPackages_keep_exactly_one_active_version()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = new ConnectorPackageStore(Factory);
+        var at = new DateTimeOffset(2026, 7, 27, 9, 0, 0, TimeSpan.Zero);
+
+        await store.UpsertAsync(Package("1.0.0", at), ct);
+        await store.ActivateAsync("com.example.paket", "1.0.0", at, ct);
+        await store.UpsertAsync(Package("2.0.0", at), ct);
+        await store.ActivateAsync("com.example.paket", "2.0.0", at.AddMinutes(5), ct);
+
+        var versions = await store.GetVersionsAsync("com.example.paket", ct);
+        versions.Should().HaveCount(2);
+        versions.Count(v => v.State is PackageState.Active).Should().Be(1);
+        (await store.GetActiveAsync("com.example.paket", ct))!.Version.Should().Be("2.0.0");
+        versions.Single(v => v.Version == "1.0.0").State.Should().Be(PackageState.Superseded);
+
+        // Zurückschalten ist derselbe Vorgang in die andere Richtung.
+        await store.ActivateAsync("com.example.paket", "1.0.0", at.AddMinutes(9), ct);
+        (await store.GetActiveAsync("com.example.paket", ct))!.Version.Should().Be("1.0.0");
+
+        // Die erteilten Zugriffe überstehen den Weg durch die Datenbank — sie sind der Beleg,
+        // wem das Gateway einmal was erlaubt hat.
+        (await store.GetActiveAsync("com.example.paket", ct))!.GrantedCapabilities
+            .Should().Equal("env:TOKEN", "fs-read:/daten");
+
+        await store.RemoveAsync("com.example.paket", "2.0.0", ct);
+        (await store.GetVersionsAsync("com.example.paket", ct)).Should().ContainSingle();
+    }
+
+    /// <summary>
+    /// Bestehende Herausgeber dürfen durch die Migration nicht aufgewertet werden: Vorgabe ist
+    /// ThirdParty, nicht Core.
+    /// </summary>
+    [Fact]
+    public async Task An_existing_publisher_key_defaults_to_third_party()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = new PublisherTrustStore(Factory, TimeProvider.System);
+        var key = await store.PinAsync(Convert.ToBase64String(new byte[32]), "vorhanden", ct);
+
+        key.TrustLevel.Should().Be(ConnectorTrustLevel.ThirdParty);
+
+        await store.SetTrustLevelAsync(key.KeyId, ConnectorTrustLevel.Official, ct);
+        await store.LoadAsync(ct);
+        store.All.Single(k => k.KeyId == key.KeyId).TrustLevel
+            .Should().Be(ConnectorTrustLevel.Official);
+    }
+
+    private static InstalledConnectorPackage Package(string version, DateTimeOffset at) => new(
+        "com.example.paket", version, "Beispiel", UpstreamTransportKind.Wasi,
+        new string('a', 64), ConnectorTrustLevel.Official, new string('b', 64),
+        Path.Combine("packages", "com.example.paket", version), PackageState.Quarantined, at, null,
+        ["env:TOKEN", "fs-read:/daten"]);
+
     private async Task WaitForRowCountAsync(int expected, int timeoutMs = 30000)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();

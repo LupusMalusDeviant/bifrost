@@ -38,4 +38,7 @@ internal sealed class FakePublisherTrustStore : IPublisherTrustStore
     }
 
     public Task ReinstateAsync(string keyId, CancellationToken ct) => Task.CompletedTask;
+
+    public Task SetTrustLevelAsync(string keyId, ConnectorTrustLevel level, CancellationToken ct)
+        => Task.CompletedTask;
 }

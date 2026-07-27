@@ -12,12 +12,18 @@ namespace McpMcp.Abstractions;
 /// Schlüssel werden behalten statt gelöscht, damit ältere Audit-Zeilen zuordenbar bleiben.
 /// </para>
 /// </summary>
+/// <param name="TrustLevel">
+/// Wie viel ein Paket dieses Herausgebers ohne Rückfrage verlangen darf (ADR-0016). Vorgabe ist
+/// <see cref="ConnectorTrustLevel.ThirdParty"/> — ein gepinnter Schlüssel heißt „darf laufen", nicht
+/// „darf alles". Höher stuft nur ein ausdrücklicher Schritt.
+/// </param>
 public sealed record PublisherKey(
     string KeyId,
     string PublicKeyBase64,
     string Label,
     DateTimeOffset AddedAt,
-    DateTimeOffset? RevokedAt = null)
+    DateTimeOffset? RevokedAt = null,
+    ConnectorTrustLevel TrustLevel = ConnectorTrustLevel.ThirdParty)
 {
     public bool IsActive => RevokedAt is null;
 }
@@ -60,6 +66,12 @@ public interface IPublisherTrustStore
 
     /// <summary>Hebt einen Entzug auf. Bewusst ein eigener Schritt, nie ein Nebeneffekt von Pin.</summary>
     Task ReinstateAsync(string keyId, CancellationToken ct);
+
+    /// <summary>
+    /// Setzt die Vertrauensstufe (ADR-0016). Eigener Schritt aus demselben Grund wie
+    /// <see cref="ReinstateAsync"/>: Vertrauen zu erhöhen darf kein Nebeneffekt des Pinnens sein.
+    /// </summary>
+    Task SetTrustLevelAsync(string keyId, ConnectorTrustLevel level, CancellationToken ct);
 }
 
 /// <summary>

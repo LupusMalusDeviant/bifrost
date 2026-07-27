@@ -2,6 +2,7 @@ using System.Text.Json;
 using McpMcp.Abstractions;
 using McpMcp.Core.Capabilities;
 using McpMcp.Core.Upstreams;
+using McpMcp.Core.Packaging;
 using McpMcp.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -490,7 +491,113 @@ internal static class ApiEndpoints
         });
 
         MapPublisherManagement(api);
+        MapConnectorPackages(api);
         MapWebhookManagement(api);
+    }
+
+    /// <summary>
+    /// Connector-Pakete (ADR-0016). Nur Admins: Wer hier installiert, entscheidet, welcher fremde
+    /// Code im Gateway läuft — dieselbe Schwelle wie beim Pinnen eines Herausgebers.
+    /// </summary>
+    private static void MapConnectorPackages(RouteGroupBuilder api)
+    {
+        var packages = api.MapGroup("/packages").AddEndpointFilter(RequireAdminAsync);
+
+        packages.MapGet("/", async (IConnectorPackageStore store, CancellationToken ct) =>
+            Results.Ok(await store.ListAsync(ct)));
+
+        packages.MapGet("/{packageId}", async (
+            string packageId, IConnectorPackageStore store, CancellationToken ct) =>
+        {
+            var versions = await store.GetVersionsAsync(packageId, ct);
+            return versions.Count == 0 ? Results.NotFound() : Results.Ok(versions);
+        });
+
+        // Der Rumpf ist das Paket selbst (application/octet-stream). Zustimmungen kommen als
+        // Query-Parameter, damit die Datei unverändert durchgereicht werden kann.
+        packages.MapPost("/", async (
+            HttpRequest request, HttpContext ctx, ConnectorPackageInstaller installer,
+            ConnectorPackageResolver resolver, CancellationToken ct) =>
+        {
+            var accepted = request.Query["grant"].Where(g => !string.IsNullOrWhiteSpace(g)).ToArray()!;
+            var allowUntrusted = request.Query["allowUntrusted"] is ["1" or "true", ..];
+
+            // Erst vollständig in den Speicher: Der Reader muss mehrfach durch das Archiv, und ein
+            // nicht-suchbarer Netzwerk-Stream ließe die Größenprüfung ins Leere laufen.
+            using var buffer = new MemoryStream();
+            await request.Body.CopyToAsync(buffer, ct);
+            if (buffer.Length == 0)
+            {
+                return Results.BadRequest(new { error = "Leerer Rumpf — erwartet wird ein .mcpkg-Archiv." });
+            }
+
+            buffer.Position = 0;
+            try
+            {
+                var installed = await installer.InstallAsync(
+                    buffer,
+                    new ConnectorInstallOptions(accepted!, allowUntrusted),
+                    Identity(ctx),
+                    ct);
+                await resolver.RefreshAsync(ct);
+                return Results.Created($"/api/v1/packages/{installed.PackageId}", installed);
+            }
+            catch (ConnectorPackageException exception)
+            {
+                // Ein abgewiesenes Paket ist ein Eingabefehler des Administrators, kein
+                // Serverfehler — und die Meldung nennt den Grund, damit er behebbar ist.
+                return Results.BadRequest(new { error = exception.Message });
+            }
+        }).DisableAntiforgery();
+
+        packages.MapPost("/{packageId}/rollback", async (
+            string packageId, HttpContext ctx, ConnectorPackageInstaller installer,
+            ConnectorPackageResolver resolver, CancellationToken ct) =>
+        {
+            try
+            {
+                var active = await installer.RollbackAsync(packageId, Identity(ctx), ct);
+                await resolver.RefreshAsync(ct);
+                return Results.Ok(active);
+            }
+            catch (ConnectorPackageException exception)
+            {
+                return Results.BadRequest(new { error = exception.Message });
+            }
+        });
+
+        packages.MapDelete("/{packageId}/{version}", async (
+            string packageId, string version, HttpContext ctx,
+            ConnectorPackageInstaller installer, ConnectorPackageResolver resolver,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                await installer.RemoveVersionAsync(packageId, version, Identity(ctx), ct);
+                await resolver.RefreshAsync(ct);
+                return Results.NoContent();
+            }
+            catch (ConnectorPackageException exception)
+            {
+                return Results.BadRequest(new { error = exception.Message });
+            }
+        });
+
+        packages.MapDelete("/{packageId}", async (
+            string packageId, HttpContext ctx, ConnectorPackageInstaller installer,
+            ConnectorPackageResolver resolver, CancellationToken ct) =>
+        {
+            try
+            {
+                await installer.RemovePackageAsync(packageId, Identity(ctx), ct);
+                await resolver.RefreshAsync(ct);
+                return Results.NoContent();
+            }
+            catch (ConnectorPackageException exception)
+            {
+                return Results.BadRequest(new { error = exception.Message });
+            }
+        });
     }
 
     private sealed record ApprovalToolToggle(string Tool, bool Required);
@@ -546,7 +653,38 @@ internal static class ApiEndpoints
                 $"publisher-reinstated:{keyId}");
             return Results.NoContent();
         });
+
+        // Die Vertrauensstufe (ADR-0016) entscheidet, wie viel ein Paket dieses Herausgebers ohne
+        // Rückfrage bekommt. Eigener Endpunkt, kein Feld beim Pinnen — sonst wäre „vertrauen" und
+        // „viel erlauben" derselbe Klick.
+        publishers.MapPut("/{keyId}/trust-level", async (
+            string keyId, TrustLevelRequest body, HttpContext ctx, IPublisherTrustStore trust,
+            IAuditSink audit, TimeProvider time, CancellationToken ct) =>
+        {
+            if (!Enum.TryParse<ConnectorTrustLevel>(body.Level, ignoreCase: true, out var level))
+            {
+                return Results.BadRequest(new
+                {
+                    error = "Unbekannte Stufe. Erlaubt: Official, ThirdParty, Community.",
+                });
+            }
+
+            try
+            {
+                await trust.SetTrustLevelAsync(keyId, level, ct);
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.BadRequest(new { error = exception.Message });
+            }
+
+            AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null,
+                $"publisher-trust-level:{keyId}={level}");
+            return Results.NoContent();
+        });
     }
+
+    private sealed record TrustLevelRequest(string Level);
 
     private sealed record PinPublisherRequest(string PublicKey, string? Label);
 

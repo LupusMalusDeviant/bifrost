@@ -6,7 +6,19 @@ MCP-MCP is in **pre-release development**. There are no supported release versio
 
 | Version | Supported |
 |---|---|
-| `main` (unreleased) | ✅ best effort |
+| `main` | ✅ best effort |
+| `v0.5.0` | ✅ best effort |
+
+### Advisory for anyone who ran an early 1.x build
+
+An early 1.x line was withdrawn and has since been removed entirely — it was never a valid release.
+The reason was a redaction defect: on the lazy path (`invoke_tool`), tool arguments reached the
+audit log **unredacted**, so credentials passed through that path were persisted in plaintext,
+while the same call via `tools/call` was masked correctly.
+
+If you ever ran one of those builds: inspect the `AuditEvents` table, delete the affected rows, and
+rotate every credential that appeared there. Details are in the
+[threat model](docs/security/threat-model.md) (finding 7).
 
 ## Reporting a vulnerability
 
@@ -19,7 +31,9 @@ Use [GitHub private vulnerability reporting](https://github.com/LupusMalusDevian
 MCP-MCP is a security-relevant component by design: it terminates every tool call and holds credentials for all connected upstream servers. The intended posture (see `docs/adr/`, German):
 
 - **Credential concentration:** Upstream credentials are stored encrypted (ASP.NET Data Protection); agent API keys are stored only as hashes. The gateway host is still a high-value target — harden it accordingly (dedicated user, TLS via reverse proxy, restricted network exposure).
-- **stdio upstreams run with gateway privileges** (v1, [ADR-0005](docs/adr/0005-hot-swap-upstreams-als-verwaltete-kindprozesse.md)): there is **no sandbox** between the gateway and stdio MCP-server child processes. Only connect MCP servers you trust, exactly as you would when attaching them to an agent directly. Container-per-upstream isolation is a planned v2 feature.
+- **stdio upstreams run with gateway privileges** ([ADR-0005](docs/adr/0005-hot-swap-upstreams-als-verwaltete-kindprozesse.md)): there is **no sandbox** between the gateway and stdio MCP-server child processes. Only connect MCP servers you trust, exactly as you would when attaching them to an agent directly. Container isolation exists for the **CLI** transport and WASI components run in a real sandbox — stdio is still the unisolated path.
+- **Isolated paths and their limits:** CLI upstreams can run per-invocation in a hardened container (read-only rootfs, non-root, all capabilities dropped, no network unless granted — [ADR-0018](docs/adr/0018-native-prozess-und-container-isolation.md)); WASI components run out-of-process with per-interface grants that default to none ([ADR-0020](docs/adr/0020-wasi-runtime-out-of-process-rust-host.md)). WebAssembly is a sandbox boundary, but its safety still depends on the directories, sockets and secrets you grant.
+- **Only signed plugins load.** WASI components and connector packages are verified against pinned Ed25519 publisher keys; an empty trust store loads nothing. Revoking a publisher stops its running upstreams immediately ([ADR-0016](docs/adr/0016-versionierter-connector-plugin-vertrag.md)).
 - **Default-deny RBAC:** agents see and reach only what a role explicitly grants. If you observe a tool being visible or callable without a grant, that is a vulnerability — please report it.
 - **Audit integrity:** every call (including denied ones) is logged with secret redaction. Bypasses of redaction or of audit logging are vulnerabilities.
 - **Untrusted input:** tool descriptions and results from upstream servers are treated as untrusted content (encoding in the UI, no execution). Injection paths through upstream metadata are in scope for reports.
