@@ -38,6 +38,7 @@ Ein Architecture Decision Record dokumentiert eine einzelne, wichtige Architektu
 | [0018-EM](./0018-entscheidungsmaterial-stdio.md) | Entscheidungsmaterial zur stdio-Isolation — fünf Optionen mit Kosten und Bruchstellen | Material | 2026-07-28 | Grundlage für [0018](./0018-native-prozess-und-container-isolation.md) |
 | [0019](./0019-langlaufende-tasks-und-events.md) | Persistentes Task-Modell (Polling als Vertrag; Freigaben gehen darin auf) | Akzeptiert | 2026-07-25 | ergänzt [0010](./0010-sampling-elicitation-nicht-durchreichen.md), löst [0012](./0012-approval-flows-asynchron.md) technisch ab |
 | [0020](./0020-wasi-runtime-out-of-process-rust-host.md) | WASI-Runtime als Out-of-Process-Rust-Host hinter dem Connector-Vertrag | Akzeptiert | 2026-07-24 | — |
+| [0021-EM](./0021-entscheidungsmaterial-skills-im-paket.md) | Entscheidungsmaterial: Skills im Paket — vier Optionen, und warum es für einen Satz keine Sandbox gibt | Material | 2026-07-28 | Grundlage für eine Ergänzung zu [0016](./0016-versionierter-connector-plugin-vertrag.md) |
 
 ## Beitragen
 
