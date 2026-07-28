@@ -287,6 +287,14 @@ Skill-Namen sind seitdem **eindeutig**. Vorher waren zwei gleichen Namens mögli
 wurde dann der erstbeste. Beim Aktualisieren einer bestehenden Datenbank scheitert die Migration,
 wenn dort schon Dopplungen stehen — dann vorher umbenennen.
 
+**Größe:** Ein Skill darf höchstens 256 KB groß sein — dieselbe Grenze für einen von Hand
+angelegten wie für einen aus einem Paket. Der Grund ist die Auslieferung: `read_skill` schickt den
+Text vollständig in den Kontext eines Agenten, und ein unbegrenzter Skill hebelt genau das Argument
+aus, für das die Meta-Tools existieren. Was länger ist, gehört auf mehrere Skills verteilt, die
+sich gegenseitig referenzieren. Die Grenze wirkt beim **Speichern**; ein bereits gespeicherter,
+größerer Skill wird weiter vollständig geliefert — ihn stillschweigend abzuschneiden hieße, einem
+Agenten eine halbe Anweisung zu geben.
+
 **Frontmatter-Import:** Eine bestehende `SKILL.md` mit YAML-Kopf lässt sich einfügen; der Knopf
 *Frontmatter aus Inhalt übernehmen* liest `name`, `description`, `when-to-use`, `references` und
 `required-tools` in die Felder und lässt den Rest als Inhalt stehen. Das ist bewusst **kein

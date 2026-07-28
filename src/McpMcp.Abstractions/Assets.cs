@@ -29,6 +29,45 @@ public static class AssetDelivery
 }
 
 /// <summary>
+/// Grenzen, die für <b>jeden</b> Skill gelten — egal ob von Hand angelegt oder aus einem Paket.
+/// <para>
+/// Die Zahl steht hier und nicht im Paketleser, weil sie sonst zweimal existierte und
+/// auseinanderliefe: dieselbe Auslieferung, zwei Regeln. Genau das war nach dem ersten Wurf der
+/// Fall — der Paketweg war gedeckelt, der tägliche nicht.
+/// </para>
+/// </summary>
+public static class SkillLimits
+{
+    /// <summary>
+    /// Größter Skill-Text in UTF-8-Bytes.
+    /// <para>
+    /// <b>Warum es überhaupt eine Grenze gibt:</b> <c>read_skill</c> liefert den Text vollständig in
+    /// den Kontext eines Agenten. Ein unbegrenzter Skill hebelt damit genau das Argument aus, für das
+    /// die Meta-Tools existieren — entdecken billig, Inhalt auf Abruf.
+    /// </para>
+    /// </summary>
+    public const int MaxContentBytes = 256 * 1024;
+
+    /// <summary>
+    /// Prüft beim <b>Schreiben</b>. Bewusst nicht beim Ausliefern: Ein bereits gespeicherter,
+    /// zu großer Skill (aus der Zeit vor dieser Grenze) wird weiter vollständig geliefert. Ihn
+    /// stillschweigend abzuschneiden hieße, einem Agenten eine halbe Anweisung zu geben.
+    /// </summary>
+    public static void EnsureWithinLimit(string content)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        var bytes = System.Text.Encoding.UTF8.GetByteCount(content);
+        if (bytes > MaxContentBytes)
+        {
+            throw new InvalidOperationException(
+                $"Der Skill ist {bytes / 1024} KB groß; erlaubt sind {MaxContentBytes / 1024} KB. "
+                + "Der Text geht bei jedem Abruf vollständig in den Kontext eines Agenten — was so "
+                + "lang ist, gehört auf mehrere Skills verteilt, die sich gegenseitig referenzieren.");
+        }
+    }
+}
+
+/// <summary>
 /// Die strukturierten Angaben eines Skills neben seinem Fließtext.
 /// <para>
 /// <b>Warum überhaupt Struktur, wo ein Skill doch Text ist:</b> Nur was deklariert ist, lässt sich

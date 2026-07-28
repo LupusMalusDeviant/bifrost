@@ -44,11 +44,10 @@ public static class ConnectorPackageReader
     public const long MaxManifestBytes = 1024 * 1024;
 
     /// <summary>
-    /// Größter Skill-Text. Ein Skill wird einem Administrator zur Zustimmung vorgelegt und
-    /// anschließend in den Kontext eines Agenten geliefert — beides hat eine praktische Obergrenze,
-    /// weit unterhalb dessen, was ein Archiv tragen könnte.
+    /// Größter Skill-Text — dieselbe Grenze wie für einen von Hand angelegten Skill. Die Zahl steht
+    /// bewusst nicht hier: Zwei Zahlen für dieselbe Auslieferung liefen auseinander.
     /// </summary>
-    public const long MaxSkillBytes = 256 * 1024;
+    public const long MaxSkillBytes = SkillLimits.MaxContentBytes;
 
     public const string ManifestEntry = "manifest.json";
     public const string SignatureEntry = "manifest.sig";

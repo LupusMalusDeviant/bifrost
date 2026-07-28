@@ -62,6 +62,7 @@ public sealed class EfAssetStore : IAssetStore
         AssetId id, string content, SkillMetadata? metadata, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(content);
+        SkillLimits.EnsureWithinLimit(content);
         await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
         var existing = await db.Assets.AsNoTracking()
             .Where(a => a.Id == id.Value)
@@ -93,6 +94,7 @@ public sealed class EfAssetStore : IAssetStore
         string name, string? description, string content, SkillMetadata? metadata, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        SkillLimits.EnsureWithinLimit(content);
         await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
         await EnsureNameFreeAsync(db, name, ct).ConfigureAwait(false);
         var id = AssetId.New();
@@ -125,6 +127,7 @@ public sealed class EfAssetStore : IAssetStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(source);
+        SkillLimits.EnsureWithinLimit(content);
         await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
         var existing = await db.Assets.AsNoTracking()
             .Where(a => a.Name == name)
