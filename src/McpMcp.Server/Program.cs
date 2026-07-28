@@ -273,7 +273,17 @@ builder.Services.AddSingleton(new ResultCompressionOptions(maxResultChars));
 builder.Services.AddSingleton(new AuditOptions(
     CaptureResponsePayloads: Environment.GetEnvironmentVariable("MCPMCP_AUDIT_DEBUG_PAYLOADS") is "1" or "true"));
 builder.Services.AddSingleton<IToolInvoker, ToolInvoker>();
-builder.Services.AddSingleton<MetaToolService>();
+// Explizit statt per Konvention: Der Asset-Store ist ein OPTIONALER Konstruktorparameter, und
+// den fuellt der Container nicht von selbst — ohne diese Zeile gaebe es list_skills/read_skill,
+// die immer "keine Skill-Ausliefering eingebunden" antworten.
+builder.Services.AddSingleton(sp => new MetaToolService(
+    sp.GetRequiredService<IToolCatalog>(),
+    sp.GetRequiredService<IAuthorizationService>(),
+    sp.GetRequiredService<IToolInvoker>(),
+    sp.GetRequiredService<IAuditSink>(),
+    sp.GetRequiredService<IRedactionService>(),
+    sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<IAssetStore>()));
 
 // ── MCP-Endpoint (WP4.2) + REST-Fassade (WP5) ────────────────────────────────
 builder.Services.AddHttpContextAccessor();
@@ -289,9 +299,14 @@ builder.Services.AddMcpServer(options =>
             Name = "mcp-mcp",
             Version = McpMcpProductInfo.Version,
         };
+        // Der einzige Text, den jeder angeschlossene Agent einmal je Sitzung sieht. Kurz halten:
+        // Er kostet Kontext in JEDER Sitzung, und lang macht ihn nicht wirksamer.
         options.ServerInstructions =
             "MCP-MCP gateway: aggregated tools from multiple upstream servers. " +
-            "Use search_tools to discover capabilities, describe_tool for schemas, invoke_tool to call.";
+            "Use search_tools to discover capabilities, describe_tool for schemas, invoke_tool to call. " +
+            "This gateway also publishes shared skills — instructions, playbooks and conventions " +
+            "maintained centrally for all agents. Call list_skills when a task might have an " +
+            "established procedure here; it returns names only, read_skill fetches one.";
     })
     .WithHttpTransport(options =>
     {

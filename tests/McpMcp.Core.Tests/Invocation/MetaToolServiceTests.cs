@@ -103,11 +103,14 @@ public class MetaToolServiceTests
     }
 
     [Fact]
-    public void Definitions_expose_three_meta_tools_with_schemas()
+    public void Definitions_expose_the_meta_tools_with_schemas()
     {
-        MetaToolService.Definitions.Should().HaveCount(3);
+        // Fünf seit dem 2026-07-28: list_skills/read_skill sind dazugekommen, damit ein Agent den
+        // Skill-Bestand selbst durchsehen kann. Über MCP-Prompts geht das nicht — die sind in den
+        // meisten Clients nutzerinitiiert, das Modell sieht sie nicht.
+        MetaToolService.Definitions.Should().HaveCount(5);
         MetaToolService.Definitions.Select(d => d.Name).Should().BeEquivalentTo(
-            "search_tools", "describe_tool", "invoke_tool");
+            "search_tools", "describe_tool", "invoke_tool", "list_skills", "read_skill");
         MetaToolService.Definitions.Should().OnlyContain(
             d => d.InputSchema.ValueKind == System.Text.Json.JsonValueKind.Object);
         MetaToolService.IsMetaTool("search_tools").Should().BeTrue();

@@ -18,6 +18,8 @@ public sealed class MetaToolService
     public const string SearchToolsName = "search_tools";
     public const string DescribeToolName = "describe_tool";
     public const string InvokeToolName = "invoke_tool";
+    public const string ListSkillsName = "list_skills";
+    public const string ReadSkillName = "read_skill";
 
     private const int DefaultSearchLimit = 10;
     private const int MaxSearchLimit = 50;
@@ -47,6 +49,27 @@ public sealed class MetaToolService
                   "arguments":{"type":"object","description":"Arguments matching the tool's input schema."}},
                  "required":["name"]}
                 """)),
+
+        // Skills als TOOLS, nicht nur als MCP-Prompts. Ein Prompt ist in den meisten Clients
+        // nutzerinitiiert — der Mensch sieht die Liste, das Modell nicht. Ein Tool ruft das Modell
+        // selbst auf; erst damit kann ein Agent von sich aus nachsehen, ob es für seine Aufgabe
+        // eine hinterlegte Anleitung gibt. Die Prompt-/Resource-Auslieferung bleibt daneben
+        // bestehen, sie bedient den Menschen.
+        new(ListSkillsName,
+            "List the skills (instructions, playbooks, conventions) published on this gateway. "
+            + "Returns names and one-line descriptions only — call read_skill for the full text. "
+            + "Worth checking once when a task looks like it might have an established procedure here.",
+            ParseSchema("""
+                {"type":"object","properties":{
+                  "query":{"type":"string","description":"Optional keywords to filter by name or description."}}}
+                """)),
+        new(ReadSkillName,
+            "Read the full text of one skill listed by list_skills.",
+            ParseSchema("""
+                {"type":"object","properties":{
+                  "name":{"type":"string","description":"Skill name as returned by list_skills."}},
+                 "required":["name"]}
+                """)),
     ];
 
     private readonly IToolCatalog _catalog;
@@ -55,6 +78,7 @@ public sealed class MetaToolService
     private readonly IAuditSink _audit;
     private readonly IRedactionService _redaction;
     private readonly TimeProvider _time;
+    private readonly IAssetStore? _assets;
 
     public MetaToolService(
         IToolCatalog catalog,
@@ -62,13 +86,15 @@ public sealed class MetaToolService
         IToolInvoker invoker,
         IAuditSink audit,
         IRedactionService redaction,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IAssetStore? assets = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(authorization);
         ArgumentNullException.ThrowIfNull(invoker);
         ArgumentNullException.ThrowIfNull(audit);
         ArgumentNullException.ThrowIfNull(redaction);
+        _assets = assets;
         _catalog = catalog;
         _authorization = authorization;
         _invoker = invoker;
@@ -77,8 +103,19 @@ public sealed class MetaToolService
         _time = timeProvider ?? TimeProvider.System;
     }
 
-    public static bool IsMetaTool(string name)
-        => name is SearchToolsName or DescribeToolName or InvokeToolName;
+    /// <summary>
+    /// Einmal aus <see cref="Definitions"/> gebaut. Aus der Definitionsliste abgeleitet und nicht
+    /// als zweite Namensliste gepflegt — sonst erschiene ein neues Meta-Tool im Katalog, wäre aber
+    /// nicht aufrufbar, weil der Aufruf im normalen Invoker landete, der es nicht kennt.
+    /// <para>
+    /// Als Menge statt als Suche über die Liste: Die Prüfung läuft bei <b>jedem</b> Tool-Aufruf,
+    /// und dort gehört keine Allokation hin.
+    /// </para>
+    /// </summary>
+    private static readonly HashSet<string> MetaToolNames =
+        [.. Definitions.Select(d => d.Name)];
+
+    public static bool IsMetaTool(string name) => MetaToolNames.Contains(name);
 
     public async Task<ToolInvocationResult> ExecuteAsync(
         IdentityId caller, CallOrigin origin, string metaTool, JsonElement args, CancellationToken ct)
@@ -104,6 +141,20 @@ public sealed class MetaToolService
             {
                 // Ziel-RBAC + Audit übernimmt die Invoker-Pipeline — kein Doppel-Audit hier.
                 return await InvokeToolAsync(caller, origin, args, started, ct).ConfigureAwait(false);
+            }
+
+            case ListSkillsName:
+            {
+                var result = await ListSkillsAsync(args, started, ct).ConfigureAwait(false);
+                Audit(caller, origin, ListSkillsName, args, result);
+                return result;
+            }
+
+            case ReadSkillName:
+            {
+                var result = await ReadSkillAsync(args, started, ct).ConfigureAwait(false);
+                Audit(caller, origin, ReadSkillName, args, result);
+                return result;
             }
 
             default:
@@ -197,6 +248,79 @@ public sealed class MetaToolService
             result.Content?.GetRawText().Length,
             result.Duration,
             CallerRoles: _authorization.DescribeCaller(caller)));
+    }
+
+    /// <summary>
+    /// Namen und Kurzbeschreibungen der Skills — <b>ohne Inhalt</b>. Dasselbe Muster wie
+    /// search_tools: Entdecken ist billig, der Text kommt auf Abruf. Eine Liste, die den ganzen
+    /// Text mitliefert, wäre bei einem Dutzend Skills teurer als der gesamte gepinnte Katalog.
+    /// </summary>
+    private async Task<ToolInvocationResult> ListSkillsAsync(
+        JsonElement args, long started, CancellationToken ct)
+    {
+        if (_assets is null)
+        {
+            return Fail(
+                InvocationStatus.ToolNotFound,
+                "In dieser Zusammenstellung ist keine Skill-Auslieferung eingebunden.",
+                started);
+        }
+
+        var all = await _assets.ListAsync(ct).ConfigureAwait(false);
+
+        // Kein RBAC-Filter: Skills sind für jede authentifizierte Identität sichtbar (FR-40). Das
+        // ist entschieden und getestet — deshalb steht hier auch kein `caller`.
+        if (TryGetString(args, "query", out var query))
+        {
+            all = [.. all.Where(a =>
+                a.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+                || (a.Description?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false))];
+        }
+
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            skills = all.Select(a => new
+            {
+                name = a.Name,
+                description = a.Description,
+                version = a.LatestVersion.Value,
+            }),
+        });
+        return new ToolInvocationResult(InvocationStatus.Success, payload, null, Elapsed(started));
+    }
+
+    /// <summary>Der Text eines Skills. Erst hier kostet er Kontext.</summary>
+    private async Task<ToolInvocationResult> ReadSkillAsync(
+        JsonElement args, long started, CancellationToken ct)
+    {
+        if (_assets is null)
+        {
+            return Fail(
+                InvocationStatus.ToolNotFound,
+                "In dieser Zusammenstellung ist keine Skill-Auslieferung eingebunden.",
+                started);
+        }
+
+        if (!TryGetString(args, "name", out var name))
+        {
+            return Fail(InvocationStatus.ValidationFailed, "read_skill erwartet ein 'name'-Argument (string).", started);
+        }
+
+        var match = (await _assets.ListAsync(ct).ConfigureAwait(false))
+            .FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.Ordinal));
+        if (match is null)
+        {
+            return Fail(InvocationStatus.ToolNotFound, $"Skill '{name}' existiert nicht.", started);
+        }
+
+        var content = await _assets.GetAsync(match.Id, null, ct).ConfigureAwait(false);
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            name = content.Name,
+            version = content.Version.Value,
+            content = content.Content,
+        });
+        return new ToolInvocationResult(InvocationStatus.Success, payload, null, Elapsed(started));
     }
 
     private static ToolAction ActionFor(CatalogEntryKind kind) => kind switch

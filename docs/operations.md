@@ -207,6 +207,31 @@ Zu den Parametern: `paramStructure: by-name` schickt ein Objekt, `by-position` e
 Array** in der Reihenfolge aus dem Dokument. Der Aufrufer nennt in beiden Fällen die Namen; die
 Reihenfolge kommt aus der Beschreibung, nicht aus der Reihenfolge im Aufruf.
 
+## Skills: was der Mensch sieht und was der Agent selbst holt
+
+Zentrale Skills (Assets) gehen auf **zwei** Wegen an die Agenten, und der Unterschied ist wichtig:
+
+| Weg | Wer löst aus | Wo er auftaucht |
+|---|---|---|
+| MCP-**Prompt** `assets__<name>` und Resource `mcpmcp://assets/<name>` | **der Mensch** | Slash-Menü bzw. Anhang-Menü des Clients |
+| Meta-Tools `list_skills` / `read_skill` | **das Modell** | im Tool-Katalog, wie jedes andere Tool |
+
+Der Prompt-Weg allein reicht nicht, wenn ein Agent *selbst* merken soll, dass es für seine Aufgabe
+eine hinterlegte Anleitung gibt: Prompts sind in den meisten Clients nutzerinitiiert — die Liste
+sieht der Mensch, nicht das Modell. Tools ruft das Modell dagegen von sich aus auf.
+
+**Und die Token-Rechnung, weil sie die naheliegende Sorge ist:** `list_skills` liefert **nur** Namen
+und Kurzbeschreibungen, `read_skill` holt den Text. Dasselbe Muster wie `search_tools`/
+`describe_tool`, aus demselben Grund. Die beiden Schemas heben die Schätzung des Lazy-Pfads von 700
+auf 950 Tokens — einmal je Sitzung, gegenüber den Tausenden, die das Anpinnen aller Tools kostete.
+Ein Blick in den Skill-Bestand kostet danach so viel wie eine kurze Liste, nicht wie ein Dokument.
+
+Jeder angeschlossene Agent erfährt beim Verbinden über die **Server-Instruktion**, dass es diesen
+Bestand gibt — drei Sätze, ebenfalls einmal je Sitzung. Länger macht sie nicht wirksamer.
+
+> Skills sind für **jede** authentifizierte Identität lesbar (FR-40) — auch über `list_skills`.
+> Keine Zugangsdaten in Skills ablegen.
+
 ## Agenten über OAuth
 
 Neben API-Keys kann sich ein Agent mit einem Zugriffstoken eines vorhandenen Identitätsanbieters

@@ -13,8 +13,16 @@ namespace McpMcp.Core.Catalog;
 /// </summary>
 public sealed partial class ToolCatalog : IToolCatalog, IDisposable
 {
-    /// <summary>Konservative Schätzung für die drei Meta-Tool-Schemas (search/describe/invoke, ADR-0003).</summary>
-    public const int MetaToolTokenEstimate = 700;
+    /// <summary>
+    /// Konservative Schätzung für die Meta-Tool-Schemas des Lazy-Pfads (ADR-0003).
+    /// <para>
+    /// Seit dem 2026-07-28 fünf statt drei: <c>list_skills</c> und <c>read_skill</c> sind
+    /// dazugekommen. Beide sind absichtlich schmal — <c>list_skills</c> liefert nur Namen und
+    /// Kurzbeschreibungen, der Text kommt über <c>read_skill</c> auf Abruf. Dasselbe Muster wie
+    /// search/describe, und aus demselben Grund: Entdecken soll billig sein.
+    /// </para>
+    /// </summary>
+    public const int MetaToolTokenEstimate = 950;
 
     /// <summary>
     /// Die Kontextkosten eines Profils: Summe der gepinnten Schemas plus die Meta-Tools, wenn der
