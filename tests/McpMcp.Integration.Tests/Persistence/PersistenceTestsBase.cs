@@ -752,8 +752,8 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         MarkSkippedIfUnavailable();
         var store = new EfAssetStore(Factory);
 
-        var id = await store.CreateAsync("mein-skill", "Ein Test-Skill", "Version-1-Inhalt", TestContext.Current.CancellationToken);
-        var v2 = await store.PublishAsync(id, "Version-2-Inhalt", TestContext.Current.CancellationToken);
+        var id = await store.CreateAsync("mein-skill", "Ein Test-Skill", "Version-1-Inhalt", metadata: null, TestContext.Current.CancellationToken);
+        var v2 = await store.PublishAsync(id, "Version-2-Inhalt", metadata: null, TestContext.Current.CancellationToken);
         v2.Value.Should().Be(2);
 
         (await store.GetAsync(id, null, TestContext.Current.CancellationToken)).Content.Should().Be("Version-2-Inhalt", "latest");

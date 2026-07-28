@@ -37,7 +37,7 @@ public sealed class SkillMetaToolTests : IClassFixture<GatewayFixture>
         var name = $"deploy-{Guid.NewGuid():N}";
         const string Content = "## Ablauf\nErst Status prüfen, dann ausrollen.";
         await _gw.Services.GetRequiredService<IAssetStore>()
-            .CreateAsync(name, "Wie hier ausgerollt wird", Content, ct);
+            .CreateAsync(name, "Wie hier ausgerollt wird", Content, metadata: null, ct);
         var (admin, _) = await _gw.SeedAdminAsync($"skill-{Guid.NewGuid():N}");
 
         var result = await MetaTools.ExecuteAsync(
@@ -56,7 +56,7 @@ public sealed class SkillMetaToolTests : IClassFixture<GatewayFixture>
         var ct = TestContext.Current.CancellationToken;
         var name = $"konvention-{Guid.NewGuid():N}";
         await _gw.Services.GetRequiredService<IAssetStore>()
-            .CreateAsync(name, "Konventionen", "Immer erst suchen.", ct);
+            .CreateAsync(name, "Konventionen", "Immer erst suchen.", metadata: null, ct);
         var (admin, _) = await _gw.SeedAdminAsync($"skill-read-{Guid.NewGuid():N}");
 
         var result = await MetaTools.ExecuteAsync(

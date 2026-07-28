@@ -226,6 +226,43 @@ und Kurzbeschreibungen, `read_skill` holt den Text. Dasselbe Muster wie `search_
 auf 950 Tokens — einmal je Sitzung, gegenüber den Tausenden, die das Anpinnen aller Tools kostete.
 Ein Blick in den Skill-Bestand kostet danach so viel wie eine kurze Liste, nicht wie ein Dokument.
 
+### Struktur, Referenzen und Versionen
+
+Ein Skill ist Text plus ein paar **deklarierte** Angaben:
+
+| Feld | Wofür |
+|---|---|
+| Beschreibung | eine Zeile; sie entscheidet, ob ein Agent zugreift |
+| Wann anwenden | geht mit in `list_skills` — der eigentliche Auslöser |
+| Referenzierte Skills | andere Skills, die dieser voraussetzt oder ergänzt |
+| Benötigte Tools | namespaced Tool-Namen, die der Skill voraussetzt |
+
+**Warum überhaupt Struktur, wo ein Skill doch Text ist:** Nur was deklariert ist, lässt sich
+prüfen. Ein Verweis in der Prosa („Details siehe `codebase-mapper/references/x`") hängt still ins
+Leere, sobald jemand umbenennt. Deklariert man ihn, sagt der Gateway, dass er nicht aufgeht — und
+bei den vorausgesetzten Tools kann er es gegen den **Katalog** prüfen. Das kann kein Datei-Editor,
+weil nur der Gateway weiß, welche Tools angeschlossen sind.
+
+Die Befunde sind **Warnungen, keine Fehler**. Wer Skill A schreibt, der B referenziert, legt B
+vielleicht erst danach an; ein hartes Nein erzwänge eine Reihenfolge, die niemand einhält — und die
+naheliegende Reaktion wäre, das Feld leer zu lassen. Ein leeres Feld prüft nichts.
+
+**Mehrteilige Skills** bildest du über den Namen ab: `codebase-mapper/SKILL`,
+`codebase-mapper/references/format`. Der Einstieg deklariert die Teile als Referenzen, ein Agent
+liest zuerst den Einstieg und zieht mit `read_skill` nur das nach, was er braucht. Das ist dieselbe
+schrittweise Offenlegung wie bei `search_tools`/`describe_tool`. Für den Slash-Command-Weg sind
+flache Namen die sicherere Wahl — wie ein Client mit einem Schrägstrich im Prompt-Namen umgeht, ist
+nicht garantiert.
+
+**Versionen** sind append-only. Die Historie zeigt jede Fassung samt ihrer Angaben; Zurückschalten
+hängt die alte Fassung als **neue** Version an, statt Geschichte zu überschreiben — dieselbe Regel
+wie bei der Server-Konfiguration.
+
+**Frontmatter-Import:** Eine bestehende `SKILL.md` mit YAML-Kopf lässt sich einfügen; der Knopf
+*Frontmatter aus Inhalt übernehmen* liest `name`, `description`, `when-to-use`, `references` und
+`required-tools` in die Felder und lässt den Rest als Inhalt stehen. Das ist bewusst **kein
+YAML-Parser**, sondern ein Leser für genau diese flache Form.
+
 Jeder angeschlossene Agent erfährt beim Verbinden über die **Server-Instruktion**, dass es diesen
 Bestand gibt — drei Sätze, ebenfalls einmal je Sitzung. Länger macht sie nicht wirksamer.
 

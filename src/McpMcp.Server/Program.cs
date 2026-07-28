@@ -120,6 +120,9 @@ builder.Services.AddSingleton<IApiKeyService>(sp => sp.GetRequiredService<ApiKey
 builder.Services.AddSingleton<IApiKeyValidator>(sp => sp.GetRequiredService<ApiKeyService>());
 builder.Services.AddSingleton<IUiUserService, UiUserService>();
 builder.Services.AddSingleton<IAssetStore, EfAssetStore>();
+// Prueft deklarierte Skill-Verweise gegen den Bestand und die vorausgesetzten Tools gegen den
+// Katalog — Letzteres kann nur der Gateway, weil nur er den Katalog kennt.
+builder.Services.AddSingleton<ISkillValidator, SkillValidator>();
 builder.Services.AddSingleton<McpMcp.Web.UiInternalIdentity>();
 
 // ── Upstreams & Katalog (ADR-0005, WP2) ──────────────────────────────────────

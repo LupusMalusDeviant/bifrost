@@ -64,7 +64,8 @@ public sealed class MetaToolService
                   "query":{"type":"string","description":"Optional keywords to filter by name or description."}}}
                 """)),
         new(ReadSkillName,
-            "Read the full text of one skill listed by list_skills.",
+            "Read the full text of one skill listed by list_skills. The result also names the "
+            + "skills it references — follow those with read_skill when they look relevant.",
             ParseSchema("""
                 {"type":"object","properties":{
                   "name":{"type":"string","description":"Skill name as returned by list_skills."}},
@@ -283,6 +284,9 @@ public sealed class MetaToolService
             {
                 name = a.Name,
                 description = a.Description,
+                // Die Angabe, die ueber den Zugriff entscheidet, gehoert in die LISTE — nicht erst
+                // in den Text, den man dafuer schon geladen haben muesste.
+                whenToUse = a.MetadataOrEmpty.WhenToUse,
                 version = a.LatestVersion.Value,
             }),
         });
@@ -314,10 +318,17 @@ public sealed class MetaToolService
         }
 
         var content = await _assets.GetAsync(match.Id, null, ct).ConfigureAwait(false);
+        var metadata = content.MetadataOrEmpty;
         var payload = JsonSerializer.SerializeToElement(new
         {
             name = content.Name,
             version = content.Version.Value,
+            whenToUse = metadata.WhenToUse,
+            // Als eigene Felder, nicht in den Text montiert: Der Agent soll dem Verweis folgen
+            // koennen, ohne ihn aus Prosa zu raten — und der ausgelieferte Text bleibt genau der,
+            // den jemand geschrieben hat.
+            references = metadata.ReferencesOrEmpty,
+            requiredTools = metadata.RequiredToolsOrEmpty,
             content = content.Content,
         });
         return new ToolInvocationResult(InvocationStatus.Success, payload, null, Elapsed(started));

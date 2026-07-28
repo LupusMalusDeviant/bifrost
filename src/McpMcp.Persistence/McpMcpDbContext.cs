@@ -115,6 +115,11 @@ public sealed class McpMcpDbContext : DbContext
             e.HasKey(r => new { r.Id, r.Version });
             e.Property(r => r.Name).HasMaxLength(200).IsRequired();
             e.Property(r => r.Content).IsRequired();
+            // Die Metadaten haengen an der VERSION, nicht am Skill: Wer die Referenzen aendert,
+            // aendert den Skill — das gehoert in die Historie wie der Text.
+            e.Property(r => r.WhenToUse).HasMaxLength(1000);
+            e.Property(r => r.References).HasMaxLength(2000);
+            e.Property(r => r.RequiredTools).HasMaxLength(2000);
         });
 
         modelBuilder.Entity<ToolDescriptionOverrideRow>(e =>
@@ -651,4 +656,13 @@ public sealed class AssetRow
     public string Content { get; set; } = string.Empty;
 
     public DateTimeOffset PublishedAt { get; set; }
+
+    /// <summary>Wann ein Agent zu diesem Skill greifen soll — geht mit in <c>list_skills</c>.</summary>
+    public string? WhenToUse { get; set; }
+
+    /// <summary>Referenzierte Skill-Namen, zeilenweise getrennt.</summary>
+    public string? References { get; set; }
+
+    /// <summary>Vorausgesetzte namespaced Tool-Namen, zeilenweise getrennt.</summary>
+    public string? RequiredTools { get; set; }
 }

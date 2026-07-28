@@ -1,6 +1,7 @@
 @page "/assets"
 @attribute [Authorize(Policy = UiPolicies.Admin)]
 @inject IAssetStore AssetStore
+@inject ISkillValidator SkillValidator
 @inject IAuditSink Audit
 @inject TimeProvider Time
 @inject AuthenticationStateProvider AuthState
@@ -8,8 +9,10 @@
 <h1>Skills / Assets</h1>
 <p class="muted">
     Zentral verwaltete, versionierte Text-Assets (Skills/Prompts/Instructions, FR-40).
-    Agenten erhalten sie als MCP-Prompt <span class="mono">assets__&lt;name&gt;</span> und als Resource
-    <span class="mono">mcpmcp://assets/&lt;name&gt;</span> — immer in der neuesten Version.
+    Agenten erhalten sie als MCP-Prompt <span class="mono">assets__&lt;name&gt;</span>, als Resource
+    <span class="mono">mcpmcp://assets/&lt;name&gt;</span> — und über die Meta-Tools
+    <span class="mono">list_skills</span> / <span class="mono">read_skill</span>, die ein Agent
+    selbst aufrufen kann. Immer in der neuesten Version.
 </p>
 
 <div class="card">
@@ -21,16 +24,20 @@
     {
         <div class="table-wrap">
             <table>
-                <thead><tr><th>Name</th><th>Beschreibung</th><th>Version</th><th>Aktualisiert</th><th></th></tr></thead>
+                <thead><tr><th>Name</th><th>Beschreibung</th><th>Wann anwenden</th><th>Version</th><th>Aktualisiert</th><th></th></tr></thead>
                 <tbody>
                     @foreach (var a in _assets)
                     {
                         <tr>
                             <td>@a.Name</td>
                             <td class="muted">@(a.Description ?? "—")</td>
+                            <td class="muted" style="max-width:220px">@(a.MetadataOrEmpty.WhenToUse ?? "—")</td>
                             <td>v@(a.LatestVersion.Value)</td>
                             <td class="mono muted">@a.UpdatedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)</td>
-                            <td><button class="btn-sm btn-ghost" @onclick="() => Edit(a.Id)">Bearbeiten</button></td>
+                            <td style="white-space:nowrap">
+                                <button class="btn-sm btn-ghost" @onclick="() => Edit(a.Id)">Bearbeiten</button>
+                                <button class="btn-sm btn-ghost" @onclick="() => ShowHistory(a.Id, a.Name)">Versionen</button>
+                            </td>
                         </tr>
                     }
                 </tbody>
@@ -39,32 +46,115 @@
     }
 </div>
 
+@if (_historyId is not null)
+{
+    <div class="card">
+        <h3 style="margin-top:0">Versionen: <span class="mono">@_historyName</span></h3>
+        <p class="muted">
+            Append-only wie die Server-Konfiguration: Zurückschalten hängt die alte Fassung als
+            <strong>neue</strong> Version an, statt Geschichte zu überschreiben.
+        </p>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Version</th><th>Veröffentlicht (UTC)</th><th>Zeichen</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var v in _history)
+                    {
+                        <tr>
+                            <td>v@(v.Version.Value)</td>
+                            <td class="mono muted">@v.PublishedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)</td>
+                            <td class="muted">@v.Content.Length</td>
+                            <td style="white-space:nowrap">
+                                <button class="btn-sm btn-ghost" @onclick="() => Preview(v)">Ansehen</button>
+                                @if (v.Version.Value != _history.Max(x => x.Version.Value))
+                                {
+                                    <button class="btn-sm btn-ghost" @onclick="() => Rollback(v)">Zurückschalten</button>
+                                }
+                                else
+                                {
+                                    <span class="muted">aktuell</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        @if (_previewed is not null)
+        {
+            <label>Fassung v@(_previewed.Version.Value)</label>
+            <textarea class="mono" rows="8" readonly>@_previewed.Content</textarea>
+        }
+        <div class="toolbar" style="margin-top:.75rem">
+            <button class="btn-ghost" @onclick="() => { _historyId = null; _previewed = null; }">Schließen</button>
+        </div>
+    </div>
+}
+
 <div class="card">
-    <h3 style="margin-top:0">@(_editId is null ? "Neues Asset" : "Neue Version veröffentlichen")</h3>
+    <h3 style="margin-top:0">@(_editId is null ? "Neuer Skill" : "Neue Version veröffentlichen")</h3>
     @if (_editId is null)
     {
         <div class="row">
-            <div><label>Name</label><input @bind="_name" /></div>
-            <div><label>Beschreibung</label><input @bind="_desc" /></div>
+            <div><label>Name</label><input @bind="_name" placeholder="codebase-mapper/SKILL" /></div>
+            <div><label>Beschreibung</label><input @bind="_desc" placeholder="Eine Zeile — sie entscheidet, ob ein Agent zugreift" /></div>
         </div>
     }
     else
     {
         <p class="muted">Bearbeite: <span class="mono">@_name</span> — die nächste Version wird angehängt (append-only).</p>
     }
+
+    <label>Wann anwenden</label>
+    <input @bind="_whenToUse" placeholder="z.B. Wenn ein Repository dokumentiert werden soll" />
+
+    <div class="row">
+        <div>
+            <label>Referenzierte Skills (eine je Zeile)</label>
+            <textarea class="mono" rows="3" @bind="_references"></textarea>
+        </div>
+        <div>
+            <label>Benötigte Tools (eine je Zeile)</label>
+            <textarea class="mono" rows="3" @bind="_requiredTools"></textarea>
+        </div>
+    </div>
+
     <label>Inhalt</label>
-    <textarea class="mono" rows="8" @bind="_content"></textarea>
+    <textarea class="mono" rows="10" @bind="_content"></textarea>
+
     <div class="toolbar" style="margin-top:.75rem">
         <button @onclick="Save">@(_editId is null ? "Anlegen" : "Version veröffentlichen")</button>
+        <button class="btn-ghost" @onclick="ImportFrontmatter">Frontmatter aus Inhalt übernehmen</button>
         @if (_editId is not null) { <button class="btn-ghost" @onclick="ResetForm">Abbrechen</button> }
         @if (_msg is not null) { <span class="@(_ok ? "msg-ok" : "msg-err")">@_msg</span> }
     </div>
+
+    @if (_findings.Count > 0)
+    {
+        @* Warnungen, keine Fehler: Wer A schreibt und B danach anlegt, soll nicht blockiert
+           werden. Sichtbar müssen sie trotzdem sein — sonst prüft niemand etwas. *@
+        <p class="muted" style="margin-bottom:.25rem"><strong>Hinweise zur Prüfung:</strong></p>
+        <ul class="muted" style="margin-top:0">
+            @foreach (var f in _findings)
+            {
+                <li><span class="mono">@f.Field</span>: @f.Message</li>
+            }
+        </ul>
+    }
 </div>
 
 @code {
     private IReadOnlyList<AssetInfo> _assets = [];
+    private IReadOnlyList<AssetContent> _history = [];
+    private IReadOnlyList<SkillFinding> _findings = [];
     private AssetId? _editId;
-    private string _name = "", _desc = "", _content = ""; private bool _ok; private string? _msg;
+    private AssetId? _historyId;
+    private AssetContent? _previewed;
+    private string _historyName = "";
+    private string _name = "", _desc = "", _content = "";
+    private string _whenToUse = "", _references = "", _requiredTools = "";
+    private bool _ok;
+    private string? _msg;
 
     protected override Task OnInitializedAsync() => Reload();
 
@@ -73,32 +163,161 @@
     private async Task<string> UserAsync()
         => (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "?";
 
+    private static string Lines(IReadOnlyList<string> values) => string.Join('\n', values);
+
+    private static IReadOnlyList<string> ParseLines(string text)
+        => [.. text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+
+    private SkillMetadata CurrentMetadata() => new(
+        string.IsNullOrWhiteSpace(_whenToUse) ? null : _whenToUse.Trim(),
+        ParseLines(_references),
+        ParseLines(_requiredTools));
+
     private async Task Edit(AssetId id)
     {
         var content = await AssetStore.GetAsync(id, null, CancellationToken.None);
-        _editId = id; _name = content.Name; _content = content.Content; _msg = null;
+        _editId = id;
+        _name = content.Name;
+        _content = content.Content;
+        var metadata = content.MetadataOrEmpty;
+        _whenToUse = metadata.WhenToUse ?? "";
+        _references = Lines(metadata.ReferencesOrEmpty);
+        _requiredTools = Lines(metadata.RequiredToolsOrEmpty);
+        _msg = null;
+        _findings = await SkillValidator.ValidateAsync(_name, metadata, CancellationToken.None);
     }
 
-    private void ResetForm() { _editId = null; _name = _desc = _content = ""; _msg = null; }
+    private async Task ShowHistory(AssetId id, string name)
+    {
+        _historyId = id;
+        _historyName = name;
+        _previewed = null;
+        _history = await AssetStore.GetVersionsAsync(id, CancellationToken.None);
+    }
+
+    private void Preview(AssetContent version) => _previewed = version;
+
+    /// <summary>
+    /// Zurückschalten hängt die alte Fassung als neue Version an — dieselbe Regel wie bei der
+    /// Server-Konfiguration. Eine Historie, aus der etwas verschwinden kann, ist keine.
+    /// </summary>
+    private async Task Rollback(AssetContent version)
+    {
+        await AssetStore.PublishAsync(
+            version.Id, version.Content, version.Metadata, CancellationToken.None);
+        UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.AssetChanged,
+            $"asset-rolledback:{_historyName}@v{version.Version.Value}");
+        _ok = true;
+        _msg = $"Auf v{version.Version.Value} zurückgeschaltet — als neue Version angehängt.";
+        await ShowHistory(version.Id, _historyName);
+        await Reload();
+    }
+
+    /// <summary>
+    /// Liest YAML-Frontmatter aus dem Inhalt in die Felder — damit sich eine bestehende
+    /// <c>SKILL.md</c> hineinkopieren lässt, ohne die Felder abzutippen.
+    /// <para>
+    /// Bewusst <b>kein YAML-Parser</b>, sondern ein Leser für genau diese flache Form. Ein echter
+    /// Parser wäre eine Abhängigkeit und eine Angriffsfläche für etwas, das fünf Schlüssel liest.
+    /// </para>
+    /// </summary>
+    private void ImportFrontmatter()
+    {
+        var text = _content.Replace("\r\n", "\n", StringComparison.Ordinal);
+        if (!text.StartsWith("---\n", StringComparison.Ordinal))
+        {
+            _ok = false;
+            _msg = "Kein Frontmatter gefunden — erwartet wird ein Block, der mit '---' beginnt und endet.";
+            return;
+        }
+
+        var end = text.IndexOf("\n---", 4, StringComparison.Ordinal);
+        if (end < 0)
+        {
+            _ok = false;
+            _msg = "Frontmatter ist nicht abgeschlossen ('---' am Ende fehlt).";
+            return;
+        }
+
+        var block = text[4..end];
+        var body = text[(end + 4)..].TrimStart('\n');
+        string? currentList = null;
+        var references = new List<string>();
+        var tools = new List<string>();
+
+        foreach (var raw in block.Split('\n'))
+        {
+            var line = raw.TrimEnd();
+            if (line.StartsWith("  - ", StringComparison.Ordinal) || line.StartsWith("- ", StringComparison.Ordinal))
+            {
+                var item = line[(line.IndexOf("- ", StringComparison.Ordinal) + 2)..].Trim().Trim('"', '\'');
+                if (currentList == "references") { references.Add(item); }
+                else if (currentList == "required-tools") { tools.Add(item); }
+                continue;
+            }
+
+            var separator = line.IndexOf(':', StringComparison.Ordinal);
+            if (separator < 0) { continue; }
+            var key = line[..separator].Trim().ToLowerInvariant();
+            var value = line[(separator + 1)..].Trim().Trim('"', '\'');
+            currentList = key is "references" or "required-tools" && value.Length == 0 ? key : null;
+
+            switch (key)
+            {
+                case "name" when _editId is null && value.Length > 0: _name = value; break;
+                case "description" when value.Length > 0: _desc = value; break;
+                case "when-to-use" or "whentouse" when value.Length > 0: _whenToUse = value; break;
+            }
+        }
+
+        if (references.Count > 0) { _references = Lines(references); }
+        if (tools.Count > 0) { _requiredTools = Lines(tools); }
+        _content = body;
+        _ok = true;
+        _msg = "Frontmatter übernommen; der Rest steht als Inhalt.";
+    }
+
+    private void ResetForm()
+    {
+        _editId = null;
+        _name = _desc = _content = _whenToUse = _references = _requiredTools = "";
+        _findings = [];
+        _msg = null;
+    }
 
     private async Task Save()
     {
         _msg = null;
         try
         {
+            var metadata = CurrentMetadata();
+            var name = _editId is null ? _name.Trim() : _name;
+
+            // Geprüft wird VOR dem Speichern, aber es blockiert nicht: Die Befunde stehen danach
+            // unter dem Formular, und der Skill ist trotzdem gespeichert.
+            _findings = await SkillValidator.ValidateAsync(name, metadata, CancellationToken.None);
+
             if (_editId is null)
             {
                 if (string.IsNullOrWhiteSpace(_name)) { _ok = false; _msg = "Name fehlt."; return; }
-                await AssetStore.CreateAsync(_name.Trim(), string.IsNullOrWhiteSpace(_desc) ? null : _desc.Trim(), _content, CancellationToken.None);
-                UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.AssetChanged, $"asset-created:{_name}");
+                await AssetStore.CreateAsync(
+                    name, string.IsNullOrWhiteSpace(_desc) ? null : _desc.Trim(), _content, metadata,
+                    CancellationToken.None);
+                UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.AssetChanged, $"asset-created:{name}");
             }
             else
             {
-                await AssetStore.PublishAsync(_editId.Value, _content, CancellationToken.None);
-                UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.AssetChanged, $"asset-published:{_name}");
+                await AssetStore.PublishAsync(_editId.Value, _content, metadata, CancellationToken.None);
+                UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.AssetChanged, $"asset-published:{name}");
             }
-            _ok = true; _msg = "Gespeichert.";
+
+            _ok = true;
+            _msg = _findings.Count == 0
+                ? "Gespeichert."
+                : $"Gespeichert — mit {_findings.Count} Hinweis(en), siehe unten.";
+            var keep = _findings;
             ResetForm();
+            _findings = keep;
             await Reload();
         }
         catch (Exception ex) { _ok = false; _msg = ex.Message; }

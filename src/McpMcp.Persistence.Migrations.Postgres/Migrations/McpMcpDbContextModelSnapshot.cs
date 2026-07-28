@@ -134,6 +134,18 @@ namespace McpMcp.Persistence.Migrations.Postgres.Migrations
                     b.Property<long>("PublishedAt")
                         .HasColumnType("bigint");
 
+                    b.Property<string>("References")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("RequiredTools")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("WhenToUse")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
                     b.HasKey("Id", "Version");
 
                     b.ToTable("Assets");
