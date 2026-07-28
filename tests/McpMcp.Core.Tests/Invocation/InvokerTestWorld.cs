@@ -101,6 +101,13 @@ internal sealed class InvokerTestWorld
 
     public NamespacedToolName Free => NamespacedToolName.Create(Slug, "free");
 
+    /// <summary>
+    /// Meta-Tools mit angebundener Skill-Ablage. Ohne sie ist <c>_assets</c> null — und genau das ist
+    /// eine gültige Zusammenstellung, die ihren eigenen Test hat.
+    /// </summary>
+    public MetaToolService WithAssets(IAssetStore assets)
+        => new(Catalog, Authorization, Invoker, Audit, Redaction, Time, assets);
+
     /// <summary>Zweiter Invoker auf derselben Welt — für Schalter, die im Konstruktor festgelegt werden.</summary>
     public ToolInvoker WithAuditOptions(AuditOptions options)
         => new(Authorization, RateLimiter, Catalog, Supervisor, Audit, Redaction, Time, logger: null, options);
