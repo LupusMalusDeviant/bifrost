@@ -32,6 +32,8 @@ Beide Werte sofort sichern. Verloren? Siehe [Zugang zurücksetzen](#zugang-zurü
 | `ASPNETCORE_URLS` | `http://+:8080` (Container) | Bind-Adresse/Port |
 | `MCPMCP_KEYRING_CERT_PATH` | *(nicht gesetzt)* | PFX-Zertifikat zum Verschlüsseln des Key-Rings (siehe [Key-Ring schützen](#key-ring-schützen)) |
 | `MCPMCP_KEYRING_CERT_PASSWORD` | *(nicht gesetzt)* | Passwort des PFX |
+| `MCPMCP_OAUTH_ISSUER` | *(nicht gesetzt)* | Authorization Server, dem für **eingehende** Agenten-Token vertraut wird. Gesetzt = der Gateway ist zusätzlich OAuth-Resource-Server (siehe [Agenten über OAuth](#agenten-über-oauth)) |
+| `MCPMCP_OAUTH_AUDIENCE` | `MCPMCP_PUBLIC_BASE_URL` | Kanonische Adresse dieses Gateways; ein Token muss darauf lauten |
 | `MCPMCP_WASI_HOST` | *(nicht gesetzt)* | Pfad zum WASI-Host-Binary. **Pflicht für die Installation von Connector-Paketen** — ohne ihn lässt sich ein Paket nicht proben, und ungeprobt wird nichts aktiv |
 | `MCPMCP_PUBLIC_BASE_URL` | *(nicht gesetzt)* | Öffentliche Adresse des Gateways; nötig für die Redirect-URI der Upstream-Autorisierung (siehe [OAuth gegen Upstreams](#oauth-gegen-upstreams)) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | *(nicht gesetzt)* | Ziel für Metriken **und** Traces (siehe [Metriken und Traces](#metriken-und-traces)) |
@@ -204,6 +206,38 @@ Antwort und passt nicht auf einen Tool-Call.
 Zu den Parametern: `paramStructure: by-name` schickt ein Objekt, `by-position` ein **geordnetes
 Array** in der Reihenfolge aus dem Dokument. Der Aufrufer nennt in beiden Fällen die Namen; die
 Reihenfolge kommt aus der Beschreibung, nicht aus der Reihenfolge im Aufruf.
+
+## Agenten über OAuth
+
+Neben API-Keys kann sich ein Agent mit einem Zugriffstoken eines vorhandenen Identitätsanbieters
+anmelden. Der Gateway ist dann **Resource Server** im Sinne der MCP-Autorisierung — er stellt selbst
+keine Token aus, das bleibt Sache des Authorization Servers.
+
+```bash
+MCPMCP_OAUTH_ISSUER=https://login.example.com/realms/mcpmcp
+MCPMCP_PUBLIC_BASE_URL=https://gateway.example.com
+```
+
+Damit passieren drei Dinge:
+
+- `/.well-known/oauth-protected-resource` liefert die Protected Resource Metadata (RFC 9728) —
+  **anonym**, denn sie ist der Weg, auf dem ein Client überhaupt erst erfährt, wo er ein Token
+  bekommt.
+- Eine `401`-Antwort trägt `WWW-Authenticate: Bearer resource_metadata="…"` und verweist dorthin.
+- Ein mitgeschicktes Token wird gegen den JWKS des Issuers geprüft: Signatur, Issuer, Ablauf — und
+  **die Audience**. Ein Token, das für einen anderen Dienst ausgestellt wurde, bewirkt hier nichts.
+  Ohne diese Prüfung wäre der Gateway die Stelle, an der fremde Token eingelöst werden.
+
+**API-Keys bleiben bestehen.** Sie werden zuerst geprüft, das Token danach; ein Agent, der heute
+läuft, läuft ohne Umstellung weiter. Ohne `MCPMCP_OAUTH_ISSUER` ändert sich gar nichts — der
+Standard nennt Autorisierung ausdrücklich optional.
+
+> **Wie eine neue Identität entsteht:** Beim ersten gültigen Token eines unbekannten Subjects legt
+> der Gateway eine Identität an — **ohne jede Rolle**. Sie kann damit nichts, bis ein Administrator
+> ihr eine gibt (Default-Deny). Das ist Absicht: Die Alternative wäre, unbekannte Subjects
+> abzuweisen, und dann sähe nie jemand, wer angeklopft hat. Der Name trägt den Issuer mit
+> (`oauth:<issuer>#<sub>`), damit zwei Authorization Server mit gleichem `sub` nicht auf dieselbe
+> Identität fallen.
 
 ## OAuth gegen Upstreams
 

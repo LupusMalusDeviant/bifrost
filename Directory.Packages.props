@@ -29,6 +29,11 @@
          Vertrauensgrenze wäre die schlechtere Wahl, egal wie kurz sie ausfiele. -->
     <PackageVersion Include="BouncyCastle.Cryptography" Version="2.6.2" />
 
+    <!-- Token-Prüfung, wenn der Gateway selbst Resource Server ist (MCP-Autorisierung).
+         Bringt JWKS-Abruf mit Zwischenspeicher und Schlüsselrotation mit — genau das, was man
+         nicht selbst schreiben will, wenn eine Signaturprüfung davon abhängt. -->
+    <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.21.0" />
+
     <!-- Persistenz (ADR-0007) + Secret-Verschlüsselung (NFR-04) -->
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10" />

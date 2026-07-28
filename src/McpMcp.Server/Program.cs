@@ -124,6 +124,17 @@ builder.Services.AddSingleton<McpMcp.Web.UiInternalIdentity>();
 
 // ── Upstreams & Katalog (ADR-0005, WP2) ──────────────────────────────────────
 builder.Services.AddSingleton<IUpstreamConnector, StdioUpstreamConnector>();
+// ── Gateway als OAuth-Resource-Server (MCP-Autorisierung, Stufe 1) ──────────
+// Nur aktiv, wenn ein Issuer konfiguriert ist. Ohne ihn bleibt alles wie bisher — API-Keys sind
+// dann der einzige Weg, und der Standard nennt Autorisierung ausdruecklich optional.
+var oauthResourceServer = OAuthResourceServerOptions.FromConfiguration(builder.Configuration);
+if (oauthResourceServer is not null)
+{
+    builder.Services.AddSingleton(oauthResourceServer);
+    builder.Services.AddSingleton<IOAuthTokenValidator>(sp => new OAuthTokenValidator(
+        oauthResourceServer, sp.GetRequiredService<IRbacManagement>()));
+}
+
 // Upstream-OAuth: Token-Ablage verschluesselt wie jedes andere Credential (NFR-04).
 builder.Services.AddSingleton<IUpstreamOAuthTokenStore, UpstreamOAuthTokenStore>();
 builder.Services.AddSingleton<IUpstreamConnector>(sp => new StreamableHttpUpstreamConnector(
@@ -405,6 +416,21 @@ app.MapMcp("/mcp");
 app.MapGatewayApi();
 app.MapAuthEndpoints();
 app.MapUpstreamOAuth();
+
+// Protected Resource Metadata (RFC 9728). Bewusst anonym: Sie ist der Weg, auf dem ein Client
+// ueberhaupt erst erfaehrt, wo er sich ein Token holt — hinter Authentifizierung waere sie nutzlos.
+if (oauthResourceServer is not null)
+{
+    // Einmal gebaut statt bei jedem Abruf: Das Dokument ist unveraenderlich, solange die
+    // Konfiguration steht.
+    var protectedResourceMetadata = new
+    {
+        resource = oauthResourceServer.Audience,
+        authorization_servers = new[] { oauthResourceServer.Issuer },
+        bearer_methods_supported = new[] { "header" },
+    };
+    app.MapGet("/.well-known/oauth-protected-resource", () => Results.Json(protectedResourceMetadata));
+}
 app.MapWebhookEndpoint();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
