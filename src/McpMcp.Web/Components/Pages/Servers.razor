@@ -42,7 +42,18 @@
                                 {
                                     <button class="btn-sm btn-ghost" @onclick="() => SetEnabled(s.Id, false)">Deaktivieren</button>
                                 }
-                                <button class="btn-sm btn-ghost" @onclick="() => StartEdit(s.Id)">Bearbeiten</button>
+                                @if (EditableKind(s.Id) is not { } nichtEditierbar)
+                                {
+                                    <button class="btn-sm btn-ghost" @onclick="() => StartEdit(s.Id)">Bearbeiten</button>
+                                }
+                                else
+                                {
+                                    @* Kein toter Knopf: Das Formular hat fuer diese Art keine Felder,
+                                       und der Auffangzweig haette daraus etwas anderes gebaut. *@
+                                    <span class="muted" title="@ServerFormKinds.ReasonNotEditable(nichtEditierbar)">
+                                        nicht im Formular
+                                    </span>
+                                }
                                 <button class="btn-sm btn-ghost" @onclick="() => ShowHistory(s.Id, s.Slug)">Versionen</button>
                                 @if (_oauthServers.Contains(s.Id))
                                 {
@@ -153,11 +164,12 @@
     <div class="row">
         <div>
             <label>Transport</label>
+            @* Aus ServerFormKinds, damit Auswahlliste und Bau-Zweig nicht auseinanderlaufen. *@
             <select @bind="_kind">
-                <option value="@UpstreamTransportKind.Stdio">stdio (lokaler Prozess)</option>
-                <option value="@UpstreamTransportKind.StreamableHttp">Streamable HTTP</option>
-                <option value="@UpstreamTransportKind.OpenApi">OpenAPI-Import</option>
-                <option value="@UpstreamTransportKind.Cli">CLI-Manifest (lokaler Prozess)</option>
+                @foreach (var kind in ServerFormKinds.Supported)
+                {
+                    <option value="@kind">@KindLabel(kind)</option>
+                }
             </select>
         </div>
         <div>
@@ -305,6 +317,9 @@
     private string _editSlug = "";
     private UpstreamServerConfig? _editBase;
 
+    /// <summary>Art je Server — fuer die Frage, ob das Formular ihn abbilden kann.</summary>
+    private Dictionary<ServerId, UpstreamTransportKind> _kinds = [];
+
     private ServerId? _historyServer;
     private string _historySlug = "";
     private IReadOnlyList<UpstreamConfigVersion> _history = [];
@@ -316,10 +331,12 @@
     private void Reload()
     {
         _statuses = Supervisor.Statuses.OrderBy(s => s.Slug).ToList();
-        // Ob ein Upstream OAuth braucht, steht in seiner Konfiguration, nicht im Status.
-        _oauthServers = [.. ConfigStore.GetAllLatestAsync(CancellationToken.None).GetAwaiter().GetResult()
-            .Where(kv => kv.Value.Config.Http?.OAuth is not null)
-            .Select(kv => kv.Key)];
+
+        // Ob ein Upstream OAuth braucht und welcher Art er ist, steht in seiner Konfiguration,
+        // nicht im Status.
+        var latest = ConfigStore.GetAllLatestAsync(CancellationToken.None).GetAwaiter().GetResult();
+        _oauthServers = [.. latest.Where(kv => kv.Value.Config.Http?.OAuth is not null).Select(kv => kv.Key)];
+        _kinds = latest.ToDictionary(kv => kv.Key, kv => kv.Value.Config.Kind);
     }
 
     private async Task<string> UserAsync()
@@ -363,7 +380,7 @@
                         ParseLines(_cliReadRoots),
                         ParseLines(_cliWriteRoots),
                         _cliMaxConcurrency)),
-                _ => new UpstreamServerConfig(
+                UpstreamTransportKind.OpenApi => new UpstreamServerConfig(
                     _slug.Trim(), Display(), _kind, true,
                     OpenApi: new OpenApiTransportOptions(
                         new Uri(_specUrl.Trim()),
@@ -372,6 +389,10 @@
                         string.IsNullOrWhiteSpace(_credential) ? null : _credential,
                         _openApiAuth == OpenApiAuthKind.ApiKeyHeader ? _apiKeyHeader.Trim() : null,
                         _allowPrivateTargets)),
+
+                // Kein Auffangzweig mehr: Vorher wurde JEDE unbekannte Art zu einer
+                // OpenAPI-Konfiguration. Eine neue Art soll hier auffallen, nicht durchrutschen.
+                _ => throw new NotSupportedException(ServerFormKinds.ReasonNotEditable(_kind)),
             };
         }
         catch (Exception ex)
@@ -382,6 +403,19 @@
     }
 
     private string Display() => string.IsNullOrWhiteSpace(_displayName) ? _slug.Trim() : _displayName.Trim();
+
+    /// <summary>Die Art des Servers, wenn das Formular sie NICHT abbilden kann; sonst null.</summary>
+    private UpstreamTransportKind? EditableKind(ServerId id)
+        => _kinds.TryGetValue(id, out var kind) && !ServerFormKinds.CanEdit(kind) ? kind : null;
+
+    private static string KindLabel(UpstreamTransportKind kind) => kind switch
+    {
+        UpstreamTransportKind.Stdio => "stdio (lokaler Prozess)",
+        UpstreamTransportKind.StreamableHttp => "Streamable HTTP",
+        UpstreamTransportKind.OpenApi => "OpenAPI-Import",
+        UpstreamTransportKind.Cli => "CLI-Manifest (lokaler Prozess)",
+        _ => kind.ToString(),
+    };
 
     private static IReadOnlyDictionary<string, string>? ParseKeyValues(string text)
     {
