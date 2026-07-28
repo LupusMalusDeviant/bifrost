@@ -1,5 +1,9 @@
 # ADR-0018: Native Prozess- und Container-Isolation
 
+> **Entscheidungsmaterial zu stdio (2026-07-28):**
+> [0018-entscheidungsmaterial-stdio.md](0018-entscheidungsmaterial-stdio.md) — fünf Optionen mit
+> Kosten und Bruchstellen. Noch nicht entschieden.
+
 - **Status:** Vorgeschlagen; der **Container-Modus für CLI-Upstreams** ist am 2026-07-26 umgesetzt
   und an einer laufenden Runtime belegt. Offen bleiben die Netzwerk-Allowlist und der Modus für
   stdio-Upstreams.
