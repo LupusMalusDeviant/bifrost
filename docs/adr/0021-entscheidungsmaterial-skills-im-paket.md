@@ -1,10 +1,14 @@
 # Entscheidungsmaterial: Skills im Paket („Plugin" = Konnektor + Wissen)
 
-> **Umsetzungsstand 2026-07-28: Option B ist gebaut — die fünf Fragen sind aber nicht entschieden.**
+> **Erledigt am 2026-07-28.** Alle fünf Fragen wurden mit dem Product Owner durchgegangen und
+> entschieden; die Entscheidungen stehen in [ADR-0021](0021-skills-in-paketen.md) (Status
+> *Akzeptiert*). Zwei davon weichen von dem ab, was beim Bauen von Option B als Annahme entstanden
+> war: **F1** wurde zu Option **C** (eigener Pakettyp `mcpmcp.skills.v1` neben dem
+> Connector-Paket), **F5** zu **Skills mitnehmen** statt stehen lassen. Beides ist noch nicht
+> umgesetzt.
 >
-> Der Product Owner hat ausdrücklich „Option B bauen" gewählt, mit den Empfehlungen aus Abschnitt 6
-> als **Annahmen**. Was daraus im Code steht, ist damit eine Annahme und keine Entscheidung; jede
-> davon lässt sich umstoßen, und die Stelle dafür steht dabei:
+> Dieses Dokument bleibt als Beleg stehen — was geprüft wurde und woran die Entscheidungen hingen.
+> Die Tabelle darunter ist der Stand **vor** der Entscheidung:
 >
 > | Frage | Angenommen | Wo es steht |
 > |---|---|---|

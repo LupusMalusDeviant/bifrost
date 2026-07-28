@@ -261,7 +261,8 @@ wie bei der Server-Konfiguration.
 ### Skills aus einem Paket
 
 Ein Connector-Paket kann die Skills mitbringen, die erklären, wie man seinen Konnektor benutzt
-(Material [0021-EM](adr/0021-entscheidungsmaterial-skills-im-paket.md), Option B). Der Grund ist
+([ADR-0021](adr/0021-skills-in-paketen.md)). Ein Pakettyp für Skill-Bündel **ohne** Konnektor ist
+entschieden, aber noch nicht gebaut. Der Grund ist
 nicht Bequemlichkeit: *Benötigte Tools* konnte der Gateway bisher nur **prüfen** und melden, wenn
 etwas fehlt. Ein Paket **stellt die Zusage her** — die Tools kommen mit.
 
@@ -280,7 +281,7 @@ demselben Namen stünde beim nächsten Mal etwas anderes.
 | Herkunft | steht an der Version; die Skill-Liste zeigt sie an |
 | Update | hängt eine Version an; die vorherige bleibt |
 | Eigene Änderung | Wer den Text bearbeitet, verliert die Herkunft. Das nächste Paket-Update **meldet**, dass es eine angepasste Fassung ablöst — sie bleibt in der Historie und lässt sich zurückschalten |
-| Paket entfernt | Der Skill bleibt stehen und wird als *verwaist* gekennzeichnet. Löschen wäre der eine Schritt, den man nicht rückgängig machen kann |
+| Paket entfernt | **Heute:** Der Skill bleibt stehen und wird als *verwaist* gekennzeichnet. **Entschieden, aber noch nicht umgesetzt** ([ADR-0021](adr/0021-skills-in-paketen.md), F5): Das Entfernen nimmt die mitgelieferten Skills mit — angekündigt, und eine lokal angepasste Fassung wird dabei besonders genannt |
 | Probe gescheitert | Kein Skill wird eingespielt — eine Anweisung aus einem Konnektor, der nie gelaufen ist, wäre trotzdem in Umlauf |
 
 Skill-Namen sind seitdem **eindeutig**. Vorher waren zwei gleichen Namens möglich; ausgeliefert
