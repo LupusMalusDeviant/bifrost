@@ -6,9 +6,9 @@
 
 **A self-hosted meta-MCP gateway on .NET** — connect one endpoint to your agents, and manage all your MCP servers behind it.
 
-> **[Release v0.5.0](https://github.com/LupusMalusDeviant/mcp-mcp/releases/tag/v0.5.0)** is the current release. The version is deliberately below 1.0: the code is feature-complete and covered by tests against SQLite *and* real PostgreSQL, but it has no operational uptime behind it. 1.0 follows from running it, not from adding features.
+> **[Pre-release v0.6.0](https://github.com/LupusMalusDeviant/mcp-mcp/releases/tag/v0.6.0)** is the current build. It brings everything that had accumulated on `main` since v0.5.0 into a tagged state: WASI plugins with an out-of-process Rust host, container isolation for CLI upstreams, long-running tasks, the capability model, OpenRPC, signed connector packages, upstream OAuth, rug-pull protection, OTel traces, and skills with a schema, an editor and package delivery.
 >
-> `main` is ahead of that release — WASI plugins, container isolation, long-running tasks, the capability model, OpenRPC and connector packages all landed afterwards and are **not** in a tagged build.
+> The version is deliberately below 1.0 — and it is marked as a **pre-release** for a reason: the code is feature-complete for its scope and covered by tests against SQLite *and* real PostgreSQL, but **it still has no operational uptime behind it**. 1.0 follows from running it, not from adding features.
 
 ## The problem
 
@@ -141,6 +141,9 @@ The full design documentation lives in [`docs/`](docs/) — written in **German*
 | Rug-pull protection | Tool definitions are fingerprinted per discovery; a changed tool is withheld until accepted | ✅ on `main`; trust-on-first-use |
 | Observability | Metrics plus OTel traces, exported when an OTLP endpoint is configured | ✅ on `main`; no alerting rules shipped |
 | gRPC / GraphQL | Unary gRPC has a design spike; GraphQL has a decision matrix | ⏳ open |
+| Skills | Declared metadata (when-to-use, references, required tools), validation against the live catalog, version history with rollback, size limit, and `list_skills` / `read_skill` as meta-tools | ✅ on `main` |
+| Skills in packages | A connector package carries the skills that explain its connector; consent is bound to the text, not the publisher ([ADR-0021](docs/adr/0021-skills-in-paketen.md)) | ✅ on `main`; a package type for skill bundles without a connector is decided but not built |
+| M9 "v0.6.0 pre-release" | Everything since v0.5.0 brought into a tagged build | ✅ [pre-release](https://github.com/LupusMalusDeviant/mcp-mcp/releases/tag/v0.6.0) |
 | "1.0" | Real-world operation over time — the one thing tests can't provide | ⏳ open |
 
 ## License
