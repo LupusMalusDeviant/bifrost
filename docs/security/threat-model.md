@@ -62,7 +62,9 @@ prüft die Signatur, setzt Grants durch und führt aus. Vollständiger Review:
 
 ## Akzeptierte / dokumentierte Restrisiken
 
-- **stdio-Upstreams ohne Sandbox** (ADR-0005): Admin-kontrollierter Command/Args/Env läuft ungesandboxt als Kindprozess mit Gateway-Rechten. Trust-Boundary: **nur vertrauenswürdige Server anschließen**; nur Admins dürfen Upstreams anlegen. Container-Isolation pro Upstream ist v2-Kandidat.
+- **stdio-Upstreams ohne Sandbox** (ADR-0005): Admin-kontrollierter Command/Args läuft ungesandboxt als Kindprozess mit Gateway-Rechten. Trust-Boundary: **nur vertrauenswürdige Server anschließen**; nur Admins dürfen Upstreams anlegen.
+  **Seit 2026-07-28 verkleinert** (ADR-0018): Der Kindprozess erbt nicht mehr die Umgebung des Gateways, sondern sieht eine namentliche Allowlist — Datenbank- und Key-Ring-Passwort sind damit nicht mehr für jeden gestarteten Server lesbar. **Der Rest bleibt:** derselbe Benutzer, derselbe Dateizugriff, dasselbe Netz. Insbesondere ist der DataProtection-Key-Ring unter `<datadir>/keys` weiterhin lesbar, und mit ihm sind alle Upstream-Credentials entschlüsselbar. Ein kompromittierter stdio-Server ist deshalb als kompromittiertes Gateway zu behandeln.
+  Der **Container je stdio-Upstream** ist als Zielarchitektur beschlossen, ohne Termin; der eigene Benutzer wurde geprüft und verworfen, weil ein non-root-Prozess nicht zu einem anderen Benutzer wechseln kann.
 - **CLI-Hostmodus ohne Sandbox** (ADR-0014/0018): Absolute kanonische Pfade, Roots, optionaler
   SHA-256-Pin, isoliertes Environment, typisierte Parameter, Byte-/Zeit-/Parallelitätslimits und
   Prozessbaum-Kill reduzieren die Angriffsfläche, bilden aber keine Kernel-Sandbox. Untrusted native

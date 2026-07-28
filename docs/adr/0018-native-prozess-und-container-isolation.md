@@ -1,8 +1,29 @@
 # ADR-0018: Native Prozess- und Container-Isolation
 
-> **Entscheidungsmaterial zu stdio (2026-07-28):**
-> [0018-entscheidungsmaterial-stdio.md](0018-entscheidungsmaterial-stdio.md) — fünf Optionen mit
-> Kosten und Bruchstellen. Noch nicht entschieden.
+> **stdio-Isolation — entschieden am 2026-07-28.** Grundlage:
+> [0018-entscheidungsmaterial-stdio.md](0018-entscheidungsmaterial-stdio.md).
+>
+> **Beschlossen:** Die Blast-Radius-Verkleinerung kommt sofort, der **Container je stdio-Upstream
+> bleibt Zielarchitektur ohne Termin**. Bestehende Konfigurationen werden nicht gebrochen.
+>
+> **Was dabei herauskam und die Entscheidung verändert hat:** Der ursprünglich vorgesehene Weg —
+> den Kindprozess unter einem *eigenen, weniger berechtigten Benutzer* starten — ist in der
+> Standard-Auslieferung **nicht umsetzbar**. Das Image läuft als `USER app`, also non-root, und ein
+> Prozess ohne Privilegien kann nicht zu einem anderen Benutzer wechseln; dafür bräuchte es
+> `CAP_SETUID` oder root. Den Gateway als root laufen zu lassen wäre schlechter als das Problem.
+> Diese Option ist damit **geprüft und verworfen**, nicht offen — wer sie später wieder vorschlägt,
+> findet hier den Grund.
+>
+> **Umgesetzt stattdessen:** Ein stdio-Kindprozess erbt nicht mehr die vollständige Umgebung des
+> Gateways, sondern sieht eine kurze, namentliche Allowlist (`StdioProcessEnvironment`). Vorher
+> standen dort `MCPMCP_DB_CONNECTION` — bei Postgres samt Passwort — und
+> `MCPMCP_KEYRING_CERT_PASSWORD` für jeden gestarteten Server lesbar. Der CLI-Transport räumt seine
+> Umgebung seit ADR-0014 auf; beim ältesten Transport fehlte derselbe Schritt.
+>
+> **Was das ausdrücklich nicht ist:** eine Sandbox. Der Prozess läuft weiterhin als derselbe
+> Benutzer und kann alles lesen, was diesem Benutzer offensteht — **einschließlich des
+> DataProtection-Key-Rings unter `<datadir>/keys`**. Nur vertrauenswürdige stdio-Server anschließen
+> bleibt die Betriebsregel.
 
 - **Status:** Vorgeschlagen; der **Container-Modus für CLI-Upstreams** ist am 2026-07-26 umgesetzt
   und an einer laufenden Runtime belegt. Offen bleiben die Netzwerk-Allowlist und der Modus für
