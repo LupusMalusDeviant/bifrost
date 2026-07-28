@@ -37,6 +37,8 @@ MCP-MCP is a security-relevant component by design: it terminates every tool cal
 - **Default-deny RBAC:** agents see and reach only what a role explicitly grants. If you observe a tool being visible or callable without a grant, that is a vulnerability — please report it.
 - **Audit integrity:** every call (including denied ones) is logged with secret redaction. Bypasses of redaction or of audit logging are vulnerabilities.
 - **Untrusted input:** tool descriptions and results from upstream servers are treated as untrusted content (encoding in the UI, no execution). Injection paths through upstream metadata are in scope for reports.
+- **Tool definitions are pinned.** Name, description and input schema are fingerprinted on every discovery; a changed tool is withheld from the catalogue — not callable, not visible — until an administrator accepts the new version. This covers the rug-pull path, which no MCP standard addresses. The limit is trust-on-first-use: it protects against changes **after** adoption, not against an upstream that was malicious from the start.
+- **No token passthrough.** The gateway never forwards an agent's credential to an upstream; it holds its own upstream credentials. Where an upstream uses OAuth, the token is bound to that upstream via the RFC 8707 `resource` indicator and is not usable elsewhere.
 
 ## Out of scope
 

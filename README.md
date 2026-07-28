@@ -31,6 +31,9 @@ MCP-MCP is a reverse proxy for the Model Context Protocol: to your agents it is 
 | ⏳ **Long-running work** | Approvals, and anything else that outlives one call, are *tasks*: persisted, cancellable, polled ([ADR-0019](docs/adr/0019-langlaufende-tasks-und-events.md)) |
 | 🧩 **WASI plugins** | Signed WebAssembly components run in an out-of-process Rust host with per-interface capability grants, fuel/memory/time limits and an audit record of every grant ([ADR-0017](docs/adr/0017-wasi-component-runtime.md), [ADR-0020](docs/adr/0020-wasi-runtime-out-of-process-rust-host.md)) |
 | 📦 **Connector packages** | Signed `.mcpkg` packages install through quarantine with a real probe, activate atomically, and roll back ([ADR-0016](docs/adr/0016-versionierter-connector-plugin-vertrag.md)) |
+| 🔑 **Upstream OAuth** | Hosted MCP servers that require OAuth can be connected: discovery per RFC 9728, authorization code with PKCE S256 and the RFC 8707 `resource` indicator, tokens stored encrypted and refreshed automatically |
+| 🔍 **Tool-definition pinning** | An upstream that silently changes a tool's description or schema has it held back until an admin accepts the new version — the classic rug-pull path, which no MCP standard covers |
+| 📈 **Observability** | Metrics and OpenTelemetry traces per call, with a child span isolating upstream time from gateway overhead. Spans deliberately carry no arguments or results |
 | 🖥️ **Web UI** | Blazor admin panel: server management, tool explorer, RBAC, live dashboard, log search, token cockpit, approvals, tasks, packages |
 | 📚 **Central skill distribution** | Versioned text assets (skills/prompts/instructions) served to all agents as MCP prompts/resources |
 
@@ -134,6 +137,9 @@ The full design documentation lives in [`docs/`](docs/) — written in **German*
 | Tasks | Approvals generalised into persisted, cancellable tasks; polling is the contract ([ADR-0019](docs/adr/0019-langlaufende-tasks-und-events.md)) | ✅ on `main`; event delivery deferred |
 | OpenRPC | JSON-RPC services as upstreams, fail-closed schema import | ✅ on `main` |
 | Connector packages | Signed `.mcpkg`, quarantine install with probe, update/rollback, trust levels ([ADR-0016](docs/adr/0016-versionierter-connector-plugin-vertrag.md)) | ✅ on `main`; WASI transport only |
+| Upstream OAuth | Authorization-code flow with PKCE against upstream authorization servers; discovery targets run through the same SSRF guard as schema imports | ✅ on `main`; not yet exercised against a real authorization server |
+| Rug-pull protection | Tool definitions are fingerprinted per discovery; a changed tool is withheld until accepted | ✅ on `main`; trust-on-first-use |
+| Observability | Metrics plus OTel traces, exported when an OTLP endpoint is configured | ✅ on `main`; no alerting rules shipped |
 | gRPC / GraphQL | Unary gRPC has a design spike; GraphQL has a decision matrix | ⏳ open |
 | "1.0" | Real-world operation over time — the one thing tests can't provide | ⏳ open |
 
