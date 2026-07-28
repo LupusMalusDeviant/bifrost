@@ -196,6 +196,89 @@ public sealed class PackagedSkillTests : IDisposable
             .WithMessage("*keine Skill-Ablage*");
     }
 
+    /// <summary>
+    /// ADR-0021 F5. Der Grund gegen „stehen lassen": Ein verwaister Skill bleibt über
+    /// <c>list_skills</c> für jeden Agenten sichtbar, während die Kennzeichnung nur ein Mensch in
+    /// der Oberfläche sieht — eine Anleitung für Tools, die es nicht mehr gibt.
+    /// </summary>
+    [Fact]
+    public async Task Removing_a_package_takes_its_skills_with_it()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var package = TestPackage.WithSkill(_publisher, SkillText);
+        var installer = Installer();
+        await installer.InstallAsync(package, new ConnectorInstallOptions([Consent()]), null, ct);
+
+        var removed = await installer.RemovePackageAsync("com.example.echo", null, ct);
+
+        removed.Should().Equal(["com.example.echo/benutzung"]);
+        (await _assets.ListAsync(ct)).Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Die Auflage aus dem ADR: Es wird vorher gesagt, was mitgeht — und eine lokal angepasste
+    /// Fassung besonders. Erkennbar daran, dass die neueste Version keine Paketherkunft trägt.
+    /// </summary>
+    [Fact]
+    public async Task The_preview_names_what_would_be_lost_including_local_edits()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var package = TestPackage.WithSkill(_publisher, SkillText);
+        var installer = Installer();
+        var installed = await installer.InstallAsync(
+            package, new ConnectorInstallOptions([Consent()]), null, ct);
+        await _assets.PublishAsync(installed.Skills[0].Id, "Meine eigene Fassung.", null, ct);
+
+        var preview = await installer.PreviewRemovalAsync("com.example.echo", ct);
+
+        preview.Should().ContainSingle().Which.Name.Should().Be("com.example.echo/benutzung");
+        preview[0].Source.Should().BeNull(
+            "die neueste Fassung stammt nicht mehr aus dem Paket — genau das muss vorher sichtbar sein");
+    }
+
+    /// <summary>
+    /// Auch die angepasste Fassung geht mit. Das ist der harte Teil der Entscheidung und steht
+    /// deshalb als eigener Test da: Wer ihn ändert, ändert ADR-0021 F5.
+    /// </summary>
+    [Fact]
+    public async Task A_locally_edited_skill_is_removed_as_well()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var package = TestPackage.WithSkill(_publisher, SkillText);
+        var installer = Installer();
+        var installed = await installer.InstallAsync(
+            package, new ConnectorInstallOptions([Consent()]), null, ct);
+        await _assets.PublishAsync(installed.Skills[0].Id, "Meine eigene Fassung.", null, ct);
+
+        var removed = await installer.RemovePackageAsync("com.example.echo", null, ct);
+
+        removed.Should().ContainSingle();
+        (await _assets.ListAsync(ct)).Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Eine einzelne alte Version zu entfernen ist etwas anderes als das Paket loszuwerden. Skills
+    /// gehören zum Paket, nicht zu einer Version — sonst nähme ein Aufräumen alter Versionen die
+    /// Anleitung zum laufenden Konnektor mit.
+    /// </summary>
+    [Fact]
+    public async Task Removing_a_single_old_version_keeps_the_skills()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var installer = Installer();
+        using var v1 = TestPackage.WithSkill(_publisher, SkillText);
+        await installer.InstallAsync(v1, new ConnectorInstallOptions([Consent()]), null, ct);
+        const string neu = "## Benutzung\nFassung zwei.";
+        using var v2 = TestPackage.WithSkill(_publisher, neu, version: "1.1.0");
+        await installer.InstallAsync(
+            v2, new ConnectorInstallOptions([Consent(neu, "1.1.0")]), null, ct);
+
+        await installer.RemoveVersionAsync("com.example.echo", "1.0.0", null, ct);
+
+        (await _assets.ListAsync(ct)).Should().ContainSingle(
+            "der Konnektor läuft weiter — seine Anleitung auch");
+    }
+
     [Fact]
     public async Task A_package_without_skills_keeps_working_unchanged()
     {

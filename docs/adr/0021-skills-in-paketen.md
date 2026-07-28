@@ -5,17 +5,15 @@
 - **Grundlage:** [0021-EM](0021-entscheidungsmaterial-skills-im-paket.md) — Material mit vier
   Optionen und fünf Fragen. Ergänzt [ADR-0016](0016-versionierter-connector-plugin-vertrag.md).
 
-> **Umsetzungsstand 2026-07-28.** Drei der fünf Entscheidungen standen schon, weil sie beim Bauen
-> von Option B als Annahme umgesetzt und hier bestätigt wurden. **Zwei sind offen** und weichen von
-> dem ab, was heute im Code steht:
+> **Umsetzungsstand 2026-07-28.** Vier der fünf Entscheidungen stehen. **Eine ist offen:**
 >
 > | Entscheidung | Stand |
 > |---|---|
 > | F2 Zustimmung gilt dem Text, ohne Stufenrabatt | **steht** (`ConnectorTrustPolicy`, `SkillConsentToken`) |
 > | F3 Präfix `<paket-id>/<skill>` | **steht** (`ConnectorPackageInstaller`) |
 > | F4 Überschreiben mit Hinweis | **steht** (`SkillPublication.ReplacedLocalEdit`) |
+> | F5 Deinstallieren nimmt die Skills mit | **steht** (`IAssetStore.DeleteFromPackageAsync`, Ankündigung über `PreviewRemovalAsync`) |
 > | F1 Eigener Pakettyp `mcpmcp.skills.v1` | **offen** — heute trägt nur ein Connector-Paket Skills |
-> | F5 Deinstallieren nimmt die Skills mit | **offen** — heute bleiben sie als *verwaist* stehen |
 
 ## Kontext
 

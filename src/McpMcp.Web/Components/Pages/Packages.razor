@@ -83,6 +83,46 @@
     </div>
 </div>
 
+@if (_removal is not null)
+{
+    <div class="card">
+        <h2 style="margin-top:0">
+            <span class="mono">@_removal.PackageId</span> entfernen
+        </h2>
+        @if (_removal.Skills.Count == 0)
+        {
+            <p class="muted">Dieses Paket hat keine Skills mitgebracht. Es geht nichts weiter verloren.</p>
+        }
+        else
+        {
+            <p>
+                Mit dem Paket werden <strong>@_removal.Skills.Count Skill(s) gelöscht</strong> — samt
+                ihrer Versionshistorie. Das lässt sich nicht rückgängig machen.
+            </p>
+            <ul>
+                @foreach (var skill in _removal.Skills)
+                {
+                    <li>
+                        <span class="mono">@skill.Name</span>
+                        @if (skill.Source is null)
+                        {
+                            <strong> — von dir angepasst.</strong>
+                            <span class="muted">
+                                Die neueste Fassung stammt nicht mehr aus dem Paket. Diese Arbeit geht
+                                mit verloren.
+                            </span>
+                        }
+                    </li>
+                }
+            </ul>
+        }
+        <div class="toolbar" style="margin-top:.5rem">
+            <button @onclick="ConfirmRemovePackage" disabled="@_busy">Endgültig entfernen</button>
+            <button class="btn-ghost" @onclick="() => _removal = null" disabled="@_busy">Abbrechen</button>
+        </div>
+    </div>
+}
+
 <div class="card">
     @if (_packages.Count == 0)
     {
@@ -159,6 +199,10 @@
         IReadOnlyList<ConnectorSkill> Skills,
         IReadOnlyDictionary<string, string> Texts);
 
+    /// <summary>Was ein Entfernen mitnehmen wuerde — angekuendigt, bevor es passiert.</summary>
+    private sealed record RemovalPreview(string PackageId, IReadOnlyList<AssetInfo> Skills);
+
+    private RemovalPreview? _removal;
     private List<InstalledConnectorPackage> _packages = [];
     private IBrowserFile? _pending;
     private byte[]? _bytes;
@@ -279,12 +323,38 @@
         Report($"{package.PackageId} {package.Version} entfernt.", failed: false);
     });
 
-    private async Task RemovePackage(string packageId) => await Guarded(async () =>
+    /// <summary>
+    /// ADR-0021 F5: Erst ankuendigen, was mitgeht. Ein Loeschvorgang, der ungefragt fremde Arbeit
+    /// mitnimmt, waere genau der Schritt, den man nicht rueckgaengig machen kann.
+    /// </summary>
+    private async Task RemovePackage(string packageId)
     {
-        await Installer.RemovePackageAsync(packageId, null, CancellationToken.None);
-        await Resolver.RefreshAsync(CancellationToken.None);
-        Report($"{packageId} vollständig entfernt.", failed: false);
-    });
+        _message = null;
+        _removal = new RemovalPreview(
+            packageId, await Installer.PreviewRemovalAsync(packageId, CancellationToken.None));
+    }
+
+    private async Task ConfirmRemovePackage()
+    {
+        if (_removal is null)
+        {
+            return;
+        }
+
+        var packageId = _removal.PackageId;
+        _removal = null;
+        await Guarded(async () =>
+        {
+            var removedSkills = await Installer.RemovePackageAsync(
+                packageId, null, CancellationToken.None);
+            await Resolver.RefreshAsync(CancellationToken.None);
+            Report(
+                removedSkills.Count == 0
+                    ? $"{packageId} vollständig entfernt."
+                    : $"{packageId} vollständig entfernt, samt {string.Join(", ", removedSkills)}.",
+                failed: false);
+        });
+    }
 
     private async Task Guarded(Func<Task> action)
     {

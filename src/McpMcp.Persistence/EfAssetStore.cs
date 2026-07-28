@@ -158,6 +158,67 @@ public sealed class EfAssetStore : IAssetStore
             name, new AssetId(row.Id), new AssetVersion(row.Version), replacedLocalEdit);
     }
 
+    public async Task<IReadOnlyList<AssetInfo>> ListFromPackageAsync(
+        string packageId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(packageId);
+        await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var ids = await IdsFromPackageAsync(db, packageId, ct).ConfigureAwait(false);
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var rows = await db.Assets.AsNoTracking()
+            .Where(a => ids.Contains(a.Id))
+            .ToListAsync(ct).ConfigureAwait(false);
+
+        return [.. rows
+            .GroupBy(a => a.Id)
+            .Select(g => g.OrderByDescending(a => a.Version).First())
+            .Select(r => new AssetInfo(
+                new AssetId(r.Id), r.Name, r.Description, new AssetVersion(r.Version), r.PublishedAt,
+                ToMetadata(r), ToSource(r)))
+            .OrderBy(a => a.Name, StringComparer.Ordinal)];
+    }
+
+    public async Task<IReadOnlyList<string>> DeleteFromPackageAsync(
+        string packageId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(packageId);
+        await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var ids = await IdsFromPackageAsync(db, packageId, ct).ConfigureAwait(false);
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var rows = await db.Assets.Where(a => ids.Contains(a.Id)).ToListAsync(ct).ConfigureAwait(false);
+        var names = rows
+            .GroupBy(a => a.Id)
+            .Select(g => g.OrderByDescending(a => a.Version).First().Name)
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToList();
+
+        // Alle Versionen, nicht nur die aus dem Paket: Ein Skill mit einer angepassten Fassung
+        // obenauf ginge sonst halb weg — die Historie bliebe stehen und der Name wäre belegt.
+        db.Assets.RemoveRange(rows);
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return names;
+    }
+
+    /// <summary>
+    /// Skills, von denen <em>irgendeine</em> Version aus diesem Paket stammt. Nicht nur die
+    /// neueste — sonst fiele genau der Fall durch, um den es geht: die lokal angepasste Fassung.
+    /// </summary>
+    private static async Task<List<Guid>> IdsFromPackageAsync(
+        McpMcpDbContext db, string packageId, CancellationToken ct)
+        => await db.Assets.AsNoTracking()
+            .Where(a => a.SourcePackageId == packageId)
+            .Select(a => a.Id)
+            .Distinct()
+            .ToListAsync(ct).ConfigureAwait(false);
+
     private static async Task EnsureNameFreeAsync(McpMcpDbContext db, string name, CancellationToken ct)
     {
         // Der eindeutige Index faengt es ohnehin ab; diese Pruefung ist fuer die Meldung da. Ein

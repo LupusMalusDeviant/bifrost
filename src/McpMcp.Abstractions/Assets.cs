@@ -223,4 +223,29 @@ public interface IAssetStore
         SkillMetadata? metadata,
         SkillSource source,
         CancellationToken ct);
+
+    /// <summary>
+    /// Skills, die aus diesem Paket stammen — für die <b>Ankündigung</b> vor dem Entfernen
+    /// (ADR-0021, F5).
+    /// <para>
+    /// Gefunden wird über <em>irgendeine</em> Version mit dieser Herkunft, nicht nur über die
+    /// neueste: Wer den Text angepasst hat, hat eine Version ohne Herkunft obenauf gelegt — der
+    /// Skill kam trotzdem aus dem Paket. Genau diese Fälle sind die, die man vorher sehen muss;
+    /// erkennbar sind sie daran, dass <see cref="AssetInfo.Source"/> leer ist.
+    /// </para>
+    /// </summary>
+    Task<IReadOnlyList<AssetInfo>> ListFromPackageAsync(string packageId, CancellationToken ct);
+
+    /// <summary>
+    /// Entfernt alle Versionen der Skills aus diesem Paket und liefert deren Namen zurück
+    /// (ADR-0021, F5).
+    /// <para>
+    /// <b>Die einzige Stelle, an der Historie verloren geht.</b> Sonst gilt append-only ohne
+    /// Ausnahme. Der Grund steht im ADR: Ein verwaister Skill bliebe über <c>list_skills</c> für
+    /// jeden Agenten sichtbar, während die Kennzeichnung nur ein Mensch in der Oberfläche sieht —
+    /// eine Anleitung für Tools, die es nicht mehr gibt, ist schlimmer als keine. Die Auflage dazu
+    /// ist, dass vorher angekündigt wird, was mitgeht (<see cref="ListFromPackageAsync"/>).
+    /// </para>
+    /// </summary>
+    Task<IReadOnlyList<string>> DeleteFromPackageAsync(string packageId, CancellationToken ct);
 }

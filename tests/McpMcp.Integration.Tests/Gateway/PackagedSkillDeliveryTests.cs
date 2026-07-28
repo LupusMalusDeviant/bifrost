@@ -91,6 +91,73 @@ public sealed class PackagedSkillDeliveryTests : IClassFixture<GatewayFixture>
     }
 
     /// <summary>
+    /// ADR-0021 F5 gegen den echten Store: Gelöscht werden <b>alle</b> Versionen, auch die von Hand
+    /// veröffentlichte obenauf. Bliebe sie stehen, wäre der Name weiter belegt — und der Skill
+    /// halb weg.
+    /// </summary>
+    [Fact]
+    public async Task Deleting_a_packages_skills_takes_every_version_and_frees_the_name()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var packageId = $"com.example.s{Guid.NewGuid():N}"[..24];
+        var name = $"{packageId}/benutzung";
+
+        var published = await Assets.PublishFromPackageAsync(
+            name, null, "Herstellerfassung", null, new SkillSource(packageId, "1.0.0"), ct);
+        await Assets.PublishAsync(published.Id, "Meine Fassung", null, ct);
+
+        var preview = await Assets.ListFromPackageAsync(packageId, ct);
+        preview.Should().ContainSingle().Which.Source.Should().BeNull(
+            "die Ankündigung muss sagen, dass hier eigene Arbeit mitgeht");
+
+        var removed = await Assets.DeleteFromPackageAsync(packageId, ct);
+
+        removed.Should().Equal([name]);
+        (await Assets.ListAsync(ct)).Should().NotContain(a => a.Name == name);
+        (await Assets.GetVersionsAsync(published.Id, ct)).Should().BeEmpty();
+
+        // Der Beweis, dass der Name wirklich frei ist: Anlegen würde sonst am eindeutigen Index
+        // scheitern.
+        var act = async () => await Assets.CreateAsync(name, null, "neu", null, ct);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task A_deleted_skill_is_gone_for_agents_too()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var packageId = $"com.example.t{Guid.NewGuid():N}"[..24];
+        var name = $"{packageId}/benutzung";
+        await Assets.PublishFromPackageAsync(
+            name, null, "Anleitung", null, new SkillSource(packageId, "1.0.0"), ct);
+        await Assets.DeleteFromPackageAsync(packageId, ct);
+
+        var caller = await _gw.SeedAdminAsync($"pkgdel-{Guid.NewGuid():N}");
+        var result = await MetaTools.ExecuteAsync(
+            caller.Identity, CallOrigin.Mcp, MetaToolService.ReadSkillName,
+            JsonSerializer.SerializeToElement(new { name }), ct);
+
+        result.Status.Should().Be(InvocationStatus.ToolNotFound,
+            "genau darum ging es: keine Anleitung für Tools, die es nicht mehr gibt");
+    }
+
+    [Fact]
+    public async Task Skills_of_another_package_are_untouched()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var bleibt = $"com.example.u{Guid.NewGuid():N}"[..24];
+        var geht = $"com.example.v{Guid.NewGuid():N}"[..24];
+        await Assets.PublishFromPackageAsync(
+            $"{bleibt}/a", null, "A", null, new SkillSource(bleibt, "1.0.0"), ct);
+        await Assets.PublishFromPackageAsync(
+            $"{geht}/b", null, "B", null, new SkillSource(geht, "1.0.0"), ct);
+
+        await Assets.DeleteFromPackageAsync(geht, ct);
+
+        (await Assets.ListAsync(ct)).Should().Contain(a => a.Name == $"{bleibt}/a");
+    }
+
+    /// <summary>
     /// Skills werden über ihren <b>Namen</b> ausgeliefert. Zwei gleichen Namens wären nicht
     /// unterscheidbar — ausgeliefert würde der erstbeste. Das war bis hierhin möglich.
     /// </summary>

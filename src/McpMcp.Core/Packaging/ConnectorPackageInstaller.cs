@@ -271,8 +271,27 @@ public sealed partial class ConnectorPackageInstaller
         Audit("Paketversion entfernt", packageId, version, null, caller);
     }
 
-    /// <summary>Entfernt alle Versionen eines Pakets, aktive eingeschlossen.</summary>
-    public async Task RemovePackageAsync(string packageId, IdentityId? caller, CancellationToken ct)
+    /// <summary>
+    /// Was das Entfernen dieses Pakets an Skills mitnehmen würde (ADR-0021, F5). Die Auflage aus dem
+    /// ADR: Es wird vorher gesagt, und eine <b>lokal angepasste</b> Fassung wird besonders genannt —
+    /// erkennbar daran, dass die neueste Version keine Paketherkunft mehr trägt.
+    /// </summary>
+    public async Task<IReadOnlyList<AssetInfo>> PreviewRemovalAsync(
+        string packageId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(packageId);
+        return _assets is null
+            ? []
+            : await _assets.ListFromPackageAsync(packageId, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Entfernt alle Versionen eines Pakets, aktive eingeschlossen — <b>samt</b> der Skills, die es
+    /// mitgebracht hat (ADR-0021, F5). Liefert deren Namen zurück, damit der Aufrufer sie nennen
+    /// kann.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> RemovePackageAsync(
+        string packageId, IdentityId? caller, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(packageId);
         var versions = await _store.GetVersionsAsync(packageId, ct).ConfigureAwait(false);
@@ -288,7 +307,18 @@ public sealed partial class ConnectorPackageInstaller
         }
 
         SafeDelete(Path.Combine(RootDirectory, packageId));
-        Audit("Paket entfernt", packageId, "alle Versionen", null, caller);
+
+        // Erst die Dateien, dann die Skills: Bleibt eine Anleitung ohne ihren Konnektor stehen, ist
+        // das der Zustand, den F5 gerade abschafft — umgekehrt wäre eine gelöschte Anleitung zu
+        // einem noch laufenden Konnektor der Schaden.
+        var removedSkills = _assets is null
+            ? []
+            : await _assets.DeleteFromPackageAsync(packageId, ct).ConfigureAwait(false);
+
+        Audit("Paket entfernt", packageId, "alle Versionen",
+            removedSkills.Count == 0 ? null : $"Skills mitentfernt: {string.Join(", ", removedSkills)}",
+            caller);
+        return removedSkills;
     }
 
     private string VersionDirectory(string packageId, string version)

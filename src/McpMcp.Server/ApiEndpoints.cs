@@ -662,15 +662,38 @@ internal static class ApiEndpoints
             }
         });
 
+        // ADR-0021 F5: Das Entfernen nimmt die Skills des Pakets mit. Die Auflage dazu ist, dass es
+        // vorher gesagt wird — ueber die API heisst das: Es gibt einen Weg, es vorher zu erfahren.
+        packages.MapGet("/{packageId}/removal-preview", async (
+            string packageId, ConnectorPackageInstaller installer, CancellationToken ct) =>
+        {
+            var skills = await installer.PreviewRemovalAsync(packageId, ct);
+            return Results.Ok(new
+            {
+                skills = skills.Select(s => new
+                {
+                    name = s.Name,
+                    version = s.LatestVersion.Value,
+
+                    // Die neueste Fassung traegt keine Paketherkunft mehr: Jemand hat den Text
+                    // angepasst, und diese Arbeit geht mit verloren.
+                    locallyEdited = s.Source is null,
+                }),
+            });
+        });
+
         packages.MapDelete("/{packageId}", async (
             string packageId, HttpContext ctx, ConnectorPackageInstaller installer,
             ConnectorPackageResolver resolver, CancellationToken ct) =>
         {
             try
             {
-                await installer.RemovePackageAsync(packageId, Identity(ctx), ct);
+                var removedSkills = await installer.RemovePackageAsync(packageId, Identity(ctx), ct);
                 await resolver.RefreshAsync(ct);
-                return Results.NoContent();
+
+                // Kein NoContent mehr: Was mitgegangen ist, gehoert in die Antwort. Ein leerer
+                // Rumpf haette verschwiegen, dass Skills geloescht wurden.
+                return Results.Ok(new { removedSkills });
             }
             catch (ConnectorPackageException exception)
             {

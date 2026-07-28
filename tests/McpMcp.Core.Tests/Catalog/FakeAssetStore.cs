@@ -53,6 +53,43 @@ internal sealed class FakeAssetStore : IAssetStore
         return Task.FromResult(version);
     }
 
+    public Task<IReadOnlyList<AssetInfo>> ListFromPackageAsync(string packageId, CancellationToken ct)
+    {
+        IReadOnlyList<AssetInfo> matches =
+        [
+            .. _versions
+                .Where(v => IdsFromPackage(packageId).Contains(v.Id))
+                .GroupBy(v => v.Id)
+                .Select(g => g.OrderByDescending(v => v.Version.Value).First())
+                .Select(v => new AssetInfo(
+                    v.Id, v.Name, _descriptions.GetValueOrDefault(v.Id.Value), v.Version, v.PublishedAt,
+                    v.Metadata, v.Source))
+                .OrderBy(a => a.Name, StringComparer.Ordinal),
+        ];
+        return Task.FromResult(matches);
+    }
+
+    public Task<IReadOnlyList<string>> DeleteFromPackageAsync(string packageId, CancellationToken ct)
+    {
+        var ids = IdsFromPackage(packageId);
+        IReadOnlyList<string> names =
+        [
+            .. _versions.Where(v => ids.Contains(v.Id))
+                .GroupBy(v => v.Id)
+                .Select(g => g.OrderByDescending(v => v.Version.Value).First().Name)
+                .OrderBy(n => n, StringComparer.Ordinal),
+        ];
+        _versions.RemoveAll(v => ids.Contains(v.Id));
+        return Task.FromResult(names);
+    }
+
+    /// <summary>
+    /// Über <em>irgendeine</em> Version, nicht nur die neueste — sonst fiele die lokal angepasste
+    /// Fassung durch, und genau die ist der interessante Fall.
+    /// </summary>
+    private HashSet<AssetId> IdsFromPackage(string packageId)
+        => [.. _versions.Where(v => v.Source?.PackageId == packageId).Select(v => v.Id)];
+
     public Task<SkillPublication> PublishFromPackageAsync(
         string name, string? description, string content, SkillMetadata? metadata,
         SkillSource source, CancellationToken ct)

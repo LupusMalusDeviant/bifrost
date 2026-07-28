@@ -281,7 +281,7 @@ demselben Namen stünde beim nächsten Mal etwas anderes.
 | Herkunft | steht an der Version; die Skill-Liste zeigt sie an |
 | Update | hängt eine Version an; die vorherige bleibt |
 | Eigene Änderung | Wer den Text bearbeitet, verliert die Herkunft. Das nächste Paket-Update **meldet**, dass es eine angepasste Fassung ablöst — sie bleibt in der Historie und lässt sich zurückschalten |
-| Paket entfernt | **Heute:** Der Skill bleibt stehen und wird als *verwaist* gekennzeichnet. **Entschieden, aber noch nicht umgesetzt** ([ADR-0021](adr/0021-skills-in-paketen.md), F5): Das Entfernen nimmt die mitgelieferten Skills mit — angekündigt, und eine lokal angepasste Fassung wird dabei besonders genannt |
+| Paket entfernt | Die mitgelieferten Skills gehen mit — **samt Historie**, und das ist die einzige Stelle, an der Historie verloren geht ([ADR-0021](adr/0021-skills-in-paketen.md), F5). Vorher wird angekündigt, was mitgeht; eine von dir angepasste Fassung wird dabei besonders genannt. Eine einzelne alte Paketversion zu entfernen lässt die Skills stehen — sie gehören zum Paket, nicht zu einer Version |
 | Probe gescheitert | Kein Skill wird eingespielt — eine Anweisung aus einem Konnektor, der nie gelaufen ist, wäre trotzdem in Umlauf |
 
 Skill-Namen sind seitdem **eindeutig**. Vorher waren zwei gleichen Namens möglich; ausgeliefert
