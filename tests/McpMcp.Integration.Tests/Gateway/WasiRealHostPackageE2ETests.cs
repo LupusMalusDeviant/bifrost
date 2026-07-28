@@ -61,8 +61,8 @@ public sealed class WasiRealHostPackageE2ETests : IClassFixture<GatewayFixture>
                 v1, new ConnectorInstallOptions(AcceptedGrants: ["env:MCPMCP_SPIKE"]), null, ct);
             await resolver.RefreshAsync(ct);
 
-            installed.State.Should().Be(PackageState.Active);
-            installed.TrustLevel.Should().Be(ConnectorTrustLevel.Official);
+            installed.Package.State.Should().Be(PackageState.Active);
+            installed.Package.TrustLevel.Should().Be(ConnectorTrustLevel.Official);
 
             // 2) Ein Upstream, der nur die Paket-Id kennt — keine Pfade in der Konfiguration.
             var serverId = await _gw.Supervisor.AddAsync(

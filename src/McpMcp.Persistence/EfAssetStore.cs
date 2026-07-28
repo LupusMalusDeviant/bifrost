@@ -31,7 +31,7 @@ public sealed class EfAssetStore : IAssetStore
 
         return [.. latest.Select(r => new AssetInfo(
             new AssetId(r.Id), r.Name, r.Description, new AssetVersion(r.Version), r.PublishedAt,
-            ToMetadata(r)))];
+            ToMetadata(r), ToSource(r)))];
     }
 
     public async Task<AssetContent> GetAsync(AssetId id, AssetVersion? version, CancellationToken ct)
@@ -76,6 +76,12 @@ public sealed class EfAssetStore : IAssetStore
             Description = existing?.Description,
             Content = content,
             PublishedAt = _time.GetUtcNow(),
+
+            // Herkunft wird BEWUSST nicht übernommen: Wer hier veröffentlicht, hat den Text von
+            // Hand geschrieben. Genau daran erkennt ein späteres Paket-Update, dass es eine
+            // angepasste Fassung ablösen würde.
+            SourcePackageId = null,
+            SourcePackageVersion = null,
         };
         ApplyMetadata(row, metadata);
         db.Assets.Add(row);
@@ -88,6 +94,7 @@ public sealed class EfAssetStore : IAssetStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        await EnsureNameFreeAsync(db, name, ct).ConfigureAwait(false);
         var id = AssetId.New();
         var row = new AssetRow
         {
@@ -104,9 +111,70 @@ public sealed class EfAssetStore : IAssetStore
         return id;
     }
 
+    /// <summary>
+    /// Anlegen oder anhängen — je nachdem, ob es den Namen schon gibt. Die Entscheidung liegt hier,
+    /// weil sie eine Namenssuche braucht.
+    /// </summary>
+    public async Task<SkillPublication> PublishFromPackageAsync(
+        string name,
+        string? description,
+        string content,
+        SkillMetadata? metadata,
+        SkillSource source,
+        CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(source);
+        await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var existing = await db.Assets.AsNoTracking()
+            .Where(a => a.Name == name)
+            .OrderByDescending(a => a.Version)
+            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+
+        // Die bisherige neueste Fassung kam nicht aus einem Paket: Jemand hat den Text angepasst.
+        // Das Update wird trotzdem angehängt — die Historie behält beide, und Zurückschalten
+        // existiert. Gemeldet wird es aber, denn still verdrängt wäre es ein Vertrauensbruch.
+        var replacedLocalEdit = existing is not null && existing.SourcePackageId is null;
+
+        var row = new AssetRow
+        {
+            Id = existing?.Id ?? AssetId.New().Value,
+            Version = (existing?.Version ?? 0) + 1,
+            Name = name,
+            Description = description ?? existing?.Description,
+            Content = content,
+            PublishedAt = _time.GetUtcNow(),
+            SourcePackageId = source.PackageId,
+            SourcePackageVersion = source.PackageVersion,
+        };
+        ApplyMetadata(row, metadata);
+        db.Assets.Add(row);
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        return new SkillPublication(
+            name, new AssetId(row.Id), new AssetVersion(row.Version), replacedLocalEdit);
+    }
+
+    private static async Task EnsureNameFreeAsync(McpMcpDbContext db, string name, CancellationToken ct)
+    {
+        // Der eindeutige Index faengt es ohnehin ab; diese Pruefung ist fuer die Meldung da. Ein
+        // Datenbankfehler auf dem Bildschirm sagt niemandem, was zu tun ist.
+        if (await db.Assets.AsNoTracking().AnyAsync(a => a.Name == name, ct).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException(
+                $"Es gibt bereits einen Skill namens '{name}'. Skills werden über ihren Namen "
+                + "ausgeliefert — zwei gleiche Namen wären nicht unterscheidbar.");
+        }
+    }
+
     private static AssetContent ToContent(AssetRow row) => new(
         new AssetId(row.Id), new AssetVersion(row.Version), row.Name, row.Content, row.PublishedAt,
-        ToMetadata(row));
+        ToMetadata(row), ToSource(row));
+
+    private static SkillSource? ToSource(AssetRow row)
+        => row.SourcePackageId is { Length: > 0 } id
+            ? new SkillSource(id, row.SourcePackageVersion ?? "?")
+            : null;
 
     /// <summary>
     /// Listen zeilenweise statt als JSON: Sie sind kurz, sie werden von Menschen im Editor

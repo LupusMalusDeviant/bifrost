@@ -20,7 +20,7 @@ internal sealed class FakeAssetStore : IAssetStore
                 .Select(g => g.OrderByDescending(v => v.Version.Value).First())
                 .Select(v => new AssetInfo(
                     v.Id, v.Name, _descriptions.GetValueOrDefault(v.Id.Value), v.Version, v.PublishedAt,
-                    v.Metadata)),
+                    v.Metadata, v.Source)),
         ];
         return Task.FromResult(latest);
     }
@@ -53,9 +53,30 @@ internal sealed class FakeAssetStore : IAssetStore
         return Task.FromResult(version);
     }
 
+    public Task<SkillPublication> PublishFromPackageAsync(
+        string name, string? description, string content, SkillMetadata? metadata,
+        SkillSource source, CancellationToken ct)
+    {
+        var existing = _versions.Where(v => v.Name == name)
+            .OrderByDescending(v => v.Version.Value)
+            .FirstOrDefault();
+        var replacedLocalEdit = existing is not null && existing.Source is null;
+        var id = existing?.Id ?? AssetId.New();
+        var version = new AssetVersion((existing?.Version.Value ?? 0) + 1);
+        _descriptions[id.Value] = description ?? _descriptions.GetValueOrDefault(id.Value);
+        _versions.Add(new AssetContent(
+            id, version, name, content, DateTimeOffset.UnixEpoch, metadata, source));
+        return Task.FromResult(new SkillPublication(name, id, version, replacedLocalEdit));
+    }
+
     public Task<AssetId> CreateAsync(
         string name, string? description, string content, SkillMetadata? metadata, CancellationToken ct)
     {
+        if (_versions.Any(v => v.Name == name))
+        {
+            throw new InvalidOperationException($"Es gibt bereits einen Skill namens '{name}'.");
+        }
+
         var id = AssetId.New();
         _descriptions[id.Value] = description;
         _versions.Add(new AssetContent(

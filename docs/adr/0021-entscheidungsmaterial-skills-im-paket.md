@@ -1,5 +1,25 @@
 # Entscheidungsmaterial: Skills im Paket („Plugin" = Konnektor + Wissen)
 
+> **Umsetzungsstand 2026-07-28: Option B ist gebaut — die fünf Fragen sind aber nicht entschieden.**
+>
+> Der Product Owner hat ausdrücklich „Option B bauen" gewählt, mit den Empfehlungen aus Abschnitt 6
+> als **Annahmen**. Was daraus im Code steht, ist damit eine Annahme und keine Entscheidung; jede
+> davon lässt sich umstoßen, und die Stelle dafür steht dabei:
+>
+> | Frage | Angenommen | Wo es steht |
+> |---|---|---|
+> | F1 Umfang | **B** — Skills als Nutzdaten im bestehenden Manifest; Skill-Bündel ohne Konnektor gibt es nicht | `ConnectorSkill`, `ConnectorManifest.Skills` |
+> | F2 Zustimmung | Text **immer** anzeigen und einzeln bestätigen, ohne Stufenrabatt; die Zustimmung bindet an den SHA-256 des Textes und verfällt, wenn er sich ändert | `ConnectorManifest.SkillConsentToken`, `ConnectorTrustPolicy` |
+> | F3 Namensraum | **Präfix** `<paket-id>/<skill>` | `ConnectorPackageInstaller.PublishSkillsAsync` |
+> | F4 Update vs. lokale Änderung | **Überschreiben mit Hinweis**: Das Update wird angehängt, die eigene Fassung bleibt in der Historie, und der Fall wird gemeldet — *diese Frage hatte Abschnitt 6 gar nicht beantwortet, die Annahme ist beim Bauen entstanden* | `EfAssetStore.PublishFromPackageAsync`, `SkillPublication.ReplacedLocalEdit` |
+> | F5 Deinstallieren | **Stehen lassen** und als verwaist kennzeichnen | Assets-Oberfläche, abgeleitet statt gespeichert |
+>
+> Mitgenommen wurde außerdem der Mangel aus Abschnitt 3.1: Skill-Namen sind jetzt eindeutig.
+> **Achtung beim Aktualisieren einer bestehenden Datenbank:** Der eindeutige Index scheitert, wenn
+> dort schon zwei Skills gleichen Namens stehen — dann muss vorher einer umbenannt werden.
+>
+> Die Abschnitte darunter sind der Stand **vor** dem Bauen und werden nicht nachgeführt.
+
 **Stand 2026-07-28. Dies ist Material, keine Entscheidung.** Es prüft eine naheliegende Idee gegen
 den Code, der heute wirklich da ist: Ein `.mcpkg` trägt einen Konnektor — soll es auch die Skills
 tragen, die erklären, wie man ihn benutzt? Die Entscheidung trifft der Product Owner.

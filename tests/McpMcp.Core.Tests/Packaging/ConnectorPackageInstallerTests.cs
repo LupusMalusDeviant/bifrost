@@ -47,10 +47,10 @@ public sealed class ConnectorPackageInstallerTests : IDisposable
         var installed = await Installer().InstallAsync(
             package, new ConnectorInstallOptions(), null, TestContext.Current.CancellationToken);
 
-        installed.State.Should().Be(PackageState.Active);
-        installed.PackageId.Should().Be("com.example.echo");
-        installed.TrustLevel.Should().Be(ConnectorTrustLevel.Official);
-        installed.ActivatedAt.Should().Be(_time.GetUtcNow());
+        installed.Package.State.Should().Be(PackageState.Active);
+        installed.Package.PackageId.Should().Be("com.example.echo");
+        installed.Package.TrustLevel.Should().Be(ConnectorTrustLevel.Official);
+        installed.Package.ActivatedAt.Should().Be(_time.GetUtcNow());
         _probes.Should().Be(1, "installiert wird nur, was geprobt wurde");
         File.Exists(Path.Combine(_root, "com.example.echo", "1.0.0", "payload", "component.wasm"))
             .Should().BeTrue();
@@ -97,7 +97,7 @@ public sealed class ConnectorPackageInstallerTests : IDisposable
         using var second = TestPackage.Valid(_publisher, version: "1.1.0");
         var updated = await installer.InstallAsync(
             second, new ConnectorInstallOptions(), null, TestContext.Current.CancellationToken);
-        updated.Version.Should().Be("1.1.0");
+        updated.Package.Version.Should().Be("1.1.0");
 
         var versions = await _store.GetVersionsAsync("com.example.echo", TestContext.Current.CancellationToken);
         versions.Single(v => v.Version == "1.0.0").State.Should().Be(PackageState.Superseded,
@@ -162,8 +162,8 @@ public sealed class ConnectorPackageInstallerTests : IDisposable
         var installed = await installer.InstallAsync(
             fixedPackage, new ConnectorInstallOptions(), null, TestContext.Current.CancellationToken);
 
-        installed.State.Should().Be(PackageState.Active);
-        installed.FailureReason.Should().BeNull();
+        installed.Package.State.Should().Be(PackageState.Active);
+        installed.Package.FailureReason.Should().BeNull();
     }
 
     [Fact]
@@ -229,95 +229,5 @@ public sealed class ConnectorPackageInstallerTests : IDisposable
             package, new ConnectorInstallOptions(), null, TestContext.Current.CancellationToken);
 
         await act.Should().ThrowAsync<ConnectorPackageException>().WithMessage("*Plattformen*");
-    }
-
-    private sealed class StaticTrustStore : IPublisherTrustStore
-    {
-        private readonly IReadOnlyList<PublisherKey> _keys;
-
-        public StaticTrustStore(IReadOnlyList<PublisherKey> keys) => _keys = keys;
-
-        public IReadOnlyList<PublisherKey> All => _keys;
-
-        public IReadOnlyList<string> ActivePublicKeys =>
-            [.. _keys.Where(k => k.IsActive).Select(k => k.PublicKeyBase64)];
-
-        public event EventHandler<PublisherRevokedEventArgs>? Revoked
-        {
-            add { }
-            remove { }
-        }
-
-        public Task LoadAsync(CancellationToken ct) => Task.CompletedTask;
-
-        public Task<PublisherKey> PinAsync(string publicKeyBase64, string label, CancellationToken ct)
-            => Task.FromResult(_keys[0]);
-
-        public Task RevokeAsync(string keyId, CancellationToken ct) => Task.CompletedTask;
-
-        public Task ReinstateAsync(string keyId, CancellationToken ct) => Task.CompletedTask;
-
-        public Task SetTrustLevelAsync(string keyId, ConnectorTrustLevel level, CancellationToken ct)
-            => Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// Store ohne Datenbank. Die EF-Variante ist an ihrem eigenen Ort getestet; hier geht es um den
-    /// Ablauf, nicht um die Persistenz.
-    /// </summary>
-    private sealed class InMemoryPackageStore : IConnectorPackageStore
-    {
-        private readonly List<InstalledConnectorPackage> _packages = [];
-
-        public Task<IReadOnlyList<InstalledConnectorPackage>> ListAsync(CancellationToken ct)
-            => Task.FromResult<IReadOnlyList<InstalledConnectorPackage>>([.. _packages]);
-
-        public Task<InstalledConnectorPackage?> GetActiveAsync(string packageId, CancellationToken ct)
-            => Task.FromResult(_packages.FirstOrDefault(
-                p => p.PackageId == packageId && p.State is PackageState.Active));
-
-        public Task<IReadOnlyList<InstalledConnectorPackage>> GetVersionsAsync(
-            string packageId, CancellationToken ct)
-            => Task.FromResult<IReadOnlyList<InstalledConnectorPackage>>(
-                [.. _packages.Where(p => p.PackageId == packageId)]);
-
-        public Task UpsertAsync(InstalledConnectorPackage package, CancellationToken ct)
-        {
-            _packages.RemoveAll(p => p.PackageId == package.PackageId && p.Version == package.Version);
-            _packages.Add(package);
-            return Task.CompletedTask;
-        }
-
-        public Task ActivateAsync(
-            string packageId, string version, DateTimeOffset at, CancellationToken ct)
-        {
-            for (var i = 0; i < _packages.Count; i++)
-            {
-                if (_packages[i].PackageId != packageId)
-                {
-                    continue;
-                }
-
-                _packages[i] = _packages[i].Version == version
-                    ? _packages[i] with
-                    {
-                        State = PackageState.Active, ActivatedAt = at, FailureReason = null,
-                    }
-                    : _packages[i] with
-                    {
-                        State = _packages[i].State is PackageState.Active
-                            ? PackageState.Superseded
-                            : _packages[i].State,
-                    };
-            }
-
-            return Task.CompletedTask;
-        }
-
-        public Task RemoveAsync(string packageId, string version, CancellationToken ct)
-        {
-            _packages.RemoveAll(p => p.PackageId == packageId && p.Version == version);
-            return Task.CompletedTask;
-        }
     }
 }

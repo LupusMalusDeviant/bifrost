@@ -619,7 +619,7 @@ internal static class ApiEndpoints
                     Identity(ctx),
                     ct);
                 await resolver.RefreshAsync(ct);
-                return Results.Created($"/api/v1/packages/{installed.PackageId}", installed);
+                return Results.Created($"/api/v1/packages/{installed.Package.PackageId}", installed);
             }
             catch (ConnectorPackageException exception)
             {

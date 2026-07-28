@@ -233,7 +233,10 @@ builder.Services.AddSingleton(sp => new ConnectorPackageInstaller(
     WasiPackageProbe.Create(sp),
     sp.GetRequiredService<TimeProvider>(),
     sp.GetRequiredService<IAuditSink>(),
-    sp.GetRequiredService<ILogger<ConnectorPackageInstaller>>()));
+    sp.GetRequiredService<ILogger<ConnectorPackageInstaller>>(),
+    // Damit ein Paket die Skills mitbringen kann, die erklären, wie man seinen Konnektor benutzt
+    // (Material 0021-EM, Option B).
+    sp.GetRequiredService<IAssetStore>()));
 
 // ── Freigabe-Flows (FR-32, ADR-0012) ─────────────────────────────────────────
 builder.Services.AddSingleton<ApprovalPolicyStore>();

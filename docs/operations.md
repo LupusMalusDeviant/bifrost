@@ -258,6 +258,35 @@ nicht garantiert.
 hängt die alte Fassung als **neue** Version an, statt Geschichte zu überschreiben — dieselbe Regel
 wie bei der Server-Konfiguration.
 
+### Skills aus einem Paket
+
+Ein Connector-Paket kann die Skills mitbringen, die erklären, wie man seinen Konnektor benutzt
+(Material [0021-EM](adr/0021-entscheidungsmaterial-skills-im-paket.md), Option B). Der Grund ist
+nicht Bequemlichkeit: *Benötigte Tools* konnte der Gateway bisher nur **prüfen** und melden, wenn
+etwas fehlt. Ein Paket **stellt die Zusage her** — die Tools kommen mit.
+
+Beim Installieren zeigt die Paket-Seite jeden mitgelieferten Text an, und er ist einzeln zu
+bestätigen — **auch bei einem offiziellen Herausgeber**. Für einen Zugriff nach außen gibt es eine
+Laufzeitgrenze, die ihn durchsetzt; für einen Skill nicht. Er ist Text, der ungefiltert in die
+Denkschleife eines Agenten geht, der Tools aufrufen darf. Es gibt keine Sandbox für einen Satz.
+
+Die Zustimmung lautet `skill:<name>@<hash>` und bindet an den **Inhalt**. Ändert ein Update den
+Text, verfällt sie und ist neu zu geben — sonst wäre sie eine Zustimmung zu einem Namen, und unter
+demselben Namen stünde beim nächsten Mal etwas anderes.
+
+| Was | Verhalten |
+|---|---|
+| Name | `<paket-id>/<skill>` — ein Paket kann keinen handgeschriebenen Skill überschatten |
+| Herkunft | steht an der Version; die Skill-Liste zeigt sie an |
+| Update | hängt eine Version an; die vorherige bleibt |
+| Eigene Änderung | Wer den Text bearbeitet, verliert die Herkunft. Das nächste Paket-Update **meldet**, dass es eine angepasste Fassung ablöst — sie bleibt in der Historie und lässt sich zurückschalten |
+| Paket entfernt | Der Skill bleibt stehen und wird als *verwaist* gekennzeichnet. Löschen wäre der eine Schritt, den man nicht rückgängig machen kann |
+| Probe gescheitert | Kein Skill wird eingespielt — eine Anweisung aus einem Konnektor, der nie gelaufen ist, wäre trotzdem in Umlauf |
+
+Skill-Namen sind seitdem **eindeutig**. Vorher waren zwei gleichen Namens möglich; ausgeliefert
+wurde dann der erstbeste. Beim Aktualisieren einer bestehenden Datenbank scheitert die Migration,
+wenn dort schon Dopplungen stehen — dann vorher umbenennen.
+
 **Frontmatter-Import:** Eine bestehende `SKILL.md` mit YAML-Kopf lässt sich einfügen; der Knopf
 *Frontmatter aus Inhalt übernehmen* liest `name`, `description`, `when-to-use`, `references` und
 `required-tools` in die Felder und lässt den Rest als Inhalt stehen. Das ist bewusst **kein

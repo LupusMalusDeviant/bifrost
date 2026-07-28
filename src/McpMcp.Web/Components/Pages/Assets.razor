@@ -1,6 +1,7 @@
 @page "/assets"
 @attribute [Authorize(Policy = UiPolicies.Admin)]
 @inject IAssetStore AssetStore
+@inject IConnectorPackageStore PackageStore
 @inject ISkillValidator SkillValidator
 @inject IAuditSink Audit
 @inject TimeProvider Time
@@ -24,12 +25,26 @@
     {
         <div class="table-wrap">
             <table>
-                <thead><tr><th>Name</th><th>Beschreibung</th><th>Wann anwenden</th><th>Version</th><th>Aktualisiert</th><th></th></tr></thead>
+                <thead><tr><th>Name</th><th>Herkunft</th><th>Beschreibung</th><th>Wann anwenden</th><th>Version</th><th>Aktualisiert</th><th></th></tr></thead>
                 <tbody>
                     @foreach (var a in _assets)
                     {
                         <tr>
                             <td>@a.Name</td>
+                            <td class="muted">
+                                @if (a.Source is { } source)
+                                {
+                                    <span class="mono">@source.PackageId @source.PackageVersion</span>
+                                    @if (!_installedPackages.Contains(source.PackageId))
+                                    {
+                                        <span class="badge badge-muted" title="Das Paket ist nicht mehr installiert. Der Skill bleibt bewusst stehen — er könnte angepasst worden sein.">verwaist</span>
+                                    }
+                                }
+                                else
+                                {
+                                    <span>von Hand</span>
+                                }
+                            </td>
                             <td class="muted">@(a.Description ?? "—")</td>
                             <td class="muted" style="max-width:220px">@(a.MetadataOrEmpty.WhenToUse ?? "—")</td>
                             <td>v@(a.LatestVersion.Value)</td>
@@ -145,6 +160,9 @@
 
 @code {
     private IReadOnlyList<AssetInfo> _assets = [];
+
+    /// <summary>Fuer die Verwaist-Kennzeichnung: welche Pakete stehen ueberhaupt noch?</summary>
+    private HashSet<string> _installedPackages = [];
     private IReadOnlyList<AssetContent> _history = [];
     private IReadOnlyList<SkillFinding> _findings = [];
     private AssetId? _editId;
@@ -158,7 +176,12 @@
 
     protected override Task OnInitializedAsync() => Reload();
 
-    private async Task Reload() => _assets = await AssetStore.ListAsync(CancellationToken.None);
+    private async Task Reload()
+    {
+        _assets = await AssetStore.ListAsync(CancellationToken.None);
+        _installedPackages = [.. (await PackageStore.ListAsync(CancellationToken.None))
+            .Select(p => p.PackageId)];
+    }
 
     private async Task<string> UserAsync()
         => (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "?";

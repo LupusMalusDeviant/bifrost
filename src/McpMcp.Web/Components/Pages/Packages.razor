@@ -35,6 +35,39 @@
         <p class="mono" style="margin-top:.5rem">@_pending.Name (@Kilobytes(_pending.Size) KB)</p>
     }
 
+    @if (_preview is { Skills.Count: > 0 })
+    {
+        <div class="card" style="margin-top:.75rem">
+            <h3>Dieses Paket bringt @_preview.Skills.Count Skill(s) mit</h3>
+            <p class="muted">
+                Ein Skill ist eine <b>Anweisung an deinen Agenten</b>. Anders als ein Zugriff nach außen
+                lässt er sich nicht einsperren — es gibt keine Sandbox für einen Satz. Deshalb sind
+                Skills unabhängig von der Vertrauensstufe einzeln zu bestätigen, und die Zustimmung
+                gilt <b>diesem Text</b>: Ändert er sich, verfällt sie.
+            </p>
+            @foreach (var skill in _preview.Skills)
+            {
+                <details style="margin-bottom:.5rem">
+                    <summary>
+                        <span class="mono">@_preview.Manifest.Id/@skill.Name</span>
+                        @if (skill.Description is { Length: > 0 } description)
+                        {
+                            <span class="muted"> — @description</span>
+                        }
+                    </summary>
+                    <p class="mono muted" style="margin:.25rem 0">
+                        @_preview.Manifest.SkillConsentToken(skill)
+                    </p>
+                    <pre class="mono" style="white-space:pre-wrap;max-height:20rem;overflow:auto">@_preview.Texts[skill.Name]</pre>
+                </details>
+            }
+            <label>
+                <input type="checkbox" @bind="_acceptSkills" style="width:auto" />
+                Ich habe die Texte gelesen und stimme ihnen zu
+            </label>
+        </div>
+    }
+
     <div class="row" style="margin-top:.5rem">
         <div style="flex:2">
             <label>Zugestimmte Zugriffe (eine je Zeile, z.&nbsp;B. <span class="mono">env:TOKEN</span>)</label>
@@ -120,10 +153,18 @@
     /// <summary>Obergrenze beim Hochladen — dieselbe wie im Reader, nur früher wirksam.</summary>
     private const long MaxUploadBytes = ConnectorPackageReader.MaxArchiveBytes;
 
+    /// <summary>Was ein Paket mitbringt, bevor irgendetwas davon installiert ist.</summary>
+    private sealed record SkillPreview(
+        ConnectorManifest Manifest,
+        IReadOnlyList<ConnectorSkill> Skills,
+        IReadOnlyDictionary<string, string> Texts);
+
     private List<InstalledConnectorPackage> _packages = [];
     private IBrowserFile? _pending;
+    private byte[]? _bytes;
+    private SkillPreview? _preview;
     private string _grants = "";
-    private bool _allowUntrusted, _busy, _failed;
+    private bool _allowUntrusted, _acceptSkills, _busy, _failed;
     private string? _message;
 
     protected override async Task OnInitializedAsync() => await Reload();
@@ -133,21 +174,15 @@
             .OrderBy(p => p.PackageId, StringComparer.Ordinal)
             .ThenByDescending(p => p.InstalledAt)];
 
-    private void OnFileSelected(InputFileChangeEventArgs args)
+    private async Task OnFileSelected(InputFileChangeEventArgs args)
     {
         _pending = args.File;
         _message = null;
         _failed = false;
-    }
+        _preview = null;
+        _acceptSkills = false;
+        _bytes = null;
 
-    private async Task Install()
-    {
-        if (_pending is null)
-        {
-            return;
-        }
-
-        _busy = true;
         try
         {
             using var buffer = new MemoryStream();
@@ -156,17 +191,64 @@
                 await stream.CopyToAsync(buffer);
             }
 
-            buffer.Position = 0;
-            var installed = await Installer.InstallAsync(
+            _bytes = buffer.ToArray();
+
+            // Erst prüfen, dann zeigen. Ein Text aus einem Paket, hinter dem niemand steht, sähe
+            // auf dem Bildschirm genauso aus wie einer von einem gepinnten Herausgeber.
+            using var forVerify = new MemoryStream(_bytes, writable: false);
+            var verified = ConnectorPackageReader.Verify(forVerify, Trust.All);
+            if (verified.Manifest.SkillsOrEmpty.Count > 0)
+            {
+                using var forTexts = new MemoryStream(_bytes, writable: false);
+                _preview = new SkillPreview(
+                    verified.Manifest,
+                    verified.Manifest.SkillsOrEmpty,
+                    ConnectorPackageReader.ReadSkillTexts(forTexts, verified.Manifest));
+            }
+        }
+        catch (Exception exception) when (exception is ConnectorPackageException or IOException
+            or InvalidOperationException)
+        {
+            Report(exception.Message, failed: true);
+        }
+    }
+
+    private async Task Install()
+    {
+        if (_pending is null || _bytes is null)
+        {
+            return;
+        }
+
+        if (_preview is not null && !_acceptSkills)
+        {
+            Report("Die mitgelieferten Skills sind noch nicht bestätigt.", failed: true);
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            using var buffer = new MemoryStream(_bytes, writable: false);
+            var accepted = new List<string>(ParseGrants(_grants));
+            if (_preview is not null)
+            {
+                accepted.AddRange(_preview.Skills.Select(_preview.Manifest.SkillConsentToken));
+            }
+
+            var result = await Installer.InstallAsync(
                 buffer,
-                new ConnectorInstallOptions(ParseGrants(_grants), _allowUntrusted),
+                new ConnectorInstallOptions(accepted, _allowUntrusted),
                 caller: null,
                 CancellationToken.None);
             await Resolver.RefreshAsync(CancellationToken.None);
-            Report($"{installed.PackageId} {installed.Version} ist aktiv.", failed: false);
+            Report(Summarize(result), failed: false);
             _pending = null;
+            _bytes = null;
+            _preview = null;
             _grants = "";
             _allowUntrusted = false;
+            _acceptSkills = false;
         }
         catch (Exception exception) when (exception is ConnectorPackageException or IOException
             or InvalidOperationException)
@@ -226,6 +308,29 @@
     {
         _message = message;
         _failed = failed;
+    }
+
+    /// <summary>
+    /// Eine abgelöste lokale Fassung gehört auf den Bildschirm, nicht ins Log: Wer den Text
+    /// angepasst hat, erfährt es sonst erst, wenn ein Agent sich anders verhält.
+    /// </summary>
+    private static string Summarize(ConnectorInstallResult result)
+    {
+        var text = $"{result.Package.PackageId} {result.Package.Version} ist aktiv.";
+        if (result.Skills.Count > 0)
+        {
+            text += $" {result.Skills.Count} Skill(s) eingespielt.";
+        }
+
+        if (result.ReplacedLocalEdits.Count > 0)
+        {
+            text += " Achtung: Bei "
+                + string.Join(", ", result.ReplacedLocalEdits.Select(s => s.Name))
+                + " lag eine lokal angepasste Fassung vor. Sie bleibt in der Historie und lässt sich "
+                + "unter Skills zurückschalten.";
+        }
+
+        return text;
     }
 
     private static IReadOnlyList<string> ParseGrants(string text)

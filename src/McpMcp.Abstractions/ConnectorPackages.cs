@@ -62,6 +62,38 @@ public sealed record ConnectorGrantRequest(
 public sealed record ConnectorPayload(string Path, string Sha256);
 
 /// <summary>
+/// Ein Skill, den ein Paket mitbringt (Material 0021-EM, Option B). Der Text liegt als gewöhnliche
+/// Nutzdatei im Archiv und ist damit über den Manifest-Hash <b>schon signiert</b> — das Paketformat
+/// musste dafür nicht geändert werden, die Nutzdatei bekommt nur eine Rolle.
+/// <para>
+/// <b>Warum ein Paket überhaupt Skills tragen soll:</b> <c>required-tools</c> kann der Gateway heute
+/// nur <em>prüfen</em> und melden, wenn ein Tool fehlt. Ein Paket, das Konnektor und Skill zusammen
+/// mitbringt, <em>stellt die Zusage her</em> — die Tools kommen mit.
+/// </para>
+/// <para>
+/// <b>Und warum das trotzdem heikel ist:</b> Ein Konnektor ist eingesperrt — WASI-Grants, eigener
+/// Prozess, Probe vor der Aktivierung. Ein Skill ist es nicht. Er ist Text, der ungefiltert in die
+/// Denkschleife eines Agenten geht, der Tools aufrufen darf. Es gibt keine Sandbox für einen Satz.
+/// Deshalb ist die Zustimmung hier an den <b>Textinhalt</b> gebunden und nicht an eine Kategorie,
+/// und deshalb gibt es dabei auch keinen Rabatt für vertrauenswürdige Herausgeber
+/// (<see cref="SkillConsentToken"/>).
+/// </para>
+/// </summary>
+/// <param name="Name">
+/// Name ohne Paketpräfix und ohne <c>/</c>. Installiert wird er als
+/// <c>&lt;paket-id&gt;/&lt;name&gt;</c> — so kann ein Paket einen handgeschriebenen Skill nicht
+/// überschatten.
+/// </param>
+/// <param name="Path">Pfad der Textdatei im Archiv; muss eine deklarierte Nutzdatei sein.</param>
+public sealed record ConnectorSkill(
+    string Name,
+    string Path,
+    string? Description = null,
+    string? WhenToUse = null,
+    IReadOnlyList<string>? References = null,
+    IReadOnlyList<string>? RequiredTools = null);
+
+/// <summary>
 /// Das signierte Manifest eines Connector-Pakets (ADR-0016, <c>mcpmcp.connector.v1</c>).
 /// <para>
 /// Signiert werden <b>genau diese Bytes</b>, und das Manifest nennt den SHA-256 jeder Nutzdatei.
@@ -82,7 +114,8 @@ public sealed record ConnectorManifest(
     IReadOnlyList<ConnectorPayload> Payloads,
     ConnectorGrantRequest? Grants = null,
     IReadOnlyList<string>? Platforms = null,
-    string? Description = null)
+    string? Description = null,
+    IReadOnlyList<ConnectorSkill>? Skills = null)
 {
     /// <summary>Der einzige Schemawert, den v1 kennt.</summary>
     public const string SchemaV1 = "mcpmcp.connector.v1";
@@ -91,6 +124,25 @@ public sealed record ConnectorManifest(
     public const string SupportedContractVersion = "1";
 
     public ConnectorGrantRequest GrantsOrNone => Grants ?? ConnectorGrantRequest.None;
+
+    public IReadOnlyList<ConnectorSkill> SkillsOrEmpty => Skills ?? [];
+
+    /// <summary>
+    /// Der Eintrag, dem ein Administrator zustimmen muss, damit dieser Skill eingespielt wird:
+    /// <c>skill:&lt;name&gt;@&lt;hash&gt;</c> mit dem SHA-256 des <b>Textes</b> (Kurzform).
+    /// <para>
+    /// Der Hash steht bewusst darin. Eine Zustimmung zu „skill:release" wäre eine Zustimmung zu
+    /// einem Namen — und beim nächsten Update stünde unter demselben Namen etwas anderes. Bindet
+    /// man sie an den Inhalt, verfällt sie, sobald sich der Text ändert. Das ist der einzige
+    /// Schutzmechanismus, den es hier gibt: Es gibt keine Sandbox für einen Satz.
+    /// </para>
+    /// </summary>
+    public string SkillConsentToken(ConnectorSkill skill)
+    {
+        ArgumentNullException.ThrowIfNull(skill);
+        var hash = Payloads.FirstOrDefault(p => string.Equals(p.Path, skill.Path, StringComparison.Ordinal))?.Sha256;
+        return $"skill:{skill.Name}@{(hash is null ? "?" : hash[..Math.Min(hash.Length, 12)])}";
+    }
 }
 
 /// <summary>Zustand einer installierten Paketversion.</summary>

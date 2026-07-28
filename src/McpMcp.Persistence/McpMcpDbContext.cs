@@ -120,6 +120,17 @@ public sealed class McpMcpDbContext : DbContext
             e.Property(r => r.WhenToUse).HasMaxLength(1000);
             e.Property(r => r.References).HasMaxLength(2000);
             e.Property(r => r.RequiredTools).HasMaxLength(2000);
+            e.Property(r => r.SourcePackageId).HasMaxLength(200);
+            e.Property(r => r.SourcePackageVersion).HasMaxLength(50);
+
+            // Skills werden ueber ihren NAMEN adressiert (assets__name, read_skill). Zwei Skills
+            // gleichen Namens waeren nicht unterscheidbar — ausgeliefert wuerde der erstbeste.
+            // Der Index steht auf (Name, Version) und nicht auf Name allein, weil derselbe Skill
+            // viele Zeilen hat: eine je Version. Jeder NEUE Skill beginnt bei Version 1, und die
+            // Zeile mit Version 1 bleibt (append-only) — ein zweiter gleichen Namens kollidiert
+            // deshalb zuverlaessig dort. Wer spaeter ein Umbenennen einfuehrt, muss das hier
+            // mitdenken.
+            e.HasIndex(r => new { r.Name, r.Version }).IsUnique();
         });
 
         modelBuilder.Entity<ToolDescriptionOverrideRow>(e =>
@@ -665,4 +676,9 @@ public sealed class AssetRow
 
     /// <summary>Vorausgesetzte namespaced Tool-Namen, zeilenweise getrennt.</summary>
     public string? RequiredTools { get; set; }
+
+    /// <summary>Paket, aus dem diese Version stammt; null heißt von Hand geschrieben.</summary>
+    public string? SourcePackageId { get; set; }
+
+    public string? SourcePackageVersion { get; set; }
 }

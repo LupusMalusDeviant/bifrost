@@ -24,6 +24,22 @@ public sealed record ConnectorInstallOptions(
     bool AllowUntrusted = false);
 
 /// <summary>
+/// Ergebnis einer Installation: das Paket <b>und</b> was es an Skills eingespielt hat.
+/// <para>
+/// Die Skills stehen hier und nicht nur im Log, weil einer davon eine lokal angepasste Fassung
+/// abgelöst haben kann. Das muss derjenige erfahren, der gerade installiert hat — hinterher fällt
+/// es niemandem mehr auf.
+/// </para>
+/// </summary>
+public sealed record ConnectorInstallResult(
+    InstalledConnectorPackage Package,
+    IReadOnlyList<SkillPublication> Skills)
+{
+    public IReadOnlyList<SkillPublication> ReplacedLocalEdits
+        => [.. Skills.Where(s => s.ReplacedLocalEdit)];
+}
+
+/// <summary>
 /// Installiert, aktualisiert und rollt Connector-Pakete zurück (ADR-0016).
 /// <para>
 /// Der Ablauf ist bewusst in dieser Reihenfolge: <b>prüfen → auspacken in Quarantäne → proben →
@@ -44,6 +60,7 @@ public sealed partial class ConnectorPackageInstaller
     private readonly TimeProvider _time;
     private readonly ILogger<ConnectorPackageInstaller>? _log;
     private readonly IAuditSink? _audit;
+    private readonly IAssetStore? _assets;
 
     public ConnectorPackageInstaller(
         string rootDirectory,
@@ -52,7 +69,8 @@ public sealed partial class ConnectorPackageInstaller
         ConnectorProbe probe,
         TimeProvider time,
         IAuditSink? audit = null,
-        ILogger<ConnectorPackageInstaller>? log = null)
+        ILogger<ConnectorPackageInstaller>? log = null,
+        IAssetStore? assets = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootDirectory);
         ArgumentNullException.ThrowIfNull(store);
@@ -67,6 +85,7 @@ public sealed partial class ConnectorPackageInstaller
         _time = time;
         _audit = audit;
         _log = log;
+        _assets = assets;
     }
 
     public string RootDirectory { get; }
@@ -77,7 +96,7 @@ public sealed partial class ConnectorPackageInstaller
     /// Installiert ein Paket und macht es zur aktiven Version. Eine bereits vorhandene Version
     /// desselben Pakets bleibt als <see cref="PackageState.Superseded"/> liegen.
     /// </summary>
-    public async Task<InstalledConnectorPackage> InstallAsync(
+    public async Task<ConnectorInstallResult> InstallAsync(
         Stream package, ConnectorInstallOptions options, IdentityId? caller, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(package);
@@ -147,7 +166,55 @@ public sealed partial class ConnectorPackageInstaller
             $"Herausgeber {verified.Publisher.KeyId}, Stufe {verified.TrustLevel}, Grants: "
             + (granted.Count == 0 ? "keine" : string.Join(", ", granted)), caller);
 
-        return (await _store.GetActiveAsync(manifest.Id, ct).ConfigureAwait(false))!;
+        // Erst NACH der Aktivierung. Ein Paket, dessen Probe scheitert, darf keine Anweisungen
+        // hinterlassen — die wären dann in Umlauf, ohne dass der Konnektor je gelaufen ist.
+        var skills = await PublishSkillsAsync(manifest, target, caller, ct).ConfigureAwait(false);
+
+        return new ConnectorInstallResult(
+            (await _store.GetActiveAsync(manifest.Id, ct).ConfigureAwait(false))!, skills);
+    }
+
+    /// <summary>
+    /// Spielt die mitgelieferten Skills ein (Material 0021-EM, Option B). Der Name bekommt das
+    /// Paketpräfix, damit ein Paket keinen handgeschriebenen Skill überschatten kann.
+    /// </summary>
+    private async Task<IReadOnlyList<SkillPublication>> PublishSkillsAsync(
+        ConnectorManifest manifest, string directory, IdentityId? caller, CancellationToken ct)
+    {
+        if (manifest.SkillsOrEmpty.Count == 0)
+        {
+            return [];
+        }
+
+        if (_assets is null)
+        {
+            // Kein stiller Verlust: Wer ein Paket mit Skills in eine Zusammenstellung ohne
+            // Skill-Ablage installiert, bekäme sonst den Konnektor und wüsste nie, dass die
+            // Anleitung dazu unter den Tisch gefallen ist.
+            throw new ConnectorPackageException(
+                $"'{manifest.Id}' bringt {manifest.SkillsOrEmpty.Count} Skill(s) mit, aber in dieser "
+                + "Zusammenstellung ist keine Skill-Ablage eingebunden.");
+        }
+
+        var source = new SkillSource(manifest.Id, manifest.Version);
+        var published = new List<SkillPublication>();
+        foreach (var skill in manifest.SkillsOrEmpty)
+        {
+            var path = Path.Combine(directory, skill.Path.Replace('/', Path.DirectorySeparatorChar));
+            var content = await File.ReadAllTextAsync(path, ct).ConfigureAwait(false);
+            var metadata = new SkillMetadata(skill.WhenToUse, skill.References, skill.RequiredTools);
+            var result = await _assets.PublishFromPackageAsync(
+                $"{manifest.Id}/{skill.Name}", skill.Description, content,
+                metadata.IsEmpty ? null : metadata, source, ct).ConfigureAwait(false);
+            published.Add(result);
+
+            Audit(
+                result.ReplacedLocalEdit ? "Skill aus Paket - lokale Fassung abgeloest" : "Skill aus Paket",
+                manifest.Id, manifest.Version,
+                $"{result.Name} Version {result.Version.Value}", caller);
+        }
+
+        return published;
     }
 
     /// <summary>

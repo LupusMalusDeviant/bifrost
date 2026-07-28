@@ -66,13 +66,25 @@ public sealed record SkillMetadata(
             && RequiredToolsOrEmpty.Count == 0;
 }
 
+/// <summary>
+/// Woher eine Skill-Version stammt, wenn sie nicht von Hand geschrieben wurde: aus einem
+/// installierten Connector-Paket (ADR-0016, Material 0021-EM).
+/// <para>
+/// Die Herkunft hängt an der <b>Version</b>, nicht am Skill. Genau das macht den Fall lesbar, um
+/// den es geht: Steht sie an der neuesten Version nicht, hat jemand den Text nach dem Installieren
+/// angepasst — und ein Paket-Update darf ihn nicht stillschweigend verdrängen.
+/// </para>
+/// </summary>
+public sealed record SkillSource(string PackageId, string PackageVersion);
+
 public sealed record AssetInfo(
     AssetId Id,
     string Name,
     string? Description,
     AssetVersion LatestVersion,
     DateTimeOffset UpdatedAt,
-    SkillMetadata? Metadata = null)
+    SkillMetadata? Metadata = null,
+    SkillSource? Source = null)
 {
     public SkillMetadata MetadataOrEmpty => Metadata ?? SkillMetadata.Empty;
 }
@@ -83,10 +95,23 @@ public sealed record AssetContent(
     string Name,
     string Content,
     DateTimeOffset PublishedAt,
-    SkillMetadata? Metadata = null)
+    SkillMetadata? Metadata = null,
+    SkillSource? Source = null)
 {
     public SkillMetadata MetadataOrEmpty => Metadata ?? SkillMetadata.Empty;
 }
+
+/// <summary>
+/// Was beim Einspielen eines Skills aus einem Paket passiert ist.
+/// </summary>
+/// <param name="ReplacedLocalEdit">
+/// Die bisherige neueste Fassung stammte <b>nicht</b> aus einem Paket — jemand hat den Text
+/// angepasst. Das Update wird trotzdem angehängt (die Historie behält beide), aber es wird
+/// <b>gemeldet</b>: Ein still verdrängter Text wäre genau der Vertrauensbruch, den die
+/// Versionierung verhindern soll.
+/// </param>
+public sealed record SkillPublication(
+    string Name, AssetId Id, AssetVersion Version, bool ReplacedLocalEdit);
 
 /// <summary>Ein Befund der Skill-Prüfung. Warnung, nicht Fehler — siehe <see cref="ISkillValidator"/>.</summary>
 public sealed record SkillFinding(string Field, string Message);
@@ -142,4 +167,21 @@ public interface IAssetStore
 
     /// <summary>Alle Versionen eines Skills, neueste zuerst — für Historie und Zurückschalten.</summary>
     Task<IReadOnlyList<AssetContent>> GetVersionsAsync(AssetId id, CancellationToken ct);
+
+    /// <summary>
+    /// Spielt einen Skill aus einem Paket ein: legt ihn unter <paramref name="name"/> an oder hängt
+    /// eine neue Version an, wenn es ihn schon gibt.
+    /// <para>
+    /// Als eigene Operation und nicht als Zusatzparameter an <see cref="CreateAsync"/>, weil die
+    /// Entscheidung „anlegen oder anhängen" eine Namenssuche braucht — die gehört in den Store, wo
+    /// die Namen liegen, und nicht in jeden Aufrufer.
+    /// </para>
+    /// </summary>
+    Task<SkillPublication> PublishFromPackageAsync(
+        string name,
+        string? description,
+        string content,
+        SkillMetadata? metadata,
+        SkillSource source,
+        CancellationToken ct);
 }

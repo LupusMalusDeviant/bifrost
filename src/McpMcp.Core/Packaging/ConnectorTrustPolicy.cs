@@ -50,20 +50,37 @@ public static class ConnectorTrustPolicy
                 + "Installation braucht eine ausdrückliche Freigabe — deny-by-default.");
         }
 
+        var accepted = new HashSet<string>(acceptedGrants ?? [], StringComparer.Ordinal);
+
+        // Skills IMMER einzeln bestätigen — auch bei 'Official'. Für einen Zugriff nach außen gibt
+        // es eine Laufzeitgrenze, die ihn durchsetzt; für einen Skill nicht. Er ist Text, der
+        // ungefiltert in die Denkschleife eines Agenten geht, der Tools aufrufen darf. Eine Stufe
+        // „vertrauenswürdig genug, um ungelesen zu bleiben" hätte hier keine technische Grundlage,
+        // sondern wäre eine reine Aussage über den Herausgeber (Material 0021-EM, Frage 2).
+        var skillTokens = manifest.SkillsOrEmpty.Select(manifest.SkillConsentToken).ToList();
+        var missingSkills = skillTokens.Where(t => !accepted.Contains(t)).ToList();
+        if (missingSkills.Count > 0)
+        {
+            throw new ConnectorPackageException(
+                $"'{manifest.Id}' bringt Skills mit, denen niemand zugestimmt hat: "
+                + $"{string.Join(", ", missingSkills)}. Ein Skill wird einem Agenten als Anweisung "
+                + "vorgelegt und ist durch nichts eingeschränkt — die Zustimmung gilt dem Text und "
+                + "verfällt, sobald er sich ändert.");
+        }
+
         var requested = manifest.GrantsOrNone.Enumerate();
         if (requested.Count == 0)
         {
-            return [];
+            return skillTokens;
         }
 
         if (level is ConnectorTrustLevel.Official)
         {
             // Ein offizielles Paket bekommt, was im Manifest steht. Das Manifest ist signiert, also
             // ist die Liste selbst nicht manipulierbar — sie bleibt im Audit sichtbar.
-            return requested;
+            return [.. requested, .. skillTokens];
         }
 
-        var accepted = new HashSet<string>(acceptedGrants ?? [], StringComparer.Ordinal);
         var missing = requested.Where(r => !accepted.Contains(r)).ToList();
         if (missing.Count > 0)
         {
@@ -75,6 +92,6 @@ public static class ConnectorTrustPolicy
 
         // Zugestimmt wird genau das Verlangte — eine Zustimmung zu etwas, das gar nicht im Manifest
         // steht, wird nicht zu einem Grant. Sonst wüchse die Berechtigung mit einem Tippfehler.
-        return requested;
+        return [.. requested, .. skillTokens];
     }
 }

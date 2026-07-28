@@ -137,11 +137,22 @@ namespace McpMcp.Persistence.Migrations.Sqlite.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("SourcePackageId")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourcePackageVersion")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("WhenToUse")
                         .HasMaxLength(1000)
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id", "Version");
+
+                    b.HasIndex("Name", "Version")
+                        .IsUnique();
 
                     b.ToTable("Assets");
                 });

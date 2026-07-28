@@ -43,6 +43,13 @@ public static class ConnectorPackageReader
     /// <summary>Das Manifest ist Metadaten, kein Nutzinhalt.</summary>
     public const long MaxManifestBytes = 1024 * 1024;
 
+    /// <summary>
+    /// Größter Skill-Text. Ein Skill wird einem Administrator zur Zustimmung vorgelegt und
+    /// anschließend in den Kontext eines Agenten geliefert — beides hat eine praktische Obergrenze,
+    /// weit unterhalb dessen, was ein Archiv tragen könnte.
+    /// </summary>
+    public const long MaxSkillBytes = 256 * 1024;
+
     public const string ManifestEntry = "manifest.json";
     public const string SignatureEntry = "manifest.sig";
 
@@ -118,6 +125,27 @@ public static class ConnectorPackageReader
         {
             WriteFile(root, payload.Path, ReadEntry(archive, payload.Path, MaxUnpackedBytes));
         }
+    }
+
+    /// <summary>
+    /// Liest die Texte der mitgelieferten Skills — damit sie einem Administrator <b>vor</b> der
+    /// Zustimmung gezeigt werden können. Erst nach <see cref="Verify"/> aufrufen: Vorher stünde
+    /// hinter dem Text niemand, und ihn dann anzuzeigen hieße, ihn zu beglaubigen.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> ReadSkillTexts(
+        Stream package, ConnectorManifest manifest)
+    {
+        ArgumentNullException.ThrowIfNull(package);
+        ArgumentNullException.ThrowIfNull(manifest);
+
+        using var archive = OpenArchive(package);
+        var texts = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var skill in manifest.SkillsOrEmpty)
+        {
+            texts[skill.Name] = Encoding.UTF8.GetString(ReadEntry(archive, skill.Path, MaxSkillBytes));
+        }
+
+        return texts;
     }
 
     private static ZipArchive OpenArchive(Stream package)
@@ -389,6 +417,69 @@ public static class ConnectorPackageReader
         {
             throw new ConnectorPackageException(
                 $"Die Signatur '{manifest.SignaturePath}' zum Entry Point ist keine deklarierte Datei.");
+        }
+
+        VerifySkills(archive, manifest, declared);
+    }
+
+    /// <summary>
+    /// Prüft die mitgelieferten Skills (Material 0021-EM, Option B). Der Text ist über die
+    /// Nutzdaten-Hashes schon abgedeckt; hier geht es um das, was das Format sonst nicht sieht:
+    /// Zeigt der Skill auf eine <b>signierte</b> Datei, ist sein Name benutzbar, und ist der Inhalt
+    /// überhaupt Text?
+    /// </summary>
+    private static void VerifySkills(
+        ZipArchive archive, ConnectorManifest manifest, HashSet<string> declaredPayloads)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var skill in manifest.SkillsOrEmpty)
+        {
+            if (string.IsNullOrWhiteSpace(skill.Name))
+            {
+                throw new ConnectorPackageException("Ein Skill im Manifest hat keinen Namen.");
+            }
+
+            // Der Paketname wird beim Installieren vorangestellt. Ein '/' im Namen würde diese
+            // Grenze verwischen — und genau darüber könnte ein Paket einen fremden Skill treffen.
+            if (skill.Name.Contains('/', StringComparison.Ordinal)
+                || skill.Name.Contains(NamespacedToolName.Separator, StringComparison.Ordinal))
+            {
+                throw new ConnectorPackageException(
+                    $"Skill-Name '{skill.Name}' enthält einen Trenner. Das Paketpräfix setzt der "
+                    + "Gateway, nicht das Manifest.");
+            }
+
+            if (!names.Add(skill.Name))
+            {
+                throw new ConnectorPackageException(
+                    $"Skill '{skill.Name}' ist im Manifest mehrfach deklariert.");
+            }
+
+            if (!declaredPayloads.Contains(skill.Path))
+            {
+                throw new ConnectorPackageException(
+                    $"Skill '{skill.Name}' verweist auf '{skill.Path}' — das ist keine deklarierte "
+                    + "Datei und damit nicht signiert.");
+            }
+
+            var content = ReadEntry(archive, skill.Path, MaxSkillBytes);
+            if (content.Length > MaxSkillBytes)
+            {
+                throw new ConnectorPackageException(
+                    $"Skill '{skill.Name}' ist größer als {MaxSkillBytes / 1024} KB.");
+            }
+
+            try
+            {
+                // Ein Skill wird einem Sprachmodell vorgelegt. Was kein Text ist, hat dort nichts
+                // verloren — und ein Prüfer, der es durchreicht, verschiebt den Fehler nur nach hinten.
+                _ = new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(content);
+            }
+            catch (ArgumentException)
+            {
+                throw new ConnectorPackageException(
+                    $"Skill '{skill.Name}' ist kein gültiges UTF-8.");
+            }
         }
     }
 
