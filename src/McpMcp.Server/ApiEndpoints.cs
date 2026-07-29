@@ -794,6 +794,105 @@ internal static class ApiEndpoints
     {
         // Verwaltung der Webhooks (FR-20). Der Trigger-Endpunkt selbst liegt außerhalb von /api
         // (unauthentifiziert, signaturgeschützt); hier nur das Anlegen/Auflisten/Entfernen.
+        // ── Management: Skills (FR-40) ───────────────────────────────────────
+        // Jeder andere Speicher hat eine REST-Flaeche; Skills hatten nur die Weboberflaeche. Fuer
+        // einen einzelnen Text geht das — fuer eine Sammlung aus Dutzenden Dateien, wie sie ein
+        // Agent mitbringt, ist Abtippen keine Bedienung. Ohne diese Endpunkte laesst sich der
+        // Bestand weder aus einem Repository befuellen noch versionieren noch sichern.
+        var skills = api.MapGroup("/skills").AddEndpointFilter(RequireAdminAsync);
+
+        skills.MapGet("/", async (IAssetStore store, CancellationToken ct) =>
+        {
+            var all = await store.ListAsync(ct);
+            return Results.Ok(new
+            {
+                skills = all.Select(a => new
+                {
+                    id = a.Id.Value,
+                    name = a.Name,
+                    description = a.Description,
+                    whenToUse = a.MetadataOrEmpty.WhenToUse,
+                    references = a.MetadataOrEmpty.ReferencesOrEmpty,
+                    requiredTools = a.MetadataOrEmpty.RequiredToolsOrEmpty,
+                    version = a.LatestVersion.Value,
+                    updatedAt = a.UpdatedAt,
+                    // Herkunft mitgeben: Wer per Skript pflegt, muss erkennen, was aus einem Paket
+                    // stammt und beim naechsten Update ueberschrieben wuerde (ADR-0021).
+                    source = a.Source is null ? null : $"{a.Source.PackageId}@{a.Source.PackageVersion}",
+                }),
+            });
+        });
+
+        skills.MapGet("/{id:guid}", async (
+            Guid id, int? version, IAssetStore store, CancellationToken ct) =>
+        {
+            try
+            {
+                var content = await store.GetAsync(
+                    new AssetId(id), version is { } v ? new AssetVersion(v) : null, ct);
+                return Results.Ok(new
+                {
+                    id = content.Id.Value,
+                    name = content.Name,
+                    version = content.Version.Value,
+                    whenToUse = content.MetadataOrEmpty.WhenToUse,
+                    references = content.MetadataOrEmpty.ReferencesOrEmpty,
+                    requiredTools = content.MetadataOrEmpty.RequiredToolsOrEmpty,
+                    content = content.Content,
+                });
+            }
+            catch (KeyNotFoundException exception)
+            {
+                return Results.NotFound(new { error = exception.Message });
+            }
+        });
+
+        skills.MapPost("/", async (
+            SkillCreate body, HttpContext ctx, IAssetStore store, ISkillValidator validator,
+            IAuditSink audit, TimeProvider time, CancellationToken ct) =>
+        {
+            var metadata = new SkillMetadata(body.WhenToUse, body.References, body.RequiredTools);
+            try
+            {
+                var id = await store.CreateAsync(
+                    body.Name, body.Description, body.Content, metadata.IsEmpty ? null : metadata, ct);
+                AuditManagement(audit, time, ctx, AuditEventKind.AssetChanged, null, $"skill-created:{body.Name}");
+
+                // Befunde sind Warnungen, keine Fehler (siehe ISkillValidator) — sie kommen mit der
+                // Antwort zurueck, damit ein Skript sie sieht, statt dass sie nur in der Oberflaeche
+                // erscheinen.
+                var findings = await validator.ValidateAsync(body.Name, metadata, ct);
+                return Results.Created($"/api/v1/skills/{id.Value}", new
+                {
+                    id = id.Value,
+                    findings = findings.Select(f => new { field = f.Field, message = f.Message }),
+                });
+            }
+            catch (InvalidOperationException exception)
+            {
+                // Doppelter Name oder Groessengrenze — beides sind Bedienfehler, keine Serverfehler.
+                return Results.BadRequest(new { error = exception.Message });
+            }
+        });
+
+        skills.MapPost("/{id:guid}/versions", async (
+            Guid id, SkillPublish body, HttpContext ctx, IAssetStore store, IAuditSink audit,
+            TimeProvider time, CancellationToken ct) =>
+        {
+            var metadata = new SkillMetadata(body.WhenToUse, body.References, body.RequiredTools);
+            try
+            {
+                var version = await store.PublishAsync(
+                    new AssetId(id), body.Content, metadata.IsEmpty ? null : metadata, ct);
+                AuditManagement(audit, time, ctx, AuditEventKind.AssetChanged, null, $"skill-published:{id}");
+                return Results.Ok(new { version = version.Value });
+            }
+            catch (InvalidOperationException exception)
+            {
+                return Results.BadRequest(new { error = exception.Message });
+            }
+        });
+
         var hooks = api.MapGroup("/webhooks").AddEndpointFilter(RequireAdminAsync);
 
         hooks.MapGet("/", async (IWebhookStore store, CancellationToken ct) =>
@@ -831,6 +930,20 @@ internal static class ApiEndpoints
     }
 
     private sealed record WebhookCreate(string Name, Guid CallerId, string Tool);
+
+    private sealed record SkillCreate(
+        string Name,
+        string Content,
+        string? Description = null,
+        string? WhenToUse = null,
+        IReadOnlyList<string>? References = null,
+        IReadOnlyList<string>? RequiredTools = null);
+
+    private sealed record SkillPublish(
+        string Content,
+        string? WhenToUse = null,
+        IReadOnlyList<string>? References = null,
+        IReadOnlyList<string>? RequiredTools = null);
 
     private static IdentityId Identity(HttpContext ctx) => (IdentityId)ctx.Items[ApiKeyAuthMiddleware.IdentityItemKey]!;
 

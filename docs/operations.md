@@ -300,6 +300,25 @@ nicht garantiert.
 hängt die alte Fassung als **neue** Version an, statt Geschichte zu überschreiben — dieselbe Regel
 wie bei der Server-Konfiguration.
 
+### Skills über die API pflegen
+
+Skills hatten lange nur die Weboberfläche. Für einen einzelnen Text reicht ein Formular; für die
+Skill-Sammlung eines Agenten — Dutzende Dateien mit Verweisen untereinander — ist Abtippen keine
+Bedienung. Deshalb gibt es die REST-Fläche, admin-only wie die übrigen Management-Endpunkte:
+
+| Methode | Pfad | Zweck |
+|---|---|---|
+| `GET` | `/api/v1/skills` | Bestand mit Angaben, Version und Herkunft |
+| `GET` | `/api/v1/skills/{id}?version=N` | ein Skill samt Text |
+| `POST` | `/api/v1/skills` | anlegen (`name`, `content`, optional `description`, `whenToUse`, `references`, `requiredTools`) |
+| `POST` | `/api/v1/skills/{id}/versions` | neue Version anhängen |
+
+Die **Befunde der Prüfung kommen mit der Antwort zurück** — ein Skript sieht die Oberfläche nicht,
+und ein Verweis ins Leere soll auffallen, auch wenn er nicht blockiert. Ein doppelter Name oder ein
+zu großer Text sind `400` mit Begründung, kein Serverfehler.
+
+Damit lässt sich der Bestand aus einem Repository befüllen, versionieren und sichern.
+
 ### Skills aus einem Paket
 
 Ein Connector-Paket kann die Skills mitbringen, die erklären, wie man seinen Konnektor benutzt
