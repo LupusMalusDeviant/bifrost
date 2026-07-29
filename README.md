@@ -6,7 +6,7 @@
 
 **A self-hosted meta-MCP gateway on .NET** — connect one endpoint to your agents, and manage all your MCP servers behind it.
 
-> **[Pre-release v0.6.0](https://github.com/LupusMalusDeviant/mcp-mcp/releases/tag/v0.6.0)** is the current build. It brings everything that had accumulated on `main` since v0.5.0 into a tagged state: WASI plugins with an out-of-process Rust host, container isolation for CLI upstreams, long-running tasks, the capability model, OpenRPC, signed connector packages, upstream OAuth, rug-pull protection, OTel traces, and skills with a schema, an editor and package delivery.
+> **[Pre-release v0.6.1](https://github.com/LupusMalusDeviant/mcp-mcp/releases/tag/v0.6.1)** is the current build. It brings everything that had accumulated on `main` since v0.5.0 into a tagged state: WASI plugins with an out-of-process Rust host, container isolation for CLI upstreams, long-running tasks, the capability model, OpenRPC, signed connector packages, upstream OAuth, rug-pull protection, OTel traces, and skills with a schema, an editor and package delivery.
 >
 > The version is deliberately below 1.0 — and it is marked as a **pre-release** for a reason: the code is feature-complete for its scope and covered by tests against SQLite *and* real PostgreSQL, but **it still has no operational uptime behind it**. 1.0 follows from running it, not from adding features.
 
@@ -144,6 +144,7 @@ The full design documentation lives in [`docs/`](docs/) — written in **German*
 | Skills | Declared metadata (when-to-use, references, required tools), validation against the live catalog, version history with rollback, size limit, and `list_skills` / `read_skill` as meta-tools | ✅ on `main` |
 | Skills in packages | A connector package carries the skills that explain its connector; consent is bound to the text, not the publisher ([ADR-0021](docs/adr/0021-skills-in-paketen.md)) | ✅ on `main`; a package type for skill bundles without a connector is decided but not built |
 | M9 "v0.6.0 pre-release" | Everything since v0.5.0 brought into a tagged build | ✅ [pre-release](https://github.com/LupusMalusDeviant/mcp-mcp/releases/tag/v0.6.0) |
+| First real operation | An instance running on real hardware — which immediately surfaced two defects no test could have found: a silently dropped session cookie over HTTP, and `http://` redirects behind a TLS proxy | ✅ fixed in [v0.6.1](https://github.com/LupusMalusDeviant/mcp-mcp/releases/tag/v0.6.1) |
 | "1.0" | Real-world operation over time — the one thing tests can't provide | ⏳ open |
 
 ## License
