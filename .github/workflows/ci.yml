@@ -234,13 +234,21 @@ jobs:
             exit 1
           fi
 
-      - name: Verify image size < 300 MB (WP7 DoD)
+      # Die Grenze stand auf 300 MB (WP7-DoD) und war fuer ein Image gedacht, das den WASI-Host
+      # noch nicht mitbrachte — der Dockerfile-Kommentar nannte damals ~230 MB. Seit ADR-0020 liegt
+      # wasmtime mit im Image, und mit v0.6.2 kommen die statischen Blazor-Ressourcen dazu, ohne
+      # die die Oberflaeche nicht bedienbar ist. Damit war 300 MB erreicht.
+      #
+      # Angehoben auf 350 statt abgeschafft: Die Schranke soll Wildwuchs abfangen, nicht jede
+      # legitime Ergaenzung anhalten. 50 MB Luft sind genug fuer echten Zuwachs und zu wenig, um
+      # ein verdoppeltes Image durchzulassen.
+      - name: Verify image size < 350 MB (WP7 DoD, angehoben in v0.6.2)
         run: |
           BYTES=$(docker image inspect mcpmcp:ci --format '{{.Size}}')
           MB=$((BYTES / 1024 / 1024))
           echo "Image size: ${MB} MB"
-          if [ "$MB" -ge 300 ]; then
-            echo "::error::Image ${MB} MB überschreitet die 300-MB-Grenze (WP7-DoD)."
+          if [ "$MB" -ge 350 ]; then
+            echo "::error::Image ${MB} MB überschreitet die 350-MB-Grenze (WP7-DoD)."
             exit 1
           fi
 

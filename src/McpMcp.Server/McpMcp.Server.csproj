@@ -11,6 +11,7 @@
       benutzbar aussahen. Gefunden erst im echten Betrieb.
     -->
     <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
+
   </PropertyGroup>
 
   <ItemGroup>
