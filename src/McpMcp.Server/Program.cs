@@ -457,6 +457,18 @@ if (!app.Environment.IsDevelopment())
     });
 }
 
+// Hinter einem TLS-Proxy (der vorgesehene Produktionsaufbau, NFR-04) sieht der Gateway selbst nur
+// HTTP. Ohne Auswertung der Forwarded-Header baut er absolute Adressen aus dem, was er sieht — und
+// schickt einen abgemeldeten Besucher von einer https-Seite auf eine http-Adresse. Beim ersten
+// echten Betrieb war das ein „400 The plain HTTP request was sent to HTTPS port".
+//
+// Bewusst OPT-IN: Wer X-Forwarded-Proto von jedem Absender glaubt, laesst sich von jedem Client
+// erzaehlen, die Verbindung sei sicher. Deshalb muss ein Betreiber sagen, WEM er glaubt.
+if (ForwardedProxyOptions.TryCreate(builder.Configuration["MCPMCP_TRUSTED_PROXIES"], out var forwarded))
+{
+    app.UseForwardedHeaders(forwarded);
+}
+
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();

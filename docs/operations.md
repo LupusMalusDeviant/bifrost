@@ -4,6 +4,26 @@ Praxisleitfaden zum Deployment und Betrieb. Zielgruppe: Self-hosted Single-Opera
 
 ### Die Web-UI braucht HTTPS — sonst hält die Anmeldung nicht
 
+**Hinter einem TLS-Proxy zusätzlich `MCPMCP_TRUSTED_PROXIES` setzen.** Sonst sieht der Gateway nur
+HTTP und baut seine Umleitungen daraus: Wer eine geschützte Seite abgemeldet aufruft, wird von einer
+`https`-Seite auf eine `http`-Adresse geschickt und bekommt vom Proxy ein
+`400 The plain HTTP request was sent to HTTPS port`.
+
+| Wert | Bedeutung |
+|---|---|
+| *(nicht gesetzt)* | Forwarded-Header werden **ignoriert** — richtig, wenn der Gateway direkt erreichbar ist |
+| `any` | jedem Absender glauben — nur, wenn der Gateway ausschließlich über den Proxy erreichbar ist |
+| `172.17.0.1` / `10.0.0.0/8` | Kommaliste aus Adressen und CIDR-Bereichen |
+
+Opt-in ist Absicht: Steht der Gateway direkt im Netz, könnte jeder Client `X-Forwarded-Proto: https`
+behaupten — und damit sowohl die Adressbildung als auch die Warnung oben aushebeln. Ein Tippfehler
+im Wert bricht den Start ab, statt still auf „aus" zu fallen.
+
+Der Proxy muss `X-Forwarded-Proto` **und** den Port im `Host` mitgeben (`proxy_set_header Host
+$http_host` — `$host` verwirft den Port). Für die Web-UI braucht er außerdem WebSockets
+(Blazor Interactive Server) und ungepufferte Antworten für `/mcp` (Server-Sent Events).
+
+
 Außerhalb von `Development` trägt das Sitzungs-Cookie immer `Secure` (NFR-04). **Ein Browser
 verwirft ein solches Cookie über Klartext-HTTP stillschweigend:** Die Anmeldung geht durch, der
 Server antwortet mit `302`, und der nächste Seitenaufruf ist wieder die Login-Maske. Es gibt weder
