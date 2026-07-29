@@ -57,6 +57,62 @@ public class SkillMetaToolTests
         result.Content!.Value.GetProperty("skills").EnumerateArray().Should().ContainSingle();
     }
 
+    /// <summary>
+    /// Ein mehrteiliger Skill (Einstieg + <c>references/…</c>) blähte die Liste um seine Bestandteile
+    /// auf, die niemand durchblättert. Bei 14 Einstiegen mit 61 Teilen war das der Unterschied
+    /// zwischen ~1900 und ~5000 Tokens — und damit genau das, was die schrittweise Offenlegung
+    /// verhindern soll.
+    /// </summary>
+    [Fact]
+    public async Task Parts_referenced_by_another_skill_stay_out_of_the_list()
+    {
+        await SeedAsync("mapper/references/format", null, "Beiwerk");
+        await SeedAsync("mapper", "Der Einstieg", "Text",
+            new SkillMetadata(References: ["mapper/references/format"]));
+        var agent = _w.RegisterAgent();
+
+        var result = await ExecuteAsync(agent, MetaToolService.ListSkillsName, new { });
+
+        // Der Teil ist über die Referenz des Einstiegs erreichbar, nicht über die Liste.
+        Names(result).Should().Equal(["mapper"]);
+    }
+
+    [Fact]
+    public async Task Parts_are_still_reachable_by_name_and_listable_on_request()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await SeedAsync("mapper/references/format", null, "Beiwerk");
+        await SeedAsync("mapper", null, "Text", new SkillMetadata(References: ["mapper/references/format"]));
+        var agent = _w.RegisterAgent();
+
+        var read = await ExecuteAsync(agent, MetaToolService.ReadSkillName,
+            new { name = "mapper/references/format" });
+        var full = await ExecuteAsync(agent, MetaToolService.ListSkillsName, new { includeParts = true });
+
+        read.Content!.Value.GetProperty("content").GetString().Should().Be("Beiwerk",
+            "ausgeblendet heißt nicht unerreichbar");
+        Names(full).Should().HaveCount(2, "wer alles sehen will, sagt es");
+    }
+
+    /// <summary>
+    /// Der Filter darf NICHT am Namen hängen: Ein Skill aus einem Paket heißt
+    /// <c>&lt;paket-id&gt;/&lt;skill&gt;</c> (ADR-0021) und ist trotzdem ein Einstieg. Ein Filter auf
+    /// „enthält einen Schrägstrich" hätte genau die verschwinden lassen.
+    /// </summary>
+    [Fact]
+    public async Task A_packaged_skill_stays_listed_although_its_name_contains_a_slash()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await _assets.PublishFromPackageAsync(
+            "com.example.echo/benutzung", "Aus dem Paket", "Inhalt", null,
+            new SkillSource("com.example.echo", "1.0.0"), ct);
+        var agent = _w.RegisterAgent();
+
+        var result = await ExecuteAsync(agent, MetaToolService.ListSkillsName, new { });
+
+        Names(result).Should().Equal(["com.example.echo/benutzung"]);
+    }
+
     [Fact]
     public async Task List_filters_by_query_over_name_and_description()
     {

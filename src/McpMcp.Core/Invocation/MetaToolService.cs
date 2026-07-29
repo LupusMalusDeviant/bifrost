@@ -58,10 +58,13 @@ public sealed class MetaToolService
         new(ListSkillsName,
             "List the skills (instructions, playbooks, conventions) published on this gateway. "
             + "Returns names and one-line descriptions only — call read_skill for the full text. "
+            + "Skills referenced by another skill are its parts and are hidden here; read_skill "
+            + "fetches them by the names the entry declares. "
             + "Worth checking once when a task looks like it might have an established procedure here.",
             ParseSchema("""
                 {"type":"object","properties":{
-                  "query":{"type":"string","description":"Optional keywords to filter by name or description."}}}
+                  "query":{"type":"string","description":"Optional keywords to filter by name or description."},
+                  "includeParts":{"type":"boolean","description":"Also list skills that are only referenced by another skill. Default false."}}}
                 """)),
         new(ReadSkillName,
             "Read the full text of one skill listed by list_skills. The result also names the "
@@ -269,6 +272,25 @@ public sealed class MetaToolService
 
         var all = await _assets.ListAsync(ct).ConfigureAwait(false);
 
+        // Teile ausblenden, die ein anderer Skill als Referenz führt. Ein mehrteiliger Skill
+        // (Einstieg + references/…) blähte die Liste sonst um seine Bestandteile auf, die niemand
+        // durchblättert — erreichbar sind sie über die Referenzen des Einstiegs. Bei 14 Einstiegen
+        // mit 61 Teilen war das der Unterschied zwischen ~1900 und ~5000 Tokens.
+        //
+        // Erkannt wird das an den DATEN, nicht an einer Namenskonvention: Ein Skill aus einem Paket
+        // heißt '<paket-id>/<skill>' (ADR-0021) und ist trotzdem ein Einstieg — ein Filter auf '/'
+        // hätte genau die verschwinden lassen.
+        if (!TryGetBool(args, "includeParts"))
+        {
+            var referenced = all
+                .SelectMany(a => a.MetadataOrEmpty.ReferencesOrEmpty)
+                .ToHashSet(StringComparer.Ordinal);
+            if (referenced.Count > 0)
+            {
+                all = [.. all.Where(a => !referenced.Contains(a.Name))];
+            }
+        }
+
         // Kein RBAC-Filter: Skills sind für jede authentifizierte Identität sichtbar (FR-40). Das
         // ist entschieden und getestet — deshalb steht hier auch kein `caller`.
         if (TryGetString(args, "query", out var query))
@@ -340,6 +362,11 @@ public sealed class MetaToolService
         CatalogEntryKind.Prompt => ToolAction.UsePrompt,
         _ => ToolAction.UseTool,
     };
+
+    private static bool TryGetBool(JsonElement args, string property)
+        => args.ValueKind is JsonValueKind.Object
+            && args.TryGetProperty(property, out var prop)
+            && prop.ValueKind is JsonValueKind.True;
 
     private static bool TryGetString(JsonElement args, string property, out string value)
     {
