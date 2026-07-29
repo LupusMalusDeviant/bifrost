@@ -16,6 +16,8 @@ using McpMcp.Upstream;
 using McpMcp.Web;
 using McpMcp.Web.Components;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using ModelContextProtocol.Protocol;
@@ -426,6 +428,33 @@ if (!keyRingProtected)
 if (AdminCommands.IsAdminCommand(args))
 {
     return await AdminCommands.RunAsync(app, args);
+}
+
+// Das Sitzungs-Cookie der Web-UI trägt außerhalb von Development immer 'Secure' (NFR-04). Ein
+// Browser verwirft ein solches Cookie über Klartext-HTTP **stillschweigend**: Die Anmeldung geht
+// durch, der nächste Seitenaufruf ist wieder anonym, und nirgends steht ein Grund. Genau das ist
+// beim ersten echten Betrieb passiert.
+//
+// Beim Start lässt sich NICHT entscheiden, ob davor ein TLS-Proxy steht — deshalb ist diese Zeile
+// eine Bedingung, keine Fehlermeldung. Die eindeutige Aussage kommt beim Login-Versuch selbst
+// (siehe AuthEndpoints); erst dort ist die Frage beantwortbar.
+if (!app.Environment.IsDevelopment())
+{
+    app.Lifetime.ApplicationStarted.Register(() =>
+    {
+        var addresses = app.Services.GetService<IServer>()?.Features
+            .Get<IServerAddressesFeature>()?.Addresses ?? [];
+        if (addresses.Count > 0 && addresses.All(a => a.StartsWith("http://", StringComparison.OrdinalIgnoreCase)))
+        {
+#pragma warning disable CA1848
+            app.Logger.LogWarning(
+                "Der Gateway lauscht nur auf HTTP ({Addresses}). Das Sitzungs-Cookie der Web-UI ist " +
+                "'Secure' — steht davor kein TLS-Proxy, verwirft der Browser es und die Anmeldung " +
+                "hält nicht über den nächsten Seitenaufruf hinaus. Mit TLS davor ist alles in Ordnung.",
+                string.Join(", ", addresses));
+#pragma warning restore CA1848
+        }
+    });
 }
 
 app.UseAuthentication();

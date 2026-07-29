@@ -2,6 +2,28 @@
 
 Praxisleitfaden zum Deployment und Betrieb. Zielgruppe: Self-hosted Single-Operator (ADR-0001).
 
+### Die Web-UI braucht HTTPS — sonst hält die Anmeldung nicht
+
+Außerhalb von `Development` trägt das Sitzungs-Cookie immer `Secure` (NFR-04). **Ein Browser
+verwirft ein solches Cookie über Klartext-HTTP stillschweigend:** Die Anmeldung geht durch, der
+Server antwortet mit `302`, und der nächste Seitenaufruf ist wieder die Login-Maske. Es gibt weder
+im Browser noch im Server eine Fehlermeldung — das Symptom zeigt nicht auf die Ursache.
+
+Deshalb sagt der Gateway es jetzt selbst: eine Zeile beim Start, wenn er nur auf HTTP lauscht, und
+eine **eindeutige** Zeile bei jeder Anmeldung, die über HTTP hereinkommt, ohne dass ein Proxy
+`X-Forwarded-Proto: https` gesetzt hat. Hinter einem TLS-Proxy erscheint sie nicht — eine Warnung,
+die beim korrekten Aufbau mitläuft, wird ignoriert.
+
+| Aufbau | Anmeldung hält? |
+|---|---|
+| TLS-Proxy davor, setzt `X-Forwarded-Proto: https` | ja |
+| direkt über HTTPS | ja |
+| `http://localhost:8080` (auch per SSH-Tunnel) | ja — Browser behandeln `localhost` als sicheren Ursprung |
+| `http://<ip-oder-name>:8080` | **nein** |
+
+Der Zugang über `/mcp` und `/api` ist davon **nicht** betroffen: Agenten authentifizieren sich mit
+einem API-Key im Header, nicht mit einem Cookie.
+
 ## Schnellstart (Docker)
 
 ```bash
