@@ -837,15 +837,15 @@ Das Schema wird beim Start automatisch über EF-Migrationen angelegt (siehe [Sch
 
 ## Schema & Upgrades
 
-Ab **v1.1** verwaltet der Gateway sein Datenbankschema über EF-Core-Migrationen. Beim Start passiert automatisch genau eine von drei Sachen — das Ergebnis steht im Log (`Datenbank initialisiert (…)`):
+Der Gateway verwaltet sein Datenbankschema über EF-Core-Migrationen. Beim Start passiert automatisch genau eine von drei Sachen — das Ergebnis steht im Log (`Datenbank initialisiert (…)`):
 
 | Vorgefunden | Aktion | Log-Ausgabe |
 |---|---|---|
 | Leere/neue DB | Schema aus Migrationen anlegen | `CreatedFromMigrations` |
-| **v1.0-DB** (per `EnsureCreated` erzeugt, ohne Migrationshistorie) | Initial-Migration als Baseline stempeln (**kein DDL, keine Datenänderung**), dann migrieren | `BaselinedLegacySchema` |
+| **Alt-DB** aus einem Build vor der Migrationsverwaltung (per `EnsureCreated` erzeugt, ohne Migrationshistorie) | Initial-Migration als Baseline stempeln (**kein DDL, keine Datenänderung**), dann migrieren | `BaselinedLegacySchema` |
 | Bereits migrationsverwaltet | ausstehende Migrationen anwenden | `Migrated` |
 
-### Upgrade von v1.0 auf v1.1
+### Upgrade einer Alt-Datenbank
 
 Es ist **kein manueller Schritt nötig** — der Gateway erkennt das Alt-Schema selbst und stempelt die Baseline. Trotzdem gilt die übliche Sorgfalt:
 
@@ -853,7 +853,7 @@ Es ist **kein manueller Schritt nötig** — der Gateway erkennt das Alt-Schema 
 2. **Datenverzeichnis sichern** (`mcpmcp.db` **und** `keys/`, siehe [Backup](#backup)).
 3. Neue Version starten und im Log `BaselinedLegacySchema` bestätigen.
 
-Beim Rollback auf v1.0 ist die zusätzliche Tabelle `__EFMigrationsHistory` unschädlich — v1.0 ignoriert sie.
+Bei einem Rollback auf einen solchen Alt-Build ist die zusätzliche Tabelle `__EFMigrationsHistory` unschädlich — er ignoriert sie.
 
 Jeder Provider hat eine eigene Migrations-Assembly (`McpMcp.Persistence.Migrations.Sqlite` bzw. `.Postgres`), weil SQLite und PostgreSQL unterschiedliches DDL brauchen. Beide sind im Image enthalten; die Auswahl erfolgt automatisch über `MCPMCP_DB_PROVIDER`.
 
@@ -936,7 +936,7 @@ Der Container-Healthcheck nutzt `dotnet McpMcp.Server.dll --healthcheck` (self-p
 
 Der DataProtection-Key-Ring unter `<datadir>/keys/` entschlüsselt die at-rest verschlüsselten Upstream-Credentials. Ohne Zusatzschutz liegt er im Klartext neben der Datenbank — der Gateway warnt beim Start entsprechend.
 
-Ab v1.1 lässt er sich mit einem X509-Zertifikat verschlüsseln (bewusst zertifikatsbasiert statt Cloud-KMS, damit es self-hosted funktioniert):
+Er lässt sich mit einem X509-Zertifikat verschlüsseln (bewusst zertifikatsbasiert statt Cloud-KMS, damit es self-hosted funktioniert):
 
 ```bash
 # Zertifikat einmalig erzeugen (Beispiel, OpenSSL):
@@ -948,11 +948,17 @@ MCPMCP_KEYRING_CERT_PATH=/secrets/keyring.pfx
 MCPMCP_KEYRING_CERT_PASSWORD=GEHEIM
 ```
 
+**Was das schützt und was nicht:** Liegt das PFX-Passwort in derselben Compose-Datei neben dem
+Volume, hat jemand mit Zugriff auf die Maschine beides. Der Gewinn liegt woanders und ist real:
+Ein **Backup oder ein Volume-Abzug** allein reicht dann nicht mehr, um an die gespeicherten
+Upstream-Credentials zu kommen. Wer mehr will, legt das PFX auf ein Medium, das nicht mitgesichert
+wird.
+
 Danach enthalten die XML-Dateien im Key-Ring nur noch verschlüsseltes Material. **Das Zertifikat wird zum Entschlüsseln gebraucht** — geht es verloren, sind die gespeicherten Upstream-Credentials unbrauchbar (die Server müssen dann neu konfiguriert werden). Zertifikat also getrennt vom Datenverzeichnis sichern. Beim Zertifikatswechsel bleibt Altmaterial lesbar, solange das alte Zertifikat weiterhin angegeben wird.
 
 ## Zugang zurücksetzen
 
-Bootstrap-Zugänge werden nur bei **leerer** DB erzeugt. Für verlorene Zugänge gibt es ab v1.1 zwei Kommandos, die gegen die konfigurierte Datenbank laufen, den Zugang **einmalig** ausgeben und sich beenden, ohne den Gateway zu starten:
+Bootstrap-Zugänge werden nur bei **leerer** DB erzeugt. Für verlorene Zugänge gibt es zwei Kommandos, die gegen die konfigurierte Datenbank laufen, den Zugang **einmalig** ausgeben und sich beenden, ohne den Gateway zu starten:
 
 ```bash
 # UI-Passwort zurücksetzen (Default-Benutzer "admin"; Rolle bleibt unverändert,
