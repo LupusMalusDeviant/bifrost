@@ -494,6 +494,15 @@ if (oauthResourceServer is not null)
     app.MapGet("/.well-known/oauth-protected-resource", () => Results.Json(protectedResourceMetadata));
 }
 app.MapWebhookEndpoint();
+
+// Die UI ist selbstenthaltend (CSS inline in App.razor, Favicon als Data-URI) — deshalb fehlte
+// hier lange jede statische Auslieferung. Genau EINE Datei laesst sich aber nicht inlinen:
+// '_framework/blazor.web.js'. Ohne sie startet der Blazor-Circuit nie, und dann tut in der
+// gesamten Oberflaeche kein @onclick und kein @bind etwas — waehrend die Seiten weiterhin
+// serverseitig gerendert werden und deshalb benutzbar AUSSEHEN. Genau so ist es beim ersten
+// echten Betrieb aufgefallen.
+app.MapStaticAssets();
+
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));

@@ -2,6 +2,15 @@
 
   <PropertyGroup>
     <Description>ASP.NET-Core-Host: MCP-Endpoint, REST-Fassade, AuthN, Health. Einziges src-Projekt neben Upstream mit MCP-SDK-Sicht (Server-Seite, ab WP4).</Description>
+    <!--
+      Der SDK setzt RequiresAspNetWebAssets nur automatisch, wenn das Projekt SELBST .razor-Dateien
+      enthaelt. Unsere liegen alle in der Razor-Klassenbibliothek McpMcp.Web (ADR-0004) — dadurch
+      wurde 'Microsoft.AspNetCore.App.Internal.Assets' nie eingebunden und '_framework/blazor.web.js'
+      lief ins Leere. Folge: Der Blazor-Circuit startete nie, und in der GESAMTEN Oberflaeche tat kein
+      @onclick und kein @bind etwas — waehrend die Seiten serverseitig gerendert wurden und deshalb
+      benutzbar aussahen. Gefunden erst im echten Betrieb.
+    -->
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
   </PropertyGroup>
 
   <ItemGroup>
