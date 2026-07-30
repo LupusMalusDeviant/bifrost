@@ -71,15 +71,73 @@ public interface IApprovalStore
 }
 
 /// <summary>
-/// Pflegt, welche Tools eine Freigabe erfordern (FR-32) — zur Laufzeit über die UI, ohne Neustart.
+/// Wie die Schärfe eines Tools durchgesetzt wird. <b>Nicht zu verwechseln mit der Frage, OB ein
+/// Tool scharf ist</b> — das ist die Markierung, dies hier ist der Weg.
+/// <para>
+/// Die Trennung ist der Kern von ADR-0022. Vorher bedeutete ein einziges Häkchen zweierlei
+/// zugleich: „gefährlich" <em>und</em> „über die Warteschlange". Wer die Warteschlange abschaltete,
+/// löschte damit auch das Wissen, welches Werkzeug überhaupt gefährlich ist — und dieses Wissen
+/// ist genau das, was der schärfere Aufrufweg braucht.
+/// </para>
+/// </summary>
+public enum ApprovalEnforcement
+{
+    /// <summary>
+    /// Der Aufruf wartet, bis ein Mensch in Oberfläche oder CLI entscheidet (FR-32, ADR-0012).
+    /// Der Schutz liegt im Gateway und gilt für <b>jeden</b> Client. Das bisherige Verhalten und
+    /// weiterhin der Vorgabewert.
+    /// </summary>
+    Queue = 0,
+
+    /// <summary>
+    /// Das Gateway führt sofort aus, verlangt aber den Aufruf über <c>invoke_sensitive_tool</c>
+    /// statt <c>invoke_tool</c> — damit ein Client seine eigene Rückfrage genau auf die scharfen
+    /// Werkzeuge legen kann, statt auf alle oder auf keins.
+    /// <para>
+    /// <b>Das Gateway hält hier nichts mehr auf.</b> Der Schutz hängt daran, dass der Client
+    /// tatsächlich fragt; ein Client, der nicht fragt, kommt ungebremst durch. Deshalb ist das
+    /// eine bewusste Entscheidung je Werkzeug und nicht der Vorgabewert. Protokolliert wird
+    /// unverändert alles.
+    /// </para>
+    /// </summary>
+    Client = 1,
+}
+
+/// <summary>
+/// Pflegt, welche Tools scharf sind und wie das durchgesetzt wird (FR-32) — zur Laufzeit über die
+/// UI, ohne Neustart.
 /// </summary>
 public interface IApprovalPolicy
 {
+    /// <summary>
+    /// Muss dieser Aufruf in die Warteschlange? Nur bei <see cref="ApprovalEnforcement.Queue"/>.
+    /// <para>
+    /// Bewusst <em>nicht</em> gleichbedeutend mit <see cref="IsSensitive"/>: Ein Werkzeug im
+    /// Client-Modus bleibt scharf, wird hier aber nicht aufgehalten.
+    /// </para>
+    /// </summary>
     bool RequiresApproval(NamespacedToolName tool);
+
+    /// <summary>
+    /// Ist dieses Werkzeug als scharf markiert — unabhängig davon, wie das durchgesetzt wird?
+    /// Das ist die Frage, an der der Aufrufweg hängt.
+    /// </summary>
+    bool IsSensitive(NamespacedToolName tool);
+
+    /// <summary>Der Durchsetzungsweg, oder <c>null</c>, wenn das Werkzeug nicht markiert ist.</summary>
+    ApprovalEnforcement? EnforcementFor(NamespacedToolName tool);
 
     IReadOnlyCollection<NamespacedToolName> All { get; }
 
+    /// <summary>
+    /// Markiert oder entmarkiert. <c>required: true</c> markiert mit
+    /// <see cref="ApprovalEnforcement.Queue"/> — der sichere Vorgabewert, damit ein Aufrufer, der
+    /// den Weg nicht angibt, nicht versehentlich den schwächeren bekommt.
+    /// </summary>
     Task SetAsync(NamespacedToolName tool, bool required, CancellationToken ct);
+
+    /// <summary>Markiert mit einem ausdrücklich gewählten Weg; <c>null</c> entfernt die Markierung.</summary>
+    Task SetAsync(NamespacedToolName tool, ApprovalEnforcement? enforcement, CancellationToken ct);
 
     event EventHandler? Changed;
 }

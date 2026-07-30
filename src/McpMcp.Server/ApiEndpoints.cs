@@ -414,15 +414,44 @@ internal static class ApiEndpoints
         });
 
         approvals.MapGet("/tools", (IApprovalPolicy policy) =>
-            Results.Ok(policy.All.Select(t => t.Value)));
+            Results.Ok(policy.All.Select(t => new
+            {
+                tool = t.Value,
+                mode = policy.EnforcementFor(t)?.ToString(),
+            })));
 
         approvals.MapPost("/tools", async (
             ApprovalToolToggle body, HttpContext ctx, IApprovalPolicy policy, IAuditSink audit,
             TimeProvider time, CancellationToken ct) =>
         {
-            await policy.SetAsync(new NamespacedToolName(body.Tool), body.Required, ct);
+            ApprovalEnforcement? enforcement;
+            if (!body.Required)
+            {
+                enforcement = null;
+            }
+            else if (body.Mode is null)
+            {
+                enforcement = ApprovalEnforcement.Queue;
+            }
+            else if (Enum.TryParse<ApprovalEnforcement>(body.Mode, ignoreCase: true, out var parsed))
+            {
+                enforcement = parsed;
+            }
+            else
+            {
+                // Laut scheitern statt still auf Queue fallen: Ein Tippfehler soll nicht als
+                // "hat funktioniert" durchgehen — der Aufrufer glaubte sonst, er habe den
+                // Client-Modus gesetzt.
+                return Results.BadRequest(
+                    $"Unbekannter Modus '{body.Mode}'. Erlaubt: "
+                    + string.Join(", ", Enum.GetNames<ApprovalEnforcement>()));
+            }
+
+            await policy.SetAsync(new NamespacedToolName(body.Tool), enforcement, ct);
             AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null,
-                $"approval-tool-{(body.Required ? "required" : "cleared")}:{body.Tool}");
+                enforcement is { } set
+                    ? $"approval-tool-required-{set}:{body.Tool}"
+                    : $"approval-tool-cleared:{body.Tool}");
             return Results.NoContent();
         });
 
@@ -702,7 +731,13 @@ internal static class ApiEndpoints
         });
     }
 
-    private sealed record ApprovalToolToggle(string Tool, bool Required);
+    /// <summary>
+    /// <paramref name="Mode"/> ist optional und bleibt leer der alte Vertrag: <c>Required=true</c>
+    /// ohne Angabe heisst weiterhin Warteschlange. Ein Skript, das diesen Endpunkt vor ADR-0022
+    /// benutzt hat, bekommt damit unveraendert den strengeren Weg — der schwaechere muss
+    /// ausdruecklich verlangt werden.
+    /// </summary>
+    private sealed record ApprovalToolToggle(string Tool, bool Required, string? Mode = null);
 
     /// <summary>
     /// Verwaltung der vertrauenswürdigen Publisher für WASI-Components (Plan 0003, WP4).

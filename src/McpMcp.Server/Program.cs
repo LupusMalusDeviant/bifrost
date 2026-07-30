@@ -291,7 +291,10 @@ builder.Services.AddSingleton(sp => new MetaToolService(
     sp.GetRequiredService<IAuditSink>(),
     sp.GetRequiredService<IRedactionService>(),
     sp.GetRequiredService<TimeProvider>(),
-    sp.GetRequiredService<IAssetStore>()));
+    sp.GetRequiredService<IAssetStore>(),
+    // Ohne die Politik wuesste invoke_sensitive_tool nicht, WELCHE Werkzeuge scharf sind — die
+    // Weiche fiele auf "nichts ist scharf" zurueck und beide Tueren staenden fuer alles offen.
+    sp.GetRequiredService<IApprovalPolicy>()));
 
 // ── MCP-Endpoint (WP4.2) + REST-Fassade (WP5) ────────────────────────────────
 builder.Services.AddHttpContextAccessor();

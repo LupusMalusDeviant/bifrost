@@ -108,6 +108,13 @@ internal sealed class InvokerTestWorld
     public MetaToolService WithAssets(IAssetStore assets)
         => new(Catalog, Authorization, Invoker, Audit, Redaction, Time, assets);
 
+    /// <summary>
+    /// Meta-Tools, die wissen, welche Werkzeuge scharf sind — Voraussetzung für die Weiche zwischen
+    /// <c>invoke_tool</c> und <c>invoke_sensitive_tool</c> (ADR-0022).
+    /// </summary>
+    public MetaToolService WithApprovalPolicy(IApprovalPolicy policy)
+        => new(Catalog, Authorization, Invoker, Audit, Redaction, Time, assets: null, approvalPolicy: policy);
+
     /// <summary>Zweiter Invoker auf derselben Welt — für Schalter, die im Konstruktor festgelegt werden.</summary>
     public ToolInvoker WithAuditOptions(AuditOptions options)
         => new(Authorization, RateLimiter, Catalog, Supervisor, Audit, Redaction, Time, logger: null, options);

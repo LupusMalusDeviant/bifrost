@@ -54,19 +54,44 @@
 
 <AuthorizeView Policy="@UiPolicies.Admin">
     <div class="card">
-        <h3 style="margin-top:0">Freigabepflichtige Tools</h3>
-        <p class="muted">Welche Tools eine Freigabe verlangen — zur Laufzeit, ohne Neustart.</p>
+        <h3 style="margin-top:0">Scharfe Tools</h3>
+        <p class="muted">
+            Welche Tools als gefährlich gelten — und wie das durchgesetzt wird. Zur Laufzeit, ohne
+            Neustart.
+        </p>
+        <ul class="muted" style="margin:0 0 1rem 1.1rem;padding:0">
+            <li>
+                <b>Warteschlange</b> — der Aufruf wartet hier auf deine Entscheidung. Das Gateway
+                hält ihn auf, unabhängig davon, welcher Client fragt.
+            </li>
+            <li>
+                <b>Client fragt</b> — das Gateway führt sofort aus, verlangt aber den Aufruf über
+                <code>invoke_sensitive_tool</code>. Damit kann ein Client seine eigene Rückfrage
+                genau auf diese Werkzeuge legen. <b>Das Gateway hält dann nichts mehr auf:</b> Ein
+                Client, der nicht fragt, kommt ungebremst durch. Protokolliert wird weiterhin alles.
+            </li>
+        </ul>
         <div class="table-wrap">
             <table>
-                <thead><tr><th>Tool</th><th>Freigabepflichtig</th></tr></thead>
+                <thead><tr><th>Tool</th><th>Durchsetzung</th></tr></thead>
                 <tbody>
                     @foreach (var tool in _allTools)
                     {
                         <tr>
                             <td class="mono">@tool.Value</td>
                             <td>
-                                <input type="checkbox" checked="@_required.Contains(tool)" style="width:auto"
-                                       @onchange="e => SetRequired(tool, (bool)e.Value!)" />
+                                <select style="width:auto"
+                                        @onchange="e => SetEnforcement(tool, (string?)e.Value)">
+                                    <option value="" selected="@(!_marked.ContainsKey(tool))">nicht scharf</option>
+                                    <option value="@nameof(ApprovalEnforcement.Queue)"
+                                            selected="@(_marked.TryGetValue(tool, out var q) && q == ApprovalEnforcement.Queue)">
+                                        Warteschlange
+                                    </option>
+                                    <option value="@nameof(ApprovalEnforcement.Client)"
+                                            selected="@(_marked.TryGetValue(tool, out var c) && c == ApprovalEnforcement.Client)">
+                                        Client fragt
+                                    </option>
+                                </select>
                             </td>
                         </tr>
                     }
@@ -79,7 +104,7 @@
 @code {
     private IReadOnlyList<ApprovalRequest> _pending = [];
     private IReadOnlyList<NamespacedToolName> _allTools = [];
-    private HashSet<NamespacedToolName> _required = [];
+    private Dictionary<NamespacedToolName, ApprovalEnforcement> _marked = [];
     private string? _message;
 
     protected override async Task OnInitializedAsync() => await Reload();
@@ -89,7 +114,10 @@
         _pending = await ApprovalQueue.ListAsync(ApprovalState.Pending, CancellationToken.None);
         _allTools = Catalog.Snapshot.Where(e => e.Kind == CatalogEntryKind.Tool)
             .Select(e => e.Name).OrderBy(n => n.Value, StringComparer.Ordinal).ToList();
-        _required = [.. Policy.All];
+        _marked = Policy.All
+            .Select(t => (Tool: t, Mode: Policy.EnforcementFor(t)))
+            .Where(x => x.Mode is not null)
+            .ToDictionary(x => x.Tool, x => x.Mode!.Value);
     }
 
     private async Task<string> UserAsync()
@@ -106,11 +134,30 @@
         await Reload();
     }
 
-    private async Task SetRequired(NamespacedToolName tool, bool required)
+    private async Task SetEnforcement(NamespacedToolName tool, string? mode)
     {
-        await Policy.SetAsync(tool, required, CancellationToken.None);
+        // Leer heisst "nicht scharf". Ein unbekannter Wert kaeme nur aus einer manipulierten
+        // Auswahlliste — dann lieber nichts tun als raten.
+        ApprovalEnforcement? enforcement = null;
+        if (!string.IsNullOrEmpty(mode))
+        {
+            if (!Enum.TryParse<ApprovalEnforcement>(mode, ignoreCase: true, out var parsed))
+            {
+                return;
+            }
+
+            enforcement = parsed;
+        }
+
+        await Policy.SetAsync(tool, enforcement, CancellationToken.None);
         UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged,
-            $"approval-tool-{(required ? "required" : "cleared")}:{tool.Value}");
+            enforcement is { } set
+                ? $"approval-tool-required-{set}:{tool.Value}"
+                : $"approval-tool-cleared:{tool.Value}");
+        _message = enforcement is ApprovalEnforcement.Client
+            ? $"'{tool.Value}': Das Gateway haelt diesen Aufruf nicht mehr auf — es verlangt nur noch "
+              + "den Weg über invoke_sensitive_tool. Der Schutz liegt jetzt beim Client."
+            : null;
         await Reload();
     }
 }

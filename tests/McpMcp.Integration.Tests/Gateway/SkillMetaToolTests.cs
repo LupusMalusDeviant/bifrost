@@ -88,7 +88,7 @@ public sealed class SkillMetaToolTests : IClassFixture<GatewayFixture>
     public void Every_defined_meta_tool_is_recognised_as_one()
         => MetaToolService.Definitions.Should()
             .OnlyContain(d => MetaToolService.IsMetaTool(d.Name))
-            .And.HaveCount(5);
+            .And.HaveCount(6);
 
     /// <summary>
     /// Ein Aufruf eines Skill-Tools steht im Audit — wie jeder andere. Ohne das wäre der

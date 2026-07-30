@@ -108,9 +108,13 @@ public class MetaToolServiceTests
         // Fünf seit dem 2026-07-28: list_skills/read_skill sind dazugekommen, damit ein Agent den
         // Skill-Bestand selbst durchsehen kann. Über MCP-Prompts geht das nicht — die sind in den
         // meisten Clients nutzerinitiiert, das Modell sieht sie nicht.
-        MetaToolService.Definitions.Should().HaveCount(5);
+        // Sechs seit dem 2026-07-30: invoke_sensitive_tool (ADR-0022). Der zweite Name ist der
+        // ganze Zweck — ein Client kann seine Rückfrage nur je Tool-NAMEN einstellen und sieht
+        // sonst nicht, ob hinter dem Aufruf 'uptime' oder 'rm -rf' steckt.
+        MetaToolService.Definitions.Should().HaveCount(6);
         MetaToolService.Definitions.Select(d => d.Name).Should().BeEquivalentTo(
-            "search_tools", "describe_tool", "invoke_tool", "list_skills", "read_skill");
+            "search_tools", "describe_tool", "invoke_tool", "invoke_sensitive_tool",
+            "list_skills", "read_skill");
         MetaToolService.Definitions.Should().OnlyContain(
             d => d.InputSchema.ValueKind == System.Text.Json.JsonValueKind.Object);
         MetaToolService.IsMetaTool("search_tools").Should().BeTrue();

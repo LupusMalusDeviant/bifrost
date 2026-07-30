@@ -18,8 +18,13 @@ public class ApprovalFlowTests
         private readonly HashSet<NamespacedToolName> _tools;
         public FakePolicy(params NamespacedToolName[] tools) => _tools = [.. tools];
         public bool RequiresApproval(NamespacedToolName tool) => _tools.Contains(tool);
+        public bool IsSensitive(NamespacedToolName tool) => _tools.Contains(tool);
+        public ApprovalEnforcement? EnforcementFor(NamespacedToolName tool)
+            => _tools.Contains(tool) ? ApprovalEnforcement.Queue : null;
         public IReadOnlyCollection<NamespacedToolName> All => _tools;
         public Task SetAsync(NamespacedToolName tool, bool required, CancellationToken ct) => Task.CompletedTask;
+        public Task SetAsync(NamespacedToolName tool, ApprovalEnforcement? enforcement, CancellationToken ct)
+            => Task.CompletedTask;
         public event EventHandler? Changed { add { } remove { } }
     }
 

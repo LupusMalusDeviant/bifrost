@@ -188,6 +188,8 @@ public sealed class McpMcpDbContext : DbContext
         {
             e.HasKey(r => r.Tool);
             e.Property(r => r.Tool).HasMaxLength(300);
+            e.Property(r => r.Mode).HasMaxLength(20)
+                .HasDefaultValue(nameof(ApprovalEnforcement.Queue));
         });
 
         modelBuilder.Entity<PublisherKeyRow>(e =>
@@ -523,6 +525,14 @@ public sealed class TaskRow
 public sealed class ApprovalToolRow
 {
     public string Tool { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Der Durchsetzungsweg als Name des Enum-Werts, nicht als Zahl. Diese Tabelle liest im
+    /// Zweifel ein Mensch mit <c>sqlite3</c>, wenn er wissen will, warum ein Aufruf durchging —
+    /// „Client" beantwortet das, „1" nicht. Vorgabe ist der strengere Weg, damit eine Zeile ohne
+    /// Angabe (alle bestehenden) nicht stillschweigend schwächer wird.
+    /// </summary>
+    public string Mode { get; set; } = nameof(ApprovalEnforcement.Queue);
 }
 
 /// <summary>Ein registrierter Webhook (FR-20, ADR-0013).</summary>

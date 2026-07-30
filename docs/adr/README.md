@@ -40,6 +40,7 @@ Ein Architecture Decision Record dokumentiert eine einzelne, wichtige Architektu
 | [0020](./0020-wasi-runtime-out-of-process-rust-host.md) | WASI-Runtime als Out-of-Process-Rust-Host hinter dem Connector-Vertrag | Akzeptiert | 2026-07-24 | — |
 | [0021](./0021-skills-in-paketen.md) | Skills in Paketen — Zustimmung gilt dem Text; eigener Pakettyp für Skill-Bündel noch offen | Akzeptiert | 2026-07-28 | ergänzt [0016](./0016-versionierter-connector-plugin-vertrag.md) |
 | [0021-EM](./0021-entscheidungsmaterial-skills-im-paket.md) | Entscheidungsmaterial: Skills im Paket — vier Optionen, fünf Fragen | Material | 2026-07-28 | Grundlage für [0021](./0021-skills-in-paketen.md) |
+| [0022](./0022-schaerfe-und-durchsetzung-trennen.md) | Schärfe und Durchsetzung trennen — zweite Tür `invoke_sensitive_tool` | Akzeptiert | 2026-07-30 | ergänzt [0012](./0012-approval-flows-asynchron.md) |
 
 ## Beitragen
 

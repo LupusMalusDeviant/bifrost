@@ -18,6 +18,20 @@ public sealed class MetaToolService
     public const string SearchToolsName = "search_tools";
     public const string DescribeToolName = "describe_tool";
     public const string InvokeToolName = "invoke_tool";
+
+    /// <summary>
+    /// Derselbe Aufruf wie <see cref="InvokeToolName"/>, aber ausschließlich für als scharf
+    /// markierte Werkzeuge (ADR-0022).
+    /// <para>
+    /// <b>Der Sinn liegt im Namen, nicht im Verhalten.</b> Ein MCP-Client kann seine Rückfrage nur
+    /// je Tool<em>namen</em> einstellen — er sieht ja nur <c>invoke_tool</c> und nicht, was
+    /// dahinter steckt. Wer also für <c>invoke_tool</c> nachfragen lässt, wird auch bei
+    /// <c>list_servers</c> gefragt; wer es abschaltet, bei <c>execute_command</c> nicht mehr. Mit
+    /// zwei Namen fällt die Grenze des Clients mit der Grenze der Gefahr zusammen.
+    /// </para>
+    /// </summary>
+    public const string InvokeSensitiveToolName = "invoke_sensitive_tool";
+
     public const string ListSkillsName = "list_skills";
     public const string ReadSkillName = "read_skill";
 
@@ -35,17 +49,32 @@ public sealed class MetaToolService
                  "required":["query"]}
                 """)),
         new(DescribeToolName,
-            "Get the full description and JSON input schema of one tool found via search_tools.",
+            "Get the full description and JSON input schema of one tool found via search_tools. "
+            + "The result also says whether the tool is sensitive and which of invoke_tool / "
+            + "invoke_sensitive_tool to call it with.",
             ParseSchema("""
                 {"type":"object","properties":{
                   "name":{"type":"string","description":"Namespaced tool name, e.g. github__create_issue."}},
                  "required":["name"]}
                 """)),
         new(InvokeToolName,
-            "Invoke any permitted tool by its namespaced name with a JSON arguments object.",
+            "Invoke any permitted tool by its namespaced name with a JSON arguments object. "
+            + "Tools marked as sensitive are refused here — use invoke_sensitive_tool for those; "
+            + "the error names the tool to use.",
             ParseSchema("""
                 {"type":"object","properties":{
                   "name":{"type":"string","description":"Namespaced tool name, e.g. github__create_issue."},
+                  "arguments":{"type":"object","description":"Arguments matching the tool's input schema."}},
+                 "required":["name"]}
+                """)),
+        new(InvokeSensitiveToolName,
+            "Invoke a tool that this gateway marks as sensitive — the ones that change or destroy "
+            + "things (shell commands, deployments, resets). Identical to invoke_tool otherwise. "
+            + "Only sensitive tools are accepted here; anything else is refused and belongs in "
+            + "invoke_tool. Expect your client to ask the human before this call goes out.",
+            ParseSchema("""
+                {"type":"object","properties":{
+                  "name":{"type":"string","description":"Namespaced tool name, e.g. whiskers__execute_command."},
                   "arguments":{"type":"object","description":"Arguments matching the tool's input schema."}},
                  "required":["name"]}
                 """)),
@@ -92,9 +121,11 @@ public sealed class MetaToolService
     /// </para>
     /// </summary>
     public static bool ForwardsUpstreamResult(string toolName)
-        => string.Equals(toolName, InvokeToolName, StringComparison.Ordinal);
+        => string.Equals(toolName, InvokeToolName, StringComparison.Ordinal)
+        || string.Equals(toolName, InvokeSensitiveToolName, StringComparison.Ordinal);
 
     private readonly IAssetStore? _assets;
+    private readonly IApprovalPolicy? _approvalPolicy;
 
     public MetaToolService(
         IToolCatalog catalog,
@@ -103,7 +134,8 @@ public sealed class MetaToolService
         IAuditSink audit,
         IRedactionService redaction,
         TimeProvider? timeProvider = null,
-        IAssetStore? assets = null)
+        IAssetStore? assets = null,
+        IApprovalPolicy? approvalPolicy = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(authorization);
@@ -111,6 +143,7 @@ public sealed class MetaToolService
         ArgumentNullException.ThrowIfNull(audit);
         ArgumentNullException.ThrowIfNull(redaction);
         _assets = assets;
+        _approvalPolicy = approvalPolicy;
         _catalog = catalog;
         _authorization = authorization;
         _invoker = invoker;
@@ -154,9 +187,11 @@ public sealed class MetaToolService
             }
 
             case InvokeToolName:
+            case InvokeSensitiveToolName:
             {
                 // Ziel-RBAC + Audit übernimmt die Invoker-Pipeline — kein Doppel-Audit hier.
-                return await InvokeToolAsync(caller, origin, args, started, ct).ConfigureAwait(false);
+                return await InvokeToolAsync(
+                    caller, origin, metaTool, args, started, ct).ConfigureAwait(false);
             }
 
             case ListSkillsName:
@@ -219,23 +254,36 @@ public sealed class MetaToolService
             return Fail(InvocationStatus.ToolNotFound, $"Tool '{name}' existiert nicht oder ist nicht sichtbar.", started);
         }
 
+        // Die Tuer gleich mitliefern. Ohne das erfaehrt ein Agent erst am Fehlschlag, dass ein
+        // Werkzeug scharf ist — ein vermeidbarer Umweg, denn hier ist die Antwort ohnehin bekannt.
+        var sensitive = IsSensitive(entry.Name);
         var payload = JsonSerializer.SerializeToElement(new
         {
             name = entry.Name.Value,
             description = entry.Description,
             inputSchema = entry.InputSchema,
             estimatedSchemaTokens = entry.EstimatedSchemaTokens,
+            sensitive,
+            invokeWith = sensitive ? InvokeSensitiveToolName : InvokeToolName,
         });
         return new ToolInvocationResult(InvocationStatus.Success, payload, null, Elapsed(started));
     }
 
     private async Task<ToolInvocationResult> InvokeToolAsync(
-        IdentityId caller, CallOrigin origin, JsonElement args, long started, CancellationToken ct)
+        IdentityId caller, CallOrigin origin, string metaTool, JsonElement args, long started, CancellationToken ct)
     {
         if (!TryGetString(args, "name", out var name))
         {
-            var fail = Fail(InvocationStatus.ValidationFailed, "invoke_tool erwartet ein 'name'-Argument (string).", started);
-            Audit(caller, origin, InvokeToolName, args, fail);
+            var fail = Fail(InvocationStatus.ValidationFailed, $"{metaTool} erwartet ein 'name'-Argument (string).", started);
+            Audit(caller, origin, metaTool, args, fail);
+            return fail;
+        }
+
+        var tool = new NamespacedToolName(name);
+        if (WrongDoor(metaTool, tool) is { } wrongDoor)
+        {
+            var fail = Fail(InvocationStatus.ValidationFailed, wrongDoor, started);
+            Audit(caller, origin, metaTool, args, fail);
             return fail;
         }
 
@@ -244,8 +292,47 @@ public sealed class MetaToolService
             : default;
 
         return await _invoker.InvokeAsync(
-            new ToolInvocationRequest(caller, origin, new NamespacedToolName(name), arguments, null), ct)
+            new ToolInvocationRequest(caller, origin, tool, arguments, null), ct)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Ist das Werkzeug als scharf markiert? Zwei Quellen, weil es zwei gibt: die Politik, die ein
+    /// Mensch pflegt, und die Selbstauskunft eines Connector-Pakets.
+    /// </summary>
+    private bool IsSensitive(NamespacedToolName tool)
+        => _approvalPolicy?.IsSensitive(tool) == true
+        || _catalog.Find(tool)?.RequiresApproval == true;
+
+    /// <summary>
+    /// Prüft, ob der gewählte Aufrufweg zum Werkzeug passt — und liefert sonst den Text, der sagt,
+    /// welcher der richtige wäre. <c>null</c> heißt: passt.
+    /// <para>
+    /// <b>Beide Richtungen sperren, nicht nur eine.</b> Dass ein scharfes Werkzeug nicht durch die
+    /// harmlose Tür darf, ist offensichtlich. Die Gegenrichtung ist genauso wichtig: Dürfte ein
+    /// Agent Belangloses durch die scharfe Tür schicken, gewöhnte er den Menschen an, den Dialog
+    /// wegzuklicken — und ein Dialog, den man reflexhaft bestätigt, schützt nicht mehr. Die
+    /// Ermüdung ist hier der Angriff.
+    /// </para>
+    /// </summary>
+    private string? WrongDoor(string metaTool, NamespacedToolName tool)
+    {
+        var sensitive = IsSensitive(tool);
+        var throughSensitiveDoor = string.Equals(metaTool, InvokeSensitiveToolName, StringComparison.Ordinal);
+
+        // Unbekannte Werkzeuge nicht hier abweisen: Ob es das Tool gibt und ob der Aufrufer es
+        // sehen darf, beantwortet der Invoker — und zwar mit einer Meldung, die nicht verrät, ob
+        // ein Name existiert, den man nicht sehen darf.
+        if (sensitive == throughSensitiveDoor)
+        {
+            return null;
+        }
+
+        return sensitive
+            ? $"'{tool.Value}' ist als scharf markiert und laeuft nur ueber {InvokeSensitiveToolName}. "
+              + "Denselben Aufruf dort erneut absetzen."
+            : $"'{tool.Value}' ist nicht als scharf markiert und gehoert in {InvokeToolName}. "
+              + $"{InvokeSensitiveToolName} bleibt den Werkzeugen vorbehalten, die wirklich etwas veraendern.";
     }
 
     private void Audit(IdentityId caller, CallOrigin origin, string metaTool, JsonElement args, ToolInvocationResult result)

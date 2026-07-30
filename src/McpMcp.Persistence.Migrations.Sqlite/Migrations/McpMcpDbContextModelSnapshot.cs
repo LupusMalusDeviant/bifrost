@@ -101,6 +101,13 @@ namespace McpMcp.Persistence.Migrations.Sqlite.Migrations
                         .HasMaxLength(300)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("Queue");
+
                     b.HasKey("Tool");
 
                     b.ToTable("ApprovalTools");

@@ -1,5 +1,27 @@
 # Skill-Log: adr-writer
 
+## 2026-07-30 21:32 — Run
+
+**Aufgabe:** ADR-0022 — Schärfe und Durchsetzung der Freigabepflicht trennen und eine zweite Tür
+`invoke_sensitive_tool` einführen, damit ein MCP-Client seine Rückfrage genau auf die gefährlichen
+Werkzeuge legen kann.
+
+**Entscheidungen:**
+- Kontext, Optionen und Wahl lagen aus dem Gespräch vor (Product Owner hat Option 3 gewählt,
+  Vorschlag des Autors war Option 1) → keine Rückfragen.
+- Supersede: nein, ergänzt [ADR-0012](../adr/0012-approval-flows-asynchron.md) — die Warteschlange
+  bleibt gültig und Vorgabewert.
+- Status „Akzeptiert", weil vom Product Owner entschieden.
+- Der abweichende Autorenvorschlag wurde stehen gelassen statt nachträglich angeglichen.
+
+**Artefakte:**
+- docs/adr/0022-schaerfe-und-durchsetzung-trennen.md
+- docs/adr/README.md (Index-Zeile ergänzt)
+
+**Status:** abgeschlossen
+
+---
+
 ## 2026-07-24 — Run
 
 **Aufgabe:** ADR für die M5-Architekturentscheidung — WASI-Runtime als Out-of-Process-Rust-Host hinter dem Connector-Vertrag.
