@@ -88,8 +88,11 @@ public sealed class ApprovalElicitationTests : IClassFixture<GatewayFixture>
             var first = await client.CallToolAsync(tool.Value, args, cancellationToken: ct);
             first.IsError.Should().BeTrue("der erste Aufruf legt die Anfrage an");
 
-            var offen = await Approvals.ListAsync(ApprovalState.Pending, ct);
-            var pending = offen[^1];
+            // Nach dem WERKZEUG suchen, nicht die letzte nehmen: Der vorige Test laesst eine
+            // wartende Anfrage liegen, und welche "die letzte" ist, haengt von der Reihenfolge ab.
+            // Genau daran ist der Test auf Windows gescheitert, waehrend er lokal durchlief.
+            var pending = (await Approvals.ListAsync(ApprovalState.Pending, ct))
+                .Single(r => r.Tool == tool);
             await Approvals.DecideAsync(pending.Id, approved: true, ct);
 
             var second = await client.CallToolAsync(tool.Value, args, cancellationToken: ct);
@@ -122,8 +125,11 @@ public sealed class ApprovalElicitationTests : IClassFixture<GatewayFixture>
             var args = new Dictionary<string, object?> { ["message"] = "nein" };
 
             await client.CallToolAsync(tool.Value, args, cancellationToken: ct);
-            var offen = await Approvals.ListAsync(ApprovalState.Pending, ct);
-            var pending = offen[^1];
+            // Nach dem WERKZEUG suchen, nicht die letzte nehmen: Der vorige Test laesst eine
+            // wartende Anfrage liegen, und welche "die letzte" ist, haengt von der Reihenfolge ab.
+            // Genau daran ist der Test auf Windows gescheitert, waehrend er lokal durchlief.
+            var pending = (await Approvals.ListAsync(ApprovalState.Pending, ct))
+                .Single(r => r.Tool == tool);
             await Approvals.DecideAsync(pending.Id, approved: false, ct);
 
             var afterDenial = await client.CallToolAsync(tool.Value, args, cancellationToken: ct);
