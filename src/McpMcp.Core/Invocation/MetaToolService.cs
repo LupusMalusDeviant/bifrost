@@ -82,6 +82,18 @@ public sealed class MetaToolService
     private readonly IAuditSink _audit;
     private readonly IRedactionService _redaction;
     private readonly TimeProvider _time;
+    /// <summary>
+    /// Reicht dieses Meta-Tool das Ergebnis eines Upstreams durch? Dann ist der Nutzinhalt bereits
+    /// ein serialisiertes Protokoll-Ergebnis und wird ausgepackt, statt als Text verpackt.
+    /// <para>
+    /// Nur <see cref="InvokeToolName"/> tut das — die uebrigen liefern eigene Nutzinhalte. Die
+    /// Unterscheidung steht hier bei den Definitionen und nicht in der Protokollschicht, weil sie
+    /// zum Tool gehoert: Wer ein Meta-Tool ergaenzt, entscheidet sie mit.
+    /// </para>
+    /// </summary>
+    public static bool ForwardsUpstreamResult(string toolName)
+        => string.Equals(toolName, InvokeToolName, StringComparison.Ordinal);
+
     private readonly IAssetStore? _assets;
 
     public MetaToolService(

@@ -60,7 +60,15 @@ internal static class GatewayMcpHandlers
                 .ConfigureAwait(false);
         }
 
-        return ToCallToolResult(result);
+        // Ob ein Ergebnis von einem Upstream durchgereicht wurde, WEISS diese Stelle — sie hat die
+        // Entscheidung gerade selbst getroffen. Vorher wurde es am Nutzinhalt geraten, und das ging
+        // schief, sobald ein Meta-Tool selbst ein Feld 'content' fuehrt (read_skill).
+        // invoke_tool ist zwar ein Meta-Tool, reicht aber das Ergebnis eines Upstreams durch —
+        // die Unterscheidung ist nicht "Meta-Tool oder nicht", sondern "fremdes Ergebnis oder
+        // eigener Nutzinhalt". Sie steht bei den Definitionen, nicht hier.
+        return ToCallToolResult(
+            result,
+            isPassthrough: !MetaToolService.IsMetaTool(name) || MetaToolService.ForwardsUpstreamResult(name));
     }
 
     public static async ValueTask<ListResourcesResult> ListResourcesAsync(
@@ -222,7 +230,19 @@ internal static class GatewayMcpHandlers
         return Deserialize<GetPromptResult>(payload);
     }
 
-    internal static CallToolResult ToCallToolResult(ToolInvocationResult result)
+    /// <param name="isPassthrough">
+    /// Kam das Ergebnis von einem Upstream? Dann ist es bereits ein serialisiertes
+    /// <see cref="CallToolResult"/> und wird nur zurueckgereicht.
+    /// <para>
+    /// <b>Warum das ein Parameter ist und keine Erkennung am Inhalt:</b> Vorher galt „hat ein Feld
+    /// namens <c>content</c>" als Beweis fuer Passthrough. Das ist eine Heuristik an der Stelle
+    /// eines Wissens — der Aufrufer hat die Unterscheidung gerade selbst getroffen. Sie fiel um,
+    /// als <c>read_skill</c> dazukam: Dessen Nutzinhalt fuehrt legitim ein <c>content</c> (den
+    /// Skill-Text als Zeichenkette), das Protokoll erwartet dort aber eine Liste von
+    /// ContentBlocks — jeder Aufruf endete in einer JsonException.
+    /// </para>
+    /// </param>
+    internal static CallToolResult ToCallToolResult(ToolInvocationResult result, bool isPassthrough = true)
     {
         if (result.Status is not InvocationStatus.Success)
         {
@@ -235,13 +255,13 @@ internal static class GatewayMcpHandlers
         }
 
         var content = result.Content!.Value;
-        if (content.ValueKind is JsonValueKind.Object && content.TryGetProperty("content", out _))
+        if (isPassthrough && content.ValueKind is JsonValueKind.Object && content.TryGetProperty("content", out _))
         {
             // Upstream-Passthrough: das Ergebnis IST bereits ein serialisiertes CallToolResult.
             return Deserialize<CallToolResult>(content);
         }
 
-        // Meta-Tool-Payloads (search/describe) als JSON-Text ausliefern.
+        // Meta-Tool-Payloads (search/describe/list_skills/read_skill) als JSON-Text ausliefern.
         return new CallToolResult
         {
             Content = [new TextContentBlock { Text = content.GetRawText() }],

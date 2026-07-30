@@ -9,7 +9,7 @@ public class VersioningTests
     [Fact]
     public void Product_version_comes_from_the_shared_build_property()
     {
-        McpMcpProductInfo.Version.Should().Be("0.7.1");
+        McpMcpProductInfo.Version.Should().Be("0.7.2");
         typeof(McpMcpProductInfo).Assembly.GetName().Version!.ToString(3)
             .Should().Be(McpMcpProductInfo.Version);
     }
