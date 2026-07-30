@@ -87,6 +87,21 @@ public sealed class GatewayFixture : WebApplicationFactory<Program>
 
     /// <summary>Verbindet einen SDK-Client über den In-Memory-Host mit Bearer-AuthN.</summary>
     public async Task<McpClient> ConnectClientAsync(string apiKey)
+        => await ConnectClientAsync(apiKey, elicitationHandler: null);
+
+    /// <summary>
+    /// Verbindet einen Testclient, wahlweise mit eigener Antwort auf Elicitation-Rueckfragen.
+    /// <para>
+    /// <b>Diese Luecke hat drei Fehler durchgelassen.</b> Ohne Handler meldet der Client die
+    /// Faehigkeit gar nicht erst an, und der Server nimmt jedes Mal den Warteschlangen-Pfad — die
+    /// Rueckfrage selbst wurde also von keinem Test je ausgeloest. Gefunden hat sie jedes Mal erst
+    /// der Betrieb. Wer hier einen Handler uebergibt, prueft den Pfad, den ein echter Client geht.
+    /// </para>
+    /// </summary>
+    public async Task<McpClient> ConnectClientAsync(
+        string apiKey,
+        Func<ModelContextProtocol.Protocol.ElicitRequestParams?, CancellationToken,
+            ValueTask<ModelContextProtocol.Protocol.ElicitResult>>? elicitationHandler)
     {
         var httpClient = CreateDefaultClient();
         httpClient.DefaultRequestHeaders.Authorization = new("Bearer", apiKey);
@@ -97,7 +112,14 @@ public sealed class GatewayFixture : WebApplicationFactory<Program>
                 Endpoint = new Uri(httpClient.BaseAddress!, "/mcp"),
             },
             httpClient);
-        return await McpClient.CreateAsync(transport);
+
+        var options = elicitationHandler is null
+            ? null
+            : new McpClientOptions
+            {
+                Handlers = new McpClientHandlers { ElicitationHandler = elicitationHandler },
+            };
+        return await McpClient.CreateAsync(transport, options);
     }
 
     public async Task<ServerId> AddEchoUpstreamAsync(string slug)

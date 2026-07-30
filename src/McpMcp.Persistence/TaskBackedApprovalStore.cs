@@ -155,6 +155,13 @@ public sealed class TaskBackedApprovalStore : IApprovalStore
         TaskState.Working when task.ClaimedAt is null => ApprovalState.Approved,
         TaskState.Working => ApprovalState.Consumed,
         TaskState.Failed when task.Failure?.Code == DeniedCode => ApprovalState.Denied,
+
+        // Fertig heisst: freigegeben, eingeloest, durchgelaufen. Das stand hier bis 2026-07-30 im
+        // Sammelfall darunter und wurde damit als `Denied` gemeldet — ein erfolgreich freigegebener
+        // Aufruf erschien in der Freigabe-Ansicht als abgelehnt. Aufgefallen ist es erst, als ein
+        // Test zum ersten Mal den ganzen Weg bis zur Ausfuehrung ging.
+        TaskState.Completed => ApprovalState.Consumed,
+
         // Abgelaufen oder anderweitig beendet: für die Freigabe-Sicht ist das kein offener Vorgang
         // mehr. `Denied` ist die ehrlichste Näherung — durchgelaufen ist er jedenfalls nicht.
         _ => ApprovalState.Denied,

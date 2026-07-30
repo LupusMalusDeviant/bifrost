@@ -274,25 +274,16 @@ internal static class GatewayMcpHandlers
         ToolInvocationResult original,
         CancellationToken ct)
     {
-        var (outcome, target) = await ApprovalElicitation.TryObtainAsync(
+        var outcome = await ApprovalElicitation.TryObtainAsync(
             ctx.Services!, ctx.Server, approvalId, new NamespacedToolName(name), ct).ConfigureAwait(false);
 
         if (outcome is ApprovalElicitation.Outcome.NotPossible)
         {
             // Unveraendert zurueck: Der Aufruf steht in der Warteschlange, die Meldung nennt die Id.
+            // Das ist der Weg fuer ALLES ausser einer ausdruecklichen Zustimmung — auch fuer ein
+            // 'decline'. Ein Client kann das ohne Zutun eines Menschen schicken, und eine Ablehnung
+            // im Namen eines Menschen, der nichts gesehen hat, ist keine.
             return original;
-        }
-
-        if (outcome is ApprovalElicitation.Outcome.Declined)
-        {
-            return original with
-            {
-                Status = InvocationStatus.Denied,
-                // Das ZIEL benennen, nicht das Meta-Tool: Ein Aufruf laeuft ueber invoke_tool,
-                // freigabepflichtig ist aber whiskers__execute_command — und das will der Mensch
-                // in der Meldung lesen.
-                ErrorMessage = $"Die Freigabe fuer '{target ?? name}' wurde abgelehnt.",
-            };
         }
 
         var invoker = ctx.Services!.GetRequiredService<IToolInvoker>();

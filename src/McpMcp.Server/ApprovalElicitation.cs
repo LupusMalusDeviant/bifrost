@@ -31,32 +31,32 @@ internal static class ApprovalElicitation
     /// <summary>Feldname im Bestaetigungsformular.</summary>
     private const string ApproveField = "approve";
 
-    /// <summary>Antwort des Clients: zugestimmt, abgelehnt, oder gar nicht erst gefragt.</summary>
+    /// <summary>
+    /// Zwei Ausgaenge, nicht drei. Es gibt kein „abgelehnt" mehr.
+    /// <para>
+    /// Eine Ablehnung waere nur dann etwas wert, wenn man ihr ansehen koennte, dass ein Mensch sie
+    /// ausgesprochen hat — und genau das kann man einem Client nicht ansehen. Zweimal wurde hier
+    /// eine Ablehnung verbucht, die niemand geaeussert hatte. Beim dritten Mal faellt die
+    /// Unterscheidung weg.
+    /// </para>
+    /// </summary>
     internal enum Outcome
     {
-        /// <summary>Der Client kann nicht fragen — die Warteschlange bleibt der Weg.</summary>
+        /// <summary>
+        /// Keine ausdrueckliche Zustimmung — aus welchem Grund auch immer. Die Warteschlange
+        /// bleibt der Weg, ein Mensch kann dort noch entscheiden.
+        /// </summary>
         NotPossible,
 
-        /// <summary>Ein Mensch hat zugestimmt.</summary>
+        /// <summary>Ein Mensch hat zugestimmt: ausdruecklich, mit gesetztem Haekchen.</summary>
         Approved,
-
-        /// <summary>Ein Mensch hat abgelehnt.</summary>
-        Declined,
     }
 
     /// <summary>
     /// Fragt nach, wenn möglich. Bei Zustimmung ist die Freigabe im Store bereits erteilt — der
     /// Aufrufer kann den Call unmittelbar wiederholen.
     /// </summary>
-    /// <summary>
-    /// Ergebnis samt dem Werkzeug, um das es wirklich ging. Der Name ist noetig, weil ein Aufruf
-    /// ueber <c>invoke_tool</c> laeuft: Die Meldung nannte sonst das Meta-Tool statt des
-    /// Werkzeugs, das ausgefuehrt werden soll — in einer Sicherheitsmeldung der falsche Name an
-    /// der wichtigsten Stelle.
-    /// </summary>
-    internal readonly record struct Result(Outcome Outcome, string? Tool);
-
-    public static async Task<Result> TryObtainAsync(
+    public static async Task<Outcome> TryObtainAsync(
         IServiceProvider services,
         McpServer? server,
         Guid approvalId,
@@ -72,14 +72,14 @@ internal static class ApprovalElicitation
         if (server?.ClientCapabilities?.Elicitation is null)
         {
             Skipped(log, tool, "der Client meldet keine Elicitation-Faehigkeit");
-            return new Result(Outcome.NotPossible, null);
+            return Outcome.NotPossible;
         }
 
         var store = services.GetService<IApprovalStore>();
         if (store is null)
         {
             Skipped(log, tool, "kein Approval-Store eingebunden");
-            return new Result(Outcome.NotPossible, null);
+            return Outcome.NotPossible;
         }
 
         // Die REDIGIERTEN Argumente aus der Warteschlange, nicht die des Aufrufs: Das Popup darf
@@ -89,7 +89,7 @@ internal static class ApprovalElicitation
         if (pending is null)
         {
             Skipped(log, tool, $"Anfrage {approvalId} steht nicht (mehr) auf wartend");
-            return new Result(Outcome.NotPossible, null);
+            return Outcome.NotPossible;
         }
 
         ElicitResult answer;
@@ -125,36 +125,36 @@ internal static class ApprovalElicitation
             // verlieren — er landet dann wie bisher in der Warteschlange. Der Grund gehoert aber
             // ins Log, sonst ist ein Fehler von einem fehlenden Feature nicht zu unterscheiden.
             Skipped(log, tool, $"Rueckfrage gescheitert: {exception.Message}");
-            return new Result(Outcome.NotPossible, pending.Tool.Value);
+            return Outcome.NotPossible;
         }
 
-        // Drei Antworten, drei Bedeutungen — und die dritte ist die wichtigste:
-        //   accept  → der Mensch hat zugestimmt
-        //   decline → der Mensch hat abgelehnt
-        //   sonst   → es wurde NICHT entschieden (abgebrochen, weggeklickt, Client hat gar nicht
-        //             erst gefragt). Daraus eine Ablehnung zu machen hiesse, in seinem Namen zu
-        //             entscheiden — dasselbe Uebel wie eine Selbstfreigabe, nur andersherum.
-        //             Genau das ist beim ersten Versuch passiert: Der Client lehnte ab, weil er
-        //             nichts anzuzeigen hatte, und im Audit stand "abgelehnt".
+        // NUR ein ausdrueckliches Ja zaehlt. Alles andere — auch ein glasklares 'decline' — fuehrt
+        // zurueck in die Warteschlange, wo ein Mensch noch entscheiden kann.
+        //
+        // Das war zweimal anders gedacht und zweimal falsch:
+        //   1. Zuerst galt jede Nicht-Zustimmung als Ablehnung. Der Client lehnte selbst ab, weil
+        //      das Formular leer war, und im Audit stand "abgelehnt".
+        //   2. Danach galten 'decline' und 'accept'-ohne-Haekchen als menschliches Nein, nur
+        //      'cancel' nicht. Am 2026-07-30 hat derselbe Client dann 'decline' geschickt, ohne
+        //      dass ein Formular je zu sehen war — nachgewiesen: Der Mensch bestaetigte in diesem
+        //      Aufruf ausschliesslich die Berechtigungsfrage seines Clients.
+        //
+        // Die Lehre steckt in der Wiederholung: Man kann einem Client nicht ansehen, ob hinter
+        // seiner Antwort ein Mensch stand. Nur die Zustimmung traegt ein Merkmal, das kein
+        // Automatismus nebenbei erzeugt — ein eigens gesetztes Haekchen. Der Preis ist klein und
+        // faellt auf die richtige Seite: Ein ECHTES Nein wird hier nicht mehr vermerkt, sondern
+        // bleibt wartend. Ein nicht verbuchtes Nein kostet einen Klick in der Oberflaeche; ein
+        // erfundenes Ja kostet die Freigabepflicht.
         if (string.Equals(answer.Action, "accept", StringComparison.Ordinal)
             && answer.Content?.TryGetValue(ApproveField, out var value) == true
             && value.ValueKind is JsonValueKind.True)
         {
             await store.DecideAsync(approvalId, approved: true, ct).ConfigureAwait(false);
-            return new Result(Outcome.Approved, pending.Tool.Value);
+            return Outcome.Approved;
         }
 
-        if (string.Equals(answer.Action, "decline", StringComparison.Ordinal)
-            || string.Equals(answer.Action, "accept", StringComparison.Ordinal))
-        {
-            // 'accept' ohne Ja im Formular ist ein bewusstes Nein — der Mensch hat den Dialog
-            // gesehen und das Haekchen nicht gesetzt.
-            await store.DecideAsync(approvalId, approved: false, ct).ConfigureAwait(false);
-            return new Result(Outcome.Declined, pending.Tool.Value);
-        }
-
-        Skipped(log, pending.Tool, $"Antwort '{answer.Action}' ist keine Entscheidung");
-        return new Result(Outcome.NotPossible, pending.Tool.Value);
+        Skipped(log, pending.Tool, $"Antwort '{answer.Action}' ohne ausdrueckliche Zustimmung");
+        return Outcome.NotPossible;
     }
 
 #pragma warning disable CA1848 // Selten: nur bei freigabepflichtigen Aufrufen.
