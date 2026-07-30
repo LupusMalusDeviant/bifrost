@@ -274,7 +274,7 @@ internal static class GatewayMcpHandlers
         ToolInvocationResult original,
         CancellationToken ct)
     {
-        var outcome = await ApprovalElicitation.TryObtainAsync(
+        var (outcome, target) = await ApprovalElicitation.TryObtainAsync(
             ctx.Services!, ctx.Server, approvalId, new NamespacedToolName(name), ct).ConfigureAwait(false);
 
         if (outcome is ApprovalElicitation.Outcome.NotPossible)
@@ -288,7 +288,10 @@ internal static class GatewayMcpHandlers
             return original with
             {
                 Status = InvocationStatus.Denied,
-                ErrorMessage = $"Die Freigabe fuer '{name}' wurde abgelehnt.",
+                // Das ZIEL benennen, nicht das Meta-Tool: Ein Aufruf laeuft ueber invoke_tool,
+                // freigabepflichtig ist aber whiskers__execute_command — und das will der Mensch
+                // in der Meldung lesen.
+                ErrorMessage = $"Die Freigabe fuer '{target ?? name}' wurde abgelehnt.",
             };
         }
 

@@ -28,6 +28,9 @@ namespace McpMcp.Server;
 /// </summary>
 internal static class ApprovalElicitation
 {
+    /// <summary>Feldname im Bestaetigungsformular.</summary>
+    private const string ApproveField = "approve";
+
     /// <summary>Antwort des Clients: zugestimmt, abgelehnt, oder gar nicht erst gefragt.</summary>
     internal enum Outcome
     {
@@ -45,7 +48,15 @@ internal static class ApprovalElicitation
     /// Fragt nach, wenn möglich. Bei Zustimmung ist die Freigabe im Store bereits erteilt — der
     /// Aufrufer kann den Call unmittelbar wiederholen.
     /// </summary>
-    public static async Task<Outcome> TryObtainAsync(
+    /// <summary>
+    /// Ergebnis samt dem Werkzeug, um das es wirklich ging. Der Name ist noetig, weil ein Aufruf
+    /// ueber <c>invoke_tool</c> laeuft: Die Meldung nannte sonst das Meta-Tool statt des
+    /// Werkzeugs, das ausgefuehrt werden soll — in einer Sicherheitsmeldung der falsche Name an
+    /// der wichtigsten Stelle.
+    /// </summary>
+    internal readonly record struct Result(Outcome Outcome, string? Tool);
+
+    public static async Task<Result> TryObtainAsync(
         IServiceProvider services,
         McpServer? server,
         Guid approvalId,
@@ -61,14 +72,14 @@ internal static class ApprovalElicitation
         if (server?.ClientCapabilities?.Elicitation is null)
         {
             Skipped(log, tool, "der Client meldet keine Elicitation-Faehigkeit");
-            return Outcome.NotPossible;
+            return new Result(Outcome.NotPossible, null);
         }
 
         var store = services.GetService<IApprovalStore>();
         if (store is null)
         {
             Skipped(log, tool, "kein Approval-Store eingebunden");
-            return Outcome.NotPossible;
+            return new Result(Outcome.NotPossible, null);
         }
 
         // Die REDIGIERTEN Argumente aus der Warteschlange, nicht die des Aufrufs: Das Popup darf
@@ -78,7 +89,7 @@ internal static class ApprovalElicitation
         if (pending is null)
         {
             Skipped(log, tool, $"Anfrage {approvalId} steht nicht (mehr) auf wartend");
-            return Outcome.NotPossible;
+            return new Result(Outcome.NotPossible, null);
         }
 
         ElicitResult answer;
@@ -87,13 +98,24 @@ internal static class ApprovalElicitation
             answer = await server.ElicitAsync(
                 new ElicitRequestParams
                 {
-                    // "form" mit LEEREM Schema ist die Bestaetigungsfrage: Es wird nichts erhoben,
-                    // die Antwort steckt allein in der Aktion (accept/decline/cancel). Ein erster
-                    // Versuch mit Mode = "confirmation" warf eine ArgumentException — das Protokoll
-                    // kennt nur "form" und "url".
+                    // Ein Formular mit EINEM Ja/Nein-Feld. Der erste Versuch schickte ein leeres
+                    // Schema — daran hatte der Client nichts anzuzeigen und lehnte von sich aus ab,
+                    // ohne dass ein Mensch etwas sah. Ein Dialog, den niemand sieht, ist keine
+                    // Freigabe.
                     Mode = "form",
-                    Message = Describe(tool, pending),
-                    RequestedSchema = new ElicitRequestParams.RequestSchema(),
+                    Message = Describe(pending),
+                    RequestedSchema = new ElicitRequestParams.RequestSchema
+                    {
+                        Properties =
+                        {
+                            [ApproveField] = new ElicitRequestParams.BooleanSchema
+                            {
+                                Title = $"'{pending.Tool.Value}' einmalig ausfuehren?",
+                                Description = "Ja lässt genau diesen einen Aufruf durch.",
+                            },
+                        },
+                        Required = [ApproveField],
+                    },
                 },
                 ct).ConfigureAwait(false);
         }
@@ -103,15 +125,36 @@ internal static class ApprovalElicitation
             // verlieren — er landet dann wie bisher in der Warteschlange. Der Grund gehoert aber
             // ins Log, sonst ist ein Fehler von einem fehlenden Feature nicht zu unterscheiden.
             Skipped(log, tool, $"Rueckfrage gescheitert: {exception.Message}");
-            return Outcome.NotPossible;
+            return new Result(Outcome.NotPossible, pending.Tool.Value);
         }
 
-        // Alles außer ausdrücklicher Zustimmung gilt als Nein. "cancel" ist der Vorgabewert des
-        // Protokolls, wenn ein Client nichts setzt — daraus ein Ja zu machen wäre die gefährlichste
-        // mögliche Auslegung.
-        var approved = string.Equals(answer.Action, "accept", StringComparison.Ordinal);
-        await store.DecideAsync(approvalId, approved, ct).ConfigureAwait(false);
-        return approved ? Outcome.Approved : Outcome.Declined;
+        // Drei Antworten, drei Bedeutungen — und die dritte ist die wichtigste:
+        //   accept  → der Mensch hat zugestimmt
+        //   decline → der Mensch hat abgelehnt
+        //   sonst   → es wurde NICHT entschieden (abgebrochen, weggeklickt, Client hat gar nicht
+        //             erst gefragt). Daraus eine Ablehnung zu machen hiesse, in seinem Namen zu
+        //             entscheiden — dasselbe Uebel wie eine Selbstfreigabe, nur andersherum.
+        //             Genau das ist beim ersten Versuch passiert: Der Client lehnte ab, weil er
+        //             nichts anzuzeigen hatte, und im Audit stand "abgelehnt".
+        if (string.Equals(answer.Action, "accept", StringComparison.Ordinal)
+            && answer.Content?.TryGetValue(ApproveField, out var value) == true
+            && value.ValueKind is JsonValueKind.True)
+        {
+            await store.DecideAsync(approvalId, approved: true, ct).ConfigureAwait(false);
+            return new Result(Outcome.Approved, pending.Tool.Value);
+        }
+
+        if (string.Equals(answer.Action, "decline", StringComparison.Ordinal)
+            || string.Equals(answer.Action, "accept", StringComparison.Ordinal))
+        {
+            // 'accept' ohne Ja im Formular ist ein bewusstes Nein — der Mensch hat den Dialog
+            // gesehen und das Haekchen nicht gesetzt.
+            await store.DecideAsync(approvalId, approved: false, ct).ConfigureAwait(false);
+            return new Result(Outcome.Declined, pending.Tool.Value);
+        }
+
+        Skipped(log, pending.Tool, $"Antwort '{answer.Action}' ist keine Entscheidung");
+        return new Result(Outcome.NotPossible, pending.Tool.Value);
     }
 
 #pragma warning disable CA1848 // Selten: nur bei freigabepflichtigen Aufrufen.
@@ -129,13 +172,13 @@ internal static class ApprovalElicitation
     /// <summary>
     /// Der Text im Popup. Er muss allein tragen: Wer ihn liest, sieht sonst nichts vom Vorgang.
     /// </summary>
-    private static string Describe(NamespacedToolName tool, ApprovalRequest pending)
+    private static string Describe(ApprovalRequest pending)
     {
         var arguments = pending.RedactedArguments is { } redacted
             ? Shorten(redacted.GetRawText())
             : "(keine)";
 
-        return $"Freigabe nötig für '{tool.Value}'.{Environment.NewLine}"
+        return $"Freigabe nötig für '{pending.Tool.Value}'.{Environment.NewLine}"
             + $"Aufrufer: {pending.CallerDescription}{Environment.NewLine}"
             + $"Argumente (maskiert): {arguments}{Environment.NewLine}{Environment.NewLine}"
             + "Zustimmen lässt genau diesen einen Aufruf durch.";

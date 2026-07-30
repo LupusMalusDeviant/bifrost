@@ -6,7 +6,7 @@
 
 **A self-hosted meta-MCP gateway on .NET** — connect one endpoint to your agents, and manage all your MCP servers behind it.
 
-> **[Pre-release v0.8.1](https://github.com/LupusMalusDeviant/mcp-mcp/releases/tag/v0.8.1)** is the current build. It brings everything that had accumulated on `main` since v0.5.0 into a tagged state: WASI plugins with an out-of-process Rust host, container isolation for CLI upstreams, long-running tasks, the capability model, OpenRPC, signed connector packages, upstream OAuth, rug-pull protection, OTel traces, and skills with a schema, an editor and package delivery.
+> **[Pre-release v0.8.2](https://github.com/LupusMalusDeviant/mcp-mcp/releases/tag/v0.8.2)** is the current build. It brings everything that had accumulated on `main` since v0.5.0 into a tagged state: WASI plugins with an out-of-process Rust host, container isolation for CLI upstreams, long-running tasks, the capability model, OpenRPC, signed connector packages, upstream OAuth, rug-pull protection, OTel traces, and skills with a schema, an editor and package delivery.
 >
 > The version is deliberately below 1.0 — and it is marked as a **pre-release** for a reason: the code is feature-complete for its scope and covered by tests against SQLite *and* real PostgreSQL, but **it still has no operational uptime behind it**. 1.0 follows from running it, not from adding features.
 
