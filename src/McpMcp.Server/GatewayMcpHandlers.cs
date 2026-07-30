@@ -68,6 +68,16 @@ internal static class GatewayMcpHandlers
         // Ob ein Ergebnis von einem Upstream durchgereicht wurde, WEISS diese Stelle — sie hat die
         // Entscheidung gerade selbst getroffen. Vorher wurde es am Nutzinhalt geraten, und das ging
         // schief, sobald ein Meta-Tool selbst ein Feld 'content' fuehrt (read_skill).
+        // Fehlt eine Freigabe und kann der Client fragen, wird JETZT gefragt statt in die
+        // Warteschlange gelegt (ADR-0012 bleibt gueltig — nur der Weg zum Menschen ist kuerzer).
+        // Bei Zustimmung laeuft derselbe Aufruf einmalig durch; die Freigabe ist an Identitaet,
+        // Werkzeug und Argument-Fingerabdruck gebunden, ein zweiter Aufruf fragt wieder.
+        if (result.Status is InvocationStatus.ApprovalRequired && result.TaskId is { } approvalId)
+        {
+            result = await RetryAfterElicitedApprovalAsync(
+                ctx, identity, name, args, approvalId, result, ct).ConfigureAwait(false);
+        }
+
         // invoke_tool ist zwar ein Meta-Tool, reicht aber das Ergebnis eines Upstreams durch —
         // die Unterscheidung ist nicht "Meta-Tool oder nicht", sondern "fremdes Ergebnis oder
         // eigener Nutzinhalt". Sie steht bei den Definitionen, nicht hier.
@@ -247,6 +257,47 @@ internal static class GatewayMcpHandlers
     /// ContentBlocks — jeder Aufruf endete in einer JsonException.
     /// </para>
     /// </param>
+    /// <summary>
+    /// Holt die fehlende Freigabe beim Menschen ein und wiederholt den Aufruf.
+    /// <para>
+    /// Der Aufruf wird <b>einmal</b> wiederholt, nicht in einer Schleife: Fuehrt die zweite Runde
+    /// wieder zu <c>ApprovalRequired</c>, stimmt etwas nicht (abgelaufen, widerrufen, anderer
+    /// Fingerabdruck) — und eine Schleife wuerde daraus eine Endlosfrage an den Menschen machen.
+    /// </para>
+    /// </summary>
+    private static async Task<ToolInvocationResult> RetryAfterElicitedApprovalAsync(
+        RequestContext<CallToolRequestParams> ctx,
+        IdentityId identity,
+        string name,
+        JsonElement args,
+        Guid approvalId,
+        ToolInvocationResult original,
+        CancellationToken ct)
+    {
+        var outcome = await ApprovalElicitation.TryObtainAsync(
+            ctx.Services!, ctx.Server, approvalId, new NamespacedToolName(name), ct).ConfigureAwait(false);
+
+        if (outcome is ApprovalElicitation.Outcome.NotPossible)
+        {
+            // Unveraendert zurueck: Der Aufruf steht in der Warteschlange, die Meldung nennt die Id.
+            return original;
+        }
+
+        if (outcome is ApprovalElicitation.Outcome.Declined)
+        {
+            return original with
+            {
+                Status = InvocationStatus.Denied,
+                ErrorMessage = $"Die Freigabe fuer '{name}' wurde abgelehnt.",
+            };
+        }
+
+        var invoker = ctx.Services!.GetRequiredService<IToolInvoker>();
+        return await invoker.InvokeAsync(
+            new ToolInvocationRequest(identity, CallOrigin.Mcp, new NamespacedToolName(name), args, null),
+            ct).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Schreibt einmal je Session, was der Client kann. Hier und nicht im Session-Aufbau: Dort
     /// laeuft der Initialize-Handshake noch, und <c>ClientCapabilities</c> ist null — der erste

@@ -150,6 +150,23 @@ Zweifel produktive Arbeit ab.
 Einzelne Tools lassen sich freigabepflichtig machen (FR-32,
 [ADR-0012](adr/0012-approval-flows-asynchron.md)): Ein solcher Aufruf wird **nicht** ausgeführt,
 sondern **sofort abgewiesen** (`ApprovalRequired`), und eine Anfrage landet in der Queue unter
+**Freigabe per Rückfrage.** Meldet der anfragende Client die MCP-Fähigkeit **Elicitation**, fragt
+der Gateway im Moment des Aufrufs nach, statt die Anfrage nur in die Warteschlange zu legen: ein
+Dialog beim Menschen, Zustimmung lässt genau diesen einen Aufruf durch. Kann der Client es nicht,
+bleibt alles wie bisher — die Warteschlange ist die Rückfallebene, kein Aufruf geht verloren.
+
+Der Grund ist nicht Bequemlichkeit allein: Verlangt jede Freigabe einen Wechsel in Oberfläche oder
+CLI, schaltet jemand bei einem oft gebrauchten Werkzeug irgendwann die Freigabepflicht ab — und dann
+schützt sie gar nicht mehr.
+
+**Es bleibt eine menschliche Freigabe.** Die Frage geht an den Client, die Antwort kommt von dem
+Menschen davor; der Agent hält keinen Freigabe-Schlüssel und kann die Antwort nicht erfinden. Im
+Dialog stehen dieselben **maskierten** Argumente wie in der Warteschlange — das Popup zeigt nie
+mehr als die Oberfläche.
+
+Welche Fähigkeiten ein verbundener Client mitbringt, steht beim ersten Aufruf im Log
+(`MCP-Client: … Elicitation: True/False …`).
+
 **Freigaben** in der Web-UI. Ein Mensch (Operator/Admin) sieht dort die konkreten — maskierten —
 Argumente und entscheidet.
 
