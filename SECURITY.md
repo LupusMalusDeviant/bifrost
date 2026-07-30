@@ -7,7 +7,8 @@ MCP-MCP is in **pre-release development**. There are no supported release versio
 | Version | Supported |
 |---|---|
 | `main` | ✅ best effort |
-| `v0.8.0` | ✅ best effort |
+| `v0.8.1` | ✅ best effort |
+| `v0.8.0` | ⚠️ superseded by `v0.8.1` |
 | `v0.7.3` | ⚠️ superseded by `v0.8.0` |
 | `v0.7.2` | ⚠️ superseded by `v0.7.3` |
 | `v0.7.1` | ⚠️ superseded by `v0.7.2` |

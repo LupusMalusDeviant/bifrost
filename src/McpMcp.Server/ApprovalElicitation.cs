@@ -52,14 +52,22 @@ internal static class ApprovalElicitation
         NamespacedToolName tool,
         CancellationToken ct)
     {
+        // Jede Absage bekommt eine Spur. Ein stiller Rueckfall auf die Warteschlange sieht von
+        // aussen aus wie "der Client kann es nicht" — auch dann, wenn in Wahrheit etwas kaputt ist.
+        // Genau so ist der erste Versuch untergegangen: Ein ungueltiger Modus warf, der catch
+        // schluckte, und im Log stand nichts.
+        var log = services.GetService<ILoggerFactory>()?.CreateLogger("McpMcp.Server.ApprovalElicitation");
+
         if (server?.ClientCapabilities?.Elicitation is null)
         {
+            Skipped(log, tool, "der Client meldet keine Elicitation-Faehigkeit");
             return Outcome.NotPossible;
         }
 
         var store = services.GetService<IApprovalStore>();
         if (store is null)
         {
+            Skipped(log, tool, "kein Approval-Store eingebunden");
             return Outcome.NotPossible;
         }
 
@@ -69,6 +77,7 @@ internal static class ApprovalElicitation
             .FirstOrDefault(r => r.Id == approvalId);
         if (pending is null)
         {
+            Skipped(log, tool, $"Anfrage {approvalId} steht nicht (mehr) auf wartend");
             return Outcome.NotPossible;
         }
 
@@ -78,15 +87,22 @@ internal static class ApprovalElicitation
             answer = await server.ElicitAsync(
                 new ElicitRequestParams
                 {
-                    Mode = "confirmation",
+                    // "form" mit LEEREM Schema ist die Bestaetigungsfrage: Es wird nichts erhoben,
+                    // die Antwort steckt allein in der Aktion (accept/decline/cancel). Ein erster
+                    // Versuch mit Mode = "confirmation" warf eine ArgumentException — das Protokoll
+                    // kennt nur "form" und "url".
+                    Mode = "form",
                     Message = Describe(tool, pending),
+                    RequestedSchema = new ElicitRequestParams.RequestSchema(),
                 },
                 ct).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // Ein Client, der die Fähigkeit meldet, sie aber nicht bedient, darf den Aufruf nicht
-            // verlieren — er landet dann wie bisher in der Warteschlange.
+            // verlieren — er landet dann wie bisher in der Warteschlange. Der Grund gehoert aber
+            // ins Log, sonst ist ein Fehler von einem fehlenden Feature nicht zu unterscheiden.
+            Skipped(log, tool, $"Rueckfrage gescheitert: {exception.Message}");
             return Outcome.NotPossible;
         }
 
@@ -97,6 +113,18 @@ internal static class ApprovalElicitation
         await store.DecideAsync(approvalId, approved, ct).ConfigureAwait(false);
         return approved ? Outcome.Approved : Outcome.Declined;
     }
+
+#pragma warning disable CA1848 // Selten: nur bei freigabepflichtigen Aufrufen.
+    private static void Skipped(ILogger? log, NamespacedToolName tool, string reason)
+    {
+        if (log?.IsEnabled(LogLevel.Information) == true)
+        {
+            log.LogInformation(
+                "Keine Rueckfrage fuer {Tool} — {Reason}. Der Aufruf bleibt in der Warteschlange.",
+                tool.Value, reason);
+        }
+    }
+#pragma warning restore CA1848
 
     /// <summary>
     /// Der Text im Popup. Er muss allein tragen: Wer ihn liest, sieht sonst nichts vom Vorgang.
