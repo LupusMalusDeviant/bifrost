@@ -103,6 +103,43 @@ public sealed class SkillApiTests : IClassFixture<GatewayFixture>
     }
 
     /// <summary>
+    /// Die Beschreibung war nach dem Anlegen <b>unveränderlich</b> — weder über die Oberfläche noch
+    /// über die API zu ändern. Das ist ausgerechnet die Angabe, an der ein Agent entscheidet, ob er
+    /// den Skill nimmt: Ein Tippfehler darin wäre dauerhaft gewesen.
+    /// </summary>
+    [Fact]
+    public async Task Publishing_can_correct_the_description()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var client = await AdminClientAsync();
+        var name = $"api-desc-{Guid.NewGuid():N}";
+        var id = await Assets.CreateAsync(name, "abgeschnitten…", "Text", null, ct);
+
+        await client.PostAsJsonAsync(
+            $"/api/v1/skills/{id.Value}/versions",
+            new { content = "Text", description = "vollständig und richtig" }, ct);
+
+        var listed = (await Assets.ListAsync(ct)).Single(a => a.Name == name);
+        listed.Description.Should().Be("vollständig und richtig");
+    }
+
+    /// <summary>
+    /// Ohne Angabe bleibt sie stehen — sonst löschte jede Textänderung die Beschreibung mit.
+    /// </summary>
+    [Fact]
+    public async Task Publishing_without_a_description_keeps_the_existing_one()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var client = await AdminClientAsync();
+        var name = $"api-keep-{Guid.NewGuid():N}";
+        var id = await Assets.CreateAsync(name, "bleibt", "v1", null, ct);
+
+        await client.PostAsJsonAsync($"/api/v1/skills/{id.Value}/versions", new { content = "v2" }, ct);
+
+        (await Assets.ListAsync(ct)).Single(a => a.Name == name).Description.Should().Be("bleibt");
+    }
+
+    /// <summary>
     /// Ein doppelter Name ist ein Bedienfehler, kein Serverfehler — und die Meldung muss sagen,
     /// was los ist, sonst sucht ein Skript im Nebel.
     /// </summary>

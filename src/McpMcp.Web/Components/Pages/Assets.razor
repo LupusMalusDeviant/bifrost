@@ -118,6 +118,10 @@
     else
     {
         <p class="muted">Bearbeite: <span class="mono">@_name</span> — die nächste Version wird angehängt (append-only).</p>
+        @* Der Name bleibt fest (er ist die Adresse), die Beschreibung nicht: Sie entscheidet, ob ein
+           Agent zugreift, und war bis dahin nach dem Anlegen unveränderlich. *@
+        <label>Beschreibung</label>
+        <input @bind="_desc" placeholder="Eine Zeile — sie entscheidet, ob ein Agent zugreift" />
     }
 
     <label>Wann anwenden</label>
@@ -208,6 +212,10 @@
         _editId = id;
         _name = content.Name;
         _content = content.Content;
+        // Aus der Liste, nicht aus AssetContent: Ein leeres Feld saehe aus, als gaebe es keine
+        // Beschreibung — und beim Speichern wuerde die bestehende stillschweigend uebernommen,
+        // ohne dass jemand sie gesehen hat.
+        _desc = _assets.FirstOrDefault(a => a.Id == id)?.Description ?? "";
         var metadata = content.MetadataOrEmpty;
         _whenToUse = metadata.WhenToUse ?? "";
         _references = Lines(metadata.ReferencesOrEmpty);
@@ -336,7 +344,9 @@
             }
             else
             {
-                await AssetStore.PublishAsync(_editId.Value, _content, metadata, CancellationToken.None);
+                await AssetStore.PublishAsync(
+                    _editId.Value, _content, metadata, CancellationToken.None,
+                    string.IsNullOrWhiteSpace(_desc) ? null : _desc.Trim());
                 UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.AssetChanged, $"asset-published:{name}");
             }
 

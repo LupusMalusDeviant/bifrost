@@ -59,7 +59,8 @@ public sealed class EfAssetStore : IAssetStore
     }
 
     public async Task<AssetVersion> PublishAsync(
-        AssetId id, string content, SkillMetadata? metadata, CancellationToken ct)
+        AssetId id, string content, SkillMetadata? metadata, CancellationToken ct,
+        string? description = null)
     {
         ArgumentNullException.ThrowIfNull(content);
         SkillLimits.EnsureWithinLimit(content);
@@ -74,7 +75,7 @@ public sealed class EfAssetStore : IAssetStore
             Id = id.Value,
             Version = (existing?.Version ?? 0) + 1,
             Name = existing?.Name ?? id.ToString(),
-            Description = existing?.Description,
+            Description = description ?? existing?.Description,
             Content = content,
             PublishedAt = _time.GetUtcNow(),
 

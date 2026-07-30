@@ -883,7 +883,8 @@ internal static class ApiEndpoints
             try
             {
                 var version = await store.PublishAsync(
-                    new AssetId(id), body.Content, metadata.IsEmpty ? null : metadata, ct);
+                    new AssetId(id), body.Content, metadata.IsEmpty ? null : metadata, ct,
+                    body.Description);
                 AuditManagement(audit, time, ctx, AuditEventKind.AssetChanged, null, $"skill-published:{id}");
                 return Results.Ok(new { version = version.Value });
             }
@@ -943,7 +944,11 @@ internal static class ApiEndpoints
         string Content,
         string? WhenToUse = null,
         IReadOnlyList<string>? References = null,
-        IReadOnlyList<string>? RequiredTools = null);
+        IReadOnlyList<string>? RequiredTools = null,
+        // null heisst "unveraendert uebernehmen". Ohne dieses Feld war eine einmal gesetzte
+        // Beschreibung fuer immer festgeschrieben — ausgerechnet die Angabe, an der ein Agent
+        // entscheidet, ob er den Skill nimmt.
+        string? Description = null);
 
     private static IdentityId Identity(HttpContext ctx) => (IdentityId)ctx.Items[ApiKeyAuthMiddleware.IdentityItemKey]!;
 

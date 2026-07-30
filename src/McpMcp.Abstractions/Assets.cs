@@ -197,8 +197,18 @@ public interface IAssetStore
     /// Hängt eine neue Version an. Die Metadaten gehören zur Version, nicht zum Skill: Wer die
     /// Referenzen ändert, ändert den Skill — das gehört in die Historie wie der Text.
     /// </summary>
+    /// <param name="description">
+    /// Neue Beschreibung, oder <c>null</c> für „unverändert übernehmen".
+    /// <para>
+    /// Sie war bisher <b>nach dem Anlegen unveränderlich</b> — weder über die Oberfläche noch über
+    /// die API. Das ist ausgerechnet das Feld, an dem ein Agent entscheidet, ob er einen Skill
+    /// nimmt: Ein Tippfehler darin wäre dauerhaft gewesen. Sie hängt an der Version wie die übrigen
+    /// Angaben, aus demselben Grund — wer sie ändert, ändert, wofür der Skill gehalten wird.
+    /// </para>
+    /// </param>
     Task<AssetVersion> PublishAsync(
-        AssetId id, string content, SkillMetadata? metadata, CancellationToken ct);
+        AssetId id, string content, SkillMetadata? metadata, CancellationToken ct,
+        string? description = null);
 
     /// <summary>Legt ein neues Asset (Name + Beschreibung) als Version 1 an.</summary>
     Task<AssetId> CreateAsync(

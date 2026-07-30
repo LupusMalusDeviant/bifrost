@@ -44,10 +44,16 @@ internal sealed class FakeAssetStore : IAssetStore
     }
 
     public Task<AssetVersion> PublishAsync(
-        AssetId id, string content, SkillMetadata? metadata, CancellationToken ct)
+        AssetId id, string content, SkillMetadata? metadata, CancellationToken ct,
+        string? description = null)
     {
         var previous = _versions.Where(v => v.Id == id).OrderByDescending(v => v.Version.Value).First();
         var version = new AssetVersion(previous.Version.Value + 1);
+        if (description is not null)
+        {
+            _descriptions[id.Value] = description;
+        }
+
         _versions.Add(new AssetContent(
             id, version, previous.Name, content, DateTimeOffset.UnixEpoch, metadata));
         return Task.FromResult(version);
