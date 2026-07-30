@@ -44,6 +44,10 @@ internal static class GatewayMcpHandlers
         RequestContext<CallToolRequestParams> ctx, CancellationToken ct)
     {
         var identity = RequireIdentity(ctx.Services!);
+        // Auch hier, nicht nur bei tools/list: Ein Client, der seine Werkzeugliste aus dem
+        // Zwischenspeicher nimmt, ruft nach dem Neuverbinden direkt tools/call — dann bliebe die
+        // Zeile aus, obwohl eine Session steht.
+        LogClientCapabilitiesOnce(ctx.Services!, ctx.Server);
         var name = ctx.Params?.Name ?? throw new McpException("tools/call ohne Tool-Namen.");
         var args = ToJsonElement(ctx.Params.Arguments);
 
