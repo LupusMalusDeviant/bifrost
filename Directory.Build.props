@@ -10,7 +10,7 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <Authors>MCP-MCP Project</Authors>
     <Product>MCP-MCP</Product>
-    <VersionPrefix>0.7.0</VersionPrefix>
+    <VersionPrefix>0.7.1</VersionPrefix>
     <Version>$(VersionPrefix)</Version>
     <PackageVersion>$(VersionPrefix)</PackageVersion>
     <InformationalVersion>$(VersionPrefix)</InformationalVersion>
