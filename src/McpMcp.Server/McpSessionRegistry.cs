@@ -21,7 +21,24 @@ public sealed class McpSessionRegistry : IActiveSessionSource
 
     public void Register(McpServer server, IdentityId identity) => _sessions[server] = identity;
 
-    public void Unregister(McpServer server) => _sessions.TryRemove(server, out _);
+    public void Unregister(McpServer server)
+    {
+        _sessions.TryRemove(server, out _);
+        _capabilitiesLogged.TryRemove(server, out _);
+    }
+
+    /// <summary>
+    /// Erster Aufruf je Session <c>true</c> — danach <c>false</c>. Damit laesst sich die
+    /// Faehigkeiten-Zeile genau einmal schreiben.
+    /// <para>
+    /// Sie gehoert NICHT in den Session-Aufbau: Dort laeuft der Initialize-Handshake noch, und
+    /// <c>ClientCapabilities</c> ist null. Genau daran ist der erste Versuch gescheitert — er meldete
+    /// fuer jeden Client "kann nichts", was eine falsche Aussage aus einer zu fruehen Messung war.
+    /// </para>
+    /// </summary>
+    public bool ShouldLogCapabilities(McpServer server) => _capabilitiesLogged.TryAdd(server, 0);
+
+    private readonly ConcurrentDictionary<McpServer, byte> _capabilitiesLogged = new();
 
     public async Task NotifyToolListChangedAsync(CancellationToken ct)
     {

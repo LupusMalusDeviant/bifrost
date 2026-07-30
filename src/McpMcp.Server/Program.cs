@@ -328,23 +328,6 @@ builder.Services.AddMcpServer(options =>
             var identity = (IdentityId)httpContext.Items[ApiKeyAuthMiddleware.IdentityItemKey]!;
             registry.Register(server, identity);
 
-            // Was der Client kann, entscheidet, was der Gateway ihm anbieten darf — allen voran
-            // Elicitation: Nur ein Client, der sie anmeldet, kann eine Freigabe im Moment des
-            // Aufrufs beim Menschen einholen. Ohne diese Zeile ist die Frage "kann er es?" nur
-            // durch Ausprobieren zu beantworten, und das faellt erst im Fehlerfall auf.
-#pragma warning disable CA1848
-            var sessionLog = httpContext.RequestServices.GetRequiredService<ILoggerFactory>()
-                .CreateLogger("McpMcp.Server.McpSession");
-            if (sessionLog.IsEnabled(LogLevel.Information))
-            {
-                var caps = server.ClientCapabilities;
-                sessionLog.LogInformation(
-                    "MCP-Client verbunden: {Client} {Version}. Faehigkeiten — Elicitation: "
-                    + "{Elicitation}, Sampling: {Sampling}, Roots: {Roots}.",
-                    server.ClientInfo?.Name ?? "?", server.ClientInfo?.Version ?? "?",
-                    caps?.Elicitation is not null, caps?.Sampling is not null, caps?.Roots is not null);
-            }
-#pragma warning restore CA1848
             try
             {
                 await server.RunAsync(ct);

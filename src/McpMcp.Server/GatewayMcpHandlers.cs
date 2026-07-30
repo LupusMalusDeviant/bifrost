@@ -18,6 +18,7 @@ internal static class GatewayMcpHandlers
         RequestContext<ListToolsRequestParams> ctx, CancellationToken ct)
     {
         var identity = RequireIdentity(ctx.Services!);
+        LogClientCapabilitiesOnce(ctx.Services!, ctx.Server);
         var catalog = ctx.Services!.GetRequiredService<IToolCatalog>();
         var view = catalog.GetViewFor(identity);
 
@@ -242,6 +243,41 @@ internal static class GatewayMcpHandlers
     /// ContentBlocks — jeder Aufruf endete in einer JsonException.
     /// </para>
     /// </param>
+    /// <summary>
+    /// Schreibt einmal je Session, was der Client kann. Hier und nicht im Session-Aufbau: Dort
+    /// laeuft der Initialize-Handshake noch, und <c>ClientCapabilities</c> ist null — der erste
+    /// Versuch meldete deshalb fuer jeden Client „kann nichts".
+    /// <para>
+    /// Der Wert ist nicht nur Neugier: Nur ein Client, der <b>Elicitation</b> anmeldet, kann eine
+    /// Freigabe im Moment des Aufrufs beim Menschen einholen, statt sie in die Warteschlange zu
+    /// legen.
+    /// </para>
+    /// </summary>
+    private static void LogClientCapabilitiesOnce(IServiceProvider services, McpServer? server)
+    {
+        if (server is null
+            || services.GetService<McpSessionRegistry>() is not { } registry
+            || !registry.ShouldLogCapabilities(server))
+        {
+            return;
+        }
+
+        var log = services.GetRequiredService<ILoggerFactory>().CreateLogger("McpMcp.Server.McpSession");
+        if (!log.IsEnabled(LogLevel.Information))
+        {
+            return;
+        }
+
+        var caps = server.ClientCapabilities;
+#pragma warning disable CA1848 // Einmal je Session; der Codegen braechte hier nichts.
+        log.LogInformation(
+            "MCP-Client: {Client} {Version}. Faehigkeiten — Elicitation: {Elicitation}, "
+            + "Sampling: {Sampling}, Roots: {Roots}.",
+            server.ClientInfo?.Name ?? "?", server.ClientInfo?.Version ?? "?",
+            caps?.Elicitation is not null, caps?.Sampling is not null, caps?.Roots is not null);
+#pragma warning restore CA1848
+    }
+
     internal static CallToolResult ToCallToolResult(ToolInvocationResult result, bool isPassthrough = true)
     {
         if (result.Status is not InvocationStatus.Success)
