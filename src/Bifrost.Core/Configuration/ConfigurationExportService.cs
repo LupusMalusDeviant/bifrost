@@ -1,9 +1,11 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Bifrost.Abstractions;
+using Bifrost.Abstractions.Execution;
 using Bifrost.Abstractions.Operations;
+using Bifrost.Core.Execution;
 
 namespace Bifrost.Core.Configuration;
 
@@ -32,6 +34,7 @@ public sealed class ConfigurationExportService : IConfigurationExportService
     private readonly IConfigurationImportTarget _target;
     private readonly TimeProvider _time;
     private readonly string _productVersion;
+    private readonly IHostExecutionPolicy _hostExecution;
 
     /// <summary>
     /// Die Vorbereitung zu einem ausgegebenen Plan.
@@ -45,14 +48,20 @@ public sealed class ConfigurationExportService : IConfigurationExportService
     /// </summary>
     private readonly ConcurrentDictionary<string, PreparedImport> _prepared = new(StringComparer.Ordinal);
 
+    /// <param name="hostExecution">
+    /// Die Ausführungs-Policy (ADR-0025 E4). Der Konfigurationsimport ist ein Erzeugungsweg wie das
+    /// Formular — nur ohne jemanden, der die Werte gesehen hat.
+    /// </param>
     public ConfigurationExportService(
         IConfigurationSnapshotSource source,
         IConfigurationImportTarget target,
         TimeProvider? timeProvider = null,
-        string? productVersion = null)
+        string? productVersion = null,
+        IHostExecutionPolicy? hostExecution = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(target);
+        _hostExecution = hostExecution ?? HostExecutionPolicy.Unresolved;
         _source = source;
         _target = target;
         _time = timeProvider ?? TimeProvider.System;
@@ -90,6 +99,7 @@ public sealed class ConfigurationExportService : IConfigurationExportService
             FormatVersion, _productVersion, createdAt, document.ContainsSecrets, payload);
     }
 
+    [HostExecutionChecked(Note = "ueber PlanUpstreams")]
     public async Task<ConfigurationImportPlan> PlanImportAsync(
         string payload, string? passphrase, CancellationToken ct)
     {
@@ -107,7 +117,8 @@ public sealed class ConfigurationExportService : IConfigurationExportService
         var conflicts = new List<string>();
         var missing = new List<string>();
 
-        var upstreams = PlanUpstreams(document, currentDocument, additions, unchanged, conflicts);
+        var upstreams = PlanUpstreams(
+            document, currentDocument, additions, unchanged, conflicts, _hostExecution);
         var roles = PlanRoles(document, currentDocument, additions, unchanged, conflicts);
         var profiles = PlanProfiles(document, currentDocument, additions, unchanged, conflicts);
         var guardRules = PlanGuardRules(document, currentDocument, additions, unchanged, conflicts);
@@ -361,12 +372,14 @@ public sealed class ConfigurationExportService : IConfigurationExportService
 
     // ── Planung je Objektart ────────────────────────────────────────────────────────────────────
 
+    [HostExecutionChecked]
     private static List<UpstreamSnapshot> PlanUpstreams(
         ConfigurationExportDocument document,
         ConfigurationExportDocument current,
         List<string> additions,
         List<string> unchanged,
-        List<string> conflicts)
+        List<string> conflicts,
+        IHostExecutionPolicy? hostExecution)
     {
         var bySlug = Index(current.Upstreams, u => u.Slug);
         var byId = current.Upstreams.GroupBy(u => u.Id).ToDictionary(g => g.Key, g => g.First());
@@ -395,6 +408,19 @@ public sealed class ConfigurationExportService : IConfigurationExportService
                 conflicts.Add(
                     $"Upstream '{upstream.Slug}': Der Slug ist auf der Zielinstanz bereits vergeben. "
                     + "Er wird nicht überschrieben — der Slug ist die Namespacing-Basis der Werkzeugnamen (FR-03).");
+                continue;
+            }
+
+            // ADR-0025 E4: Ein Konfigurationsimport bringt Upstreams mit, die niemand in dieser
+            // Instanz eingetippt hat. Der betroffene Upstream wird übersprungen statt der ganze
+            // Import abgebrochen — der Rest der Datei ist deshalb nicht falsch, und der Betreiber
+            // sieht in der Vorschau genau, was fehlen wird und warum.
+            var policy = HostExecutionGuard.Evaluate(hostExecution, upstream.Config);
+            if (!policy.Allowed)
+            {
+                conflicts.Add(
+                    $"Upstream '{upstream.Slug}': {policy.Summary} [{policy.ReasonCode}] "
+                    + (policy.Remediation ?? string.Empty));
                 continue;
             }
 

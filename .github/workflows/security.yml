@@ -1,0 +1,415 @@
+name: security
+
+# Security- und Supply-Chain-Gates (WP3.5).
+#
+# ── Verhaeltnis zu release.yml ──────────────────────────────────────────────────────────
+# Dieser Workflow ist die LAUFENDE Pruefung: jeder PR, jeder Push auf main, woechentlich.
+# Die BLOCKIERENDE Wiederholung fuer den Release steht in release.yml im Job
+# `supply-chain` — dort, wo schon das Trivy-Gate sitzt.
+#
+# Warum beides und nicht nur eines: Ein Gate, das nur im Release laeuft, meldet den Fund
+# zum spaetestmoeglichen Zeitpunkt — wenn das Tag bereits gesetzt ist und alle warten.
+# Ein Gate, das nur im PR laeuft, sagt nichts ueber den getaggten Commit und nichts ueber
+# Schwachstellen, die ERST NACH dem Merge bekannt wurden. Die woechentliche Wiederholung
+# deckt genau diesen dritten Fall ab: unveraenderter Code, neue Advisory-Lage.
+#
+# ── Ehrlichkeitsvermerk ─────────────────────────────────────────────────────────────────
+# Dieser Workflow ist zum Zeitpunkt der Abgabe NIE auf GitHub gelaufen — ebenso wenig wie
+# release.yml, das seit M1 ungelaufen ist. Was lokal/containerisiert belegt wurde und was
+# hier bloss in der YAML steht, trennt docs/security-gates.md §6 einzeln auf.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Montags, versetzt zu Dependabot (05:00): erst die Updates, dann die Nachpruefung.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Werkzeugversionen zentral. Ein SHA-gepinnter Installer, der ein ungepinntes Binary
+  # aus dem Netz holt, ist Pinning-Theater (docs/security/supply-chain.md §7).
+  #
+  # ACHTUNG, bekannte Luecke: Diese beiden Digests pflegt Dependabot NICHT. Die
+  # `docker`-Oekosystem-Konfiguration liest Dockerfiles und Compose-Dateien, keine
+  # `docker run`-Aufrufe in Workflows. Sie brauchen die manuelle Nachschau aus
+  # docs/security-gates.md §7 — hier steht das dran, statt es zu verschweigen.
+  GITLEAKS_IMAGE: zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f # v8.30.1
+  TRIVY_IMAGE: aquasec/trivy@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f # 0.72.0
+
+jobs:
+  # ── exceptions ──────────────────────────────────────────────────────────────
+  # Laeuft zuerst und ist absichtlich das billigste Gate: Wenn das Ausnahmeregister
+  # ungueltig ist (abgelaufener Eintrag, fehlende Freigabe, Frist ueber 90 Tage), sind
+  # alle folgenden Gates in ihrer Aussage nicht mehr vertrauenswuerdig — sie koennten
+  # etwas durchlassen, das niemand mehr verantwortet.
+  exceptions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Ausnahmeregister pruefen (Fristen, Freigaben, Drift)
+        run: python3 .github/scripts/security_exceptions.py validate
+
+      - name: Aktive Ausnahmen in die Zusammenfassung schreiben
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Aktive Sicherheits-Ausnahmen"
+            echo ""
+            python3 .github/scripts/security_exceptions.py validate 2>&1 || true
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── codeql ──────────────────────────────────────────────────────────────────
+  # Sprachen: NUR C#. Geprueft statt angenommen — am 2026-07-31 enthielt das Repository
+  # null Dateien mit den Endungen .js/.mjs/.ts/.tsx und kein package.json; die Oberflaeche
+  # ist Blazor, also ebenfalls C#. Ein `javascript`-Ziel haette hier nichts zu analysieren
+  # und wuerde nur eine gruene Zeile erzeugen, die Sicherheit vortaeuscht.
+  # Kommt spaeter echtes JavaScript dazu, gehoert es in die Matrix.
+  codeql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write # SARIF in die Code-Scanning-Ansicht
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [csharp]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: CodeQL init
+        uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        with:
+          languages: ${{ matrix.language }}
+          # `security-and-quality` statt der Vorgabe `security`: Das Projekt haelt einen
+          # hohen Analyselevel bereits im Build (`TreatWarningsAsErrors`), der zusaetzliche
+          # Regelsatz kostet hier wenig und faengt Muster, die der Compiler nicht sieht.
+          queries: security-and-quality
+          # Manueller Build statt `autobuild`: Das Projekt braucht .NET 10 und baut mit
+          # `TreatWarningsAsErrors`. `autobuild` wuerde eine eigene Heuristik fahren und
+          # im Zweifel eine unvollstaendige Datenbank erzeugen — eine unvollstaendige
+          # CodeQL-Datenbank meldet weniger Funde, nicht mehr Fehler. Also still falsch.
+          build-mode: manual
+
+      - name: Build fuer die CodeQL-Datenbank
+        run: dotnet build --configuration Release
+
+      - name: CodeQL analyze
+        id: analyze
+        uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        with:
+          category: /language:${{ matrix.language }}
+          output: codeql-sarif
+          # Der Upload in die Code-Scanning-Ansicht ist die Anzeige, nicht das Gate.
+          # Geblockt wird im naechsten Schritt ueber die SARIF-Datei.
+          upload: always
+
+      - name: Blockierregel — Critical/High aus CodeQL
+        shell: bash
+        run: |
+          python3 .github/scripts/sarif_gate.py codeql-sarif/*.sarif \
+            --name "CodeQL (${{ matrix.language }})" \
+            --tool codeql \
+            --threshold 7.0 \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: SARIF als Artefakt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sarif-codeql-${{ matrix.language }}
+          path: codeql-sarif/*.sarif
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ── dependencies ────────────────────────────────────────────────────────────
+  # Zwei Oekosysteme, zwei Werkzeuge, ein Job: NuGet ueber `dotnet list package`,
+  # Rust ueber `cargo audit`.
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      # Der Befehl selbst ist KEIN Gate: er meldet High-Funde und endet trotzdem mit
+      # Exit 0 (nachgemessen am 2026-07-31, siehe docs/security-gates.md §3.2). Deshalb
+      # wird die Ausgabe ausgewertet, nicht der Rueckgabewert geglaubt.
+      # `--format json` statt der Tabelle, weil die Tabelle lokalisiert ist.
+      - name: NuGet — anfaellige Pakete ermitteln
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p security-reports
+          dotnet list Bifrost.slnx package --vulnerable --include-transitive --format json \
+            > security-reports/dotnet-vulnerable.json
+          cat security-reports/dotnet-vulnerable.json
+
+      - name: NuGet — Blockierregel Critical/High
+        shell: bash
+        run: |
+          python3 .github/scripts/dotnet_vulnerable_gate.py \
+            security-reports/dotnet-vulnerable.json \
+            --sarif security-reports/dotnet-vulnerable.sarif \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      # rust-toolchain.toml pinnt den Compiler; rustup ist auf dem Runner vorhanden.
+      - name: Rust-Toolchain
+        working-directory: spikes/wasi-component-runtime
+        run: rustup show active-toolchain
+
+      # Bewusst `cargo install` statt einer weiteren fremden Action: eine Abhaengigkeit
+      # weniger, die gepinnt und gepflegt werden muss. Kostet rund drei Minuten — in einem
+      # Job, der nicht auf jedem Push laeuft, ist das der guenstigere Tausch.
+      - name: cargo-audit installieren
+        run: cargo install cargo-audit --locked --version ^0.22
+
+      # Vier eigenstaendige Lockfiles. Ohne die Schleife bliebe der Host geprueft und die
+      # drei Guest-Workspaces ungeprueft — und genau dort laeuft fremder Code.
+      - name: Rust — cargo audit ueber alle vier Lockfiles
+        id: cargo_audit
+        shell: bash
+        run: |
+          set -uo pipefail
+          # `set +e`: Alle vier Lockfiles sollen geprueft werden. Mit dem voreingestellten
+          # `-e` endete die Schleife beim ersten Fund, und die restlichen Verzeichnisse
+          # blieben ungeprueft — man saehe einen Fund und wuesste nicht, ob es drei sind.
+          set +e
+          mkdir -p security-reports
+          IGNORE=()
+          while read -r ID; do
+            [ -n "$ID" ] && IGNORE+=(--ignore "$ID")
+          done < <(python3 .github/scripts/security_exceptions.py active cargo-audit)
+          if [ ${#IGNORE[@]} -gt 0 ]; then
+            echo "Aktive cargo-audit-Ausnahmen: ${IGNORE[*]}"
+          fi
+
+          FEHLER=0
+          {
+            echo "### cargo audit"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for DIR in spikes/wasi-component-runtime \
+                     spikes/wasi-component-runtime/guest \
+                     spikes/wasi-component-runtime/guest-interface \
+                     spikes/wasi-component-runtime/guest-resource; do
+            NAME=$(echo "$DIR" | tr '/' '-')
+            echo "::group::cargo audit $DIR"
+            # JSON fuer das Artefakt, Tabelle fuer die Sichtprueferin.
+            (cd "$DIR" && cargo audit "${IGNORE[@]+"${IGNORE[@]}"}" --json) \
+              > "security-reports/cargo-audit-${NAME}.json" || true
+            (cd "$DIR" && cargo audit "${IGNORE[@]+"${IGNORE[@]}"}")
+            CODE=$?
+            echo "::endgroup::"
+            if [ "$CODE" -ne 0 ]; then
+              echo "::error::cargo audit meldet Funde in $DIR (Exit $CODE)."
+              echo "- \`$DIR\`: **Funde** (Exit $CODE)" >> "$GITHUB_STEP_SUMMARY"
+              FEHLER=1
+            else
+              echo "- \`$DIR\`: sauber" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          exit "$FEHLER"
+
+      - name: Berichte als Artefakt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sarif-dependencies
+          path: security-reports/*
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ── secrets ─────────────────────────────────────────────────────────────────
+  # Zwei Betriebsarten aus EINEM Werkzeug:
+  #   * PR      → nur die Commits des PR (schnell, blockiert den Merge);
+  #   * sonst   → die vollstaendige Historie (langsamer, faengt Altlasten).
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Ohne die volle Historie prueft der Scan einen abgeschnittenen Baum und
+          # meldet "sauber", weil er die Altlasten gar nicht gesehen hat.
+          fetch-depth: 0
+
+      - name: Umfang bestimmen
+        id: umfang
+        shell: bash
+        env:
+          BASIS: ${{ github.event.pull_request.base.sha }}
+          KOPF: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "Diff-Modus: ${BASIS}..${KOPF}"
+            echo "logopts=--log-opts=${BASIS}..${KOPF}" >> "$GITHUB_OUTPUT"
+          else
+            echo "Vollhistorie."
+            echo "logopts=" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Blockiert ueber `--exit-code 2`. Bewusst KEIN `continue-on-error` — ein Fund
+      # bricht den Job ab. Der SARIF-Upload danach laeuft ueber `if: always()`, damit
+      # der Befund sichtbar wird, obwohl der Schritt davor rot ist.
+      - name: gitleaks
+        id: gitleaks
+        shell: bash
+        run: |
+          set -uo pipefail
+          # GitHub startet `shell: bash` mit `-e`. Ohne dieses `set +e` braeche der Schritt
+          # beim Fund sofort ab, und die Unterscheidung unten — Befund (Exit 2) gegen
+          # Werkzeugfehler (alles andere) — kaeme nie zum Zug. Das Gate blockte zwar
+          # trotzdem, aber mit einer nichtssagenden Meldung.
+          set +e
+          mkdir -p security-reports
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/repo:ro" \
+            -v "${GITHUB_WORKSPACE}/security-reports:/out" \
+            "${GITLEAKS_IMAGE}" git /repo \
+            --config /repo/.github/gitleaks.toml \
+            --baseline-path /repo/.github/gitleaks-baseline.json \
+            --report-format sarif \
+            --report-path /out/gitleaks.sarif \
+            --redact \
+            --exit-code 2 \
+            --no-banner ${{ steps.umfang.outputs.logopts }}
+          CODE=$?
+          if [ "$CODE" -eq 2 ]; then
+            echo "::error::gitleaks hat Zeichenfolgen gefunden, die wie Zugangsdaten aussehen."
+            echo "::error::Pruefen: echt -> Zugangsdatum SOFORT rotieren, die Historie bereinigen."
+            echo "::error::Erfunden (Testfixture) -> Pfad in .github/gitleaks.toml eintragen, mit Begruendung."
+            exit 1
+          fi
+          if [ "$CODE" -ne 0 ]; then
+            echo "::error::gitleaks ist mit Exit $CODE abgebrochen (Werkzeugfehler, kein Befund)."
+            exit "$CODE"
+          fi
+          echo "Keine neuen Funde gegenueber der Baseline."
+
+      - name: SARIF in die Code-Scanning-Ansicht
+        # Forks bekommen kein `security-events: write`; ohne die Bedingung schluege der
+        # Upload dort fehl und wuerde einen Fund als Werkzeugfehler tarnen.
+        if: always() && github.event.pull_request.head.repo.fork != true
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        with:
+          sarif_file: security-reports/gitleaks.sarif
+          category: gitleaks
+
+      - name: SARIF als Artefakt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sarif-secrets
+          path: security-reports/*
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ── container ───────────────────────────────────────────────────────────────
+  # Containerfilesystem-Scan. Geprueft wird das WIRKLICH gebaute Image, nicht das
+  # Dockerfile: die meisten Funde stammen aus dem Basis-Image und dessen Paketstand,
+  # und den sieht man dem Dockerfile nicht an.
+  #
+  # Zusaetzlich ein `fs`-Scan des Arbeitsbaums fuer Fehlkonfigurationen (Dockerfile,
+  # Compose) und Lockfile-Schwachstellen.
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Image bauen
+        run: docker build -t bifrost:security-scan .
+
+      - name: Trivy — Containerfilesystem (blockiert bei CRITICAL/HIGH)
+        id: image_scan
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p security-reports
+          # Erst SARIF ohne Abbruch erzeugen, damit der Bericht auch dann existiert,
+          # wenn der blockierende Lauf gleich rot wird.
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${GITHUB_WORKSPACE}/security-reports:/out" \
+            "${TRIVY_IMAGE}" image \
+            --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed=false \
+            --format sarif --output /out/trivy-image.sarif \
+            --no-progress bifrost:security-scan
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            "${TRIVY_IMAGE}" image \
+            --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed=false \
+            --exit-code 1 --no-progress bifrost:security-scan
+
+      # `--scanners vuln,misconfig` ohne `secret`: Das Secret-Gate ist gitleaks (Job
+      # `secrets`). Trivys Secret-Scanner ueber den ganzen Baum lief lokal in das
+      # Zeitlimit (nachgemessen 2026-07-31), und zwei Werkzeuge fuer dieselbe Frage
+      # heissen zwei Ausnahmelisten, die auseinanderlaufen.
+      - name: Trivy — Arbeitsbaum (Lockfiles und Fehlkonfiguration)
+        shell: bash
+        run: |
+          set -uo pipefail
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/work:ro" \
+            -v "${GITHUB_WORKSPACE}/security-reports:/out" \
+            -w /work "${TRIVY_IMAGE}" fs \
+            --scanners vuln,misconfig --severity CRITICAL,HIGH \
+            --skip-dirs '**/obj' --skip-dirs '**/bin' --skip-dirs '**/target' \
+            --timeout 15m \
+            --format sarif --output /out/trivy-fs.sarif \
+            --no-progress .
+
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/work:ro" -w /work "${TRIVY_IMAGE}" fs \
+            --scanners vuln,misconfig --severity CRITICAL,HIGH \
+            --skip-dirs '**/obj' --skip-dirs '**/bin' --skip-dirs '**/target' \
+            --timeout 15m --exit-code 1 --no-progress .
+
+      - name: SARIF in die Code-Scanning-Ansicht
+        if: always() && github.event.pull_request.head.repo.fork != true
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        with:
+          sarif_file: security-reports
+          category: trivy
+
+      - name: SARIF als Artefakt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sarif-container
+          path: security-reports/*
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,0 +1,77 @@
+# gitleaks-Konfiguration fuer das Secret-Gate (WP3.5)
+#
+# ── Das Grundproblem dieses Repositories ────────────────────────────────────────────────
+# B.I.F.R.O.S.T redigiert Secrets (SECURITY.md, "Audit integrity"). Um zu belegen, DASS es
+# redigiert, muss die Testsuite Zeichenfolgen enthalten, die wie echte Zugangsdaten
+# aussehen — ein Redaktionstest ohne secret-foermige Eingabe testet nichts. Ein
+# Secret-Scanner findet genau diese Zeichenfolgen und meldet sie.
+#
+# Daraus folgt: Ohne Konfiguration ist das Gate dauerhaft rot, und ein dauerhaft rotes Gate
+# wird abgeschaltet. Die Frage ist also nicht OB ausgenommen wird, sondern wie eng.
+#
+# ── Was hier NICHT steht ────────────────────────────────────────────────────────────────
+# Kein `tests/**`-Pauschalausschluss. Ein echtes Zugangsdatum, das versehentlich in einer
+# Testdatei landet, ist genauso ein Leck wie eines in `src/` — und Testdateien sind der
+# wahrscheinlichere Ort, weil dort mit echten Systemen experimentiert wird.
+#
+# ── Was stattdessen ─────────────────────────────────────────────────────────────────────
+# Namentlich die drei Dateien, deren Inhalt am 2026-07-31 einzeln geprueft wurde und
+# nachweislich aus erfundenen Werten besteht (Details in docs/security-gates.md §4).
+#
+# ── Der beabsichtigte Nebeneffekt ───────────────────────────────────────────────────────
+# Legt jemand eine NEUE Testdatei mit secret-foermigen Fixtures an, wird das Gate rot.
+# Das ist kein Fehlalarm, sondern der vorgesehene Ablauf: ein Mensch schaut einmal hin,
+# stellt fest, dass der Wert erfunden ist, und traegt den Pfad hier ein. Genau dieses
+# einmalige Hinschauen ist der Wert des Gates. Wer es durch eine Pauschalregel ersetzt,
+# tauscht es gegen nichts ein.
+
+title = "B.I.F.R.O.S.T Secret-Gate"
+
+[extend]
+# Der mitgelieferte Regelsatz (rund 170 Anbieter) wird uebernommen und NICHT beschnitten.
+useDefault = true
+
+[allowlist]
+description = """
+Geprueft am 2026-07-31: erfundene Testwerte, keine echten Zugangsdaten.
+Jeder Eintrag nennt die Datei und den Grund. Neue Eintraege brauchen dieselbe Pruefung.
+"""
+
+paths = [
+  # Fixtures fuer den Export-/Redaktionsnachweis (WP2.5). Die Werte tragen im Quelltext
+  # den Kommentar "Erfunden, keine echten Zugangsdaten" und sind bewusst so gewaehlt, dass
+  # sie keine gemeinsame Teilzeichenfolge haben — sie existieren, damit ein Treffer im
+  # Export eindeutig zuzuordnen ist.
+  '''tests/Bifrost\.Core\.Tests/Configuration/ConfigurationFixtures\.cs$''',
+
+  # Fixtures fuer die Diagnose-Redaktion: Anthropic-Key, Slack-Token, Passphrase und ein
+  # PEM-Block, dessen Base64-Rumpf ausgeschrieben "erfundenerschluessel" enthaelt.
+  '''tests/Bifrost\.Core\.Tests/Diagnostics/DiagnosticRedactionTests\.cs$''',
+
+  # Ein 32-stelliger Hex-Wert als erfundenes Restore-Token ("0123456789abcdef…"), der
+  # gegen die API gehalten wird, um zu belegen, dass ein fremdes Token 409 erzeugt.
+  '''tests/Bifrost\.Integration\.Tests/Operations/OperationsApiTests\.cs$''',
+
+  # Der Guardrail-Nachweis: Diese Datei prueft, ob bekannte Credential-FORMEN erkannt
+  # werden. Sie muss je ein Muster pro Anbieter enthalten (ghp_…, glpat-…, AIza…, JWT) —
+  # ein Erkennungstest ohne die zu erkennenden Formen ist kein Test.
+  '''tests/Bifrost\.Core\.Tests/Guardrails/SecretGuardTests\.cs$''',
+
+  # Webhook-Signaturnachweis: "whsec_testgeheimnis_1234567890".
+  '''tests/Bifrost\.Core\.Tests/Webhooks/WebhookSignatureTests\.cs$''',
+
+  # Beleg, dass kein Span Argumente oder Ergebnisse traegt: "sk-streng-geheim-4711".
+  '''tests/Bifrost\.Core\.Tests/Invocation/TracingTests\.cs$''',
+
+  # Container-Isolation: "s3hr-geheim-xyz" als API_TOKEN einer Testumgebung.
+  '''tests/Bifrost\.Integration\.Tests/Gateway/ContainerIsolationE2ETests\.cs$''',
+
+  # OAuth-Token-Speicher: "at_streng_geheim_4711" / "rt_auch_geheim_0815".
+  '''tests/Bifrost\.Integration\.Tests/Persistence/PersistenceTestsBase\.cs$''',
+]
+
+# Historische Funde aus der Zeit vor der Umbenennung (`tests/McpMcp.*`) liegen NICHT hier,
+# sondern in `.github/gitleaks-baseline.json`. Sie sind einzeln triagiert; die Baseline
+# haelt genau diese neunzehn Fundstellen fest und laesst jeden neuen Fund durch.
+# Der Unterschied ist wichtig: ein Pfad-Ausschluss gilt fuer alle Zukunft, eine Baseline
+# nur fuer den festgehaltenen Stand.

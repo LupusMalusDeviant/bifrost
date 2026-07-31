@@ -2,6 +2,8 @@ using System.Text;
 using System.Text.RegularExpressions;
 
 using Bifrost.Abstractions;
+using Bifrost.Abstractions.Execution;
+using Bifrost.Core.Execution;
 
 namespace Bifrost.Core.Upstreams;
 
@@ -17,6 +19,29 @@ public static partial class UpstreamConfigValidator
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
     private static partial Regex EnvironmentNamePattern();
 
+    /// <summary>
+    /// Prüft Aufbau <b>und</b> Ausführungsart (ADR-0025 E4). Das ist die Fassung, die jeder Startweg
+    /// benutzt — Validieren, Testen, Starten, Import.
+    /// <para>
+    /// Die Policy steht als Argument da und hat keinen Vorgabewert: Wer validiert, muss wissen, ob
+    /// nativ ausgeführt werden darf. Ein <c>null</c> hier bedeutet nicht „egal", sondern
+    /// <see cref="HostExecutionReason.Undetermined"/> — und damit nein.
+    /// </para>
+    /// </summary>
+    [HostExecutionChecked]
+    public static void Validate(UpstreamServerConfig config, IHostExecutionPolicy? hostExecution)
+    {
+        Validate(config);
+        HostExecutionGuard.Ensure(hostExecution, config);
+    }
+
+    /// <summary>
+    /// Prüft nur den Aufbau der Konfiguration. <b>Keine</b> Aussage über die Ausführungsart —
+    /// dafür ist die Überladung mit <see cref="IHostExecutionPolicy"/> zuständig.
+    /// </summary>
+    [NoHostExecution(
+        "Reine Aufbauprüfung: liest Felder und wirft bei Formfehlern. Startet nichts und persistiert "
+        + "nichts. Die Ausführungsart prüft die Überladung mit IHostExecutionPolicy.")]
     public static void Validate(UpstreamServerConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);

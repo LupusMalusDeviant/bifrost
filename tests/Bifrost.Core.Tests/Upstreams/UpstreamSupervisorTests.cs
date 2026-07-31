@@ -1,5 +1,6 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Bifrost.Abstractions;
+using Bifrost.Core.Execution;
 using Bifrost.Core.Upstreams;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -34,7 +35,12 @@ public sealed class UpstreamSupervisorTests : IAsyncDisposable
             },
             _time,
             logger: null,
-            audit: _audit);
+            audit: _audit,
+            // Diese Tests pruefen den Lebenszyklus, nicht die Ausfuehrungs-Policy. Sie arbeiten mit
+            // stdio-Konfigurationen, und stdio laeuft nativ (ADR-0025) — ohne ausdrueckliche
+            // Erlaubnis kaeme kein einziger Upstream hoch. Die Erlaubnis steht hier sichtbar, statt
+            // dass der Kern sie stillschweigend annimmt.
+            hostExecution: HostExecutionPolicy.AllowedByOperator());
         _supervisor.Changed += (_, e) =>
         {
             lock (_events)

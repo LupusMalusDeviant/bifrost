@@ -1,4 +1,4 @@
-using Bifrost.Abstractions;
+﻿using Bifrost.Abstractions;
 using Bifrost.Core.Upstreams;
 using Bifrost.Persistence;
 using Microsoft.AspNetCore.Hosting;
@@ -40,6 +40,11 @@ public class GatewayFixture : WebApplicationFactory<Program>
         builder.UseSetting("environment", "Development"); // Cookie SecurePolicy=SameAsRequest → Tests laufen über HTTP
         builder.UseSetting("BIFROST_DATA_DIR", _dataDir);
         builder.UseSetting("BIFROST_DB_CONNECTION", $"Data Source={Path.Combine(_dataDir, "e2e.db")}");
+        // ADR-0025 E2: Eine frische Instanz verbietet native Ausfuehrung. Die E2E-Tests starten
+        // echte stdio-Testserver; die Erlaubnis steht deshalb ausdruecklich da — genau so, wie ein
+        // Betreiber sie setzen wuerde. Wer die Absage pruefen will, ueberschreibt sie in
+        // ExtraSettings.
+        builder.UseSetting("BIFROST_ALLOW_HOST_EXECUTION", "true");
         foreach (var (key, value) in ExtraSettings)
         {
             builder.UseSetting(key, value);

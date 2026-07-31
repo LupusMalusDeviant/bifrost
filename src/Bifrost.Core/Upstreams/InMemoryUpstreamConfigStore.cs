@@ -1,5 +1,6 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using Bifrost.Abstractions;
+using Bifrost.Core.Execution;
 
 namespace Bifrost.Core.Upstreams;
 
@@ -14,6 +15,7 @@ public sealed class InMemoryUpstreamConfigStore : IUpstreamConfigStore
         _time = timeProvider ?? TimeProvider.System;
     }
 
+    [NoHostExecution("Persistenzport ohne Ausfuehrung. Die Pruefung sitzt vor dem Aufruf — in Supervisor, Import und Paketinstallation; ein Store, der selbst entscheidet, waere die zweite Stelle mit derselben Meinung.")]
     public Task<ConfigVersionId> AppendVersionAsync(ServerId id, UpstreamServerConfig config, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(config);

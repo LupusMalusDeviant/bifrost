@@ -1,4 +1,5 @@
-using Bifrost.Abstractions;
+﻿using Bifrost.Abstractions;
+using Bifrost.Core.Execution;
 using Bifrost.Core.Configuration;
 using Microsoft.Extensions.Time.Testing;
 
@@ -40,8 +41,20 @@ internal static class ConfigurationFixtures
         WasiSecret,
     ];
 
+    /// <summary>
+    /// Der Dienst mit ausdruecklich erlaubter Host-Ausfuehrung. Die Beispielinstanz enthaelt an
+    /// jeder moeglichen Stelle ein Zugangsdatum — darunter stdio- und CLI-Upstreams, die nativ
+    /// laufen. Ohne die Erlaubnis pruefte jeder Import-Test nebenbei die Ausfuehrungs-Policy statt
+    /// dessen, was er pruefen will; die Policy hat ihre eigenen Tests unter Execution/.
+    /// </summary>
     public static ConfigurationExportService ServiceFor(FakeInstance instance)
-        => new(instance, instance, new FakeTimeProvider(Now), ProductVersion);
+        => new(instance, instance, new FakeTimeProvider(Now), ProductVersion,
+            HostExecutionPolicy.AllowedByOperator());
+
+    /// <summary>Derselbe Dienst auf einer Instanz, die native Ausfuehrung verbietet (ADR-0025 E2).</summary>
+    public static ConfigurationExportService ForbiddingServiceFor(FakeInstance instance)
+        => new(instance, instance, new FakeTimeProvider(Now), ProductVersion,
+            HostExecutionPolicy.FreshInstance());
 
     /// <summary>Eine Instanz, in der an jeder möglichen Stelle ein Zugangsdatum steht.</summary>
     public static FakeInstance WithSecretsEverywhere()

@@ -1,5 +1,7 @@
-using Bifrost.Abstractions;
+﻿using Bifrost.Abstractions;
+using Bifrost.Abstractions.Execution;
 using Bifrost.Core.Configuration;
+using Bifrost.Core.Execution;
 using Bifrost.Core.Upstreams;
 using Bifrost.Persistence;
 
@@ -27,6 +29,7 @@ public sealed partial class ServerConfigurationPorts : IConfigurationSnapshotSou
     private readonly IApprovalPolicy _approvals;
     private readonly IAssetStore _assets;
     private readonly GuardOptions _guardOptions;
+    private readonly IHostExecutionPolicy _hostExecution;
     private readonly ILogger<ServerConfigurationPorts> _logger;
 
     public ServerConfigurationPorts(
@@ -38,8 +41,10 @@ public sealed partial class ServerConfigurationPorts : IConfigurationSnapshotSou
         IApprovalPolicy approvals,
         IAssetStore assets,
         GuardOptions guardOptions,
-        ILogger<ServerConfigurationPorts> logger)
+        ILogger<ServerConfigurationPorts> logger,
+        IHostExecutionPolicy? hostExecution = null)
     {
+        _hostExecution = hostExecution ?? HostExecutionPolicy.Unresolved;
         ArgumentNullException.ThrowIfNull(factory);
         ArgumentNullException.ThrowIfNull(upstreamConfigs);
         ArgumentNullException.ThrowIfNull(supervisor);
@@ -109,8 +114,14 @@ public sealed partial class ServerConfigurationPorts : IConfigurationSnapshotSou
 
     // ── Schreiben (ausschließlich additiv) ──────────────────────────────────────────────────────
 
+    [HostExecutionChecked]
     public async Task AddUpstreamAsync(ServerId id, UpstreamServerConfig config, CancellationToken ct)
     {
+        // ADR-0025 E4, und ausdruecklich VOR dem Anhaengen der Version: Der Supervisor prueft zwar
+        // beim Wiederherstellen, aber dann stuende die verbotene Konfiguration bereits im Speicher.
+        // Eine Instanz, die ablehnt und trotzdem gespeichert hat, hat nicht abgelehnt.
+        HostExecutionGuard.Ensure(_hostExecution, config);
+
         // Mit der Id aus dem Export, nicht mit einer neuen: Ein mitgelieferter Grant zeigt sonst ins
         // Leere, und Default-Deny meldet das nicht — es erlaubt dann nur nichts (Lead-Entscheidung
         // zu WP2.5).

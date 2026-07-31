@@ -1,4 +1,6 @@
-using Bifrost.Abstractions;
+﻿using Bifrost.Abstractions;
+using Bifrost.Abstractions.Execution;
+using Bifrost.Core.Execution;
 using Bifrost.Core.Packaging;
 using Bifrost.Upstream.Wasi;
 
@@ -25,6 +27,15 @@ internal static class WasiPackageProbe
     /// <summary>Wie lange die Probe höchstens dauern darf — inklusive Kompilierung des Components.</summary>
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(60);
 
+    /// <summary>
+    /// Die Probe fragt die Ausfuehrungs-Policy, obwohl sie heute nur WASI probt (ADR-0025 E4).
+    /// <para>
+    /// Nicht aus Vorsicht, sondern weil hier ein Prozess startet: Sobald die Probe einen zweiten
+    /// Transport bekommt, ist die Pruefung schon da. Genau diese Stelle ist sonst der stille
+    /// Startweg &#8212; sie baut sich ihre Konfiguration selbst und kommt an keinem Formular vorbei.
+    /// </para>
+    /// </summary>
+    [HostExecutionChecked]
     public static ConnectorProbe Create(IServiceProvider services)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -54,6 +65,8 @@ internal static class WasiPackageProbe
                     // vom Connector aus dem Store gefüllt.
                     PinnedPublishers: [],
                     Grants: ToGrants(context.GrantedCapabilities)));
+
+            HostExecutionGuard.Ensure(services.GetService<IHostExecutionPolicy>(), config);
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(Timeout);

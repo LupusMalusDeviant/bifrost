@@ -156,6 +156,12 @@ internal static class UpstreamOAuthEndpoints
         // ohne Fragment, mit Pfad, weil mehrere MCP-Server hinter einem Host liegen können.
         var resource = endpoint.GetLeftPart(UriPartial.Path).TrimEnd('/');
 
+        // Diese Sonde ging ungeprüft gegen die vom Betreiber genannte Adresse — und drei Zeilen
+        // weiter unten wird derselbe Schalter an jede Discovery-Anfrage weitergereicht. Der Code
+        // kannte die Regel also und wandte sie eine Zeile zu spät an; gefunden hat das der
+        // Architekturtest aus WP3.6, der fragt, WER überhaupt eine Verbindung öffnet.
+        await OAuthDiscovery.EnsureTargetAllowedAsync(endpoint, oauth.AllowPrivateTargets, ct);
+
         // Der Upstream sagt selbst, wo sein Authorization Server steht: unautorisiert anfragen und
         // die Aufforderung lesen. Geraten wird nichts.
         using var probe = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };

@@ -1,0 +1,138 @@
+# Dependency-Updates (WP3.5)
+#
+# Warum ueberhaupt Automation: M1 pinnt jede fremde Action auf einen Commit-SHA
+# (m1-distribution-contract, Abschnitt 6). Ein SHA-Pin ist praezise, aber er altert still.
+# Niemand sieht einem Pin an, dass er zwoelf Monate alt ist und eine Sicherheitsluecke
+# einfriert. Erst die Updateautomation macht aus dem Pin einen gepflegten Pin — ohne sie
+# ist er ein eingefrorener Fehlerstand mit gutem Gewissen.
+#
+# Dependabot behaelt beim Aktualisieren eines Action-Pins den Tag-Kommentar bei
+# (`uses: owner/action@<neuer-sha> # v1.2.3`). Die Lesbarkeit des Workflows geht also nicht
+# verloren.
+#
+# Gruppierung: Pflichtenheft WP3.5 verlangt gruppierte Updates. Der Grund ist nicht Bequem-
+# lichkeit, sondern Pruefbarkeit — fuenfzehn Einzel-PRs pro Woche werden durchgewinkt, drei
+# gebuendelte werden gelesen. Majors bleiben bewusst einzeln: ein Major-Sprung ist eine
+# Entscheidung, kein Wartungsvorgang, und darf nicht in einem Sammel-PR mituntergehen.
+#
+# Jeder Dependabot-PR laeuft durch `ci.yml` (on: pull_request) UND durch `security.yml`
+# (on: pull_request). Ein Update, das die Tests bricht, kommt damit nicht nach `main`.
+
+version: 2
+
+updates:
+  # ── GitHub Actions ──────────────────────────────────────────────────────────
+  # Der wichtigste Eintrag dieser Datei: er haelt die SHA-Pins aus M1 am Leben.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
+    labels: ["dependencies", "github-actions"]
+    groups:
+      actions-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # ── NuGet (.NET) ────────────────────────────────────────────────────────────
+  # Zentrale Paketverwaltung: die Versionen stehen in Directory.Packages.props,
+  # Dependabot schreibt dort hinein.
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    labels: ["dependencies", "dotnet"]
+    groups:
+      # Test- und Analyse-Werkzeuge zusammen: sie beruehren kein Produktionsverhalten,
+      # ein gemeinsamer PR ist hier billiger als fuenf einzelne.
+      dotnet-test-tooling:
+        applies-to: version-updates
+        patterns:
+          - "xunit*"
+          - "Microsoft.NET.Test.*"
+          - "coverlet*"
+          - "FluentAssertions*"
+          - "Testcontainers*"
+          - "Moq*"
+          - "NSubstitute*"
+        update-types: ["minor", "patch"]
+      # Laufzeit- und Framework-Pakete. Minor/Patch gebuendelt, Major einzeln (s. o.).
+      dotnet-runtime:
+        applies-to: version-updates
+        patterns: ["*"]
+        exclude-patterns:
+          - "xunit*"
+          - "Microsoft.NET.Test.*"
+          - "coverlet*"
+          - "FluentAssertions*"
+          - "Testcontainers*"
+          - "Moq*"
+          - "NSubstitute*"
+        update-types: ["minor", "patch"]
+      dotnet-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # ── Cargo (Rust: WASI-Host und Guest-Komponenten) ───────────────────────────
+  # Vier eigenstaendige Lockfiles. `directories` (Plural) deckt sie in einem Eintrag ab;
+  # ohne die Guest-Verzeichnisse blieben drei Lockfiles ungepflegt.
+  #
+  # Dieser Eintrag ist sicherheitsrelevanter als er aussieht: hier liegt wasmtime, also
+  # genau die Sandbox, die untrusted WASI-Komponenten einsperrt (ADR-0020). Ein veralteter
+  # Sandbox-Kern ist kein gewoehnliches veraltetes Paket.
+  - package-ecosystem: cargo
+    directories:
+      - /spikes/wasi-component-runtime
+      - /spikes/wasi-component-runtime/guest
+      - /spikes/wasi-component-runtime/guest-interface
+      - /spikes/wasi-component-runtime/guest-resource
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    labels: ["dependencies", "rust"]
+    groups:
+      cargo-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      cargo-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # ── Docker (Basis-Image) ────────────────────────────────────────────────────
+  # Das Basis-Image liefert den Grossteil der Image-Schwachstellen (die Trivy-Funde im
+  # Release stammen fast immer von hier, nicht aus eigenem Code).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(docker)"
+    labels: ["dependencies", "docker"]
+    groups:
+      docker-base:
+        patterns: ["*"]

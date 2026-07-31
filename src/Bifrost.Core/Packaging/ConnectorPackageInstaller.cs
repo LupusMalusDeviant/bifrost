@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using Bifrost.Abstractions;
+using Bifrost.Abstractions.Execution;
+using Bifrost.Core.Execution;
 using Microsoft.Extensions.Logging;
 
 namespace Bifrost.Core.Packaging;
@@ -61,7 +63,13 @@ public sealed partial class ConnectorPackageInstaller
     private readonly ILogger<ConnectorPackageInstaller>? _log;
     private readonly IAuditSink? _audit;
     private readonly IAssetStore? _assets;
+    private readonly IHostExecutionPolicy _hostExecution;
 
+    /// <param name="hostExecution">
+    /// Die Ausführungs-Policy (ADR-0025 E4). Der Importpfad ist im ADR ausdrücklich genannt, weil er
+    /// der naheliegende Weg vorbei an einer Formularprüfung ist: Ein Paket bringt eine Konfiguration
+    /// mit, die niemand eingetippt hat.
+    /// </param>
     public ConnectorPackageInstaller(
         string rootDirectory,
         IConnectorPackageStore store,
@@ -70,8 +78,10 @@ public sealed partial class ConnectorPackageInstaller
         TimeProvider time,
         IAuditSink? audit = null,
         ILogger<ConnectorPackageInstaller>? log = null,
-        IAssetStore? assets = null)
+        IAssetStore? assets = null,
+        IHostExecutionPolicy? hostExecution = null)
     {
+        _hostExecution = hostExecution ?? HostExecutionPolicy.Unresolved;
         ArgumentException.ThrowIfNullOrWhiteSpace(rootDirectory);
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(trust);
@@ -107,6 +117,12 @@ public sealed partial class ConnectorPackageInstaller
         var granted = ConnectorTrustPolicy.Evaluate(
             manifest, verified.TrustLevel, options.AcceptedGrants, options.AllowUntrusted);
         EnsurePlatformSupported(manifest);
+
+        // ADR-0025 E4: vor der Probe, denn die Probe führt das Paket bereits aus. Ein Paket, dessen
+        // Transport nativ startet, kommt auf einer Instanz mit Verbot gar nicht erst in die
+        // Quarantäne — sonst wäre der Import der Weg vorbei am Formular.
+        HostExecutionGuard.EnsureTransport(
+            _hostExecution, $"{manifest.Id} {manifest.Version}", manifest.Transport);
 
         var existing = await _store.GetVersionsAsync(manifest.Id, ct).ConfigureAwait(false);
         if (existing.FirstOrDefault(v => v.Version == manifest.Version) is { } duplicate

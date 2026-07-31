@@ -42,6 +42,11 @@ jobs:
       publish: ${{ steps.version.outputs.publish }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # WP3.5: Der Secret-Scan weiter unten prueft die HISTORIE. Mit der Vorgabe
+          # (fetch-depth 1) saehe er einen einzigen Commit und meldete "sauber" — nicht
+          # weil nichts da ist, sondern weil er nichts angeschaut hat.
+          fetch-depth: 0
 
       # Einzige Quelle der Version ist <VersionPrefix>. Ein Tag, das nicht dazu passt, ist ein
       # Fehler im Release und kein Grund, die Version aus dem Tag zu uebernehmen.
@@ -108,6 +113,106 @@ jobs:
 
       - name: Build (warnings are errors)
         run: dotnet build --configuration Release
+
+      # ── Security-Gates (WP3.5) ────────────────────────────────────────────────────
+      # Sie stehen hier und nicht in einem eigenen Job, weil `verify` bereits die Regel
+      # traegt: "Was hier nicht gruen ist, wird gar nicht erst gebaut." Ein Fund soll den
+      # Lauf abbrechen, BEVOR ein Image in der Registry liegt — ein blockierendes Gate
+      # hinter dem Push haette ein veroeffentlichtes Image zu widerrufen statt es zu
+      # verhindern.
+      #
+      # Der Preis steht dran: Diese Schritte liegen auf dem kritischen Pfad und
+      # verlaengern `verify` um rund fuenf Minuten (cargo-audit-Uebersetzung).
+      #
+      # Dieselben Gates laufen laufend in security.yml. Hier sind sie die Wiederholung
+      # auf dem GETAGGTEN Commit — der einzige Stand, der wirklich veroeffentlicht wird.
+
+      - name: Ausnahmeregister pruefen (Fristen, Freigaben, Drift)
+        run: python3 .github/scripts/security_exceptions.py validate
+
+      # `dotnet list package --vulnerable` meldet Funde und endet trotzdem mit Exit 0
+      # (nachgemessen 2026-07-31 gegen Newtonsoft.Json 12.0.1/High). Der Rueckgabewert
+      # ist hier also wertlos; ausgewertet wird die JSON-Ausgabe.
+      - name: NuGet — anfaellige Pakete (blockiert bei CRITICAL/HIGH)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p security-reports
+          dotnet list Bifrost.slnx package --vulnerable --include-transitive --format json \
+            > security-reports/dotnet-vulnerable.json
+          python3 .github/scripts/dotnet_vulnerable_gate.py \
+            security-reports/dotnet-vulnerable.json \
+            --sarif security-reports/dotnet-vulnerable.sarif \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: cargo-audit installieren
+        run: cargo install cargo-audit --locked --version ^0.22
+
+      - name: Rust — cargo audit ueber alle vier Lockfiles (blockiert)
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p security-reports
+          IGNORE=()
+          while read -r ID; do
+            [ -n "$ID" ] && IGNORE+=(--ignore "$ID")
+          done < <(python3 .github/scripts/security_exceptions.py active cargo-audit)
+
+          FEHLER=0
+          for DIR in spikes/wasi-component-runtime \
+                     spikes/wasi-component-runtime/guest \
+                     spikes/wasi-component-runtime/guest-interface \
+                     spikes/wasi-component-runtime/guest-resource; do
+            NAME=$(echo "$DIR" | tr '/' '-')
+            echo "::group::cargo audit $DIR"
+            (cd "$DIR" && cargo audit "${IGNORE[@]+"${IGNORE[@]}"}" --json) \
+              > "security-reports/cargo-audit-${NAME}.json" || true
+            (cd "$DIR" && cargo audit "${IGNORE[@]+"${IGNORE[@]}"}") || FEHLER=1
+            echo "::endgroup::"
+          done
+          if [ "$FEHLER" -ne 0 ]; then
+            echo "::error::cargo audit meldet Funde. Der Release wird blockiert."
+            exit 1
+          fi
+
+      # Ein Secret, das im getaggten Commit steckt, wird mit dem Release veroeffentlicht
+      # und ist danach nicht mehr zurueckzuholen.
+      - name: Secret-Scan der Historie (blockiert)
+        shell: bash
+        env:
+          GITLEAKS_IMAGE: zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f # v8.30.1
+        run: |
+          set -uo pipefail
+          # GitHub startet `shell: bash` mit `-e`; ohne `set +e` braeche der Schritt beim
+          # Fund ab, bevor die Auswertung unten den Befund vom Werkzeugfehler trennt.
+          set +e
+          mkdir -p security-reports
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/repo:ro" \
+            -v "${GITHUB_WORKSPACE}/security-reports:/out" \
+            "${GITLEAKS_IMAGE}" git /repo \
+            --config /repo/.github/gitleaks.toml \
+            --baseline-path /repo/.github/gitleaks-baseline.json \
+            --report-format sarif --report-path /out/gitleaks.sarif \
+            --redact --exit-code 2 --no-banner
+          CODE=$?
+          if [ "$CODE" -eq 2 ]; then
+            echo "::error::gitleaks hat neue Funde gegenueber der Baseline. Kein Release."
+            exit 1
+          fi
+          if [ "$CODE" -ne 0 ]; then
+            echo "::error::gitleaks abgebrochen (Exit $CODE) — Werkzeugfehler, kein Befund."
+            exit "$CODE"
+          fi
+
+      - name: Security-Berichte als Artefakt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: security-reports-verify
+          path: security-reports/*
+          if-no-files-found: warn
+          retention-days: 30
 
       # ADR-0018: Die Container-Isolation laeuft gegen eine echte Runtime. Das Image vorher holen,
       # damit der Pull nicht in das Zeitlimit des Aufrufs faellt.
@@ -652,31 +757,92 @@ jobs:
       #    Ausnahmeprozess (nur PO, befristet, dokumentiert): siehe supply-chain.md, Abschn. 4.
       # ---------------------------------------------------------------------------------
 
+      # WP3.5-Korrektur am 2026-07-31. Vorher stand hier `aquasecurity/trivy-action` mit
+      # `trivyignores: .trivyignore.yaml`. Diese Datei existiert im Repository NICHT, und
+      # die Action bricht bei einem fehlenden Ignorefile ab — nachgelesen im entrypoint.sh
+      # des gepinnten SHA ed142fd0:
+      #
+      #     if [ ! -f "$f" ]; then
+      #       echo "ERROR: cannot find ignorefile '${f}'." >&2
+      #       exit 1
+      #     fi
+      #
+      # docs/security/supply-chain.md §4.2 nimmt das Gegenteil an ("Trivy vertraegt einen
+      # fehlenden trivyignores-Pfad"). Das trifft auf Trivy selbst zu, aber nicht auf diese
+      # Action — und lokal gegen Trivy 0.72.0 gehalten scheitert sogar Trivy selbst mit
+      # "ignore file not found". Der allererste Releaselauf waere hier abgebrochen; nicht
+      # am Ergebnis des Scans, sondern an einem Pfad.
+      #
+      # Jetzt direkt ueber das Trivy-Image, wie schon beim CLI-Schritt darunter: eine
+      # fremde Action weniger, und die Ausnahmeliste wird nur uebergeben, wenn es sie gibt.
       - name: Trivy — Image (blockiert bei CRITICAL/HIGH)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: ${{ env.IMAGE }}@${{ env.IMAGE_DIGEST }}
-          scanners: vuln
-          severity: CRITICAL,HIGH
-          # `ignore-unfixed: false` ist Absicht: ein Fund ohne Fix bleibt ein Fund. Er wird
-          # ueber die befristete Ausnahmeliste sichtbar gemacht, nicht per Schalter versteckt.
-          ignore-unfixed: false
-          exit-code: "1"
-          trivyignores: .trivyignore.yaml
+        shell: bash
         env:
-          TRIVY_VERSION: v0.72.0
+          TRIVY_IMAGE: aquasec/trivy@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f # 0.72.0
+        run: |
+          set -euo pipefail
+          mkdir -p security-reports
+
+          # `.trivyignore.yaml` ist optional. Existiert sie, wird sie eingehaengt und ihr
+          # Inhalt protokolliert — eine Ausnahme, die im Lauf nicht sichtbar ist, ist eine
+          # heimliche Ausnahme.
+          MOUNT=()
+          IGNORE=()
+          if [ -f .trivyignore.yaml ]; then
+            echo "Ausnahmeliste .trivyignore.yaml gefunden:"
+            cat .trivyignore.yaml
+            MOUNT=(-v "${PWD}/.trivyignore.yaml:/work/.trivyignore.yaml:ro")
+            IGNORE=(--ignorefile /work/.trivyignore.yaml)
+          else
+            echo "Keine .trivyignore.yaml — das Gate laeuft ungefiltert."
+          fi
+
+          # Erst der Bericht (ohne Abbruch), dann das Gate. Sonst gibt es bei einem Fund
+          # genau das nicht, was man dann braucht: den Bericht.
+          docker run --rm "${MOUNT[@]+"${MOUNT[@]}"}" \
+            -v "${PWD}/security-reports:/out" \
+            "${TRIVY_IMAGE}" image \
+            --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed=false \
+            "${IGNORE[@]+"${IGNORE[@]}"}" \
+            --format sarif --output /out/trivy-image.sarif \
+            --no-progress "${IMAGE}@${IMAGE_DIGEST}"
+
+          # `ignore-unfixed=false` ist Absicht: ein Fund ohne Fix bleibt ein Fund. Er wird
+          # ueber die befristete Ausnahmeliste sichtbar gemacht, nicht per Schalter versteckt.
+          docker run --rm "${MOUNT[@]+"${MOUNT[@]}"}" \
+            "${TRIVY_IMAGE}" image \
+            --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed=false \
+            "${IGNORE[@]+"${IGNORE[@]}"}" \
+            --exit-code 1 --no-progress "${IMAGE}@${IMAGE_DIGEST}"
 
       - name: Trivy — CLI-Artefakte ueber ihre SBOMs (blockiert bei CRITICAL/HIGH)
         shell: bash
         # Ueber die SBOM statt ueber das Verzeichnis: dann prueft das Gate exakt die
         # Stueckliste, die veroeffentlicht wird. Weichen beide ab, faellt es hier auf.
+        #
+        # WP3.5: Digest-Pin statt Tag `0.72.0` — ein Tag laesst sich umhaengen, und ein
+        # Schwachstellenscanner, dessen eigenes Image austauschbar ist, prueft im
+        # Zweifel das, was ein Angreifer moechte. Ausserdem dieselbe optionale
+        # Ausnahmeliste wie beim Image-Scan darueber, damit eine Ausnahme nicht auf
+        # halbem Weg wirkungslos wird.
+        env:
+          TRIVY_IMAGE: aquasec/trivy@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f # 0.72.0
         run: |
           set -euo pipefail
+          IGNORE=()
+          if [ -f .trivyignore.yaml ]; then
+            IGNORE=(--ignorefile /work/.trivyignore.yaml)
+          fi
           for S in sbom/bifrost-cli-*.cdx.json; do
             echo "::group::Trivy $S"
-            docker run --rm -v "$PWD:/work" -w /work aquasec/trivy:0.72.0 \
+            docker run --rm -v "$PWD:/work" -w /work "${TRIVY_IMAGE}" \
               sbom --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed=false \
+              "${IGNORE[@]+"${IGNORE[@]}"}" \
+              --format sarif --output "/work/security-reports/trivy-$(basename "$S" .cdx.json).sarif" \
+              --no-progress "$S"
+            docker run --rm -v "$PWD:/work" -w /work "${TRIVY_IMAGE}" \
+              sbom --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed=false \
+              "${IGNORE[@]+"${IGNORE[@]}"}" \
               --exit-code 1 --no-progress "$S"
             echo "::endgroup::"
           done
@@ -887,6 +1053,20 @@ jobs:
             sbom/*.cdx.json
             dist/checksums.txt.cosign.bundle
           if-no-files-found: error
+
+      # WP3.5: Getrennt vom Artefakt `supply-chain`, weil dieses vom Job `release`
+      # heruntergeladen und ANS RELEASE GEHAENGT wird. Scanberichte gehoeren nicht in ein
+      # oeffentliches Release — sie sind Betriebsunterlagen, keine Auslieferung. Als
+      # eigenes Actions-Artefakt bleiben sie fuer die Nachschau erreichbar, ohne dass
+      # jemand sie versehentlich veroeffentlicht.
+      - name: Trivy-Berichte als Artefakt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: security-reports-supply-chain
+          path: security-reports/*
+          if-no-files-found: warn
+          retention-days: 30
 
   # ── release (WP1.5) ─────────────────────────────────────────────────────────
   # Das Tor. Ein Tag darf NUR dann ein Release erzeugen, wenn alles davor bestanden hat:

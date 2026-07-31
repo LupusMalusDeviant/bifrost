@@ -1,0 +1,76 @@
+# Zentrales Ausnahmeregister zu den Security-Gates (WP3.5)
+#
+# ── Wozu diese Datei ────────────────────────────────────────────────────────────────────
+# Die Blockierregel lautet: Critical/High blockiert den Release. Eine Regel ohne Ausweg
+# wird umgangen — irgendwann steht ein `continue-on-error` im Workflow oder eine Severity
+# wird "voruebergehend" heruntergesetzt, und das Gate ist tot, ohne dass es jemand merkt.
+# Deshalb gibt es genau EINEN Ausweg, und er ist unbequem genug, um selten benutzt zu
+# werden: ausdruecklich, befristet, begruendet, namentlich freigegeben.
+#
+# ── Die vier Pflichtfelder ──────────────────────────────────────────────────────────────
+#   id           Kennung des Fundes (CVE-…, GHSA-…, RUSTSEC-…, Trivy-ID, CodeQL-Regel,
+#                gitleaks-Fingerprint). Genau so, wie das Werkzeug sie meldet.
+#   tool         Welches Gate uebergangen wird: dotnet | cargo-audit | trivy | gitleaks |
+#                codeql
+#   reason       Warum der Fund hier nicht trifft. "Blockiert das Release" ist KEINE
+#                Begruendung. Erwartet wird die Nichterreichbarkeit oder der Gegenbeleg,
+#                mit Verweis auf Issue/Analyse.
+#   approved_by  Product Owner, namentlich. Nicht "Team", nicht "CI".
+#   approved_at  Datum der Freigabe (YYYY-MM-DD).
+#   expires      Ablaufdatum (YYYY-MM-DD), hoechstens 90 Tage nach approved_at.
+#
+# ── Warum die Befristung der eigentliche Mechanismus ist ────────────────────────────────
+# Eine Ausnahme, die nicht von allein verfaellt, ist keine Ausnahme, sondern eine stille
+# Absenkung der Anforderung. Laeuft `expires` ab, greift das Gate wieder — und zwar ohne
+# dass jemand aktiv werden muss. Ein ABGELAUFENER Eintrag laesst den Validator scheitern
+# (`security_exceptions.py validate`), er wird also nicht bloss wirkungslos, sondern
+# sichtbar. Das ist Absicht: ein abgelaufener Eintrag ist eine offene Aufgabe, kein
+# Altpapier.
+#
+# ── Verlaengerung ───────────────────────────────────────────────────────────────────────
+# Nur mit NEUER Begruendung, nicht durch Hochschieben des Datums im selben Eintrag. Wer
+# verlaengert, ersetzt `reason` durch den aktuellen Stand der Analyse.
+#
+# ── Freigabeweg ─────────────────────────────────────────────────────────────────────────
+# Diese Datei gehoert in CODEOWNERS an den Product Owner. Damit ist die Freigabe nicht
+# nur eine Zeile in einer YAML, sondern ein Review, das jemand geben muss.
+# HINWEIS: Eine CODEOWNERS-Datei existiert im Repository noch nicht — sie liegt ausserhalb
+# der Dateizone von WP3.5 und ist vom Lead anzulegen. Solange sie fehlt, ist die
+# PO-Bindung dokumentiert, aber technisch NICHT erzwungen.
+#
+# ── Sichtbarkeit ────────────────────────────────────────────────────────────────────────
+# Jede aktive Ausnahme wird in den Release Notes des betroffenen Releases genannt
+# (FR-P008). Der Job `exceptions` in security.yml schreibt sie zusaetzlich in die
+# Job-Zusammenfassung jedes Laufs.
+#
+# ── Verhaeltnis zu .trivyignore.yaml ────────────────────────────────────────────────────
+# Trivy bringt ein eigenes Ausnahmeformat mit (`.trivyignore.yaml`, siehe
+# docs/security/supply-chain.md §4.2). Es wird weiter benutzt, weil Trivy es NATIV liest —
+# ein selbstgebauter Filter davor waere eine zweite Stelle, die anders entscheiden kann als
+# das Werkzeug. Damit daraus kein Schattenregister wird, prueft der Validator auf Drift:
+# jede ID in `.trivyignore.yaml` MUSS auch hier stehen. Fehlt sie, schlaegt das Gate fehl.
+
+version: 1
+
+# Derzeit ist KEINE Ausnahme aktiv. Alle Gates laufen ungefiltert.
+#
+# Das ist der belegte Stand vom 2026-07-31, nicht eine Annahme: `dotnet list package
+# --vulnerable --include-transitive` meldete ueber alle 22 Projekte null Funde, `trivy fs`
+# null Critical/High. Die beiden offenen cargo-audit-Funde (RUSTSEC-2026-0222/0223,
+# wasmtime 47.0.2) sind LOW und werden vom Critical/High-Gate ohnehin nicht geblockt —
+# sie brauchen deshalb KEINE Ausnahme, sondern ein Update auf wasmtime >= 47.0.3.
+# Eine Ausnahme fuer einen Fund einzutragen, der gar nicht blockt, waere die falsche
+# Gewoehnung.
+exceptions: []
+# Vorlage (auskommentiert lassen, bis sie wirklich gebraucht wird):
+#
+# exceptions:
+#   - id: CVE-2026-12345
+#     tool: trivy
+#     reason: >-
+#       Nicht erreichbar: die betroffene Funktion (libfoo `parse_remote`) wird von
+#       B.I.F.R.O.S.T nicht aufgerufen; Nachweis in Issue #123. Kein Fix verfuegbar,
+#       Upstream-Ticket foo/foo#456 verfolgt den Stand.
+#     approved_by: <Name des Product Owners>
+#     approved_at: 2026-07-31
+#     expires: 2026-10-29

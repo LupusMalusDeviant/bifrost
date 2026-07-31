@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Bifrost.Abstractions;
 using Bifrost.Abstractions.Operations;
 using Bifrost.Core.Capabilities;
@@ -272,6 +272,13 @@ internal static class ApiEndpoints
             catch (KeyNotFoundException ex)
             {
                 return Results.NotFound(new { error = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                // Ein Rollback in eine Version aus der Zeit vor der Umstellung wird von der
+                // Ausfuehrungs-Policy abgelehnt (ADR-0025). Das ist eine Absage an den Aufrufer und
+                // kein Serverfehler; die Meldung traegt den stabilen Reason-Code.
+                return Results.BadRequest(new { error = ex.Message });
             }
         });
 
@@ -1016,6 +1023,11 @@ internal static class ApiEndpoints
             {
                 // Ein abgewiesenes Paket ist ein Eingabefehler des Administrators, kein
                 // Serverfehler — und die Meldung nennt den Grund, damit er behebbar ist.
+                return Results.BadRequest(new { error = exception.Message });
+            }
+            catch (ArgumentException exception)
+            {
+                // Dasselbe fuer ein Paket, dessen Transport nativ startet (ADR-0025 E4).
                 return Results.BadRequest(new { error = exception.Message });
             }
         }).DisableAntiforgery();

@@ -1,6 +1,7 @@
-using Bifrost.Abstractions;
+﻿using Bifrost.Abstractions;
 using Bifrost.Abstractions.Operations;
 using Bifrost.Core.Diagnostics;
+using Bifrost.Core.Execution;
 using Bifrost.Persistence;
 using Bifrost.Persistence.Startup;
 
@@ -109,6 +110,7 @@ public sealed class ServerDiagnosticContextFactory
     private readonly IUpstreamConfigStore _upstreams;
     private readonly IDatabaseDiagnosticProbe _database;
     private readonly IUpstreamDiagnosticProbe _upstreamProbe;
+    private readonly HostExecutionCoordinator _hostExecution;
 
     public ServerDiagnosticContextFactory(
         IServiceProvider services,
@@ -116,8 +118,11 @@ public sealed class ServerDiagnosticContextFactory
         IHostEnvironment environment,
         IUpstreamConfigStore upstreams,
         IDatabaseDiagnosticProbe database,
-        IUpstreamDiagnosticProbe upstreamProbe)
+        IUpstreamDiagnosticProbe upstreamProbe,
+        HostExecutionCoordinator hostExecution)
     {
+        ArgumentNullException.ThrowIfNull(hostExecution);
+        _hostExecution = hostExecution;
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(environment);
@@ -152,6 +157,9 @@ public sealed class ServerDiagnosticContextFactory
             ContainerRuntimeName = runtimeName,
             Database = _database,
             Upstreams = _upstreamProbe,
+            // Der ERMITTELTE Zustand, nicht die Umgebungsvariable: Eine Instanz kann ihren Wert
+            // uebernommen haben (ADR-0025 E3), und genau dieser Unterschied ist der Befund.
+            HostExecution = _hostExecution.State,
         };
     }
 

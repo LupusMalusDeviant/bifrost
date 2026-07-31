@@ -77,7 +77,28 @@ public sealed record HttpTransportOptions(
     /// beim Authorization Server des Upstreams, statt einen festen Header mitzuschicken. Beides
     /// zugleich ist zulässig — Header für Zusatzangaben, das Token für die Autorisierung.
     /// </summary>
-    UpstreamOAuthOptions? OAuth = null);
+    UpstreamOAuthOptions? OAuth = null,
+    /// <summary>
+    /// Erlaubt Ziele in privaten, Loopback- oder Link-Local-Netzen — dieselbe Frage, die
+    /// <see cref="OpenApiTransportOptions.AllowPrivateTargets"/> und
+    /// <see cref="OpenRpcTransportOptions.AllowPrivateTargets"/> längst stellen. Bei MCP über HTTP
+    /// fehlte sie: Der Endpunkt ging ungeprüft in den Transport, während OpenAPI, OpenRPC und der
+    /// OAuth-Issuer die Adresse auflösen und private Ziele abweisen. Ein Gateway, das beliebige
+    /// URLs abruft, ist ein Werkzeug, um interne Dienste zu erreichen (SSRF).
+    /// <para>
+    /// <b><c>null</c> heißt „nicht entschieden", nicht „verboten".</b> Bestandsinstanzen haben
+    /// diesen Schalter nie gesetzt, und ein MCP-Server im eigenen Netz ist der Regelfall, nicht die
+    /// Ausnahme. Sie beim nächsten Neustart abzuklemmen, wäre dieselbe stille Verhaltensänderung,
+    /// die ADR-0025 E3 für die Hostausführung ausdrücklich ablehnt: Der Upstream läuft weiter, und
+    /// die Übernahme wird sichtbar gemacht, statt sie anzunehmen oder ihn stillzulegen.
+    /// </para>
+    /// <para>
+    /// Ausdrückliches <c>false</c> weist private Ziele ab. Neu angelegte Konfigurationen sollen den
+    /// Wert setzen — solange das nicht überall geschieht, bleibt eine Lücke, und sie steht als
+    /// solche im Fortschrittsprotokoll.
+    /// </para>
+    /// </summary>
+    bool? AllowPrivateTargets = null);
 
 /// <summary>
 /// OpenAPI-Quelle als virtueller Upstream (FR-19). <see cref="Credential"/> liegt im Config-Blob,

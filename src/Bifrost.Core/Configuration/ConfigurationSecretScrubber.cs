@@ -1,4 +1,5 @@
-using Bifrost.Abstractions;
+﻿using Bifrost.Abstractions;
+using Bifrost.Core.Execution;
 
 namespace Bifrost.Core.Configuration;
 
@@ -35,6 +36,7 @@ public static class ConfigurationSecretScrubber
             && value.EndsWith(ReferenceSuffix, StringComparison.Ordinal);
 
     /// <summary>Entfernt alle Zugangsdaten aus einer Upstream-Konfiguration.</summary>
+    [NoHostExecution("Ersetzt Geheimnisse durch Platzhalter und liefert eine Kopie; startet nichts.")]
     public static ScrubbedUpstream Scrub(string slug, UpstreamServerConfig config)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(slug);
@@ -56,6 +58,7 @@ public static class ConfigurationSecretScrubber
     /// Zielinstanz fehlen. Der Import baut darauf seine Ansage und schaltet den Upstream ab, statt
     /// ihn mit einem Platzhalter als Passwort starten zu lassen.
     /// </summary>
+    [NoHostExecution("Reine Suche nach offenen Platzhaltern; liest die Konfiguration und antwortet.")]
     public static IReadOnlyList<SecretPlaceholder> FindUnresolvedReferences(UpstreamServerConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- xUnit v3: Testprojekte sind eigenstaendige Executables, der Runner laeuft im selben Prozess. -->
+    <OutputType>Exe</OutputType>
+    <!-- CA1848: Die LoggerMessage-Delegaten sind eine Hot-Path-Optimierung. Der eine Logaufruf in
+         diesem Projekt steht in der Gegenprobe zum Mithoerer und laeuft genau einmal. -->
+    <NoWarn>$(NoWarn);CA1848</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Der Server zieht Core, Abstractions, Persistence, Upstream und Web mit. Die
+         Architekturtests brauchen genau diese Menge geladener Assemblies: Eine Invariante, die
+         nur ueber die Haelfte der Zusammensetzung prueft, ist der Fehler, den dieses Projekt
+         verhindern soll. -->
+    <ProjectReference Include="..\..\src\Bifrost.Server\Bifrost.Server.csproj" />
+    <ProjectReference Include="..\..\src\Bifrost.Cli\Bifrost.Cli.csproj" />
+    <ProjectReference Include="..\..\src\Bifrost.Persistence.Migrations.Sqlite\Bifrost.Persistence.Migrations.Sqlite.csproj" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+  </ItemGroup>
+
+</Project>

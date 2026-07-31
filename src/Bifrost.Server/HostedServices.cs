@@ -34,6 +34,7 @@ public sealed partial class GatewayStartupService : IHostedService
     private readonly IUpstreamConfigStore _configStore;
     private readonly UpstreamSupervisor _supervisor;
     private readonly ApprovalToTaskMigration _approvalMigration;
+    private readonly Bifrost.Server.Execution.HostExecutionStartup _hostExecution;
     private readonly ILogger<GatewayStartupService> _logger;
 
     public GatewayStartupService(
@@ -54,8 +55,10 @@ public sealed partial class GatewayStartupService : IHostedService
         IUpstreamConfigStore configStore,
         UpstreamSupervisor supervisor,
         ApprovalToTaskMigration approvalMigration,
+        Bifrost.Server.Execution.HostExecutionStartup hostExecution,
         ILogger<GatewayStartupService> logger)
     {
+        _hostExecution = hostExecution;
         _factory = factory;
         _databaseInitializer = databaseInitializer;
         _rbacStore = rbacStore;
@@ -120,6 +123,12 @@ public sealed partial class GatewayStartupService : IHostedService
         // BEVOR Upstreams starten — sonst faende ein bestehender WASI-Upstream beim ersten Start
         // nach dem Update keinen gepinnten Publisher mehr und bliebe fail-closed unten.
         await ImportConfiguredPublishersAsync(persisted, cancellationToken);
+
+        // ADR-0025 E3: Bevor der erste Upstream wiederhergestellt wird, steht fest, ob native
+        // Ausfuehrung erlaubt ist — und eine bestehende Instanz uebernimmt hier ihren bisherigen
+        // Zustand. Andersherum waere die Reihenfolge selbst der Fehler: Die Policy verbietet,
+        // solange sie nichts ermittelt hat, und eine bestehende Instanz kaeme nicht mehr hoch.
+        _hostExecution.Run(persisted);
 
         // Ein Entzug wirkt sofort (Plan 0003, festgelegte Entscheidung 2): betroffene Upstreams
         // werden gestoppt, nicht erst beim naechsten Laden.

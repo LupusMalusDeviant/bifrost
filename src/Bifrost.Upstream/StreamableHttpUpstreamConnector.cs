@@ -1,4 +1,5 @@
 using Bifrost.Abstractions;
+using Bifrost.Upstream.Http;
 using Bifrost.Upstream.OAuth;
 using ModelContextProtocol.Client;
 
@@ -40,6 +41,20 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector
         ArgumentNullException.ThrowIfNull(config);
         var options = config.Http
             ?? throw new ArgumentException($"Config '{config.Slug}' hat keine Http-Optionen.", nameof(config));
+
+        // MCP über HTTP war der einzige Transport ohne Zielprüfung: Der Endpunkt ging direkt in den
+        // Transport, während OpenAPI, OpenRPC und der OAuth-Issuer die Adresse auflösen und private
+        // Ziele abweisen. Gefunden von den Architekturtests aus WP3.6.
+        //
+        // 'null' heißt „nicht entschieden": Bestandsinstanzen haben den Schalter nie gesetzt, und
+        // ein MCP-Server im eigenen Netz ist der Regelfall. Sie beim Neustart abzuklemmen wäre die
+        // stille Verhaltensänderung, die ADR-0025 E3 ablehnt.
+        await RemoteSpecFetcher.EnsureTargetAllowedAsync(
+            options.Endpoint,
+            options.AllowPrivateTargets ?? true,
+            message => new InvalidOperationException(
+                $"Upstream '{config.Slug}': {message}"),
+            ct).ConfigureAwait(false);
 
         var headers = options.Headers?.ToDictionary(kv => kv.Key, kv => kv.Value)
             ?? new Dictionary<string, string>();

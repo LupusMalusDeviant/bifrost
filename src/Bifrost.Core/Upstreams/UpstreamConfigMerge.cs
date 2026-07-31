@@ -1,4 +1,5 @@
-using Bifrost.Abstractions;
+﻿using Bifrost.Abstractions;
+using Bifrost.Core.Execution;
 
 namespace Bifrost.Core.Upstreams;
 
@@ -12,6 +13,7 @@ public static class UpstreamConfigMerge
     /// ersetzt den alten und ein leerer Wert beziehungsweise eine leere Map löscht ihn explizit.
     /// Maskenwerte werden niemals persistiert.
     /// </summary>
+    [NoHostExecution("Fuegt zwei Konfigurationen zusammen und gibt eine dritte zurueck; der Start liegt beim Aufrufer, der die Policy fragt.")]
     public static UpstreamServerConfig CarryOverSecrets(
         UpstreamServerConfig edited, UpstreamServerConfig previous)
     {

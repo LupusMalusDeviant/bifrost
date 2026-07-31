@@ -1,5 +1,7 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using Bifrost.Abstractions;
+using Bifrost.Abstractions.Execution;
+using Bifrost.Core.Execution;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -20,8 +22,14 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     private readonly ILogger<UpstreamSupervisor> _logger;
     private readonly IAuditSink? _audit;
     private readonly IToolDefinitionPinStore? _pins;
+    private readonly IHostExecutionPolicy _hostExecution;
     private readonly ConcurrentDictionary<ServerId, Entry> _entries = new();
 
+    /// <param name="hostExecution">
+    /// Die Ausführungs-Policy (ADR-0025). <c>null</c> heißt <b>nicht</b> „keine Prüfung", sondern
+    /// „nicht ermittelt" — dann kommt kein nativ laufender Upstream hoch. Ein vergessener
+    /// Verdrahtungsschritt fällt so auf, statt eine Lücke zu öffnen.
+    /// </param>
     public UpstreamSupervisor(
         IEnumerable<IUpstreamConnector> connectors,
         IUpstreamConfigStore store,
@@ -29,10 +37,12 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         TimeProvider? timeProvider = null,
         ILogger<UpstreamSupervisor>? logger = null,
         IAuditSink? audit = null,
-        IToolDefinitionPinStore? pins = null)
+        IToolDefinitionPinStore? pins = null,
+        IHostExecutionPolicy? hostExecution = null)
     {
         ArgumentNullException.ThrowIfNull(connectors);
         ArgumentNullException.ThrowIfNull(store);
+        _hostExecution = hostExecution ?? HostExecutionPolicy.Unresolved;
         _connectors = connectors.ToDictionary(c => c.Kind);
         _store = store;
         _options = options ?? new SupervisorOptions();
@@ -52,9 +62,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
 
     public IUpstreamConnection? GetConnection(ServerId id) => _entries.TryGetValue(id, out var entry) ? entry.Connection : null;
 
+    [HostExecutionChecked]
     public async Task<ServerId> AddAsync(UpstreamServerConfig config, CancellationToken ct)
     {
-        UpstreamConfigValidator.Validate(config);
+        UpstreamConfigValidator.Validate(config, _hostExecution);
         EnsureSlugUnique(config.Slug, exclude: null);
 
         var id = ServerId.New();
@@ -82,10 +93,11 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     /// Registriert einen persistierten Server unter seiner bestehenden Id neu (Startup-Restore, WP4.2).
     /// Erzeugt keine neue Config-Version — die Historie lebt bereits im Store.
     /// </summary>
+    [HostExecutionChecked]
     public Task RestoreAsync(ServerId id, UpstreamConfigVersion persisted, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(persisted);
-        UpstreamConfigValidator.Validate(persisted.Config);
+        UpstreamConfigValidator.Validate(persisted.Config, _hostExecution);
         EnsureSlugUnique(persisted.Config.Slug, exclude: id);
 
         var entry = new Entry(id, persisted.Config, persisted.Version)
@@ -167,9 +179,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         }
     }
 
+    [HostExecutionChecked]
     public async Task<ConfigVersionId> ReconfigureAsync(ServerId id, UpstreamServerConfig config, CancellationToken ct)
     {
-        UpstreamConfigValidator.Validate(config);
+        UpstreamConfigValidator.Validate(config, _hostExecution);
         EnsureSlugUnique(config.Slug, exclude: id);
 
         var entry = GetEntryOrThrow(id);
@@ -219,8 +232,17 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         _entries.Clear();
     }
 
+    /// <summary>
+    /// Der gemeinsame innere Weg von Reconfigure und Rollback. Die Policy wird <b>hier</b> gefragt,
+    /// nicht nur in <see cref="ReconfigureAsync"/>: Ein Rollback holt seine Konfiguration aus der
+    /// Historie und käme sonst an jeder Prüfung vorbei — eine Version von vor der Umstellung ist
+    /// genau der Fall, in dem ein nativ laufendes Programm zurückkehrt.
+    /// </summary>
+    [HostExecutionChecked]
     private async Task<ConfigVersionId> ReconfigureCoreAsync(Entry entry, UpstreamServerConfig config, CancellationToken ct)
     {
+        HostExecutionGuard.Ensure(_hostExecution, config);
+
         await StopLoopAsync(entry, DrainPolicy.Graceful(_options.DefaultDrainGrace), ct).ConfigureAwait(false);
         entry.Version = await _store.AppendVersionAsync(entry.Id, config, ct).ConfigureAwait(false);
         entry.Config = config;
@@ -283,6 +305,16 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         entry.LoopTask = null;
     }
 
+    /// <summary>
+    /// Der Lebenszyklus einer Verbindung: Connect, Discover, Health, Neustart mit Backoff.
+    /// <para>
+    /// Die Policy wird <b>hier</b> vor jedem Verbindungsaufbau gefragt und nicht nur einmal beim
+    /// Anlegen. Diese Schleife läuft, solange der Prozess läuft, und baut nach jedem Verlust neu
+    /// auf — eine Prüfung, die nur beim Anlegen stattfand, wäre bei jedem Neuaufbau danach
+    /// abwesend.
+    /// </para>
+    /// </summary>
+    [HostExecutionChecked]
     private async Task RunLoopAsync(Entry entry, CancellationToken ct)
     {
         var policy = entry.Config.Restart ?? _options.DefaultRestartPolicy;
@@ -293,6 +325,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             try
             {
                 SetState(entry, UpstreamState.Starting, null);
+                HostExecutionGuard.Ensure(_hostExecution, entry.Config);
                 var connector = _connectors.TryGetValue(entry.Config.Kind, out var c)
                     ? c
                     : throw new InvalidOperationException($"Kein Connector für Transport {entry.Config.Kind} registriert.");

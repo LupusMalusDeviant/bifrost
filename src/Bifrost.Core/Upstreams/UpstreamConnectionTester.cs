@@ -1,4 +1,6 @@
 using Bifrost.Abstractions;
+using Bifrost.Abstractions.Execution;
+using Bifrost.Core.Execution;
 
 namespace Bifrost.Core.Upstreams;
 
@@ -8,19 +10,27 @@ public sealed class UpstreamConnectionTester : IUpstreamConnectionTester
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(15);
 
     private readonly Dictionary<UpstreamTransportKind, IUpstreamConnector> _connectors;
+    private readonly IHostExecutionPolicy _hostExecution;
 
-    public UpstreamConnectionTester(IEnumerable<IUpstreamConnector> connectors)
+    /// <param name="hostExecution">
+    /// Die Ausführungs-Policy (ADR-0025 E4). „Verbindung testen" ist ein Startweg: Er führt das
+    /// Programm wirklich aus. Ohne Policy wird nichts nativ gestartet.
+    /// </param>
+    public UpstreamConnectionTester(
+        IEnumerable<IUpstreamConnector> connectors, IHostExecutionPolicy? hostExecution = null)
     {
         ArgumentNullException.ThrowIfNull(connectors);
         _connectors = connectors.ToDictionary(c => c.Kind);
+        _hostExecution = hostExecution ?? HostExecutionPolicy.Unresolved;
     }
 
+    [HostExecutionChecked]
     public async Task<UpstreamTestResult> TestAsync(UpstreamServerConfig config, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(config);
         try
         {
-            UpstreamConfigValidator.Validate(config);
+            UpstreamConfigValidator.Validate(config, _hostExecution);
         }
         catch (ArgumentException ex)
         {
@@ -59,6 +69,7 @@ public sealed class UpstreamConnectionTester : IUpstreamConnectionTester
     /// Bewusst exakter Wertabgleich statt Mustererkennung: Die konkreten Geheimnisse sind hier
     /// bekannt, raten muss also niemand.
     /// </summary>
+    [NoHostExecution("Textersetzung auf einer Fehlermeldung; berührt weder Start noch Persistenz.")]
     public static string ScrubSecrets(string message, UpstreamServerConfig config)
     {
         if (string.IsNullOrEmpty(message))

@@ -76,6 +76,9 @@ public sealed class DiagnosticService : IDiagnosticService
         new WasiHostCheck(),
 
         new UpstreamStatesCheck(),
+
+        new HostExecutionPolicyCheck(),
+        new HostExecutionAdoptionCheck(),
     ];
 
     public static DiagnosticService CreateDefault(DiagnosticContext context, TimeProvider? timeProvider = null)

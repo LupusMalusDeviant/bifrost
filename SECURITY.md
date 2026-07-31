@@ -54,6 +54,34 @@ B.I.F.R.O.S.T is a security-relevant component by design: it terminates every to
 - **Tool definitions are pinned.** Name, description and input schema are fingerprinted on every discovery; a changed tool is withheld from the catalogue — not callable, not visible — until an administrator accepts the new version. This covers the rug-pull path, which no MCP standard addresses. The limit is trust-on-first-use: it protects against changes **after** adoption, not against an upstream that was malicious from the start.
 - **No token passthrough.** The gateway never forwards an agent's credential to an upstream; it holds its own upstream credentials. Where an upstream uses OAuth, the token is bound to that upstream via the RFC 8707 `resource` indicator and is not usable elsewhere.
 
+## Automated security gates
+
+Every pull request, every push to `main`, and a weekly scheduled run go through
+[`.github/workflows/security.yml`](.github/workflows/security.yml); the blocking subset is repeated
+on the tagged commit in `release.yml`. **Critical/High blocks the release.**
+
+| Gate | Tool | Blocks at |
+|---|---|---|
+| Code analysis | CodeQL (`csharp` — the repository contains no JavaScript; the UI is Blazor) | `security-severity` ≥ 7.0 |
+| .NET dependencies | `dotnet list package --vulnerable --include-transitive` | Critical/High |
+| Rust dependencies | `cargo audit` over all four `Cargo.lock` files | any advisory |
+| Container filesystem | Trivy against the built image | Critical/High |
+| Working tree | Trivy `fs` (lockfiles, Dockerfile/Compose misconfiguration) | Critical/High |
+| Secrets | gitleaks over git history, PR diffs on pull requests | any new finding vs. baseline |
+
+Findings are published as SARIF to the Code Scanning view and retained as workflow artifacts.
+Dependency updates arrive grouped via Dependabot (NuGet, Cargo, Docker, and the pinned Action SHAs).
+
+An exception to the blocking rule is possible, but only **explicitly, time-limited and documented**
+in `.github/security-exceptions.yml`: it names the approver, carries a reason, and expires after at
+most 90 days — after which the gate closes again on its own. There is no `continue-on-error` switch
+and no environment variable that softens a gate.
+
+The full description — including **which gates were proven able to fail, and which parts are
+untested until the first real release run** — is in
+[docs/security-gates.md](docs/security-gates.md). That distinction is deliberate: no release run has
+ever taken place, so anything concerning it is a reasoned assumption, not an acceptance.
+
 ## Out of scope
 
 - Vulnerabilities in connected third-party MCP servers themselves

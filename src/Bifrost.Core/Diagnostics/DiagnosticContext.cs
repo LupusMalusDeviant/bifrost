@@ -63,6 +63,16 @@ public sealed record DiagnosticContext
     /// <summary><c>null</c> = nicht verdrahtet; BFR-UP-0001 meldet dann Skipped.</summary>
     public IUpstreamDiagnosticProbe? Upstreams { get; init; }
 
+    /// <summary>
+    /// Der ermittelte Zustand der Ausführungs-Policy (ADR-0025, Codes BFR-POL). <c>null</c> heißt
+    /// „nicht verdrahtet"; die BFR-POL-Checks melden dann Skipped.
+    /// <para>
+    /// Ausdrücklich der <b>ermittelte</b> Zustand und nicht die Umgebungsvariable: Die Instanz kann
+    /// ihren Wert übernommen haben, und genau dieser Unterschied ist der Befund.
+    /// </para>
+    /// </summary>
+    public Execution.HostExecutionState? HostExecution { get; init; }
+
     /// <summary>Ein Umgebungswert oder <c>null</c>, wenn er fehlt oder leer ist.</summary>
     public string? Value(string name)
         => Environment.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value)

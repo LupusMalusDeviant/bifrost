@@ -1,4 +1,5 @@
-using Bifrost.Abstractions;
+﻿using Bifrost.Abstractions;
+using Bifrost.Core.Execution;
 
 namespace Bifrost.Core.Upstreams;
 
@@ -10,6 +11,7 @@ public static class UpstreamConfigRedactor
 {
     public const string Mask = "***";
 
+    [NoHostExecution("Maskiert Geheimnisse fuer die Anzeige; das Ergebnis wird nie gestartet.")]
     public static UpstreamServerConfig Redact(UpstreamServerConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);

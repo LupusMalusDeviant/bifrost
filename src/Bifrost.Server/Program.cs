@@ -2,7 +2,9 @@ using System.Globalization;
 using System.Security.Cryptography.X509Certificates;
 
 using Bifrost.Abstractions;
+using Bifrost.Abstractions.Execution;
 using Bifrost.Core.Audit;
+using Bifrost.Core.Execution;
 using Bifrost.Core.Catalog;
 using Bifrost.Core.Guardrails;
 using Bifrost.Core.Invocation;
@@ -12,6 +14,7 @@ using Bifrost.Core.Packaging;
 using Bifrost.Persistence;
 using Bifrost.Persistence.Audit;
 using Bifrost.Server;
+using Bifrost.Server.Execution;
 using Bifrost.Server.Operations;
 using Bifrost.Upstream;
 using Bifrost.Web;
@@ -180,7 +183,14 @@ builder.Services.AddSingleton<IUpstreamConnector>(sp => new Bifrost.Upstream.Was
     sp.GetRequiredService<IAuditSink>(),
     sp.GetRequiredService<IConnectorPackageResolver>())); // ADR-0020, Pakete nach ADR-0016
 builder.Services.AddSingleton<IUpstreamConfigStore, EfUpstreamConfigStore>();
-builder.Services.AddSingleton<IUpstreamConnectionTester, UpstreamConnectionTester>();
+// ── Ausfuehrungs-Policy (ADR-0025, WP3.1) ────────────────────────────────────
+// Eine Stelle entscheidet, ob ein fremdes Programm nativ auf dem Host starten darf; jeder Startweg
+// fragt dieselbe. Die Einstellung wird hier gelesen und nicht im Kern, damit die Regel pruefbar
+// bleibt, ohne das Prozessumfeld eines Testlaufs anzufassen.
+builder.Services.AddBifrostHostExecution(dataDir, builder.Configuration[HostExecutionSwitch.Name]);
+builder.Services.AddSingleton<IUpstreamConnectionTester>(sp => new UpstreamConnectionTester(
+    sp.GetServices<IUpstreamConnector>(),
+    sp.GetRequiredService<IHostExecutionPolicy>()));
 builder.Services.AddSingleton(new SupervisorOptions());
 // Rug-Pull-Schutz: festgehaltene Tool-Definitionen. Der Supervisor prueft jede Discovery dagegen.
 builder.Services.AddSingleton<ToolDefinitionPinStore>(sp => new ToolDefinitionPinStore(
@@ -193,7 +203,8 @@ builder.Services.AddSingleton<UpstreamSupervisor>(sp => new UpstreamSupervisor(
     sp.GetRequiredService<TimeProvider>(),
     sp.GetRequiredService<ILogger<UpstreamSupervisor>>(),
     sp.GetRequiredService<IAuditSink>(),
-    sp.GetRequiredService<IToolDefinitionPinStore>()));
+    sp.GetRequiredService<IToolDefinitionPinStore>(),
+    sp.GetRequiredService<IHostExecutionPolicy>()));
 builder.Services.AddSingleton<IUpstreamSupervisor>(sp => sp.GetRequiredService<UpstreamSupervisor>());
 builder.Services.AddSingleton<ToolDescriptionOverrideStore>();
 builder.Services.AddSingleton<IToolDescriptionOverrides>(sp => sp.GetRequiredService<ToolDescriptionOverrideStore>());

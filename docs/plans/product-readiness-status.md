@@ -121,7 +121,110 @@ Zwei Punkte gehen als Entscheidung an den Lead bzw. weiter:
    nur halb erfüllt; der Fix wäre ein `…_FILE`-Suffix oder `AddKeyPerFile`. Bewusst **nicht**
    nebenbei gemacht — Produktionscode gehört nicht in ein Doku-/Compose-Paket.
 
-## Laufender Meilenstein: M2 — Wiederherstellbarkeit
+## Laufender Meilenstein: M3 — Sichere Vorgaben
+
+Entscheidung vorab in [ADR-0025](../adr/0025-host-ausfuehrung-verbieten-und-bestehende-instanzen-migrieren.md),
+Vertrag eingefroren in [`m3-secure-defaults-contract.md`](m3-secure-defaults-contract.md).
+
+### WP3.6 hat zwei SSRF-Lücken gefunden — beide nachgeprüft, beide echt
+
+Das Paket sollte Regressionstests für bekannte Fehlerklassen bauen. Es hat dabei zwei **neue**
+Lücken gefunden und liefert sie als **rote** Tests ab, statt sie grün zu reden. Das ist genau das
+gewünschte Verhalten.
+
+**F1 — MCP-über-HTTP ist der einzige Transport ganz ohne Zielprüfung.**
+`HttpTransportOptions` (`src/Bifrost.Abstractions/Upstream.cs:66`) trägt **kein**
+`AllowPrivateTargets`; `OpenApiTransportOptions`, `OpenRpcTransportOptions` und
+`UpstreamOAuthOptions` tragen es. `StreamableHttpUpstreamConnector` reicht `options.Endpoint`
+direkt in den Transport — nachgeprüft: Die einzige Zielprüfung in der Datei betrifft den
+**OAuth-Issuer**, nicht den Endpunkt des Upstreams. Ein Administrator, der
+`http://169.254.169.254/…` oder einen Verwaltungsport auf `127.0.0.1` einträgt, bekommt genau den
+Abruf, den `RemoteSpecFetcher` für OpenAPI und OpenRPC verhindert.
+
+Strukturelle Ursache: `RemoteSpecFetcher` ist `internal` zu `Bifrost.Upstream` — `Bifrost.Core` und
+`Bifrost.Server` können ihn gar nicht wiederverwenden. Eine zentrale Prüfung, die man nicht
+erreichen kann, ist keine zentrale Prüfung.
+
+**F2 — Der OAuth-Connect-Endpunkt probt, bevor er prüft.**
+`src/Bifrost.Server/UpstreamOAuthEndpoints.cs:161` ruft `probe.GetAsync(endpoint, ct)` gegen die
+vom Betreiber genannte Adresse. **Drei Zeilen später** wird `oauth.AllowPrivateTargets` an jede
+Discovery-Anfrage weitergereicht. Der Code kennt den Schalter also und benutzt ihn unmittelbar
+danach — der Probe-Aufruf davor wurde schlicht übersehen.
+
+**Beide behoben.** F2 war eine übersehene Zeile: `OAuthDiscovery.EnsureTargetAllowedAsync` läuft
+jetzt vor der Sonde, mit demselben Schalter, den die Zeile darunter ohnehin weiterreicht. Der Weg
+dorthin ist der eigentliche Fix — `RemoteSpecFetcher` bleibt `internal`, bekommt aber einen
+öffentlichen Zugang über `OAuthDiscovery`, damit `Bifrost.Server` die zentrale Prüfung überhaupt
+erreichen kann.
+
+F1 verlangte eine Entscheidung, weil dort Verhalten kippt. `HttpTransportOptions` hat jetzt
+`bool? AllowPrivateTargets`, und **`null` heißt „nicht entschieden", nicht „verboten"**:
+
+- Eine Bestandsinstanz hat den Schalter nie gesetzt. Ein MCP-Server im eigenen Netz ist bei diesem
+  Produkt der Regelfall, nicht die Ausnahme — die produktive Instanz auf Badwolf spricht selbst
+  einen Upstream unter `192.168.178.61` an.
+- Sie beim nächsten Neustart abzuklemmen wäre genau die stille Verhaltensänderung, die
+  [ADR-0025 E3](../adr/0025-host-ausfuehrung-verbieten-und-bestehende-instanzen-migrieren.md)
+  für die Hostausführung ausdrücklich ablehnt. Dieselbe Frage, dieselbe Antwort.
+- Ausdrückliches `false` weist private Ziele ab.
+
+**Die Lücke ist damit nicht geschlossen, sondern verschoben**, und das gehört so gesagt: Solange die
+Erzeugungswege (Formular, API, Paketimport) den Wert nicht **setzen**, bleibt er `null` und damit
+erlaubt — auch bei neuen Konfigurationen. Der Schalter existiert, die Prüfung greift, aber die
+Vorgabe für Neuanlagen fehlt. Das gehört zu WP3.2, wo die Erzeugungswege ohnehin angefasst werden.
+
+### WP3.5 hat einen M1-Fehler gefunden, keinen M3-Fehler
+
+`release.yml` rief die Trivy-Action mit `trivyignores: .trivyignore.yaml` auf — **diese Datei gibt
+es nicht** (nachgeprüft im committeten Stand, Zeile 666). Die Action bricht bei fehlendem
+Ignorefile ab. Der allererste Releaselauf wäre daran gescheitert, und zwar nicht an einem
+Scanergebnis, sondern an einem Pfad; `supply-chain.md` §4.2 behauptet an der Stelle das Gegenteil.
+
+Das ist der zweite Beleg für dasselbe Muster: M1 gilt als implementiert und nicht abgenommen, weil
+kein Releaselauf stattgefunden hat — und jedes Mal, wenn jemand genau hinsieht, findet er etwas,
+das erst ein echter Lauf gezeigt hätte.
+
+Weitere Funde:
+
+- **`dotnet list package --vulnerable` endet mit Exit 0**, auch bei High-Funden. Das naheliegende
+  Ein-Zeilen-Gate wäre eines gewesen, das nie rot werden kann. Die Tabellenausgabe ist zudem
+  lokalisiert (`Schweregrad` statt `Severity`) — ein `grep` hätte hier zufällig funktioniert.
+- **wasmtime 47.0.2: RUSTSEC-2026-0222 und -0223.** Beide LOW, blocken also nicht — betroffen ist
+  aber die WASI-Sandbox selbst. Empfehlung ≥ 47.0.3.
+- **Der Nachweis für das Containerfilesystem-Gate fehlt** und wird ausdrücklich nicht als erfüllt
+  gemeldet: Es gibt kein Release-Image, an dem sich zeigen ließe, dass das Gate scheitern kann.
+
+`actionlint` unabhängig nachgeprüft: nur die zwei vorbestehenden Warnungen in `ci.yml`.
+
+### Ein Zeitlimit, das die Maschine maß statt das Produkt
+
+Der erste Gesamtlauf nach der Zusammenführung war rot: Zwei `RestFacadeTests` liefen nach je 17 s in
+eine Zeitschranke, während sie auf einen stdio-Testserver warteten. Einzeln laufen dieselben Tests
+12/12 grün in 10 s, der Wiederholungslauf war vollständig grün.
+
+Ursache ist die gewachsene Last — die Suite hat mit `Bifrost.Security.Tests` und
+`Bifrost.Upgrade.Tests` zwei Projekte bekommen, die selbst Prozesse und Container starten. Die
+Schranke stand auf 15 s und maß damit die Auslastung der Maschine, nicht das Verhalten des Produkts.
+
+Angehoben auf 30 s, und die Meldung nennt jetzt die tatsächlich verstrichene Zeit. Ein Zeitlimit
+heraufzusetzen ist die schwächste aller Antworten; sie ist hier trotzdem richtig, weil ein Test, der
+gelegentlich grundlos rot wird, mehr kostet als er sichert — man gewöhnt sich an rote Läufe. Die
+Schranke bleibt scharf genug für den Fall, für den sie da ist: ein Upstream, der gar nicht hochkommt.
+
+### Was WP3.6 sonst gebaut hat
+
+Die Tests zählen nirgends die heute bekannten Fälle auf. Die Endpunktmatrix liest die Routen aus
+der `EndpointDataSource` des laufenden Hosts und ist fail-closed — alles gilt als Management, außer
+es steht ausdrücklich auf der offenen Liste. Der Auditvollständigkeitstest liest die Ausgänge aus
+`InvocationStatus`; ein neuer Enum-Wert ohne Test macht ihn rot. Und die Verallgemeinerung der
+OpenRPC-Lehre von heute: Statt über Transporte läuft der Korpustest über **jede** Eigenschaft im
+Konfigurationsmodell, deren Name nach Geheimnis aussieht — ein neues `ClientSecret` an einem
+bestehenden Transport wird gefunden, nicht nur ein neuer Transport.
+
+Als Gegenprobe wurde der historische Fehler nachgestellt (`OpenRpcCredential` aus dem Korpus
+entfernt) — der Test wird rot und nennt die Stelle.
+
+## Abgeschlossener Meilenstein: M2 — Wiederherstellbarkeit
 
 Entscheidung vorab in [ADR-0024](../adr/0024-backup-restore-und-migrationssicherheit.md), Vertrag
 eingefroren in [`m2-recoverability-contract.md`](m2-recoverability-contract.md).

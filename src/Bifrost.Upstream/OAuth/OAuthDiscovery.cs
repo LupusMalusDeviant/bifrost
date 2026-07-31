@@ -108,6 +108,25 @@ public static class OAuthDiscovery
         return [];
     }
 
+    /// <summary>
+    /// Prüft ein Ziel, bevor es abgerufen wird — der Zugang zur zentralen Adressprüfung für
+    /// Aufrufer außerhalb von <c>Bifrost.Upstream</c>.
+    /// <para>
+    /// <b>Warum es diesen Zugang gibt:</b> <c>RemoteSpecFetcher</c> ist <c>internal</c>, also konnte
+    /// <c>Bifrost.Server</c> die zentrale Prüfung gar nicht benutzen. Eine zentrale Prüfung, die man
+    /// nicht erreichen kann, ist keine — der OAuth-Verbindungsendpunkt hat deshalb gegen die vom
+    /// Betreiber genannte Adresse gesondet, <b>bevor</b> irgendetwas sie geprüft hatte, und drei
+    /// Zeilen später denselben Schalter an jede Discovery-Anfrage weitergereicht.
+    /// </para>
+    /// </summary>
+    public static Task EnsureTargetAllowedAsync(
+        Uri target, bool allowPrivateTargets, CancellationToken ct)
+        => RemoteSpecFetcher.EnsureTargetAllowedAsync(
+            target,
+            allowPrivateTargets,
+            message => new OAuthDiscoveryException(message),
+            ct);
+
     public static async Task<ProtectedResourceMetadata> FetchResourceMetadataAsync(
         Uri metadataUrl, bool allowPrivateTargets, CancellationToken ct)
     {

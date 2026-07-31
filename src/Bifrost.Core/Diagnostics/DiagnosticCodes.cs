@@ -81,6 +81,20 @@ public static class DiagnosticCodes
     /// <summary>Zustände der konfigurierten Upstreams.</summary>
     public const string UpstreamStates = "BFR-UP-0001";
 
+    // ── BFR-POL: Ausführungs-Policy (ADR-0025, M3-Vertrag §2) ───────────────────────────────────
+    //
+    // Reserviert ist BFR-POL-0001…0099. Die Nummern 0001…0005 sind bereits als *Reason-Codes*
+    // vergeben (HostExecutionReason in Bifrost.Abstractions); sie begründen eine einzelne
+    // Entscheidung über einen Upstream. Die beiden Codes hier beschreiben den Zustand der Instanz.
+    // Deshalb ein eigener Zehnerblock: Ein Code darf nie zwei Bedeutungen haben, auch nicht zwei
+    // verwandte.
+
+    /// <summary>Ist native Host-Ausführung erlaubt, und woher stammt diese Antwort?</summary>
+    public const string HostExecutionPolicy = "BFR-POL-0010";
+
+    /// <summary>Diese Instanz hat ihren bisherigen Zustand übernommen (ADR-0025 E3).</summary>
+    public const string HostExecutionAdoption = "BFR-POL-0011";
+
     /// <summary>
     /// Jeder oben vergebene Code, einmal. Handgepflegt — der Test vergleicht diese Liste per
     /// Reflexion gegen die Konstanten und wird rot, wenn eine fehlt oder ein Wert doppelt vorkommt.
@@ -104,5 +118,7 @@ public static class DiagnosticCodes
         ContainerRuntime,
         WasiHost,
         UpstreamStates,
+        HostExecutionPolicy,
+        HostExecutionAdoption,
     ];
 }

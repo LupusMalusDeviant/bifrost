@@ -1,5 +1,6 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Bifrost.Abstractions;
+using Bifrost.Core.Execution;
 using Bifrost.Core.Upstreams;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -36,7 +37,8 @@ public sealed class CatalogPollingTests : IAsyncDisposable
                 CatalogPollInterval = TimeSpan.FromSeconds(3),
             },
             _time,
-            logger: null);
+            logger: null,
+            hostExecution: HostExecutionPolicy.AllowedByOperator());
         _supervisor.Changed += (_, e) =>
         {
             lock (_events)

@@ -1,6 +1,7 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using AwesomeAssertions;
 using Bifrost.Abstractions;
+using Bifrost.Core.Execution;
 using Bifrost.Core.Upstreams;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -26,7 +27,7 @@ public sealed class ToolDefinitionPinScreeningTests : IAsyncDisposable
     public ToolDefinitionPinScreeningTests()
         => _supervisor = new UpstreamSupervisor(
             [_connector], _store, new SupervisorOptions(), _time, logger: null, audit: null,
-            pins: _pins);
+            pins: _pins, hostExecution: HostExecutionPolicy.AllowedByOperator());
 
     public async ValueTask DisposeAsync() => await _supervisor.DisposeAsync();
 
@@ -149,7 +150,8 @@ public sealed class ToolDefinitionPinScreeningTests : IAsyncDisposable
         var ct = TestContext.Current.CancellationToken;
         var connector = new FakeUpstreamConnector();
         await using var plain = new UpstreamSupervisor(
-            [connector], new InMemoryUpstreamConfigStore(), new SupervisorOptions(), _time);
+            [connector], new InMemoryUpstreamConfigStore(), new SupervisorOptions(), _time,
+            hostExecution: HostExecutionPolicy.AllowedByOperator());
 
         var id = await plain.AddAsync(TestData.StdioConfig("ohnepins"), ct);
         await TestData.WaitUntilAsync(() => plain.GetStatus(id)?.State == UpstreamState.Healthy);
