@@ -173,6 +173,34 @@ Erzeugungswege (Formular, API, Paketimport) den Wert nicht **setzen**, bleibt er
 erlaubt — auch bei neuen Konfigurationen. Der Schalter existiert, die Prüfung greift, aber die
 Vorgabe für Neuanlagen fehlt. Das gehört zu WP3.2, wo die Erzeugungswege ohnehin angefasst werden.
 
+### Stand M3
+
+| WP | Status | Nachweis |
+|---|---|---|
+| 3.1 Host-Execution-Policy + Bestandsübernahme | `implementiert` | 607 Core-Tests, Architekturtest über Reflexion und IL |
+| 3.2 Container als Standard | **`abgebrochen`** | Teilarbeit auf Zweig `wip/wp3.2-isolation`, siehe unten |
+| 3.3 Key-Ring-Setup | `offen` | kam nicht über die Pflichtlektüre hinaus |
+| 3.4 Bootstrap statt Log-Credentials | `offen` | wartet ohnehin auf 3.3 (`Program.cs`) |
+| 3.5 Security- und Supply-Chain-Gates | `implementiert` | Negativnachweis je Gate außer Containerscan |
+| 3.6 Sicherheitsinvarianten | `implementiert` | 62 Tests, zwei echte SSRF-Funde |
+
+### Der Abbruch von WP3.2
+
+Beide Agenten der zweiten Welle endeten an einem **Kontolimit**, nicht an einem Fehler im Code.
+WP3.3 kam nicht über die Pflichtlektüre hinaus. WP3.2 war mitten in der Umbenennung — und ein
+halb vollzogener Rename ist der ungünstigste Abbruchzeitpunkt, den dieses Paket hat: Der Vertrag in
+`Bifrost.Abstractions` kannte nur noch `IsolationOptions`, drei Aufrufstellen in `Bifrost.Upstream`
+und `Bifrost.Core` noch `CliIsolationOptions`. **Die Lösung baute nicht.**
+
+Die Teilarbeit liegt vollständig auf `wip/wp3.2-isolation` — inklusive eines neuen Ordners
+`src/Bifrost.Upstream/Isolation/` mit vier Dateien, der neben dem alten
+`Cli/ContainerLaunchPolicy.cs` steht. Welcher von beiden bleibt, ist die unerledigte Kernfrage des
+Pakets: Zwei Launchmodelle wären genau die zwei Wahrheiten, die der Auftrag verhindern sollte.
+
+`main` wurde auf `6e05a5d` zurückgesetzt und baut. Nichts von der Teilarbeit ist verloren, und
+nichts davon ist in einem Zustand, in dem man darauf aufbauen sollte, ohne den Rename zu Ende zu
+führen.
+
 ### WP3.5 hat einen M1-Fehler gefunden, keinen M3-Fehler
 
 `release.yml` rief die Trivy-Action mit `trivyignores: .trivyignore.yaml` auf — **diese Datei gibt
