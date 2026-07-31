@@ -33,6 +33,34 @@ public interface IDiagnosticService
 `PlanAsync` vor `ApplyAsync` ist Pflicht und kein Komfort: Ein Restore, der erst beim Schreiben
 merkt, dass er nicht passt, hat bereits geschrieben.
 
+### Nachtrag nach der Welle: der Plan trägt ein Handle
+
+**Der Fehler.** In der ersten Fassung trug weder `RestorePlan` noch `ConfigurationImportPlan` einen
+Verweis auf das, woraus er entstand. Beide betroffenen Pakete haben sich unabhängig voneinander mit
+einer `ConditionalWeakTable` beholfen und einen fremden Plan abgewiesen, statt zu raten — die
+richtige Notlösung, aber sie bindet Planung und Anwendung an dieselbe **Objektidentität**. Für die
+CLI trägt das. Für die REST-API nicht: Dort geht der Plan als JSON hinaus und kommt als neues
+Objekt zurück, ein Restore über die API wäre grundsätzlich nicht anwendbar gewesen.
+
+Dass zwei Pakete ohne Kenntnis voneinander dieselbe Stelle melden, war die Aussage.
+
+**Die Korrektur.** Beide Pläne tragen ein `Token` — ein zufälliges, undurchsichtiges Handle. Der
+Zustand bleibt beim Dienst; nur das Handle reist.
+
+- Archivpfad und **Passphrase** stehen weiterhin *nicht* im Plan. Eine Passphrase, die durch eine
+  API-Antwort läuft, steht danach in jedem Log.
+- Ein Handle gilt 30 Minuten. Ein Plan beschreibt einen Zustand, den er nur zum Zeitpunkt der
+  Prüfung kannte — je länger er gilt, desto eher trifft er eine Instanz, die inzwischen eine andere
+  ist. Abgelaufene Vormerkungen werden weggeräumt, denn sie halten Passphrasen und entschlüsselte
+  Zugangsdaten im Arbeitsspeicher.
+- Ein Handle ist **einmalig**. Nach der Anwendung ist es verbraucht.
+- Unbekannt oder abgelaufen heißt Absage mit Begründung, nie ein Versuch auf geratenen Daten.
+
+`ConfigurationImportPlan` hat zugleich eine vierte Liste bekommen: `Unchanged`. Objekte, die auf der
+Zielinstanz inhaltsgleich schon vorliegen — etwa der mitgelieferte Guard-Regelsatz — sind weder
+Zugang noch Konflikt. Ohne diese Unterscheidung wäre auf einer vorbelegten Instanz **kein einziger
+Export je anwendbar** gewesen.
+
 ## 2. Backup-Manifest v1 (`manifest.json`)
 
 ```jsonc

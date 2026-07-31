@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -35,15 +36,14 @@ public sealed class ConfigurationExportService : IConfigurationExportService
     /// <summary>
     /// Die Vorbereitung zu einem ausgegebenen Plan.
     /// <para>
-    /// <b>Warum eine Seitentabelle:</b> <see cref="ConfigurationImportPlan"/> ist ein eingefrorener
-    /// Vertrag und trägt keinen Verweis auf die Nutzlast, aus der er entstand. Der Plan wird deshalb
-    /// über seine <em>Objektidentität</em> wiedererkannt. Ein Plan, der über Prozessgrenzen ging
-    /// (CLI → API → CLI), ist hier unbekannt und führt zu einer klaren Absage statt zu einem Import
-    /// auf geratenen Daten. Das ist fail-closed und zugleich der Punkt, den der Lead entscheiden
-    /// muss (siehe Abgabe).
+    /// <b>Warum eine Seitentabelle:</b> Die Nutzlast bleibt hier, der Plan trägt nur ein Handle
+    /// (<see cref="ConfigurationImportPlan.Token"/>). Bei einem Vollimport stehen in dieser Tabelle
+    /// entschlüsselte Zugangsdaten — sie gehören nicht in eine Antwort, die durch Logs und
+    /// Zwischenspeicher läuft. Ein unbekanntes oder abgelaufenes Handle führt zu einer klaren
+    /// Absage statt zu einem Import auf geratenen Daten.
     /// </para>
     /// </summary>
-    private readonly ConditionalWeakTable<ConfigurationImportPlan, PreparedImport> _prepared = [];
+    private readonly ConcurrentDictionary<string, PreparedImport> _prepared = new(StringComparer.Ordinal);
 
     public ConfigurationExportService(
         IConfigurationSnapshotSource source,
@@ -117,16 +117,17 @@ public sealed class ConfigurationExportService : IConfigurationExportService
 
         CheckDependencies(document, currentDocument, missing);
 
-        additions.AddRange(unchanged);
-
         var plan = new ConfigurationImportPlan(
             CanApply: conflicts.Count == 0 && missing.Count == 0,
             Additions: additions,
             Conflicts: conflicts,
-            MissingDependencies: missing);
+            MissingDependencies: missing,
+            Unchanged: unchanged,
+            Token: PlanTokens.New());
 
-        _prepared.Add(plan, new PreparedImport(
-            upstreams, roles, profiles, guardRules, approvals, skills, settings, current.Settings));
+        _prepared[plan.Token!] = new PreparedImport(
+            upstreams, roles, profiles, guardRules, approvals, skills, settings, current.Settings,
+            _time.GetUtcNow());
 
         return plan;
     }
@@ -145,13 +146,18 @@ public sealed class ConfigurationExportService : IConfigurationExportService
     {
         ArgumentNullException.ThrowIfNull(plan);
 
-        if (!_prepared.TryGetValue(plan, out var prepared))
+        DropExpiredImports();
+        if (plan.Token is null || !_prepared.TryGetValue(plan.Token, out var prepared))
         {
             throw new ConfigurationImportException(
-                "Zu diesem Plan liegt keine Vorbereitung vor. PlanImportAsync und ApplyImportAsync "
-                + "gehören zum selben Vorgang — ein Plan, der zwischendurch serialisiert wurde, wird "
-                + "nicht angewendet.");
+                "Zu diesem Plan liegt keine Vorbereitung vor. PlanImportAsync muss vorausgehen, auf "
+                + "derselben Dienstinstanz und innerhalb von "
+                + $"{PlanTokens.Lifetime.TotalMinutes:0} Minuten.");
         }
+
+        // Einmalig: siehe RestoreService — ein noch gültiges Handle lädt zum zweiten Lauf gegen
+        // eine Instanz ein, die der Plan nie geprüft hat.
+        _prepared.TryRemove(plan.Token, out _);
 
         if (!plan.CanApply)
         {
@@ -738,5 +744,23 @@ public sealed class ConfigurationExportService : IConfigurationExportService
         IReadOnlyList<ApprovalSnapshot> Approvals,
         IReadOnlyList<SkillSnapshot> Skills,
         InstanceSettings? Settings,
-        InstanceSettings PreviousSettings);
+        InstanceSettings PreviousSettings,
+        DateTimeOffset CreatedAt);
+
+    /// <summary>
+    /// Räumt abgelaufene Vormerkungen weg. Ein Vollimport hält entschlüsselte Zugangsdaten im
+    /// Arbeitsspeicher — ein Plan, den niemand mehr anwendet, darf sie nicht bis zum Prozessende
+    /// festhalten.
+    /// </summary>
+    private void DropExpiredImports()
+    {
+        var deadline = _time.GetUtcNow() - PlanTokens.Lifetime;
+        foreach (var (token, prepared) in _prepared)
+        {
+            if (prepared.CreatedAt < deadline)
+            {
+                _prepared.TryRemove(token, out _);
+            }
+        }
+    }
 }

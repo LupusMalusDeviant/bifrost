@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AwesomeAssertions;
 using Bifrost.Abstractions;
 using Bifrost.Abstractions.Operations;
@@ -210,5 +211,48 @@ public class ConfigurationImportPlanTests
 
         await act.Should().ThrowAsync<ConfigurationImportException>();
         ziel.Writes.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Der Grund für das Handle im Plan. Über eine HTTP-Schnittstelle geht der Plan als JSON hinaus
+    /// und kommt als <em>neues Objekt</em> zurück — an der Objektidentität wiedererkannt wäre er
+    /// dort niemals anwendbar.
+    /// </summary>
+    [Fact]
+    public async Task Plan_der_als_json_gereist_ist_bleibt_anwendbar()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var nutzlast = (await ConfigurationFixtures
+            .ServiceFor(ConfigurationFixtures.SecretFree())
+            .ExportAsync(new ConfigurationExportRequest(), ct)).Payload;
+
+        var ziel = new FakeInstance();
+        var dienst = ConfigurationFixtures.ServiceFor(ziel);
+        var plan = await dienst.PlanImportAsync(nutzlast, null, ct);
+        plan.CanApply.Should().BeTrue();
+
+        var gereist = JsonSerializer.Deserialize<ConfigurationImportPlan>(
+            JsonSerializer.Serialize(plan))!;
+        gereist.Should().NotBeSameAs(plan);
+        gereist.Token.Should().Be(plan.Token);
+
+        await dienst.ApplyImportAsync(gereist, ct);
+
+        ziel.Writes.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task Unveraendertes_steht_getrennt_von_neuem()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var quelle = ConfigurationFixtures.SecretFree();
+        var nutzlast = (await ConfigurationFixtures.ServiceFor(quelle)
+            .ExportAsync(new ConfigurationExportRequest(), ct)).Payload;
+
+        var plan = await ConfigurationFixtures.ServiceFor(quelle).PlanImportAsync(nutzlast, null, ct);
+
+        plan.Unchanged.Should().NotBeNullOrEmpty(
+            "ein Export gegen die eigene Instanz legt nichts an, und das ist kein Konflikt");
+        plan.Additions.Should().NotIntersectWith(plan.Unchanged!);
     }
 }

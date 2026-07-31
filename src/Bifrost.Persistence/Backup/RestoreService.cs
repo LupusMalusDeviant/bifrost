@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO.Compression;
 using System.Runtime.CompilerServices;
@@ -15,17 +16,18 @@ namespace Bifrost.Persistence.Backup;
 /// Schreiben merkt, dass er nicht passt, hat bereits geschrieben — deshalb die Trennung.
 /// </para>
 /// <para>
-/// <b>Vertragslücke, gemeldet statt umgangen:</b> <c>ApplyAsync</c> bekommt laut
-/// <c>Operations.cs</c> nur den Plan, der weder Archivpfad noch Passphrase trägt. Diese Klasse merkt
-/// sich beides zum jeweiligen Plan (schwache Referenz, kein Zustandsleck). Folge: Plan und Anwendung
-/// müssen dieselbe Dienstinstanz sehen; ein fremder Plan wird abgewiesen statt geraten.
+/// <b>Warum der Plan Archivpfad und Passphrase nicht trägt:</b> Eine Passphrase, die durch eine
+/// API-Antwort läuft, steht danach in jedem Log. Der Plan trägt stattdessen ein Handle
+/// (<see cref="RestorePlan.Token"/>); der Zustand bleibt hier. Plan und Anwendung müssen dieselbe
+/// Dienstinstanz sehen — über eine HTTP-Schnittstelle ist das der Server, und der Plan überlebt den
+/// Weg als JSON. Ein unbekanntes oder abgelaufenes Handle wird abgewiesen statt geraten.
 /// </para>
 /// </summary>
 public sealed class RestoreService : IRestoreService
 {
     private readonly BackupOptions _options;
     private readonly IBackupService _backupService;
-    private readonly ConditionalWeakTable<RestorePlan, PlanContext> _contexts = [];
+    private readonly ConcurrentDictionary<string, PlanContext> _contexts = new(StringComparer.Ordinal);
 
     public RestoreService(BackupOptions options, IBackupService backupService)
     {
@@ -35,7 +37,23 @@ public sealed class RestoreService : IRestoreService
         _backupService = backupService;
     }
 
-    private sealed record PlanContext(string ArchivePath, string? Passphrase);
+    private sealed record PlanContext(string ArchivePath, string? Passphrase, DateTimeOffset CreatedAt);
+
+    /// <summary>
+    /// Räumt abgelaufene Vormerkungen weg. Sie enthalten Passphrasen — ein Plan, den niemand mehr
+    /// anwenden wird, darf sie nicht bis zum Prozessende festhalten.
+    /// </summary>
+    private void DropExpiredContexts()
+    {
+        var deadline = DateTimeOffset.UtcNow - PlanTokens.Lifetime;
+        foreach (var (token, context) in _contexts)
+        {
+            if (context.CreatedAt < deadline)
+            {
+                _contexts.TryRemove(token, out _);
+            }
+        }
+    }
 
     // ── Vorprüfung ──────────────────────────────────────────────────────────────────────────────
 
@@ -81,9 +99,11 @@ public sealed class RestoreService : IRestoreService
             targetIsEmpty,
             blockers.AsReadOnly(),
             warnings.AsReadOnly(),
-            preBackupPath);
+            preBackupPath,
+            Token: PlanTokens.New());
 
-        _contexts.AddOrUpdate(plan, new PlanContext(archivePath, request.Passphrase));
+        _contexts[plan.Token!] = new PlanContext(
+            archivePath, request.Passphrase, DateTimeOffset.UtcNow);
         return plan;
     }
 
@@ -217,11 +237,12 @@ public sealed class RestoreService : IRestoreService
     public async Task<RestoreResult> ApplyAsync(RestorePlan plan, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        if (!_contexts.TryGetValue(plan, out var context))
+        DropExpiredContexts();
+        if (plan.Token is null || !_contexts.TryGetValue(plan.Token, out var context))
         {
             throw new InvalidOperationException(
-                "Zu diesem Plan ist kein Archiv bekannt. PlanAsync muss unmittelbar vorausgehen, und " +
-                "zwar auf derselben Dienstinstanz.");
+                "Zu diesem Plan ist kein Archiv bekannt. PlanAsync muss vorausgehen, auf derselben "
+                + $"Dienstinstanz und innerhalb von {PlanTokens.Lifetime.TotalMinutes:0} Minuten.");
         }
 
         if (!plan.CanApply)
@@ -229,6 +250,10 @@ public sealed class RestoreService : IRestoreService
             throw new InvalidOperationException(
                 "Ein Plan mit Blockern wird nicht angewendet: " + string.Join(" | ", plan.Blockers));
         }
+
+        // Einmalig: Ein Handle, das nach der Anwendung noch gilt, lässt sich wiederverwenden — und
+        // der zweite Lauf träfe eine Instanz, die der Plan nie geprüft hat.
+        _contexts.TryRemove(plan.Token, out _);
 
         var notes = new List<string>();
 

@@ -95,6 +95,17 @@ public sealed record RestoreRequest(
 /// Sicherung des vorhandenen Zustands, die vor einem <see cref="RestoreMode.Replace"/> entsteht.
 /// Ohne Ausweg kein Überschreiben (ADR-0024 E5).
 /// </param>
+/// <param name="Token">
+/// Undurchsichtiges Handle auf den vorgemerkten Vorgang. <see cref="IRestoreService.ApplyAsync"/>
+/// findet darüber Archivpfad und Passphrase wieder, die der Plan bewusst <b>nicht</b> trägt — eine
+/// Passphrase, die durch eine API-Antwort läuft, steht danach in jedem Log.
+/// <para>
+/// Der Zustand bleibt beim Dienst; nur das Handle reist. Damit überlebt der Plan den Weg über eine
+/// HTTP-Schnittstelle, wo er als JSON hinausgeht und als neues Objekt zurückkommt. Ein unbekanntes
+/// oder abgelaufenes Handle führt zu einer klaren Absage, nicht zu einem Restore auf geratenen
+/// Daten.
+/// </para>
+/// </param>
 public sealed record RestorePlan(
     bool CanApply,
     BackupManifest? Manifest,
@@ -102,7 +113,8 @@ public sealed record RestorePlan(
     bool TargetIsEmpty,
     IReadOnlyList<string> Blockers,
     IReadOnlyList<string> Warnings,
-    string? PreBackupPath = null);
+    string? PreBackupPath = null,
+    string? Token = null);
 
 public sealed record RestoreResult(
     bool Applied,
@@ -198,11 +210,22 @@ public sealed record ConfigurationExport(
     bool ContainsSecrets,
     string Payload);
 
+/// <param name="Unchanged">
+/// Objekte, die auf der Zielinstanz inhaltsgleich bereits vorliegen. Ohne diese Liste wäre auf einer
+/// vorbelegten Instanz — etwa mit dem mitgelieferten Guard-Regelsatz — <b>kein einziger Export je
+/// anwendbar</b>, weil jede Übereinstimmung als Konflikt zählte.
+/// </param>
+/// <param name="Token">
+/// Undurchsichtiges Handle auf die vorgemerkte Nutzlast. Siehe <see cref="RestorePlan.Token"/> —
+/// dieselbe Begründung, dieselbe Wirkung.
+/// </param>
 public sealed record ConfigurationImportPlan(
     bool CanApply,
     IReadOnlyList<string> Additions,
     IReadOnlyList<string> Conflicts,
-    IReadOnlyList<string> MissingDependencies);
+    IReadOnlyList<string> MissingDependencies,
+    IReadOnlyList<string>? Unchanged = null,
+    string? Token = null);
 
 public interface IConfigurationExportService
 {
@@ -211,6 +234,27 @@ public interface IConfigurationExportService
     Task<ConfigurationImportPlan> PlanImportAsync(string payload, string? passphrase, CancellationToken ct);
 
     Task ApplyImportAsync(ConfigurationImportPlan plan, CancellationToken ct);
+}
+
+/// <summary>
+/// Handles auf vorgemerkte Vorgänge — <see cref="RestorePlan.Token"/> und
+/// <see cref="ConfigurationImportPlan.Token"/>.
+/// </summary>
+public static class PlanTokens
+{
+    /// <summary>
+    /// Wie lange ein vorgemerkter Vorgang anwendbar bleibt. Ein Plan beschreibt einen Zustand, den
+    /// er nur zum Zeitpunkt der Prüfung kannte; je länger er gilt, desto eher wendet ihn jemand auf
+    /// eine Instanz an, die inzwischen eine andere ist.
+    /// </summary>
+    public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(30);
+
+    /// <summary>
+    /// Kryptografisch zufällig, nicht fortlaufend: Wer ein fremdes Handle raten kann, kann einen
+    /// fremden Restore auslösen.
+    /// </summary>
+    public static string New()
+        => Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
 }
 
 /// <summary>Einheitliche Exit-Codes für alle Operations-Befehle der CLI (M2-Vertrag §4).</summary>

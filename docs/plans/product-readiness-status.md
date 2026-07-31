@@ -140,7 +140,7 @@ Reihenfolgeentscheidung, die hier festgehalten wird, damit sie bei der Abnahme s
 | WP2.4 Diagnosedienst (`doctor`) | `implementiert` | 17 Codes, 107 Tests; Sonden noch nicht verdrahtet |
 | WP2.5 Konfigurationsexport/-import | `implementiert` | 20 Tests, Secret-Negativkorpus je 8-Zeichen-Bruchstück |
 | WP2.6 Upgrade-Kompatibilitätsmatrix | `offen` | wartet auf ein stabiles Archivformat aus WP2.1 |
-| WP2.7 Adapter (CLI, API, UI) | `offen` | Lead; **blockiert**, siehe Vertragslücke unten |
+| WP2.7 Adapter (CLI, API, UI) | `offen` | Lead; Vertragslücke behoben, damit **entblockt** |
 
 Gesamtlauf nach der Zusammenführung: `./build.sh verify-dotnet` → **948 Tests grün, 0 Fehler**
 (M1-Stand: 783). Kein Paket hat eine fremde Zone angefasst, `Operations.cs` blieb während der
@@ -177,20 +177,22 @@ das Vergessen auffällt.
 | Ids beim Import erhalten (WP2.5) | **bestätigt** — neu vergebene Ids ließen jeden mitgelieferten Grant ins Leere zeigen, und Default-Deny meldet das nicht, sondern erlaubt nur nichts |
 | `.gitignore`-Negation für `Backup/` (WP2.1) | **bestätigt**, Wirkung nachgeprüft (`git check-ignore`, 41 Dateien sichtbar). Die VS-Vorlagenregel `Backup*/` hätte eine ganze Quellcodezone unsichtbar gemacht |
 
-### Vertragslücke — blockiert WP2.7
+### Vertragslücke — gefunden, entschieden, behoben
 
 Zwei Pakete sind unabhängig voneinander auf denselben Fehler in `Operations.cs` gestoßen: Weder
-`RestorePlan` noch `ConfigurationImportPlan` tragen einen Verweis auf ihre Nutzlast. Beide behelfen
-sich mit einer `ConditionalWeakTable` und weisen einen fremden Plan ab, statt zu raten — das ist die
-richtige Notlösung, aber sie bindet Planung und Anwendung an **dieselbe Objektidentität**.
+`RestorePlan` noch `ConfigurationImportPlan` trug einen Verweis auf seine Nutzlast. Beide behalfen
+sich mit einer `ConditionalWeakTable` und wiesen einen fremden Plan ab, statt zu raten — die
+richtige Notlösung, aber sie bindet Planung und Anwendung an **dieselbe Objektidentität**. Für die
+CLI trägt das. Für die REST-API nicht: Dort geht der Plan als JSON hinaus und kommt als neues
+Objekt zurück, ein Restore über die API wäre grundsätzlich nicht anwendbar gewesen.
 
-Für die CLI trägt das (Plan und Anwendung im selben Aufruf). Für die REST-API nicht: Dort geht der
-Plan als JSON hinaus und kommt als neues Objekt zurück. Ein Restore über die API wäre damit
-grundsätzlich nicht anwendbar.
+Dass zwei Pakete ohne Kenntnis voneinander dieselbe Stelle melden, war die Aussage — ein Fehler,
+keine Auslegungsfrage. Die Welle war beendet, die Einfrierung damit aufgehoben; beide Pläne tragen
+jetzt ein Handle mit 30-Minuten-Geltung, einmaliger Verwendung und ohne Passphrase im Plan. Details
+im [Vertrag](m2-recoverability-contract.md#nachtrag-nach-der-welle-der-plan-trägt-ein-handle).
 
-Dass zwei Pakete ohne Kenntnis voneinander dieselbe Stelle melden, ist die Aussage — der Vertrag
-hat hier einen Fehler, keine Auslegungsfrage. Er wird vor WP2.7 nachgezogen; die Welle ist beendet,
-die Einfrierung damit aufgehoben.
+Der Nachweis ist ein Test, der den Plan tatsächlich durch `JsonSerializer` schickt und danach
+anwendet — vorher war das genau der Fall, der scheiterte.
 
 ### Offen aus dieser Welle
 

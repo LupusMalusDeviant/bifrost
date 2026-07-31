@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 using AwesomeAssertions;
 
 using Bifrost.Abstractions.Operations;
@@ -217,5 +219,51 @@ public sealed class RestoreTests
         var act = async () => await RestoreInto(target).ApplyAsync(plan, TestContext.Current.CancellationToken);
 
         await act.Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    /// <summary>
+    /// Der Grund, warum der Plan ein Handle trägt. Über eine HTTP-Schnittstelle geht er als JSON
+    /// hinaus und kommt als <em>neues Objekt</em> zurück — an der Objektidentität wiedererkannt
+    /// wäre er dort niemals anwendbar, und ein Restore über die API grundsätzlich unmöglich.
+    /// </summary>
+    [Fact]
+    public async Task A_plan_that_travelled_as_json_is_still_applicable()
+    {
+        using var source = new InstanceDirectory("quelle8");
+        using var target = new InstanceDirectory("ziel8");
+        using var archives = new ArchiveDirectory();
+        var archive = await BackupOfAsync(source, archives, rows: 7);
+
+        var service = RestoreInto(target);
+        var plan = await service.PlanAsync(
+            new RestoreRequest(archive), TestContext.Current.CancellationToken);
+        plan.CanApply.Should().BeTrue();
+
+        var travelled = JsonSerializer.Deserialize<RestorePlan>(JsonSerializer.Serialize(plan))!;
+        travelled.Should().NotBeSameAs(plan);
+        travelled.Token.Should().Be(plan.Token);
+
+        var result = await service.ApplyAsync(travelled, TestContext.Current.CancellationToken);
+
+        result.Applied.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task A_plan_is_applied_at_most_once()
+    {
+        using var source = new InstanceDirectory("quelle9");
+        using var target = new InstanceDirectory("ziel9");
+        using var archives = new ArchiveDirectory();
+        var archive = await BackupOfAsync(source, archives, rows: 3);
+
+        var service = RestoreInto(target);
+        var plan = await service.PlanAsync(
+            new RestoreRequest(archive), TestContext.Current.CancellationToken);
+        await service.ApplyAsync(plan, TestContext.Current.CancellationToken);
+
+        var again = async () => await service.ApplyAsync(plan, TestContext.Current.CancellationToken);
+
+        await again.Should().ThrowAsync<InvalidOperationException>(
+            "ein verbrauchtes Handle träfe beim zweiten Lauf eine Instanz, die der Plan nie geprüft hat");
     }
 }
