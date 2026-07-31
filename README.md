@@ -6,9 +6,11 @@
 
 **A self-hosted meta-MCP gateway on .NET** — connect one endpoint to your agents, and manage all your MCP servers behind it.
 
-> **[Pre-release v0.8.2](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.8.2)** is the current build. It brings everything that had accumulated on `main` since v0.5.0 into a tagged state: WASI plugins with an out-of-process Rust host, container isolation for CLI upstreams, long-running tasks, the capability model, OpenRPC, signed connector packages, upstream OAuth, rug-pull protection, OTel traces, and skills with a schema, an editor and package delivery.
+> **[Pre-release v0.11.0](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.11.0)** is the current build — and the first one under the name **B.I.F.R.O.S.T** (formerly MCP-MCP). Two things landed together: the **`2026-07-28` protocol revision** with its stateless core, MRTR approvals and cacheable lists ([ADR-0023](docs/adr/0023-stateless-kern-und-mrtr.md)), and the rename across code, configuration and this repository.
 >
-> The version is deliberately below 1.0 — and it is marked as a **pre-release** for a reason: the code is feature-complete for its scope and covered by tests against SQLite *and* real PostgreSQL, but **it still has no operational uptime behind it**. 1.0 follows from running it, not from adding features.
+> **Upgrading from an MCP-MCP install:** environment variables moved from `MCPMCP_*` to `BIFROST_*`, but the old names are still read and reported once at startup, and an existing `mcpmcp.db` keeps being used. The DataProtection application name and the encryption purposes deliberately keep their old values — renaming them would make every stored secret unreadable. Your session cookie is invalidated once, so expect a single re-login.
+>
+> The version is deliberately below 1.0 — and it is marked as a **pre-release** for a reason: the code is feature-complete for its scope and covered by tests against SQLite *and* real PostgreSQL, but **it still has barely any operational uptime behind it**. 1.0 follows from running it, not from adding features.
 
 ## The problem
 
@@ -37,7 +39,7 @@ B.I.F.R.O.S.T is a reverse proxy for the Model Context Protocol: to your agents 
 | 🖥️ **Web UI** | Blazor admin panel: server management, tool explorer, RBAC, live dashboard, log search, token cockpit, approvals, tasks, packages |
 | 📚 **Central skill distribution** | Versioned text assets (skills/prompts/instructions) served to all agents as MCP prompts/resources |
 
-Dockerized (< 300 MB, non-root, amd64 **and** arm64). [Formal NFR-01 benchmark](docs/acceptance/performance.md) on reference hardware: **p95 = 7.3 ms** per call, ~6400 calls/s, 0 errors under 20 sessions / 100 in-flight.
+Dockerized (< 300 MB, non-root, amd64 **and** arm64). [Formal NFR-01 benchmark](docs/acceptance/performance.md) on reference hardware, re-measured on the `2026-07-28` protocol: **`tools/call` p95 = 9.3 ms**, `tools/list` (100 tools) p95 = 14.2 ms, **0 errors** under 20 sessions / 100 in-flight — median of five consecutive runs, both NFR bounds held with ~5× and ~14× headroom. No throughput figure is claimed: the harness measures a 0.1 s burst, which is a peak rate, not sustained load.
 
 ## Architecture at a glance
 
