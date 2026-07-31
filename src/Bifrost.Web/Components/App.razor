@@ -195,7 +195,14 @@
             border-top: 1px solid var(--edge);
         }
 
-        .content { flex: 1; padding: 1.9rem 2.2rem; overflow-x: auto; max-width: 100%; min-width: 0; }
+        /* Die Zeilenlaenge ist begrenzt, nicht das Fenster. Auf einem breiten Bildschirm lief ein
+           Formularfeld vorher ueber zwei Handbreit, und die Augen mussten zwischen Beschriftung und
+           Eingabe wandern; Tabellenzeilen wurden zu Bandwuermern. 1180 px ist die Breite, bei der
+           die fuenf Kennzahlkarten noch nebeneinander stehen und eine Textzeile noch lesbar ist. */
+        .content {
+            flex: 1; padding: 1.9rem 2.2rem; overflow-x: auto; min-width: 0;
+            width: 100%; max-width: 1180px; margin: 0 auto;
+        }
 
         /* ── Glas ────────────────────────────────────────────────────────────────────────── */
         /* Der leichte Verlauf ist keine Deko, sondern die Dicke der Scheibe: oben faengt sie mehr
@@ -343,6 +350,29 @@
         .badge-err { background: rgba(255, 107, 131, .13); color: var(--err); border-color: rgba(255, 107, 131, .32); }
         .badge-warn { background: rgba(244, 184, 96, .13); color: var(--warn); border-color: rgba(244, 184, 96, .3); }
         .badge-muted { background: var(--glass-2); color: var(--muted); border-color: var(--edge); }
+
+        /* ── Leerer Zustand ──────────────────────────────────────────────────────────────── */
+        /* Eine Tabelle ohne Zeilen sagt nichts — ausgerechnet dem, der zum ersten Mal hier ist. */
+        .empty {
+            border: 1px dashed rgba(150, 205, 250, .22); border-radius: var(--radius-sm);
+            padding: 1rem 1.15rem; background: rgba(111, 211, 255, .035);
+        }
+
+        /* ── Balkenreihe ─────────────────────────────────────────────────────────────────── */
+        .spark { display: flex; align-items: flex-end; gap: 4px; height: 92px; }
+        .spark-col { flex: 1; display: flex; align-items: flex-end; height: 100%; min-width: 0; }
+        .spark-bar {
+            width: 100%; min-height: 3px; border-radius: 3px 3px 0 0;
+            background: linear-gradient(180deg, var(--ice), rgba(47, 143, 216, .35));
+            box-shadow: 0 0 12px rgba(111, 211, 255, .22);
+        }
+        /* Ein Tag ohne Calls ist kein fehlender Wert, sondern eine gemessene Null — er bekommt
+           einen Stummel, keine Leerstelle. Sonst sieht eine Lücke aus wie ein Datenausfall. */
+        .spark-bar.is-zero { background: rgba(150, 205, 250, .13); box-shadow: none; }
+        .spark-axis {
+            display: flex; justify-content: space-between; margin-top: .5rem;
+            font-family: var(--mono); font-size: .72rem; color: var(--dim);
+        }
 
         .pill-list { display: flex; flex-wrap: wrap; gap: .35rem; }
         .pill {

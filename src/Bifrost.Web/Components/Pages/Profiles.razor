@@ -17,6 +17,22 @@
 </div>
 
 <div class="card">
+    @* Ein Tabellenkopf ohne eine einzige Zeile darunter sieht aus wie ein Fehler — und sagt
+       ausgerechnet dann nichts, wenn jemand zum ersten Mal hier ist. *@
+    @if (_profiles.Count == 0)
+    {
+        <div class="empty">
+            <strong>Noch kein Profil angelegt.</strong>
+            <p class="muted" style="margin:.35rem 0 0">
+                Ohne Profil bekommt ein Agent die sparsame Default-Sicht: die Meta-Tools statt
+                aller Schemata. Ein Profil lohnt sich, sobald ein Agent einzelne Werkzeuge
+                <em>ständig</em> braucht — die kommen dann mit vollem Schema, der Rest bleibt
+                über <span class="mono">search_tools</span> erreichbar.
+            </p>
+        </div>
+    }
+    else
+    {
     <div class="table-wrap">
         <table>
             <thead><tr><th>Profil</th><th>Pinned</th><th>Lazy</th><th>Geschätzte Tokens</th><th>Ersparnis</th><th></th></tr></thead>
@@ -36,6 +52,7 @@
             </tbody>
         </table>
     </div>
+    }
 </div>
 
 <div class="card">
@@ -47,23 +64,28 @@
     }
     else
     {
-        <div class="table-wrap">
-            <table>
-                <thead><tr><th>Tag</th><th>Calls</th><th>Verlauf</th></tr></thead>
-                <tbody>
-                    @foreach (var day in _trend)
-                    {
-                        <tr>
-                            <td class="mono">@day.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)</td>
-                            <td>@day.Calls</td>
-                            <td>
-                                @* Balken statt Diagramm-Bibliothek: eine Abhängigkeit weniger für dieselbe Aussage. *@
-                                <span style="display:inline-block;height:.7rem;background:currentColor;opacity:.5;width:@(BarWidth(day.Calls))%"></span>
-                            </td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
+        @* Vierzehn Zeilen mit meist einer Null darin waren ein Diagramm, das als Tabelle
+           gerendert wurde: viel Platz, wenig Aussage, und der Verlauf — das Einzige, worum es
+           hier geht — musste im Kopf zusammengesetzt werden. Als Balkenreihe steht er in einer
+           Zeile. Der genaue Wert hängt am Titel jedes Balkens; die Tabelle war der falsche Ort
+           für eine Form, keine für eine Zahl.
+
+           Balken von Hand statt Diagramm-Bibliothek: eine Abhängigkeit weniger für dieselbe
+           Aussage — und in einer Oberfläche, die keine externen Ressourcen lädt, ohnehin die
+           einzige Möglichkeit. *@
+        <div class="spark" role="img"
+             aria-label="@($"Calls je Tag, {_trend[0].Date:yyyy-MM-dd} bis {_trend[^1].Date:yyyy-MM-dd}, Maximum {_trend.Max(d => d.Calls)}")">
+            @foreach (var day in _trend)
+            {
+                <div class="spark-col" title="@day.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture): @day.Calls Calls">
+                    <div class="spark-bar @(day.Calls == 0 ? "is-zero" : null)" style="height:@(BarWidth(day.Calls))%"></div>
+                </div>
+            }
+        </div>
+        <div class="spark-axis">
+            <span>@_trend[0].Date.ToString("dd.MM.", CultureInfo.InvariantCulture)</span>
+            <span>Spitze: @_trend.Max(d => d.Calls) Calls/Tag</span>
+            <span>@_trend[^1].Date.ToString("dd.MM.", CultureInfo.InvariantCulture)</span>
         </div>
     }
 </div>
