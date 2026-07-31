@@ -25,7 +25,7 @@
     {
         <div class="table-wrap">
             <table>
-                <thead><tr><th>Name</th><th>Herkunft</th><th>Beschreibung</th><th>Wann anwenden</th><th>Version</th><th>Aktualisiert</th><th></th></tr></thead>
+                <thead><tr><th>Name</th><th>Herkunft</th><th>Beschreibung</th><th>Wann anwenden</th><th>Version</th><th>Aktualisiert</th><th class="col-actions"></th></tr></thead>
                 <tbody>
                     @foreach (var a in _assets)
                     {
@@ -45,11 +45,11 @@
                                     <span>von Hand</span>
                                 }
                             </td>
-                            <td class="muted">@(a.Description ?? "—")</td>
-                            <td class="muted" style="max-width:220px">@(a.MetadataOrEmpty.WhenToUse ?? "—")</td>
+                            <td class="muted cell-clamp"><div class="clamp-3" title="@a.Description">@(a.Description ?? "—")</div></td>
+                            <td class="muted cell-clamp"><div class="clamp-3" title="@a.MetadataOrEmpty.WhenToUse">@(a.MetadataOrEmpty.WhenToUse ?? "—")</div></td>
                             <td>v@(a.LatestVersion.Value)</td>
                             <td class="mono muted">@a.UpdatedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)</td>
-                            <td style="white-space:nowrap">
+                            <td class="col-actions">
                                 <button class="btn-sm btn-ghost" @onclick="() => Edit(a.Id)">Bearbeiten</button>
                                 <button class="btn-sm btn-ghost" @onclick="() => ShowHistory(a.Id, a.Name)">Versionen</button>
                             </td>

@@ -195,14 +195,20 @@
             border-top: 1px solid var(--edge);
         }
 
-        /* Die Zeilenlaenge ist begrenzt, nicht das Fenster. Auf einem breiten Bildschirm lief ein
-           Formularfeld vorher ueber zwei Handbreit, und die Augen mussten zwischen Beschriftung und
-           Eingabe wandern; Tabellenzeilen wurden zu Bandwuermern. 1180 px ist die Breite, bei der
-           die fuenf Kennzahlkarten noch nebeneinander stehen und eine Textzeile noch lesbar ist. */
+        /* Die Grenze gehoert an den FLIESSTEXT, nicht an die Seite — das ist der Unterschied
+           zwischen „lesbar" und „verschenkt".
+           Der erste Anlauf klemmte die ganze Inhaltsspalte auf 1180 px. Das war fuer Absaetze
+           richtig und fuer Tabellen falsch: Auf einem 2300-px-Schirm lag die Haelfte brach,
+           waehrend die Skill-Tabelle daneben einen Querbalken brauchte und ihre Aktionsspalte aus
+           dem Bild schob. Jetzt darf die Seite die Breite nehmen, die sie hat, und die
+           Zeilenlaenge haelt der Absatz selbst (siehe p unten). */
         .content {
-            flex: 1; padding: 1.9rem 2.2rem; overflow-x: auto; min-width: 0;
-            width: 100%; max-width: 1180px; margin: 0 auto;
+            flex: 1; padding: 1.9rem 2.4rem; overflow-x: auto; min-width: 0;
+            width: 100%; max-width: 1560px; margin: 0 auto;
         }
+        /* ~82 Zeichen: Darueber verliert das Auge beim Zeilenwechsel die Spur. Gilt fuer Absaetze,
+           nicht fuer Tabellenzellen — die haben ihre eigene Begrenzung. */
+        p { max-width: 82ch; }
 
         /* ── Glas ────────────────────────────────────────────────────────────────────────── */
         /* Der leichte Verlauf ist keine Deko, sondern die Dicke der Scheibe: oben faengt sie mehr
@@ -259,6 +265,36 @@
         tbody tr:hover td { background: rgba(111, 211, 255, .05); }
         tbody tr:last-child td { border-bottom: none; }
         .table-wrap { overflow-x: auto; }
+
+        /* Eine Zelle mit Fliesstext braucht eine Grenze. Ohne sie zieht EIN langer Wert die ganze
+           Tabelle breiter als das Fenster — dann erscheint ein Querbalken, und die Spalte ganz
+           rechts (fast immer die mit den Aktionen) liegt ausserhalb des Sichtbaren. Genau so waren
+           auf der Skill-Seite "Bearbeiten" und "Versionen" nicht mehr erreichbar. */
+           ACHTUNG, hier steckte ein Fehler: Die Klammerung stand zuerst auf der Zelle selbst. Ein
+           'display:-webkit-box' hebt aber 'display:table-cell' auf — die Zelle war damit keine
+           Tabellenzelle mehr, und die naechste Spalte rutschte UNTER sie statt daneben. Deshalb
+           begrenzt die Zelle nur die Breite, und die Zeilenklammerung sitzt in einem Element
+           darin. */
+        td.cell-clamp { max-width: 340px; }
+        .clamp-3 {
+            display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3;
+            -webkit-box-orient: vertical; overflow: hidden;
+        }
+
+        /* Aktionen bleiben am rechten Rand stehen, auch wenn eine Tabelle doch einmal scrollt.
+           Die Klammer zum Gurt: Die Breitenbegrenzung oben verhindert den Regelfall, das hier
+           faengt den Ausnahmefall. */
+        th.col-actions, td.col-actions {
+            position: sticky; right: 0; white-space: nowrap; text-align: right;
+            background: linear-gradient(90deg, transparent, rgba(10, 18, 32, .92) 12%);
+        }
+        tbody tr:hover td.col-actions { background: linear-gradient(90deg, transparent, rgba(16, 28, 46, .95) 12%); }
+
+        /* In einer Tabellenzeile ist der stille Knopf die HAUPTsache — dort gibt es keinen
+           Primaerknopf, gegen den er zuruecktreten muesste. Neben einem echten Primaerknopf in
+           einer Werkzeugleiste bleibt er gedaempft (siehe .btn-ghost). */
+        td .btn-ghost { color: var(--text); border-color: rgba(150, 205, 250, .3); }
+        td .btn-ghost:hover { border-color: rgba(111, 211, 255, .5); }
 
         /* ── Eingaben ────────────────────────────────────────────────────────────────────── */
         input, select, textarea {
