@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <Description>
+      Wirt für den Nachweis aus WP0.4: startet einen echten stdio-Upstream über den PRODUKTPFAD und
+      wartet dann. Der Test schießt diesen Prozess hart ab und prüft, ob der Enkel stirbt.
+      Bewusst ein eigener Prozess: Ein Test kann seinen eigenen Testhost nicht killen.
+    </Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Bifrost.Upstream\Bifrost.Upstream.csproj" />
+  </ItemGroup>
+
+</Project>

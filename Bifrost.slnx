@@ -32,6 +32,9 @@
   <Folder Name="/tests/Bifrost.TestServers/EchoServer/">
     <Project Path="tests/Bifrost.TestServers/EchoServer/Bifrost.TestServers.EchoServer.csproj" />
   </Folder>
+  <Folder Name="/tests/Bifrost.TestServers/OrphanHost/">
+    <Project Path="tests/Bifrost.TestServers/OrphanHost/Bifrost.TestServers.OrphanHost.csproj" />
+  </Folder>
   <Folder Name="/tests/Bifrost.TestServers/HttpServer/">
     <Project Path="tests/Bifrost.TestServers/HttpServer/Bifrost.TestServers.HttpServer.csproj" />
   </Folder>

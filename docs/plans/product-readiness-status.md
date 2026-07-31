@@ -15,7 +15,7 @@ Agentenmeldung, ein grüner Unit-Test oder ein kompilierender Branch ist keine A
 | WP0.1 CI grün | `done` | `./build.sh verify-rust` grün (fmt, clippy `-D warnings`, `cargo test`) | – | – |
 | WP0.2 Release-/Doku-Konsistenz | `done` | README, SECURITY.md, `CHANGELOG.md` gegen Ist-Stand abgeglichen | – | Release-Kanal-Frage (siehe unten) |
 | WP0.3 Lokaler Verifier | `done` | `build.ps1` / `build.sh` mit `verify-fast`, `verify-dotnet`, `verify-rust`, `verify-container`; `verify-fast` und `verify-rust` lokal ausgeführt | – | CI ruft die Skripte noch nicht auf |
-| WP0.4 Prozesslebenszyklus | `in-progress` | Startpfade inventarisiert, eine Lücke geschlossen | – | Prozess-Baseline als Test, Abbruchszenario nachweisen |
+| WP0.4 Prozesslebenszyklus | `done` | `ProcessLifecycleTests` (2 Tests) plus Handprobe; Lücke in `HttpConnectorIntegrationTests` geschlossen | – | – |
 
 ## Befunde aus M0
 
@@ -48,9 +48,19 @@ Eine Ausnahme: `HttpConnectorIntegrationTests.StartHttpServer` rief `Process.Sta
 hielt danach seinen Port **und seine eigene Programmdatei**, sodass der nächste Build mit „wird von
 einem anderen Prozess verwendet" scheiterte — mit einer Ursache zwei Läufe früher. Behoben.
 
-**Noch offen an WP0.4:** Der DoD verlangt einen *Nachweis*, keine Codeänderung — also eine
-Prozess-Baseline vor und nach der Suite plus ein erzwungener Abbruch, der zeigt, dass nichts
-stehenbleibt. Das fehlt.
+**Der Nachweis** ist der eigentliche DoD, nicht die Korrektur. Der normale Weg war längst geprüft
+(`SupervisorIntegrationTests.Dispose_leaves_no_zombie_processes`); der interessante Fall ist der
+Prozess, der gar nicht mehr zum Aufräumen kommt.
+
+Dafür gibt es jetzt `ProcessLifecycleTests` mit einem eigenen Wirt (`tests/Bifrost.TestServers/OrphanHost`):
+Er startet über den **Produktpfad** einen echten stdio-Upstream, meldet dessen Prozess-Id und wartet.
+Der Test schießt **nur den Wirt** hart ab — bewusst ohne `entireProcessTree`, sonst prüfte er seine
+eigene Aufräumarbeit statt der Hygiene, die das Produkt herstellt — und erwartet, dass das Kind
+stirbt. Ein Test kann seinen eigenen Testhost nicht töten; deshalb der zweite Prozess.
+
+Von Hand gegengeprüft: Wirt `13592` hart beendet, Kind `11376` war danach weg. Der Negativfall ist
+ebenfalls belegt, allerdings unfreiwillig — ein `BulkServer` überlebte heute seinen Elternprozess
+und blockierte den nächsten Build, weil er außerhalb des Job-Objekts gestartet worden war.
 
 ## Offene Entscheidung für den Product Owner
 
