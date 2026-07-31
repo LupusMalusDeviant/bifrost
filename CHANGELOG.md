@@ -11,6 +11,18 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
 
 ## [Unveröffentlicht]
 
+## [0.12.0] — 2026-08-01
+
+Zwei Meilensteine: **Wiederherstellbarkeit** (sichern, zurückspielen, migrieren, diagnostizieren)
+und **sichere Vorgaben** (Isolation, Key-Ring-Schutz, Erstzugang ohne Log-Credentials).
+
+**Was diese Version nicht belegt:** Es ist der **erste Lauf dieser Releasepipeline überhaupt**. Sie
+wurde in M1 gebaut und war seitdem nie gelaufen — in dieser Zeit sind drei Fehler darin gefunden
+worden, die nur ein echter Lauf gezeigt hätte (ein umbenanntes Volume, ein Verweis auf eine
+nicht existierende Ignoredatei, und ein Schwachstellen-Gate, das mit Exit 0 endete). Alle drei sind
+behoben; ob weitere darin stecken, sagt erst dieser Lauf.
+
+
 ### Hinzugefügt
 
 - **Sicherung und Wiederherstellung** für SQLite-Instanzen: ein ZIP mit vorangestelltem Manifest,
