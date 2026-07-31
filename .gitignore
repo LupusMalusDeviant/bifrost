@@ -489,3 +489,10 @@ src/Bifrost.Server/data/
 # Bewusst NICHT versioniert: Sie kommen von aussen, werden dort gepflegt und sind
 # Arbeitsgrundlage, nicht Projektstand.
 docs/produktreife/
+
+# Die Visual-Studio-Vorlagenregel "Backup*/" (oben) verschluckt jedes Verzeichnis, das "Backup"
+# heisst — und damit auch die Quellcodezone src/Bifrost.Persistence/Backup/, die der M2-Vertrag
+# (Abschnitt 5) genau so vorschreibt. Hier stehen keine Sicherungsdateien von Visual Studio,
+# sondern der Backup-/Restore-Dienst selbst. Also ausdruecklich zurueckgeholt:
+!src/Bifrost.Persistence/Backup/
+!tests/Bifrost.Core.Tests/Backup/

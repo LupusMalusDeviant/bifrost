@@ -46,6 +46,21 @@ public static class UpstreamConfigMerge
                         cli.EnvironmentVariables, previous.Cli?.EnvironmentVariables),
                 }
                 : edited.Cli,
+            // WASI und OpenRPC fehlten hier, obwohl der Redactor ihre Werte maskiert. Wer einen
+            // solchen Upstream in der Oberfläche bearbeitete, speicherte damit die Maske als
+            // echten Wert und zerlegte einen laufenden Upstream, ohne dass es jemand sah.
+            Wasi = edited.Wasi is { } wasi
+                ? wasi with
+                {
+                    Secrets = MergeSecretValues(wasi.Secrets, previous.Wasi?.Secrets),
+                }
+                : edited.Wasi,
+            OpenRpc = edited.OpenRpc is { } rpc
+                ? rpc with
+                {
+                    Credential = MergeCredential(rpc.Credential, previous.OpenRpc?.Credential),
+                }
+                : edited.OpenRpc,
         };
     }
 
@@ -94,7 +109,7 @@ public static class UpstreamConfigMerge
         {
             null => previous,
             UpstreamConfigRedactor.Mask => previous
-                ?? throw new ArgumentException("Maskiertes OpenAPI-Credential hat keinen bestehenden Wert."),
+                ?? throw new ArgumentException("Maskiertes Credential hat keinen bestehenden Wert."),
             "" => null,
             _ => edited,
         };

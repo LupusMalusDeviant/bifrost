@@ -140,4 +140,53 @@ public class UpstreamConfigMergeTests
 
         merged.OpenApi!.Credential.Should().BeNull();
     }
+
+    /// <summary>
+    /// Die Gegenprobe zur Maskierung: Der Redactor hat WASI-Secrets und das OpenRPC-Credential
+    /// von Anfang an ausgeblendet, die Übernahme kannte beide nicht. Ein Speichern aus der
+    /// Oberfläche schrieb damit die Maske als echten Wert — der Upstream lief bis zum nächsten
+    /// Neustart weiter und scheiterte dann an einem Zugangsdatum, das wörtlich <c>***</c> lautete.
+    /// </summary>
+    [Fact]
+    public void Masked_wasi_secrets_are_carried_over_instead_of_stored()
+    {
+        var previous = new UpstreamServerConfig(
+            "wasm", "WASM", UpstreamTransportKind.Wasi, true,
+            Wasi: new WasiTransportOptions(
+                "bifrost-wasi-host", "component.wasm", "component.sig", ["cHVibGlzaGVy"],
+                Secrets: new Dictionary<string, string> { ["API_KEY"] = "echter-schluessel" }));
+        var edited = previous with
+        {
+            Wasi = previous.Wasi! with
+            {
+                Secrets = new Dictionary<string, string>
+                {
+                    ["API_KEY"] = UpstreamConfigRedactor.Mask,
+                },
+            },
+        };
+
+        var merged = UpstreamConfigMerge.CarryOverSecrets(edited, previous);
+
+        merged.Wasi!.Secrets!["API_KEY"].Should().Be("echter-schluessel");
+    }
+
+    [Fact]
+    public void Masked_openrpc_credential_is_carried_over_instead_of_stored()
+    {
+        var previous = new UpstreamServerConfig(
+            "rpc", "RPC", UpstreamTransportKind.OpenRpc, true,
+            OpenRpc: new OpenRpcTransportOptions(
+                new Uri("https://example.invalid/rpc"),
+                AuthKind: OpenApiAuthKind.Bearer,
+                Credential: "echtes-token"));
+        var edited = previous with
+        {
+            OpenRpc = previous.OpenRpc! with { Credential = UpstreamConfigRedactor.Mask },
+        };
+
+        var merged = UpstreamConfigMerge.CarryOverSecrets(edited, previous);
+
+        merged.OpenRpc!.Credential.Should().Be("echtes-token");
+    }
 }

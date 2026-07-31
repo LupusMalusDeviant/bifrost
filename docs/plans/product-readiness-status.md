@@ -120,3 +120,90 @@ Zwei Punkte gehen als Entscheidung an den Lead bzw. weiter:
    Umgebungsvariable). Das PFX selbst geht als Compose-Secret, das Passwort nicht. FR-P048 ist damit
    nur halb erfüllt; der Fix wäre ein `…_FILE`-Suffix oder `AddKeyPerFile`. Bewusst **nicht**
    nebenbei gemacht — Produktionscode gehört nicht in ein Doku-/Compose-Paket.
+
+## Laufender Meilenstein: M2 — Wiederherstellbarkeit
+
+Entscheidung vorab in [ADR-0024](../adr/0024-backup-restore-und-migrationssicherheit.md), Vertrag
+eingefroren in [`m2-recoverability-contract.md`](m2-recoverability-contract.md).
+
+**Vermerk zur Reihenfolge.** Das Pflichtenheft macht M2 von einem **abgenommenen** M1 abhängig.
+Abgenommen ist M1 nicht — dazu fehlt ein echter Releaselauf, den der Product Owner für diesen
+Durchgang ausdrücklich ausgeschlossen hat („keinen Release taggen"). M2 läuft daher auf Anweisung
+vor der Abnahme. Das ist keine stille Umgehung der Regel, sondern eine bewusst getroffene
+Reihenfolgeentscheidung, die hier festgehalten wird, damit sie bei der Abnahme sichtbar bleibt.
+
+| WP | Status | Nachweis |
+|---|---|---|
+| WP2.1 Backup-Format und -Erzeugung | `implementiert` | 26 Backup-Tests; SQLite vollständig, **PostgreSQL nicht** |
+| WP2.2 Restore mit Vorprüfung | `implementiert` | Staging, Pre-Backup vor `Replace`, Zip-Slip/Symlink/Bombe abgewiesen |
+| WP2.3 Migrationssicherheit | `implementiert` | 80/80 im Namensraum `Persistence`, SQLite **und** Postgres |
+| WP2.4 Diagnosedienst (`doctor`) | `implementiert` | 17 Codes, 107 Tests; Sonden noch nicht verdrahtet |
+| WP2.5 Konfigurationsexport/-import | `implementiert` | 20 Tests, Secret-Negativkorpus je 8-Zeichen-Bruchstück |
+| WP2.6 Upgrade-Kompatibilitätsmatrix | `offen` | wartet auf ein stabiles Archivformat aus WP2.1 |
+| WP2.7 Adapter (CLI, API, UI) | `offen` | Lead; **blockiert**, siehe Vertragslücke unten |
+
+Gesamtlauf nach der Zusammenführung: `./build.sh verify-dotnet` → **948 Tests grün, 0 Fehler**
+(M1-Stand: 783). Kein Paket hat eine fremde Zone angefasst, `Operations.cs` blieb während der
+gesamten Welle unverändert.
+
+### Der Fund, der keinem Paket gehörte
+
+WP2.5 meldete ihn nebenbei, und er ist der schwerwiegendste Einzelbefund dieser Welle:
+`UpstreamConfigRedactor` maskierte das Credential von `OpenRpcTransportOptions` **nicht**. Der
+Redactor sitzt in `ApiEndpoints.cs` vor der Upstream-Liste — das Zugangsdatum eines OpenRPC-Servers
+ging damit im Klartext an Oberfläche und API.
+
+Beim Nachprüfen kam eine zweite Lücke derselben Familie dazu, in die Gegenrichtung:
+`UpstreamConfigMerge.CarryOverSecrets` kannte weder WASI-Secrets noch das OpenRPC-Credential. Der
+Redactor blendete sie aus, die Übernahme holte sie nicht zurück — wer einen solchen Upstream in der
+Oberfläche bearbeitete und speicherte, schrieb die Maske `***` als echten Wert in die Datenbank.
+Der Upstream lief bis zum nächsten Neustart weiter und scheiterte dann an einem Zugangsdatum, das
+wörtlich aus drei Sternen bestand.
+
+Beide behoben. Der eigentliche Fehler lag aber im Test: `Every_transport_secret_is_masked…` prüfte
+genau **einen** Transport und trug die Zusicherung für alle im Namen. Der Ersatz führt einen
+Negativkorpus über alle sechs Transporte und hat einen Wächter, der rot wird, sobald ein siebter
+dazukommt — das Versäumnis war nicht, `OpenRpc` zu vergessen, sondern keine Stelle zu haben, an der
+das Vergessen auffällt.
+
+### Lead-Entscheidungen zu den Rückfragen
+
+| Frage | Entscheidung |
+|---|---|
+| Journaltabelle per Roh-DDL statt EF-Migration (WP2.3) | **bestätigt** — genau das Verfahren, mit dem EF seine eigene Historientabelle anlegt; eine EF-Migration war ausdrücklich verboten, ein Sidecar würde bei PostgreSQL die falsche Antwort geben |
+| Codebereiche `BFR-DB-0001…0099` (WP2.4) / `0100…0199` (WP2.3) | **bestätigt**, Überschneidungsfreiheit nachgeprüft: 26 Codes, jeder genau einmal vergeben |
+| `Skipped` im Exit-Code (WP2.4) | **neutral, also `0`.** Ein übersprungener Check ist keine Warnung — er steht sichtbar mit Begründung im Bericht, und das ist die Aussage |
+| Schreibprobe legt `.bifrost-doctor-*.tmp` an (WP2.4) | **zulässig.** Einen Ordner rein lesend auf Beschreibbarkeit zu prüfen, geht auf keinem der beiden Betriebssysteme verlässlich |
+| Ids beim Import erhalten (WP2.5) | **bestätigt** — neu vergebene Ids ließen jeden mitgelieferten Grant ins Leere zeigen, und Default-Deny meldet das nicht, sondern erlaubt nur nichts |
+| `.gitignore`-Negation für `Backup/` (WP2.1) | **bestätigt**, Wirkung nachgeprüft (`git check-ignore`, 41 Dateien sichtbar). Die VS-Vorlagenregel `Backup*/` hätte eine ganze Quellcodezone unsichtbar gemacht |
+
+### Vertragslücke — blockiert WP2.7
+
+Zwei Pakete sind unabhängig voneinander auf denselben Fehler in `Operations.cs` gestoßen: Weder
+`RestorePlan` noch `ConfigurationImportPlan` tragen einen Verweis auf ihre Nutzlast. Beide behelfen
+sich mit einer `ConditionalWeakTable` und weisen einen fremden Plan ab, statt zu raten — das ist die
+richtige Notlösung, aber sie bindet Planung und Anwendung an **dieselbe Objektidentität**.
+
+Für die CLI trägt das (Plan und Anwendung im selben Aufruf). Für die REST-API nicht: Dort geht der
+Plan als JSON hinaus und kommt als neues Objekt zurück. Ein Restore über die API wäre damit
+grundsätzlich nicht anwendbar.
+
+Dass zwei Pakete ohne Kenntnis voneinander dieselbe Stelle melden, ist die Aussage — der Vertrag
+hat hier einen Fehler, keine Auslegungsfrage. Er wird vor WP2.7 nachgezogen; die Welle ist beendet,
+die Einfrierung damit aufgehoben.
+
+### Offen aus dieser Welle
+
+- **PostgreSQL-Backup fehlt.** Der Weg lehnt laut ab statt still Zeilen zu exportieren (ADR-0024 E2),
+  aber FR-P020 ist für Postgres damit nicht erfüllt.
+- **E7 ist vorbereitet, nicht erfüllt.** `IPreMigrationBackup` existiert und wird unter dem Lock
+  gerufen; solange nichts registriert ist, migriert der Start ohne Sicherung und protokolliert eine
+  Warnung. Die Verdrahtung an `IBackupService` gehört in WP2.7.
+- **Die Diagnosesonden für Datenbank und Upstreams sind Schnittstellen ohne Umsetzung.** Bis WP2.7
+  melden `BFR-DB-0002/0003/0004` und `BFR-UP-0001` `Skipped` mit Begründung — kein stilles Bestehen.
+- **`config/instance.json` gibt es im Code nicht.** Das Backup legt sie nicht an (eine Sicherung
+  verändert die Instanz nicht); fehlt sie, bleibt `instanceId` leer. Erzeuger ist der Serverstart.
+- **`IAssetStore` kann keinen einzelnen Skill entfernen**, wodurch sich ein zur Hälfte angewendeter
+  Skill-Import nicht zurücknehmen lässt.
+- **Publisher-Trust fehlt im Konfigurationsexport.** Ohne ihn ist ein WASI-Upstream auf der
+  Zielinstanz nicht ladbar — der inhaltlich dringendste Kandidat für Exportformat v2.

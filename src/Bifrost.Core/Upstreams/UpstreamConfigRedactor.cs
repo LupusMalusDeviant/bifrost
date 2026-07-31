@@ -25,6 +25,11 @@ public static class UpstreamConfigRedactor
             OpenApi = config.OpenApi is { Credential: not null } openApi
                 ? openApi with { Credential = Mask }
                 : config.OpenApi,
+            // OpenRPC trägt dasselbe Credential-Feld wie OpenAPI und wurde beim Nachziehen
+            // schlicht vergessen — der Wert ging über ApiEndpoints im Klartext an die Oberfläche.
+            OpenRpc = config.OpenRpc is { Credential: not null } openRpc
+                ? openRpc with { Credential = Mask }
+                : config.OpenRpc,
             Cli = config.Cli is { EnvironmentVariables: { Count: > 0 } cliEnv } cli
                 ? cli with { EnvironmentVariables = RedactValues(cliEnv) }
                 : config.Cli,
