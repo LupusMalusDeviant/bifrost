@@ -31,12 +31,20 @@ internal sealed class InstanceDirectory : IDisposable
 
     public string InstanceConfigFile => Path.Combine(Root, "config", "instance.json");
 
-    public BackupOptions Options(string? productVersion = null, string? minimumRestoreVersion = null)
+    public BackupOptions Options(
+        string? productVersion = null,
+        string? minimumRestoreVersion = null,
+        IReadOnlySet<string>? knownMigrationIds = null)
         => new()
         {
             DataDirectory = Root,
             ProductVersion = productVersion ?? "0.11.0",
             MinimumRestoreVersion = minimumRestoreVersion ?? BackupLayout.DefaultMinimumRestoreVersion,
+
+            // Vorgabe ist bewusst LEER: Die meisten Tests hier prüfen andere Dinge, und das
+            // Rückwärts-Tor (ADR-0024 E6) meldet dann eine Warnung statt eines stillen Bestehens.
+            KnownMigrationIds = knownMigrationIds
+                ?? new HashSet<string>(StringComparer.Ordinal),
         };
 
     public static string ConnectionString(string file)

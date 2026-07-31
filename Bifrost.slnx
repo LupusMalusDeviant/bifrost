@@ -14,6 +14,7 @@
     <Project Path="tests/Bifrost.Cli.Tests/Bifrost.Cli.Tests.csproj" />
     <Project Path="tests/Bifrost.Core.Tests/Bifrost.Core.Tests.csproj" />
     <Project Path="tests/Bifrost.Integration.Tests/Bifrost.Integration.Tests.csproj" />
+    <Project Path="tests/Bifrost.Upgrade.Tests/Bifrost.Upgrade.Tests.csproj" />
     <Project Path="tests/Bifrost.Upstream.Tests/Bifrost.Upstream.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/Bifrost.TestServers/" />

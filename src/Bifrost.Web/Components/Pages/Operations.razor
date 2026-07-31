@@ -1,0 +1,211 @@
+@page "/operations"
+@using Bifrost.Abstractions.Operations
+@attribute [Authorize(Policy = UiPolicies.Admin)]
+@inject IDiagnosticService Diagnostics
+@inject IBackupService Backups
+@inject IAuditSink Audit
+@inject TimeProvider Time
+@inject AuthenticationStateProvider AuthState
+
+<h1>Betrieb</h1>
+<p class="muted">
+    Diagnose und Sicherung dieser Instanz (ADR-0024). Nur für Admins — eine vollständige Sicherung
+    enthält den DataProtection-Key-Ring und ist damit so schützenswert wie die Instanz selbst.
+</p>
+
+<div class="card">
+    <h3 style="margin-top:0">Diagnosebericht</h3>
+    <p class="muted" style="margin-top:0">
+        Liest nur. Einzige Ausnahme ist die Schreibprobe im Datenverzeichnis — sie legt eine
+        Testdatei an und löscht sie sofort wieder.
+    </p>
+    <div class="toolbar">
+        <button @onclick="RunDoctor" disabled="@_running">
+            @(_running ? "Läuft …" : "Bericht erstellen")
+        </button>
+        @if (_report is not null)
+        {
+            <span class="muted">
+                @_report.Checks.Count Prüfungen · @_report.Duration.TotalMilliseconds.ToString("N0") ms
+            </span>
+        }
+    </div>
+
+    @if (_report is null)
+    {
+        <div class="empty" style="margin-top:.75rem">
+            Noch kein Bericht. Der Lauf dauert wenige Sekunden und verändert nichts.
+        </div>
+    }
+    else
+    {
+        <div class="table-wrap" style="margin-top:.75rem">
+            <table>
+                <thead><tr><th>Status</th><th>Code</th><th>Befund</th><th>Nächste Handlung</th></tr></thead>
+                <tbody>
+                    @foreach (var check in _report.Checks)
+                    {
+                        <tr>
+                            <td><span class="badge @Css(check.Status)">@check.Status</span></td>
+                            <td class="mono">@check.Code</td>
+                            <td>@check.Summary</td>
+                            <td class="muted">@check.Remediation</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0">Sicherung anlegen</h3>
+    <p class="muted" style="margin-top:0">
+        Der Pfad gilt auf dem Rechner, auf dem der Gateway läuft. Ein vorhandenes Archiv wird nie
+        überschrieben. Ohne Passphrase entsteht ein <strong>unverschlüsseltes</strong> Vollbackup:
+        Es enthält den Key-Ring und damit den Schlüssel zu allen gespeicherten Zugangsdaten.
+    </p>
+    <div class="row">
+        <div>
+            <label>Zielpfad</label>
+            <input @bind="_target" placeholder="data/backups/bifrost-2026-07-31.zip" />
+        </div>
+        <div>
+            <label>Passphrase (leer = unverschlüsselt)</label>
+            <input type="password" @bind="_passphrase" autocomplete="new-password" />
+        </div>
+    </div>
+    <div class="pill-list" style="margin-top:.6rem">
+        <label class="pill"><input type="checkbox" @bind="_database" /> Datenbank</label>
+        <label class="pill"><input type="checkbox" @bind="_keyRing" /> Key-Ring</label>
+        <label class="pill"><input type="checkbox" @bind="_packages" /> Connector-Pakete</label>
+        <label class="pill"><input type="checkbox" @bind="_config" /> Instanzkonfiguration</label>
+    </div>
+    <div class="toolbar" style="margin-top:.75rem">
+        @* Eine Sicherung zerstört nichts — sie legt aber ein Geheimnis auf die Platte. Deshalb die
+           Rückfrage an derselben Stelle wie bei den zerstörenden Aktionen. *@
+        <ConfirmButton Label="Sicherung anlegen" What="@_target" OnConfirmed="CreateBackup" />
+        @if (_message is not null)
+        {
+            <span class="@(_ok ? "msg-ok" : "msg-err")">@_message</span>
+        }
+    </div>
+    @if (_lastArchive is not null)
+    {
+        <div class="card-accent" style="margin-top:.75rem;padding:.75rem 1rem">
+            <div class="mono">@_lastArchive</div>
+            <div class="muted" style="margin-top:.3rem">@_lastHint</div>
+        </div>
+    }
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0">Wiederherstellung</h3>
+    <p class="muted" style="margin-top:0">
+        Bewusst nicht hier. Ein Restore tauscht Datenbank und Key-Ring <em>unter</em> dem laufenden
+        Gateway aus — er braucht einen Wartungsmoment (ADR-0024 E5) und läuft deshalb über
+        <span class="mono">bifrost restore &lt;archiv&gt;</span>. Der Befehl zeigt zuerst den Plan
+        und wendet erst danach an; ein Überschreiben verlangt zusätzlich
+        <span class="mono">--replace</span> und eine Bestätigung.
+    </p>
+</div>
+
+@code {
+    private DiagnosticReport? _report;
+    private bool _running;
+
+    private string _target = "";
+    private string _passphrase = "";
+    private bool _database = true, _keyRing = true, _packages = true, _config = true;
+    private string? _message, _lastArchive, _lastHint;
+    private bool _ok;
+
+    private static string Css(CheckStatus status) => status switch
+    {
+        CheckStatus.Pass => "badge-ok",
+        CheckStatus.Warning => "badge-warn",
+        CheckStatus.Fail => "badge-err",
+        _ => "badge-muted",
+    };
+
+    private async Task RunDoctor()
+    {
+        _running = true;
+        try
+        {
+            _report = await Diagnostics.RunAsync(DiagnosticScope.All, CancellationToken.None);
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+
+    private async Task<string> UserAsync()
+        => (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "?";
+
+    private BackupSections Sections()
+    {
+        var sections = BackupSections.None;
+        if (_database) { sections |= BackupSections.Database; }
+        if (_keyRing) { sections |= BackupSections.KeyRing; }
+        if (_packages) { sections |= BackupSections.Packages; }
+        if (_config) { sections |= BackupSections.Config; }
+        return sections;
+    }
+
+    private async Task CreateBackup()
+    {
+        _message = null;
+        _lastArchive = null;
+        if (string.IsNullOrWhiteSpace(_target))
+        {
+            _ok = false;
+            _message = "Zielpfad fehlt.";
+            return;
+        }
+
+        var sections = Sections();
+        if (sections is BackupSections.None)
+        {
+            _ok = false;
+            _message = "Mindestens ein Bereich muss ausgewählt sein.";
+            return;
+        }
+
+        try
+        {
+            var result = await Backups.CreateAsync(
+                new BackupRequest(
+                    _target.Trim(),
+                    sections,
+                    string.IsNullOrEmpty(_passphrase) ? null : _passphrase),
+                CancellationToken.None);
+
+            UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged,
+                $"backup-created:{result.Manifest.Sections}");
+
+            _ok = true;
+            _message = "Sicherung angelegt.";
+            _lastArchive = result.ArchivePath;
+            _lastHint = result.Manifest.Encrypted
+                ? $"{result.SizeBytes:N0} Bytes, verschlüsselt. Ohne die Passphrase ist das Archiv wertlos."
+                : result.Manifest.Sections.HasFlag(BackupSections.KeyRing)
+                    ? $"{result.SizeBytes:N0} Bytes, UNVERSCHLÜSSELT und mit Key-Ring — so schützenswert wie die Instanz selbst."
+                    : $"{result.SizeBytes:N0} Bytes, unverschlüsselt.";
+            _passphrase = "";
+        }
+        catch (NotSupportedException exception)
+        {
+            // PostgreSQL: Es gibt keine Sicherung über diesen Weg, und das wird gesagt statt
+            // vorgetäuscht (ADR-0024 E2).
+            _ok = false;
+            _message = exception.Message;
+        }
+        catch (Exception exception) when (exception is IOException or ArgumentException)
+        {
+            _ok = false;
+            _message = exception.Message;
+        }
+    }
+}

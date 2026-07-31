@@ -15,7 +15,7 @@ namespace Bifrost.Persistence;
 public sealed class WebhookStore : IWebhookStore
 {
     // NICHT UMBENENNEN — siehe EfUpstreamConfigStore.ProtectionPurpose.
-    private const string ProtectionPurpose = "McpMcp.Webhook.Secret.v1";
+    private const string ProtectionPurpose = CryptographicNames.WebhookSecretPurpose;
 
     private readonly IDbContextFactory<BifrostDbContext> _factory;
     private readonly IDataProtector _protector;

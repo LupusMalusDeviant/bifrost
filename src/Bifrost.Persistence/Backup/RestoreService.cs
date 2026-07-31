@@ -40,6 +40,47 @@ public sealed class RestoreService : IRestoreService
     private sealed record PlanContext(string ArchivePath, string? Passphrase, DateTimeOffset CreatedAt);
 
     /// <summary>
+    /// Die zweite und tragende Hälfte des Rückwärts-Tors aus ADR-0024 E6.
+    /// <para>
+    /// Der Versionsvergleich darüber hat allein nicht gehalten: Die Mindestversion im Manifest ist
+    /// eine Angabe des Archivs über sich selbst, und sie stand für jedes Archiv auf demselben Wert.
+    /// Ein Archiv aus einer neueren Instanz kam damit durch und wurde eingespielt; aufgehalten hat
+    /// es erst der nächste Start — also nachdem geschrieben wurde, was E6 verhindern sollte.
+    /// Gefunden hat das WP2.6, indem er gegen die Zusage getestet hat statt für sie.
+    /// </para>
+    /// </summary>
+    private void CheckMigrationIsKnown(
+        BackupManifestDocument manifest, List<string> blockers, List<string> warnings)
+    {
+        var migration = manifest.Database.Migration;
+        if (string.IsNullOrWhiteSpace(migration))
+        {
+            // Leere Datenbank zum Sicherungszeitpunkt — es gibt keinen Stand, der zu neu sein könnte.
+            return;
+        }
+
+        if (_options.KnownMigrationIds.Count == 0)
+        {
+            warnings.Add(
+                "Der Migrationsstand des Archivs konnte nicht geprüft werden, weil dieser Aufruf die "
+                + "bekannten Migrationen nicht mitgegeben hat. Ein Archiv aus einer neueren Version "
+                + "würde hier nicht auffallen.");
+            return;
+        }
+
+        if (!_options.KnownMigrationIds.Contains(migration))
+        {
+            blockers.Add(string.Format(
+                CultureInfo.InvariantCulture,
+                "Das Archiv trägt den Migrationsstand '{0}', den diese Installation nicht kennt. Es "
+                + "stammt damit aus einer neueren Version. Ein Rückspielen wird abgelehnt, nicht "
+                + "versucht — ein neueres Schema mit älteren Regeln zu bedienen fällt später und "
+                + "woanders auf.",
+                migration));
+        }
+    }
+
+    /// <summary>
     /// Räumt abgelaufene Vormerkungen weg. Sie enthalten Passphrasen — ein Plan, den niemand mehr
     /// anwenden wird, darf sie nicht bis zum Prozessende festhalten.
     /// </summary>
@@ -120,7 +161,7 @@ public sealed class RestoreService : IRestoreService
                 $"höchstens {BackupLayout.FormatVersion}.");
         }
 
-        // ADR-0024 E6: vorwärts ja, rückwärts nein.
+        // ADR-0024 E6, erste Hälfte. Sie allein hält nicht — siehe CheckMigrationIsKnown.
         if (!ProductVersionOrder.IsAtLeast(_options.ProductVersion, manifest.MinimumRestoreVersion, out var problem))
         {
             blockers.Add(problem ?? string.Format(
@@ -130,6 +171,8 @@ public sealed class RestoreService : IRestoreService
                 manifest.MinimumRestoreVersion,
                 _options.ProductVersion));
         }
+
+        CheckMigrationIsKnown(manifest, blockers, warnings);
 
         if (!BackupManifestDocument.TryParseProvider(manifest.Database.Provider, out var provider))
         {

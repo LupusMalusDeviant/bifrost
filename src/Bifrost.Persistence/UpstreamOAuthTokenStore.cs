@@ -18,7 +18,7 @@ namespace Bifrost.Persistence;
 public sealed class UpstreamOAuthTokenStore : IUpstreamOAuthTokenStore
 {
     // NICHT UMBENENNEN — siehe EfUpstreamConfigStore.ProtectionPurpose.
-    private const string Purpose = "McpMcp.UpstreamOAuthToken.v1";
+    private const string Purpose = CryptographicNames.UpstreamOAuthTokenPurpose;
 
     private readonly IDbContextFactory<BifrostDbContext> _factory;
     private readonly IDataProtector _protector;

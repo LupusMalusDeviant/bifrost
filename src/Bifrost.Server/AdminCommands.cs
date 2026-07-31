@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using Bifrost.Abstractions;
 using Bifrost.Persistence;
+using Bifrost.Persistence.Startup;
+using Microsoft.EntityFrameworkCore;
 
 namespace Bifrost.Server;
 
@@ -14,13 +16,44 @@ internal static class AdminCommands
     public const string ResetUiAdmin = "--reset-ui-admin";
     public const string IssueBootstrapKey = "--issue-bootstrap-key";
 
+    /// <summary>
+    /// Der Ausweg aus <c>BFR-DB-0101</c> <b>ohne laufenden Gateway</b> (M2, WP2.7).
+    /// <para>
+    /// Genau das ist der Punkt: Ein offener Migrationseintrag verweigert den Schreibbetrieb, indem
+    /// der Start abbricht — der Prozess kommt also gar nicht erst hoch. Der gleichnamige
+    /// REST-Endpunkt und <c>bifrost db unblock</c> greifen dann ins Leere, weil niemand antwortet.
+    /// Deshalb läuft dieser Weg hier, im Serverprozess, vor dem Gateway-Start und ohne ihn.
+    /// </para>
+    /// <para>
+    /// Er repariert nichts und beurteilt nichts. Er löst, was der Betreiber geprüft hat —
+    /// <see cref="MigrationJournal.ClearUnfinishedAsync"/> ist ausdrücklich kein Teil des Startpfads.
+    /// </para>
+    /// </summary>
+    public const string UnblockDatabase = "--db-unblock";
+
     public static bool IsAdminCommand(string[] args)
-        => args.Contains(ResetUiAdmin) || args.Contains(IssueBootstrapKey);
+        => args.Contains(ResetUiAdmin)
+            || args.Contains(IssueBootstrapKey)
+            || args.Contains(UnblockDatabase);
 
     public static async Task<int> RunAsync(WebApplication app, string[] args, CancellationToken ct = default)
     {
         try
         {
+            // ZUERST und ohne Schema-Initialisierung: Der Riegel aus BFR-DB-0101 lässt den
+            // Initializer werfen — ihn vorher aufzurufen hieße, das Kommando genau an dem Zustand
+            // scheitern zu lassen, den es lösen soll.
+            if (args.Contains(UnblockDatabase))
+            {
+                var removed = await UnblockDatabaseAsync(
+                    app.Services.GetRequiredService<IDbContextFactory<BifrostDbContext>>(), ct);
+                Console.WriteLine(removed == 0
+                    ? "Es stand kein offener Migrationseintrag an; es wurde nichts geändert."
+                    : $"{removed} offene(r) Migrationseintrag/-einträge entfernt. Der Schreibbetrieb ist "
+                      + "wieder freigegeben — der Schemazustand ist damit NICHT geprüft.");
+                return 0;
+            }
+
             // Schema sicherstellen — das Kommando läuft ohne die Hosted Services.
             await app.Services.GetRequiredService<DatabaseInitializer>().InitializeAsync(ct);
 
@@ -53,6 +86,19 @@ internal static class AdminCommands
             Console.Error.WriteLine($"Kommando fehlgeschlagen: {ex.Message}");
             return 1;
         }
+    }
+
+    /// <summary>
+    /// Entfernt offene Einträge aus dem Migrationsjournal und liefert deren Anzahl. Der Aufrufer hat
+    /// den Zustand der Datenbank vorher geprüft oder sie wiederhergestellt — dieser Weg tut beides
+    /// nicht (ADR-0024 E7: Verweigerung, nicht Reparatur).
+    /// </summary>
+    internal static async Task<int> UnblockDatabaseAsync(
+        IDbContextFactory<BifrostDbContext> factory, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await MigrationJournal.EnsureTableAsync(db, ct);
+        return await MigrationJournal.ClearUnfinishedAsync(db, ct);
     }
 
     /// <summary>Setzt das Passwort eines UI-Nutzers zurück oder legt ihn als Admin an. Liefert das neue Passwort.</summary>

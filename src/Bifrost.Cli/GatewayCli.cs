@@ -43,6 +43,15 @@ public sealed class GatewayCli
 
     public async Task<int> RunAsync(IReadOnlyList<string> args, CancellationToken ct)
     {
+        // Die Betriebsbefehle haben eigene, im M2-Vertrag §4 festgelegte Exit-Codes. Sie laufen
+        // deshalb VOR dem try dieser Klasse: Deren catch-Zweige wuerden dieselben Zahlen mit einer
+        // anderen Bedeutung belegen (hier ist 3 „nicht berechtigt", dort „Diagnose mit Warnung").
+        if (OperationsCli.Handles(args))
+        {
+            return await new OperationsCli(_client, _input, _output, _error, _jsonOutput)
+                .RunAsync(args, ct);
+        }
+
         try
         {
             var command = args.ToArray();
@@ -297,7 +306,9 @@ public sealed class GatewayCli
           bifrost --help
 
         Authentifizierung: BIFROST_TOKEN, Token-Datei in --config oder --token-stdin.
-        """;
+
+        """
+        + OperationsCli.UsageText;
 
     /// <summary>
     /// Behandelt die beiden Befehle, die weder Konfiguration noch erreichbares Gateway brauchen:

@@ -34,6 +34,24 @@ public sealed class BackupOptions
 
     public string MinimumRestoreVersion { get; init; } = BackupLayout.DefaultMinimumRestoreVersion;
 
+    /// <summary>
+    /// Die Migrationen, die <b>dieser Build</b> kennt — die Grundlage des Rückwärts-Tors aus
+    /// ADR-0024 E6.
+    /// <para>
+    /// <b>Warum nicht die Versionsangabe:</b> <see cref="MinimumRestoreVersion"/> ist eine Angabe,
+    /// die das Archiv <em>über sich selbst</em> macht. Ein Archiv aus einer neueren Version trägt
+    /// dieselbe Zahl wie eines von heute, solange niemand sie anhebt — und dann bewacht sie das Tor,
+    /// das gerade gegen dieses Archiv schützen soll. Der Migrationsstand dagegen ist eine Tatsache:
+    /// Kennt dieser Build ihn nicht, stammt das Archiv aus einer neueren Instanz, ganz ohne
+    /// Versionsbuchhaltung.
+    /// </para>
+    /// <para>
+    /// Bleibt die Menge leer, kann das Tor nicht prüfen. Es meldet dann eine <b>Warnung</b> und
+    /// nicht etwa nichts — ein Schutz, der still ausfällt, ist schlimmer als keiner.
+    /// </para>
+    /// </summary>
+    public IReadOnlySet<string> KnownMigrationIds { get; init; } = new HashSet<string>(StringComparer.Ordinal);
+
     public string ResolvedSqliteFile
     {
         get

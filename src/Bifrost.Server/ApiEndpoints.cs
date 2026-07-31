@@ -1,9 +1,12 @@
 using System.Text.Json;
 using Bifrost.Abstractions;
+using Bifrost.Abstractions.Operations;
 using Bifrost.Core.Capabilities;
+using Bifrost.Core.Configuration;
 using Bifrost.Core.Upstreams;
 using Bifrost.Core.Packaging;
 using Bifrost.Persistence;
+using Bifrost.Persistence.Startup;
 using Microsoft.EntityFrameworkCore;
 
 namespace Bifrost.Server;
@@ -563,7 +566,345 @@ internal static class ApiEndpoints
         MapConnectorPackages(api);
         MapToolDefinitionPins(api);
         MapWebhookManagement(api);
+        MapOperations(api);
     }
+
+    // ── Betrieb: Sicherung, Wiederherstellung, Diagnose, Konfiguration (M2, WP2.7) ───────────────
+
+    /// <summary>
+    /// Stabile Kennungen der Fehlerlage. Sie sind das, worauf die CLI ihre Exit-Codes aus
+    /// M2-Vertrag §4 stützt — ein HTTP-Status allein trägt die Unterscheidung nicht (400 kann
+    /// „Archiv kaputt" oder „Argument fehlt" heißen, und das sind 5 und 2).
+    /// </summary>
+    internal static class OperationsErrorCode
+    {
+        public const string Usage = "usage";
+        public const string ArchiveInvalid = "archive-invalid";
+        public const string TargetNotEmpty = "target-not-empty";
+        public const string Unsupported = "unsupported";
+        public const string Conflict = "conflict";
+    }
+
+    /// <summary>
+    /// Diese Endpunkte sind mächtiger als alles andere im Produkt: Ein Vollbackup enthält den
+    /// Key-Ring und ist damit so schützenswert wie die Instanz selbst (ADR-0024 E3), ein Restore
+    /// überschreibt sie.
+    /// <para>
+    /// <b>Berechtigungsstufe: Global-Grant</b>, dieselbe Schwelle wie RBAC-Verwaltung,
+    /// Paketinstallation und Publisher-Trust (<see cref="RequireAdminAsync"/>). Das ist keine
+    /// Bequemlichkeit: Wer einen Global-Grant hat, darf bereits jedes Werkzeug auf jedem Server
+    /// aufrufen, Rollen und Identitäten ändern und sich selbst Schlüssel ausstellen — er kommt an
+    /// denselben Inhalt auch ohne diese Endpunkte. Eine zusätzliche Stufe hätte deshalb keine
+    /// Angriffsfläche geschlossen, aber eine zweite Berechtigungsachse in ein Modell eingezogen,
+    /// dessen Verträge in dieser Welle eingefroren sind.
+    /// </para>
+    /// <para>
+    /// Was stattdessen hinzukommt: Jeder schreibende Vorgang steht im Audit-Log, und Restore wie
+    /// Import laufen zweistufig über ein Handle mit 30-Minuten-Geltung und einmaliger Verwendung.
+    /// </para>
+    /// </summary>
+    private static void MapOperations(RouteGroupBuilder api)
+    {
+        var operations = api.MapGroup("/operations").AddEndpointFilter(RequireAdminAsync);
+
+        // ── Sicherung ────────────────────────────────────────────────────────
+        operations.MapPost("/backup", async (
+            BackupCreateRequest body, HttpContext ctx, IBackupService backups, IAuditSink audit,
+            TimeProvider time, CancellationToken ct) =>
+        {
+            if (!TryParseSections(body.Sections, out var sections, out var sectionProblem))
+            {
+                return OperationsError(StatusCodes.Status400BadRequest, OperationsErrorCode.Usage, sectionProblem);
+            }
+
+            try
+            {
+                var result = await backups.CreateAsync(
+                    new BackupRequest(body.TargetPath, sections, body.Passphrase), ct);
+                AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null,
+                    $"backup-created:{result.Manifest.Sections}");
+                return Results.Ok(new
+                {
+                    archivePath = result.ArchivePath,
+                    sizeBytes = result.SizeBytes,
+                    manifest = result.Manifest,
+                    // ADR-0024 E3: Ein unverschlüsseltes Vollbackup wird beim Erzeugen ausdrücklich
+                    // als das benannt, was es ist. Verbieten wäre falsch, verschweigen auch.
+                    hinweis = Hinweis(result.Manifest),
+                });
+            }
+            catch (NotSupportedException exception)
+            {
+                return OperationsError(
+                    StatusCodes.Status501NotImplemented, OperationsErrorCode.Unsupported, exception.Message);
+            }
+            catch (Exception exception) when (exception is ArgumentException or IOException)
+            {
+                return OperationsError(
+                    StatusCodes.Status400BadRequest, OperationsErrorCode.Usage, exception.Message);
+            }
+        });
+
+        operations.MapPost("/backup/verify", async (
+            ArchiveRequest body, IBackupService backups, CancellationToken ct) =>
+        {
+            try
+            {
+                // Ein ungültiges Archiv ist hier kein HTTP-Fehler, sondern das Ergebnis der Prüfung:
+                // Der Aufrufer hat genau danach gefragt. Die Bewertung steht im Rumpf.
+                var inspection = await backups.InspectAsync(body.ArchivePath, body.Passphrase, ct);
+                return Results.Ok(inspection);
+            }
+            catch (Exception exception) when (exception is ArgumentException or IOException)
+            {
+                return OperationsError(
+                    StatusCodes.Status400BadRequest, OperationsErrorCode.Usage, exception.Message);
+            }
+        });
+
+        // ── Wiederherstellung: zweistufig über das Handle im Plan ────────────
+        operations.MapPost("/restore/plan", async (
+            RestorePlanRequest body, IRestoreService restore, CancellationToken ct) =>
+        {
+            if (!TryParseRestoreMode(body.Mode, out var mode, out var modeProblem))
+            {
+                return OperationsError(StatusCodes.Status400BadRequest, OperationsErrorCode.Usage, modeProblem);
+            }
+
+            try
+            {
+                // Der Plan geht als JSON hinaus und kommt als neues Objekt zurück — genau dafür
+                // trägt er ein Handle statt seiner Objektidentität (M2-Vertrag, Nachtrag).
+                var plan = await restore.PlanAsync(
+                    new RestoreRequest(body.ArchivePath, mode, body.Passphrase), ct);
+                return Results.Ok(plan);
+            }
+            catch (Exception exception) when (exception is ArgumentException or IOException)
+            {
+                return OperationsError(
+                    StatusCodes.Status400BadRequest, OperationsErrorCode.Usage, exception.Message);
+            }
+        });
+
+        operations.MapPost("/restore/apply", async (
+            RestorePlan plan, HttpContext ctx, IRestoreService restore, IAuditSink audit,
+            TimeProvider time, CancellationToken ct) =>
+        {
+            try
+            {
+                var result = await restore.ApplyAsync(plan, ct);
+                AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null,
+                    $"restore-applied:{result.RestoredSections}");
+                return Results.Ok(result);
+            }
+            catch (InvalidOperationException exception)
+            {
+                // Unbekanntes oder abgelaufenes Handle, oder ein Plan mit Blockern. Beides ist eine
+                // Absage mit Begründung — nie ein Versuch auf geratenen Daten.
+                return OperationsError(
+                    StatusCodes.Status409Conflict, OperationsErrorCode.Conflict, exception.Message);
+            }
+        });
+
+        // ── Diagnose ─────────────────────────────────────────────────────────
+        operations.MapGet("/doctor", async (
+            string? scope, IDiagnosticService diagnostics, CancellationToken ct) =>
+        {
+            if (!TryParseScope(scope, out var parsed, out var scopeProblem))
+            {
+                return OperationsError(StatusCodes.Status400BadRequest, OperationsErrorCode.Usage, scopeProblem);
+            }
+
+            var report = await diagnostics.RunAsync(parsed, ct);
+            return Results.Ok(new
+            {
+                scope = report.Scope.ToString(),
+                startedAt = report.StartedAt,
+                durationMs = report.Duration.TotalMilliseconds,
+                // Die Bewertung kommt aus dem Bericht selbst; die Aufrufer bilden daraus nur ihren
+                // Exit-Code und rechnen die Regel nicht nach.
+                hasWarnings = report.HasWarnings,
+                hasFailures = report.HasFailures,
+                checks = report.Checks,
+            });
+        });
+
+        // ── Konfigurationsexport (ADR-0024 E8 — nicht Backup) ────────────────
+        operations.MapPost("/config/export", async (
+            ConfigExportRequest body, HttpContext ctx, IConfigurationExportService config,
+            IAuditSink audit, TimeProvider time, CancellationToken ct) =>
+        {
+            try
+            {
+                var export = await config.ExportAsync(
+                    new ConfigurationExportRequest(body.IncludeSecrets, body.Passphrase), ct);
+                AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null,
+                    export.ContainsSecrets ? "config-exported:credentials" : "config-exported");
+                return Results.Ok(export);
+            }
+            catch (ArgumentException exception)
+            {
+                return OperationsError(
+                    StatusCodes.Status400BadRequest, OperationsErrorCode.Usage, exception.Message);
+            }
+        });
+
+        operations.MapPost("/config/import/plan", async (
+            ConfigImportRequest body, IConfigurationExportService config, CancellationToken ct) =>
+        {
+            try
+            {
+                return Results.Ok(await config.PlanImportAsync(body.Payload, body.Passphrase, ct));
+            }
+            catch (Exception exception) when (exception is ConfigurationImportException or ArgumentException)
+            {
+                return OperationsError(
+                    StatusCodes.Status400BadRequest, OperationsErrorCode.ArchiveInvalid, exception.Message);
+            }
+        });
+
+        operations.MapPost("/config/import/apply", async (
+            ConfigurationImportPlan plan, HttpContext ctx, IConfigurationExportService config,
+            IAuditSink audit, TimeProvider time, CancellationToken ct) =>
+        {
+            try
+            {
+                await config.ApplyImportAsync(plan, ct);
+                AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null,
+                    $"config-imported:{plan.Additions.Count}");
+                return Results.NoContent();
+            }
+            catch (ConfigurationImportException exception)
+            {
+                return OperationsError(
+                    StatusCodes.Status409Conflict, OperationsErrorCode.Conflict, exception.Message);
+            }
+        });
+
+        // ── Der Riegel aus BFR-DB-0101 ausdrücklich lösen ────────────────────
+        // Ohne diesen Weg müsste ein Betreiber eine Datenbankzeile von Hand löschen. Er repariert
+        // nichts und beurteilt nichts — er löst, was der Betreiber geprüft hat.
+        operations.MapPost("/database/unblock", async (
+            HttpContext ctx, IDbContextFactory<BifrostDbContext> factory, IAuditSink audit,
+            TimeProvider time, CancellationToken ct) =>
+        {
+            await using var db = await factory.CreateDbContextAsync(ct);
+            await MigrationJournal.EnsureTableAsync(db, ct);
+            var removed = await MigrationJournal.ClearUnfinishedAsync(db, ct);
+            AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null,
+                $"migration-journal-cleared:{removed}");
+            return Results.Ok(new
+            {
+                removed,
+                hinweis = removed == 0
+                    ? "Es stand kein offener Migrationseintrag an."
+                    : "Der Riegel ist gelöst. Der nächste Start migriert weiter — der Schemazustand "
+                        + "ist damit NICHT geprüft; das war die Aufgabe davor.",
+            });
+        });
+    }
+
+    private static string Hinweis(BackupManifest manifest)
+        => manifest.Encrypted
+            ? "Das Archiv ist verschlüsselt. Ohne die Passphrase ist es wertlos."
+            : manifest.Sections.HasFlag(BackupSections.KeyRing)
+                ? "UNVERSCHLÜSSELTES Vollbackup: Es enthält den DataProtection-Key-Ring und ist damit "
+                    + "so schützenswert wie die Instanz selbst (ADR-0024 E3)."
+                : "Das Archiv ist unverschlüsselt.";
+
+    private static IResult OperationsError(int statusCode, string code, string message)
+        => Results.Json(new { error = new { code, message } }, statusCode: statusCode);
+
+    /// <summary>
+    /// Bereichsnamen -> Flags. Ein unbekannter Name wird abgewiesen und nicht still weggelassen
+    /// (M2-Vertrag §6, Invariante 3): Wer sich vertippt, bekäme sonst ein Archiv ohne den Bereich,
+    /// auf den es ihm ankam.
+    /// </summary>
+    private static bool TryParseSections(
+        IReadOnlyList<string>? names, out BackupSections sections, out string problem)
+    {
+        sections = BackupSections.All;
+        problem = string.Empty;
+        if (names is null || names.Count == 0)
+        {
+            return true;
+        }
+
+        var parsed = BackupSections.None;
+        foreach (var name in names)
+        {
+            if (!Enum.TryParse<BackupSections>(name, ignoreCase: true, out var one)
+                || one is BackupSections.None)
+            {
+                problem = $"Unbekannter Bereich '{name}'. Erlaubt: "
+                    + string.Join(", ", Enum.GetNames<BackupSections>().Where(n => n != nameof(BackupSections.None)));
+                return false;
+            }
+
+            parsed |= one;
+        }
+
+        sections = parsed;
+        return true;
+    }
+
+    private static bool TryParseRestoreMode(string? value, out RestoreMode mode, out string problem)
+    {
+        problem = string.Empty;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            mode = RestoreMode.EmptyTargetOnly;
+            return true;
+        }
+
+        if (Enum.TryParse(value, ignoreCase: true, out mode))
+        {
+            return true;
+        }
+
+        problem = $"Unbekannter Modus '{value}'. Erlaubt: "
+            + string.Join(", ", Enum.GetNames<RestoreMode>());
+        return false;
+    }
+
+    private static bool TryParseScope(string? value, out DiagnosticScope scope, out string problem)
+    {
+        scope = DiagnosticScope.All;
+        problem = string.Empty;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        var parsed = DiagnosticScope.None;
+        foreach (var name in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!Enum.TryParse<DiagnosticScope>(name, ignoreCase: true, out var one)
+                || one is DiagnosticScope.None)
+            {
+                problem = $"Unbekannter Bereich '{name}'. Erlaubt: "
+                    + string.Join(", ", Enum.GetNames<DiagnosticScope>().Where(n => n != nameof(DiagnosticScope.None)));
+                return false;
+            }
+
+            parsed |= one;
+        }
+
+        scope = parsed;
+        return true;
+    }
+
+    private sealed record BackupCreateRequest(
+        string TargetPath, IReadOnlyList<string>? Sections = null, string? Passphrase = null);
+
+    private sealed record ArchiveRequest(string ArchivePath, string? Passphrase = null);
+
+    private sealed record RestorePlanRequest(
+        string ArchivePath, string? Mode = null, string? Passphrase = null);
+
+    private sealed record ConfigExportRequest(bool IncludeSecrets = false, string? Passphrase = null);
+
+    private sealed record ConfigImportRequest(string Payload, string? Passphrase = null);
 
     /// <summary>
     /// Festgehaltene Tool-Definitionen (Rug-Pull-Schutz). Ändert ein Upstream still die Beschreibung

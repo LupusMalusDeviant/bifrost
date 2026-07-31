@@ -24,10 +24,19 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
   Zustand steht in einer Journaltabelle statt in einem Log. Ein abgebrochener Lauf wird beim
   nächsten Start erkannt und verweigert den Schreibbetrieb mit Recovery-Hinweis, statt zu
   reparieren. Ein neueres, unbekanntes Schema wird abgelehnt, nicht heruntergestuft.
-- **Diagnosedienst** mit 17 stabilen Codes (`BFR-CFG-*`, `BFR-DB-*`, `BFR-KEY-*`, `BFR-NET-*`,
-  `BFR-RT-*`, `BFR-UP-*`) — darunter der Fall, der im Betrieb am teuersten war: falsches Volume,
-  leere Datenbank, Meldung „bereit". *Noch ohne Befehl:* Die Anbindung an CLI und Oberfläche
-  kommt in einem Folgeschritt.
+- **`bifrost doctor`** mit stabilen, maschinenlesbaren Codes (`BFR-CFG-*`, `BFR-DB-*`, `BFR-KEY-*`,
+  `BFR-NET-*`, `BFR-RT-*`, `BFR-UP-*`) — darunter der Fall, der im Betrieb am teuersten war:
+  falsches Volume, leere Datenbank, Meldung „bereit". Ein Check, der nicht laufen kann, meldet das
+  mit Begründung und besteht nicht still.
+- **Befehle für den Betrieb:** `backup create` / `backup verify`, `restore`, `doctor`,
+  `config export` / `config import`, `db unblock` — alle mit einheitlichen Exit-Codes
+  (0 Erfolg · 2 Bedienfehler · 3 Warnung · 4 Fehler · 5 Archiv ungültig · 6 Ziel nicht leer), dazu
+  eine Betriebsseite in der Oberfläche und Endpunkte unter `/api/v1/operations/`.
+  Eine Passphrase wird **nicht** als Argument angenommen — sie stünde sonst in der Prozessliste und
+  in der Shell-Historie.
+- **`bifrost-server --db-unblock`** löst den Riegel aus `BFR-DB-0101` auch dann, wenn der Gateway
+  wegen ebendieses Riegels gar nicht erst startet. Vorher hätte ein Betreiber eine Datenbankzeile
+  von Hand löschen müssen.
 - **Konfigurationsexport und -import**, versioniert. Der Standardexport enthält **keine
   Secretwerte**, sondern Referenzen, die allein aus dem Ort abgeleitet sind — wer „die
   Konfiguration" in ein Git-Repository legt, legt dort keine Zugangsdaten ab. Was nicht
@@ -47,6 +56,11 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
 
 ### Behoben
 
+- **Ein Archiv aus einer neueren Version wurde eingespielt, statt abgelehnt zu werden.** Das
+  Rückwärts-Tor verglich eine Versionsangabe, die das Archiv über sich selbst macht und die für
+  jedes Archiv gleich war. Geprüft wird jetzt der Migrationsstand: Kennt diese Installation ihn
+  nicht, stammt das Archiv aus einer neueren Version. Gefunden hat das die Upgrade-Matrix, indem
+  sie gegen die Zusage getestet hat statt für sie.
 - **Ein Zugangsdatum stand im Klartext in Oberfläche und API.** Die Ausgabemaskierung für
   Upstream-Konfigurationen ließ das Credential eines OpenRPC-Servers unmaskiert durch.
 - **Bearbeiten konnte einen Upstream stillschweigend zerlegen.** In die Gegenrichtung fehlte die

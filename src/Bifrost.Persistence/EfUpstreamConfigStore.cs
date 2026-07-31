@@ -15,7 +15,7 @@ public sealed class EfUpstreamConfigStore : IUpstreamConfigStore
     // NICHT UMBENENNEN: Der Zweck geht in die Schluesselableitung ein. Er traegt den alten
     // Produktnamen, weil jeder gespeicherte Geheimtext sonst unlesbar wuerde — ein
     // kryptografischer Bezeichner ist kein Markenname (siehe Program.cs, SetApplicationName).
-    internal const string ProtectionPurpose = "McpMcp.UpstreamConfig.v1";
+    internal const string ProtectionPurpose = CryptographicNames.UpstreamConfigPurpose;
 
     private readonly IDbContextFactory<BifrostDbContext> _factory;
     private readonly IDataProtector _protector;

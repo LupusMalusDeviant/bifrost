@@ -29,6 +29,9 @@ public class UiAuthorizationAttributeTests
         { "/guardrails", UiPolicies.Admin },
         { "/approvals", UiPolicies.Operator },
         { "/webhooks", UiPolicies.Admin },
+        // Betrieb: Von hier aus entsteht ein Vollbackup — es enthaelt den Key-Ring und ist damit so
+        // schuetzenswert wie die Instanz selbst (ADR-0024 E3). Operator reicht dafuer nicht.
+        { "/operations", UiPolicies.Admin },
         { "/logs", UiPolicies.Authenticated },
         { "/", UiPolicies.Authenticated },
     };

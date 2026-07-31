@@ -139,8 +139,8 @@ Reihenfolgeentscheidung, die hier festgehalten wird, damit sie bei der Abnahme s
 | WP2.3 Migrationssicherheit | `implementiert` | 80/80 im Namensraum `Persistence`, SQLite **und** Postgres |
 | WP2.4 Diagnosedienst (`doctor`) | `implementiert` | 17 Codes, 107 Tests; Sonden noch nicht verdrahtet |
 | WP2.5 Konfigurationsexport/-import | `implementiert` | 20 Tests, Secret-Negativkorpus je 8-Zeichen-Bruchstück |
-| WP2.6 Upgrade-Kompatibilitätsmatrix | `offen` | wartet auf ein stabiles Archivformat aus WP2.1 |
-| WP2.7 Adapter (CLI, API, UI) | `offen` | Lead; Vertragslücke behoben, damit **entblockt** |
+| WP2.6 Upgrade-Kompatibilitätsmatrix | `implementiert` | 43 Tests, 15 Migrationsstände × 2 Provider; **hat E6 widerlegt** |
+| WP2.7 Adapter (CLI, API, UI) | `implementiert` | 7 Befehlsgruppen, API hinter Global-Grant, Sonden verdrahtet |
 
 Gesamtlauf nach der Zusammenführung: `./build.sh verify-dotnet` → **948 Tests grün, 0 Fehler**
 (M1-Stand: 783). Kein Paket hat eine fremde Zone angefasst, `Operations.cs` blieb während der
@@ -194,18 +194,80 @@ im [Vertrag](m2-recoverability-contract.md#nachtrag-nach-der-welle-der-plan-trä
 Der Nachweis ist ein Test, der den Plan tatsächlich durch `JsonSerializer` schickt und danach
 anwendet — vorher war das genau der Fall, der scheiterte.
 
+### WP2.6 hat das Rückwärts-Tor aus E6 widerlegt
+
+Der Upgrade-Harness sollte belegen, dass ein Archiv aus einer neueren Version abgelehnt wird. Er
+belegt das Gegenteil, und der Test steht jetzt als Feld 8 der Matrix.
+
+`RestoreService` vergleicht die **selbst behauptete** `minimumRestoreVersion` aus dem Manifest. Die
+stammt aus `BackupOptions.MinimumRestoreVersion`, und das ist die Konstante
+`BackupLayout.DefaultMinimumRestoreVersion = "0.11.0"` — sie wird von keiner Version angehoben.
+Ein Archiv aus einer späteren Version trägt also dieselbe Angabe wie eines von heute und wird
+**eingespielt**. Aufgehalten wird es erst danach vom `DatabaseInitializer` mit `BFR-DB-0102` — also
+nachdem geschrieben wurde, was E6 gerade verhindern sollte.
+
+Der Fehler ist nicht die Konstante, sondern das Kriterium: Eine Versionsangabe, die das Archiv über
+sich selbst macht, kann nicht das Tor bewachen. Der Restore muss den **Migrationsstand** aus dem
+Manifest gegen die Migrationen prüfen, die dieser Build kennt — kennt er sie nicht, ist das Archiv
+neuer, ganz ohne Versionsbuchhaltung. Das ist vor WP2.6 niemandem aufgefallen, weil der Test dazu
+fehlte; der zuständige Agent hat gegen die eigene Zusage getestet und sie widerlegt.
+
+**Behoben.** Der Restore prüft jetzt den Migrationsstand aus dem Manifest gegen die Migrationen, die
+dieser Build kennt (`KnownMigrations.For`, gelesen aus der Migrations-Assembly, **ohne**
+Datenbankverbindung — der Regelfall des Restore ist eine leere Instanz, eine Prüfung mit
+Verbindungsbedarf fiele genau dann aus, wenn sie gebraucht wird). Kennt der Build den Stand nicht,
+stammt das Archiv aus einer neueren Version, ganz ohne Versionsbuchhaltung.
+
+Fehlt die Menge der bekannten Migrationen, meldet das Tor eine **Warnung** statt zu schweigen: Ein
+Schutz, der still ausfällt, ist schlimmer als keiner. Drei Tests belegen die drei Fälle —
+abgelehnt, angewendet (dasselbe Archiv, nur bekannter Stand), und ungeprüft mit Ansage.
+
+### Vier Bezeichner, an denen jeder gespeicherte Geheimtext hängt — ungetestet
+
+Ebenfalls von WP2.6 gemeldet und nachgeprüft:
+
+| Bezeichner | Ort |
+|---|---|
+| `McpMcp.UpstreamConfig.v1` | `EfUpstreamConfigStore.cs:18` |
+| `McpMcp.UpstreamOAuthToken.v1` | `UpstreamOAuthTokenStore.cs:21` |
+| `McpMcp.Webhook.Secret.v1` | `WebhookStore.cs:18` |
+| `SetApplicationName("MCPMCP")` | `Program.cs:97` |
+
+Alle vier gehen in die Schlüsselableitung ein; eine Umbenennung macht **jeden** gespeicherten
+Geheimtext unlesbar, ohne Fehlermeldung beim Start. Gesichert sind sie heute ausschließlich durch
+Kommentare — kein Test greift darauf zu.
+
+Das ist genau die Regression, die der Umbenennungs-Commit `c7cb446` beinahe ausgelöst hätte, und
+sie ist zugleich die einzige, die der Upgrade-Harness prinzipiell nicht fangen kann: Er benutzt
+seinen eigenen Anwendungsnamen und würde eine repo-weite Umbenennung stillschweigend mitmachen.
+
+**Behoben.** Alle vier stehen jetzt als Konstanten in `CryptographicNames`, und
+`CryptographicNamesTests` prüft sie gegen ihre Werte. Ein Test, der eine Konstante gegen ihren
+eigenen Wert prüft, sieht sinnlos aus — er ist hier die einzige Stelle im Repository, an der eine
+Umbenennung *auffällt*. Wer ihn rot macht, hat zwei Möglichkeiten: die Änderung zurücknehmen oder
+einen Migrationslauf schreiben, der alles entschlüsselt und neu verschlüsselt. Den Test anzupassen
+ist keine dritte, und das steht so im Test.
+
 ### Offen aus dieser Welle
 
 - **PostgreSQL-Backup fehlt.** Der Weg lehnt laut ab statt still Zeilen zu exportieren (ADR-0024 E2),
-  aber FR-P020 ist für Postgres damit nicht erfüllt.
-- **E7 ist vorbereitet, nicht erfüllt.** `IPreMigrationBackup` existiert und wird unter dem Lock
-  gerufen; solange nichts registriert ist, migriert der Start ohne Sicherung und protokolliert eine
-  Warnung. Die Verdrahtung an `IBackupService` gehört in WP2.7.
-- **Die Diagnosesonden für Datenbank und Upstreams sind Schnittstellen ohne Umsetzung.** Bis WP2.7
-  melden `BFR-DB-0002/0003/0004` und `BFR-UP-0001` `Skipped` mit Begründung — kein stilles Bestehen.
-- **`config/instance.json` gibt es im Code nicht.** Das Backup legt sie nicht an (eine Sicherung
-  verändert die Instanz nicht); fehlt sie, bleibt `instanceId` leer. Erzeuger ist der Serverstart.
-- **`IAssetStore` kann keinen einzelnen Skill entfernen**, wodurch sich ein zur Hälfte angewendeter
-  Skill-Import nicht zurücknehmen lässt.
+  aber FR-P020 ist für Postgres damit nicht erfüllt. **Das ist die größte offene Lücke aus M2**, und
+  sie zieht eine zweite nach sich: Auf PostgreSQL läuft jedes Upgrade ohne Rückweg, weil E7 dort
+  keine Sicherung erzeugen kann (`WhenAvailable` statt `Always` — `Always` wäre dort ein
+  Startverbot, keine Zusage).
+- **E7 ist für SQLite erfüllt**, für PostgreSQL und Datenbanken im Arbeitsspeicher nicht.
+- **`IAssetStore` kann keinen einzelnen Skill entfernen** und `CreateAsync` erhält die exportierte
+  `AssetId` nicht. `RemoveSkillAsync` wirft deshalb; der Rückstand landet sichtbar in der
+  Rückstandsliste der Kompensation, statt als „vollständig zurückgenommen" gemeldet zu werden. Ein
+  zur Hälfte angewendeter Skill-Import bleibt Handarbeit.
+- **`GuardOptions` sind ein Start-Singleton aus der Umgebung.** Beim Import lässt sich nur der
+  Freigabe-Vorgabeweg übernehmen; abweichende Guard-Schalter werden protokolliert, nicht gesetzt.
+- **„Instanz-Id" heißt zwei verschiedene Dinge.** `GatewayIdentity.InstanceId` ist ein frischer GUID
+  je Prozess (für den Federations-Loop-Header), die neue stabile Id steht in `config/instance.json`.
+  Für sich genommen beides richtig, zusammen eine Falle.
 - **Publisher-Trust fehlt im Konfigurationsexport.** Ohne ihn ist ein WASI-Upstream auf der
   Zielinstanz nicht ladbar — der inhaltlich dringendste Kandidat für Exportformat v2.
+- **Alte Daten in alter Form sind nicht prüfbar.** Der Upgrade-Harness fährt echte alte Schemata,
+  aber mit dem heutigen schreibenden Code. Eine Regression im *Serialisierungsformat* eines früheren
+  Builds findet er prinzipiell nicht; das ist seine schwerwiegendste Lücke, und sie steht in
+  `docs/upgrade-matrix.md`.

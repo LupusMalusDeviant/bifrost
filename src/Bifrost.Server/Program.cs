@@ -12,6 +12,7 @@ using Bifrost.Core.Packaging;
 using Bifrost.Persistence;
 using Bifrost.Persistence.Audit;
 using Bifrost.Server;
+using Bifrost.Server.Operations;
 using Bifrost.Upstream;
 using Bifrost.Web;
 using Bifrost.Web.Components;
@@ -72,6 +73,12 @@ var dbProvider = builder.Configuration["BIFROST_DB_PROVIDER"] ?? "sqlite";
 var connectionString = builder.Configuration["BIFROST_DB_CONNECTION"]
     ?? $"Data Source={LegacyEnvironment.ResolveSqliteFile(dataDir)}";
 
+// config/instance.json: die stabile Kennung dieser Installation (M2, WP2.7). Sie entsteht hier und
+// nicht im Backup — eine Sicherung veraendert die Instanz nicht, die sie sichert. Ohne die Datei
+// traegt jedes Archivmanifest eine leere instanceId, und ein Restore kann nicht sagen, ob das
+// Archiv zu dieser Installation gehoert.
+var instanceId = InstanceIdentityFile.EnsureCreated(dataDir);
+
 // ── Persistenz & Schutz (ADR-0007, NFR-04) ───────────────────────────────────
 // Der Key-Ring entschlüsselt die at-rest verschlüsselten Upstream-Credentials. Ohne Zusatzschutz
 // liegt er im Klartext neben der DB (dokumentiertes Restrisiko). Optional per X509-Zertifikat
@@ -87,7 +94,7 @@ var keyRing = builder.Services.AddDataProtection()
     // Das ist der Preis dafuer, dass ein kryptografischer Bezeichner kein Markenname ist. Wer ihn
     // dennoch aendern will, braucht einen Migrationslauf, der alles entschluesselt und neu
     // verschluesselt — nicht eine Textersetzung.
-    .SetApplicationName("MCPMCP")
+    .SetApplicationName(CryptographicNames.DataProtectionApplication)
     .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dataDir, "keys")));
 
 var keyCertPath = builder.Configuration["BIFROST_KEYRING_CERT_PATH"];
@@ -459,6 +466,12 @@ builder.Services.AddAuthorizationBuilder()
     .AddPolicy(UiPolicies.Admin, p => p.RequireClaim(
         UiPolicies.RoleClaim, nameof(UiRole.Admin)));
 
+// ── Betriebsdienste: Sicherung, Wiederherstellung, Diagnose, Konfigurationsexport ────────────
+// (M2/ADR-0024, WP2.7). Erst diese Zeile macht die in M2 gebauten Dienste erreichbar — und sie
+// setzt den Haken aus ADR-0024 E7: vor einer schemaaendernden Migration entsteht bei SQLite
+// automatisch eine Sicherung, ohne die nicht migriert wird.
+builder.Services.AddBifrostOperations(dataDir, dbProvider, connectionString);
+
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 builder.Services.AddHostedService<GatewayStartupService>();
 builder.Services.AddHostedService<AuditWriterService>();
@@ -478,6 +491,16 @@ if (adoptedLegacyVariables.Count > 0)
         + "Umbenennung BIFROST_ (frueher MCPMCP_); bitte umstellen. Die alten Namen werden noch "
         + "gelesen, sind aber nicht mehr dokumentiert.",
         string.Join(", ", adoptedLegacyVariables));
+#pragma warning restore CA1848
+}
+
+// Die Instanz-Id einmal beim Start nennen: Sie steht im Manifest jeder Sicherung, und beim
+// Zurueckspielen ist sie die einzige Angabe, an der sich "gehoert dieses Archiv hierher?" ablesen laesst.
+if (app.Logger.IsEnabled(LogLevel.Information))
+{
+    var instanceFile = InstanceIdentityFile.PathFor(dataDir);
+#pragma warning disable CA1848
+    app.Logger.LogInformation("Instanz-Id {InstanceId} (aus {Path}).", instanceId, instanceFile);
 #pragma warning restore CA1848
 }
 

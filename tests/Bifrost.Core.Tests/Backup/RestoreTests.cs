@@ -248,6 +248,71 @@ public sealed class RestoreTests
         result.Applied.Should().BeTrue();
     }
 
+    /// <summary>
+    /// Das Rückwärts-Tor aus ADR-0024 E6, zweiter Anlauf. Der Versionsvergleich allein hielt nicht:
+    /// Die Mindestversion im Manifest ist eine Angabe des Archivs über sich selbst und stand für
+    /// jedes Archiv auf demselben Wert — ein Archiv aus einer neueren Instanz kam damit durch und
+    /// wurde eingespielt. Geprüft wird jetzt der Migrationsstand, denn der ist eine Tatsache.
+    /// </summary>
+    [Fact]
+    public async Task An_archive_from_a_newer_schema_is_refused_before_anything_is_written()
+    {
+        using var source = new InstanceDirectory("quelle10");
+        using var target = new InstanceDirectory("ziel10");
+        using var archives = new ArchiveDirectory();
+        var archive = await BackupOfAsync(source, archives, rows: 4);
+
+        // Das Ziel kennt eine ANDERE Migration als die im Archiv — genau die Lage einer Instanz,
+        // der man ein Archiv aus einer neueren Version unterschiebt.
+        var options = target.Options(
+            knownMigrationIds: new HashSet<string>(StringComparer.Ordinal) { "20250101000000_Aelter" });
+        var plan = await new RestoreService(options, new BackupService(options))
+            .PlanAsync(new RestoreRequest(archive), TestContext.Current.CancellationToken);
+
+        plan.CanApply.Should().BeFalse();
+        plan.Blockers.Should().Contain(b => b.Contains("20260731000000_Initial", StringComparison.Ordinal));
+        Directory.EnumerateFileSystemEntries(target.Root).Should().BeEmpty(
+            "abgelehnt heißt: nicht versucht — die Vorprüfung schreibt nichts");
+    }
+
+    /// <summary>
+    /// Die Gegenprobe. Dasselbe Archiv, nur ist der Stand diesmal bekannt — damit ist belegt, dass
+    /// die Ablehnung oben aus dem Migrationsvergleich kam und nicht aus irgendetwas anderem.
+    /// </summary>
+    [Fact]
+    public async Task The_same_archive_is_applied_when_the_schema_is_known()
+    {
+        using var source = new InstanceDirectory("quelle11");
+        using var target = new InstanceDirectory("ziel11");
+        using var archives = new ArchiveDirectory();
+        var archive = await BackupOfAsync(source, archives, rows: 4);
+
+        var options = target.Options(
+            knownMigrationIds: new HashSet<string>(StringComparer.Ordinal) { "20260731000000_Initial" });
+        var plan = await new RestoreService(options, new BackupService(options))
+            .PlanAsync(new RestoreRequest(archive), TestContext.Current.CancellationToken);
+
+        plan.CanApply.Should().BeTrue(string.Join(" | ", plan.Blockers));
+    }
+
+    /// <summary>
+    /// Ein Schutz, der still ausfällt, ist schlimmer als keiner: Wer die bekannten Migrationen nicht
+    /// mitgibt, bekommt das gesagt, statt ein ungeprüftes Archiv als geprüft gemeldet zu bekommen.
+    /// </summary>
+    [Fact]
+    public async Task Without_the_known_migrations_the_gate_says_so_instead_of_staying_silent()
+    {
+        using var source = new InstanceDirectory("quelle12");
+        using var target = new InstanceDirectory("ziel12");
+        using var archives = new ArchiveDirectory();
+        var archive = await BackupOfAsync(source, archives, rows: 4);
+
+        var plan = await RestoreInto(target)
+            .PlanAsync(new RestoreRequest(archive), TestContext.Current.CancellationToken);
+
+        plan.Warnings.Should().Contain(w => w.Contains("Migrationsstand", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task A_plan_is_applied_at_most_once()
     {

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- xUnit v3: Testprojekte sind eigenstaendige Executables, der Runner laeuft im selben Prozess. -->
+    <OutputType>Exe</OutputType>
+    <Description>WP2.6: Upgrade-Kompatibilitaetsmatrix. Faehrt Datenbestaende aus aelteren
+      Migrationsstaenden gegen den heutigen Stand hoch und prueft, dass dabei nichts verloren geht.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Bifrost.Persistence\Bifrost.Persistence.csproj" />
+    <!-- Die Fixtures entstehen aus den ECHTEN Migrationen, nicht aus nachgebautem SQL.
+         Deshalb muessen beide Migrations-Assemblies zur Laufzeit vorliegen. -->
+    <ProjectReference Include="..\..\src\Bifrost.Persistence.Migrations.Sqlite\Bifrost.Persistence.Migrations.Sqlite.csproj" />
+    <ProjectReference Include="..\..\src\Bifrost.Persistence.Migrations.Postgres\Bifrost.Persistence.Migrations.Postgres.csproj" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+  </ItemGroup>
+
+</Project>

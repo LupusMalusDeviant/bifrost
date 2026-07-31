@@ -227,6 +227,7 @@ Beide Werte sofort sichern. Verloren? Siehe [Zugang zurücksetzen](#zugang-zurü
 | `BIFROST_GUARD_ALLOW_CUSTOM_PATTERNS` | *(aus)* | Erlaubt Admins eigene Regex in der UI (siehe [Guardrails](#guardrails)) |
 | `BIFROST_MCP_STATELESS` | `1` | `0`/`false` schaltet auf den Sitzungsbetrieb der alten Protokollrevision zurück (siehe [Protokollstand](#protokollstand-sessionlos-oder-mit-sitzung)) |
 | `BIFROST_MCP_LIST_TTL_SECONDS` | `60` | Wie lange ein Client die Werkzeug-, Resource- und Prompt-Listen für frisch halten darf. `0` = kein Hinweis |
+| `BIFROST_BACKUP_PASSPHRASE` | *(nicht gesetzt)* | Verschlüsselt die **automatischen** Sicherungen vor einer Migration. Ohne sie entstehen sie unverschlüsselt — mit ihr sind sie ohne die Passphrase wertlos (siehe [Backup](#backup)) |
 
 ## Protokollstand: sessionlos oder mit Sitzung
 
@@ -1144,8 +1145,182 @@ Alles Persistente liegt im Datenverzeichnis (`BIFROST_DATA_DIR`):
 
 - `bifrost.db` — Konfiguration, RBAC, API-Key-Hashes, Audit-Log (bei SQLite).
 - `keys/` — **DataProtection-Key-Ring**. Ohne ihn sind die verschlüsselten Upstream-Credentials unbrauchbar.
+- `packages/` — installierte Connector-Pakete.
+- `config/instance.json` — die stabile Kennung dieser Installation. Sie entsteht beim ersten Start
+  und steht im Manifest jeder Sicherung; daran erkennt man später, ob ein Archiv hierher gehört.
 
-Beide **zusammen** sichern (Volume-Snapshot bei gestopptem Container oder DB-Dump + `keys/`-Kopie). Bei PostgreSQL: DB separat dumpen, `keys/` weiterhin aus dem Datenvolume sichern.
+Seit M2 gibt es dafür einen Produktpfad statt „Dateien raten" (ADR-0024). Alles darunter läuft über
+`bifrost` gegen einen **laufenden** Gateway.
+
+> **Ein Vollbackup ist ein Geheimnis.** Es enthält den Key-Ring — also den Schlüssel zu allen
+> gespeicherten Upstream-Zugangsdaten, OAuth-Token und Webhook-Secrets. Wer es hat, hat die Instanz
+> (ADR-0024 E3). Es gehört auf ein Ziel, das genauso geschützt ist wie das Datenverzeichnis selbst,
+> oder es wird mit einer Passphrase verschlüsselt.
+
+### Sichern, prüfen, zurückspielen
+
+```bash
+# Vollsicherung. Der Pfad gilt auf dem Rechner, auf dem der GATEWAY laeuft.
+bifrost backup create --out /data/backups/bifrost-2026-07-31.zip
+
+# Nur einzelne Bereiche:
+bifrost backup create --out /data/backups/nur-db.zip --sections database,config
+
+# Verschluesselt. Die Passphrase kommt aus einer Umgebungsvariablen oder aus einer
+# Eingabe ohne Echo — NIE als Argument (sie stuende in ps und in der Shell-Historie):
+BIFROST_BACKUP_PASSPHRASE=… bifrost backup create --out /data/backups/a.zip \
+    --passphrase-env BIFROST_BACKUP_PASSPHRASE
+bifrost backup create --out /data/backups/a.zip --passphrase-prompt
+
+# Pruefen, ohne zurueckzuspielen (Manifest, Pruefsummen, Vollstaendigkeit):
+bifrost backup verify /data/backups/bifrost-2026-07-31.zip
+
+# Zurueckspielen. Zeigt ZUERST den Plan und wendet erst danach an:
+bifrost restore /data/backups/bifrost-2026-07-31.zip
+
+# Auf eine Instanz, die nicht leer ist — verlangt zusaetzlich eine Bestaetigung:
+bifrost restore /data/backups/bifrost-2026-07-31.zip --replace
+```
+
+`--replace` fragt zurück; die Antwort ist das Wort `replace`. In Skripten übernimmt `--yes` diese
+Bestätigung. Vor dem Überschreiben entsteht automatisch eine Sicherung des Altzustands — ohne
+Ausweg kein Überschreiben (ADR-0024 E5).
+
+**Ein Restore braucht einen Wartungsmoment.** Er tauscht Datenbank und Key-Ring aus; das lässt sich
+im laufenden Schreibbetrieb nicht atomar halten. Gateway stoppen, zurückspielen, starten.
+
+### Exit-Codes
+
+Alle Betriebsbefehle benutzen dieselbe Tabelle (M2-Vertrag §4):
+
+| Code | Bedeutung |
+|---:|---|
+| `0` | Erfolg, keine Warnung |
+| `1` | unerwarteter Fehler (auch: Gateway nicht erreichbar) |
+| `2` | Bedienfehler — fehlendes Argument, fehlende Berechtigung, auf dieser Instanz nicht anwendbar |
+| `3` | Diagnose mit **Warnung** |
+| `4` | Diagnose mit **Fehler** |
+| `5` | Archiv ungültig, beschädigt oder inkompatibel (auch: Import mit Konflikten) |
+| `6` | Zielinstanz nicht leer und kein `--replace`, oder `--replace` nicht bestätigt |
+
+Ein übersprungener Diagnose-Check (`Skipped`) ist **neutral** und ergibt `0`: Er steht sichtbar mit
+Begründung im Bericht, und das ist die Aussage.
+
+### PostgreSQL
+
+**Es gibt keine PostgreSQL-Sicherung über `bifrost backup`.** Vorgesehen ist `pg_dump`
+(ADR-0024 E2); solange das nicht gebaut ist, lehnt der Befehl mit einer Meldung ab, statt still
+Zeilen zu exportieren. Für PostgreSQL also weiterhin: Datenbank mit `pg_dump` sichern und `keys/`
+aus dem Datenverzeichnis dazu — beides gehört zusammen.
+
+Dieselbe Grenze gilt für die automatische Sicherung vor Migrationen (siehe unten).
+
+### Sicherung vor jeder Migration
+
+Bei **SQLite** entsteht vor einer schemaändernden Migration automatisch eine Vollsicherung unter
+`<Datenverzeichnis>/backups/pre-migration-*.zip` — und ohne sie wird nicht migriert (ADR-0024 E7).
+Der Pfad steht im Migrationsjournal und in der Meldung, falls die Migration scheitert.
+
+Diese Sicherung ist standardmäßig **unverschlüsselt**; sie liegt im selben Schutzbereich wie die
+Datenbank, aus der sie entsteht. Wer sie verschlüsselt haben will, setzt `BIFROST_BACKUP_PASSPHRASE`
+— dann ist die Sicherung ohne diese Passphrase allerdings wertlos.
+
+Bei **PostgreSQL** entsteht keine automatische Sicherung (siehe oben). Der Start warnt und migriert
+weiter; die Sicherung ist dort Betriebspflicht.
+
+## Diagnose
+
+```bash
+bifrost doctor                       # alles
+bifrost doctor --scope database,network
+bifrost --json doctor                # maschinenlesbar
+```
+
+Der Bericht liest nur. Einzige Ausnahme ist die Schreibprobe im Datenverzeichnis: Sie legt eine
+Datei `.bifrost-doctor-*.tmp` an und löscht sie sofort wieder — rein lesend lässt sich
+Beschreibbarkeit auf keinem der beiden Betriebssysteme verlässlich beantworten.
+
+Jeder Befund trägt einen **stabilen Code** (`BFR-DB-0002`), auf den sich ein Runbook stützen kann;
+der Text daneben darf sich ändern, der Code nicht.
+
+| Präfix | Bereich |
+|---|---|
+| `BFR-CFG-*` | Konfiguration, Umgebungsvariablen, Datenverzeichnis |
+| `BFR-DB-0001…0099` | Datenbank, Migrationen, Provider |
+| `BFR-DB-0100…0199` | Startkoordination: Lock, Journal, Schemastand |
+| `BFR-KEY-*` | DataProtection-Key-Ring |
+| `BFR-NET-*` | Ports, öffentliche Adresse, Proxy-Vertrauen |
+| `BFR-RT-*` | Container-Runtime, WASI-Host |
+| `BFR-UP-*` | Upstreams |
+
+Dieselbe Ansicht gibt es in der Oberfläche unter **Betrieb** (nur für Admins), zusammen mit dem
+Anlegen einer Sicherung.
+
+## Wenn der Start BFR-DB-0101 meldet
+
+`BFR-DB-0101` heißt: Ein früherer Migrationslauf ist mittendrin abgebrochen, der Schemazustand ist
+unbekannt — und der Gateway **verweigert deshalb den Schreibbetrieb**, indem er gar nicht erst
+hochkommt. Er repariert von sich aus nichts; das ist Absicht (ADR-0024 E7).
+
+Der Weg zurück:
+
+1. **Datenbank beurteilen.** Steht im Journaleintrag ein Sicherungspfad (`backupPath`), ist das die
+   Sicherung, die unmittelbar vor dem Lauf entstanden ist. Im Zweifel diese zurückspielen:
+   `bifrost restore <archiv> --replace` bei laufendem Gateway einer *anderen* Installation, oder
+   das Datenverzeichnis von Hand aus dem Archiv herstellen.
+2. **Riegel lösen.** Erst wenn der Zustand geprüft ist:
+
+```bash
+# Der Gateway laeuft NICHT — deshalb im Serverprozess, nicht ueber die CLI:
+docker compose run --rm bifrost dotnet Bifrost.Server.dll --db-unblock
+# ohne Container:
+dotnet run --project src/Bifrost.Server -- --db-unblock
+```
+
+3. Starten und im Log `Datenbank initialisiert` bestätigen.
+
+> **Warum nicht `bifrost db unblock`?** Den Befehl gibt es, und er tut dasselbe — aber er spricht
+> über HTTP mit einem laufenden Gateway. Im Normalfall von `BFR-DB-0101` läuft keiner. Nützlich ist
+> er dort, wo eine zweite Instanz noch läuft (PostgreSQL, mehrere Knoten) oder wo der Eintrag
+> vorsorglich weggeräumt wird, bevor jemand neu startet.
+
+Beide Wege beurteilen den Schemazustand **nicht**. Sie lösen, was der Betreiber geprüft hat.
+
+## Konfiguration exportieren und übernehmen
+
+Ein Konfigurationsexport ist **kein Backup** (ADR-0024 E8): Er stellt nicht dieselbe Instanz wieder
+her, sondern baut eine gleichartige auf — und er enthält deshalb **keine Secretwerte**, sondern
+Referenzen und Masken.
+
+```bash
+# Ohne Zugangsdaten, in eine LOKALE Datei (die Nutzlast ist JSON und reist durch die Antwort):
+bifrost config export --out konfiguration.json
+
+# Mit Zugangsdaten — nur verschluesselt, das ist keine Option:
+bifrost config export --include-secrets --passphrase-env EXPORT_PASSPHRASE --out voll.json
+
+# Zielinstanz: erst zeigen, was entstuende …
+bifrost config import konfiguration.json --dry-run
+# … dann anwenden:
+bifrost config import konfiguration.json
+```
+
+Der Import ist zweistufig und **ausschließlich additiv**: Er legt an, überschreibt nichts und löscht
+nichts. Konflikte und fehlende Abhängigkeiten stehen im Plan und führen zu Exit `5`, bevor
+irgendetwas geschrieben wird.
+
+| | Backup | Konfigurationsexport |
+|---|---|---|
+| Zweck | dieselbe Instanz wiederherstellen | eine gleichartige Instanz aufbauen |
+| Enthält | alles, inkl. Key-Ring | Server, Rollen, Profile, Regeln, Skills |
+| Secrets | ja (deshalb schützenswert) | nein — Referenzen oder Masken |
+| Format | ZIP mit Manifest | JSON, versioniert |
+
+### Berechtigung
+
+Alle Betriebs-Endpunkte (`/api/v1/operations/*`) verlangen eine Identität mit **Global-Grant** —
+dieselbe Schwelle wie RBAC-Verwaltung und Paketinstallation. In der Oberfläche liegt die Seite
+**Betrieb** hinter der Admin-Rolle. Jeder schreibende Vorgang steht im Audit-Log.
 
 ## Audit-Retention
 
@@ -1259,6 +1434,10 @@ docker compose run --rm bifrost dotnet Bifrost.Server.dll --reset-ui-admin betre
 # Notfall-API-Key: legt eine NEUE Agenten-Identität mit Global-Grant an
 # (bestehende bleiben unangetastet):
 docker compose run --rm bifrost dotnet Bifrost.Server.dll --issue-bootstrap-key
+
+# Riegel aus BFR-DB-0101 lösen — erst nach Prüfung der Datenbank, siehe
+# "Wenn der Start BFR-DB-0101 meldet":
+docker compose run --rm bifrost dotnet Bifrost.Server.dll --db-unblock
 ```
 
 Ohne Container analog mit `dotnet run --project src/Bifrost.Server -- --reset-ui-admin`. Den Notfall-Zugang nach Gebrauch wieder entfernen, falls er nur der Wiederherstellung diente.
