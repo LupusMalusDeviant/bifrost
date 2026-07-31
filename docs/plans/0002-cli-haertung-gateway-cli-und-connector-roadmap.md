@@ -100,15 +100,15 @@ implementiert.
 
 ## Betroffene Dateien und Verträge
 
-- `McpMcp.Abstractions/Upstream.cs`: gespeicherter JSON-Vertrag für CLI-Optionen und Manifeste.
-- `McpMcp.Core/Upstreams/UpstreamConfigValidator.cs`: zentrale Konfigurationsgrenze.
-- `McpMcp.Core/Upstreams/UpstreamConnectionTester.cs`: Fehlertext-Redaction vor UI/API.
-- `McpMcp.Core/Upstreams/UpstreamConfigMerge.cs`: Patch-/Carry-over-Semantik für Secrets.
-- neue zentrale Config-Redaction im Core; `McpMcp.Server/ApiEndpoints.cs` konsumiert sie.
-- `McpMcp.Upstream/Cli/CliUpstreamConnector.cs`: Prozess-, Stream-, Environment- und Lifecycle-
+- `Bifrost.Abstractions/Upstream.cs`: gespeicherter JSON-Vertrag für CLI-Optionen und Manifeste.
+- `Bifrost.Core/Upstreams/UpstreamConfigValidator.cs`: zentrale Konfigurationsgrenze.
+- `Bifrost.Core/Upstreams/UpstreamConnectionTester.cs`: Fehlertext-Redaction vor UI/API.
+- `Bifrost.Core/Upstreams/UpstreamConfigMerge.cs`: Patch-/Carry-over-Semantik für Secrets.
+- neue zentrale Config-Redaction im Core; `Bifrost.Server/ApiEndpoints.cs` konsumiert sie.
+- `Bifrost.Upstream/Cli/CliUpstreamConnector.cs`: Prozess-, Stream-, Environment- und Lifecycle-
   Grenze.
-- `McpMcp.Server/Program.cs` und Build-Properties: Runtime-Policy, DI und gemeinsame Version.
-- `McpMcp.Web/Components/Pages/Servers.razor`: sichere Editiersemantik und später CLI-Manifest-UI.
+- `Bifrost.Server/Program.cs` und Build-Properties: Runtime-Policy, DI und gemeinsame Version.
+- `Bifrost.Web/Components/Pages/Servers.razor`: sichere Editiersemantik und später CLI-Manifest-UI.
 - Core-, Upstream- und Integrationstests: Sicherheitsregressionen und OS-Matrix.
 
 ## Kompatibilitäts- und Migrationsrisiken

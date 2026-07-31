@@ -7,7 +7,7 @@ Formale Lastmessung des Gateway-Overheads (WP8.3, der letzte nicht automatisiert
 | | |
 |---|---|
 | **Harness** | `PerformanceBenchmarkTests.Nfr01_gateway_overhead_and_tools_list_under_load` |
-| **Ausführung** | `$env:MCPMCP_RUN_BENCHMARK=1; dotnet test --filter FullyQualifiedName~PerformanceBenchmark` |
+| **Ausführung** | `$env:BIFROST_RUN_BENCHMARK=1; dotnet test --filter FullyQualifiedName~PerformanceBenchmark` |
 | **Upstream** | `BulkServer` — stdio-MCP-Server mit **100 Tools** |
 | **Last** | 20 gleichzeitige MCP-Sessions, 50 Calls je Session (1000 Calls), maximal **100 gleichzeitig in Flight** |
 | **Katalog** | Profil mit allen 100 Tools gepinnt, damit `tools/list` den vollen Katalog liefert |
@@ -16,7 +16,7 @@ Der Benchmark läuft bewusst **nicht** in der normalen Suite: Geteilte CI-Runner
 Referenz-Hardware, dort misst man zu einem guten Teil Runner-Auslastung statt Gateway-Verhalten.
 
 > **Korrektur (2026-07-18).** Aus dieser richtigen Beobachtung war die falsche Konsequenz gezogen
-> worden: Der Test hing hinter `MCPMCP_RUN_BENCHMARK=1`, und diese Variable wurde **nirgends**
+> worden: Der Test hing hinter `BIFROST_RUN_BENCHMARK=1`, und diese Variable wurde **nirgends**
 > gesetzt — weder lokal in der Suite noch in der CI. Damit war der einzige Test, der die
 > NFR-01/02-Schranken überhaupt prüft, dauerhaft übersprungen und die Anforderungen faktisch
 > ungeprüft, während die Suite grün meldete. Seit dem Abnahme-Audit gibt es einen eigenen
@@ -75,8 +75,8 @@ Tool-Anzahl je Profil im Blick behalten, weil `tools/list` mit dem Katalog wäch
 ## Wiederholen
 
 ```powershell
-$env:MCPMCP_RUN_BENCHMARK = "1"
-dotnet test tests/McpMcp.Integration.Tests --filter "FullyQualifiedName~PerformanceBenchmark" `
+$env:BIFROST_RUN_BENCHMARK = "1"
+dotnet test tests/Bifrost.Integration.Tests --filter "FullyQualifiedName~PerformanceBenchmark" `
   --logger "console;verbosity=detailed"
 ```
 

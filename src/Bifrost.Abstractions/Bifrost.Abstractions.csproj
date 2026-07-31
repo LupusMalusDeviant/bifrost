@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Verträge des B.I.F.R.O.S.T: Interfaces und DTOs. Darf ausschließlich BCL referenzieren (Plan 0001, Abschnitt 3.1).</Description>
+  </PropertyGroup>
+
+</Project>

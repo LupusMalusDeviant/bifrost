@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Domänenlogik: Katalog, RBAC, Profile, Invocation-Pipeline, Supervisor-Zustandsmaschine. SDK-frei (ADR-0002/0008).</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bifrost.Abstractions\Bifrost.Abstractions.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="JsonSchema.Net" />
+    <!-- Nur für die Signaturprüfung der Connector-Manifeste (ADR-0016). -->
+    <PackageReference Include="BouncyCastle.Cryptography" />
+  </ItemGroup>
+
+</Project>

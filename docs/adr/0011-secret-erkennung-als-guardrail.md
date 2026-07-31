@@ -31,7 +31,7 @@ nicht zurücknehmen lässt: Was einmal im Kontext war, ist beim Modellanbieter g
 
 Eine **Guardrail-Stufe im `ToolInvoker`** — dem einzigen Weg zu einem Tool-Call (ADR-0008), womit
 MCP-, REST- und UI-Fassade in einem Zug abgedeckt sind. Kein neues Produkt, kein zweiter Pfad:
-MCP-MCP bleibt ein MCP-Gateway, die Erkennung ist ein Filter darin.
+B.I.F.R.O.S.T bleibt ein MCP-Gateway, die Erkennung ist ein Filter darin.
 
 Regeln liegen in der Datenbank, werden gecacht und zur Laufzeit getauscht — dasselbe
 Write-Through-Muster wie `RedactionRuleStore` und `ToolDescriptionOverrideStore`, also
@@ -225,5 +225,5 @@ Ausweg, damit ein Betreiber sie erhöhen oder die Kürzung einschalten kann stat
 - **Modellgestützte Inhaltsprüfung.** Der Hot Path liegt bei 7 ms; ein Moderationsaufruf kostet
   das Hundertfache, kann selbst ausfallen und ist nicht nachvollziehbar. Widerspricht dem
   Kernversprechen des Gateways.
-- **LLM-Proxy-Funktion.** MCP-MCP routet Tool-Calls, keine Completions. Dafür gibt es gepflegte
+- **LLM-Proxy-Funktion.** B.I.F.R.O.S.T routet Tool-Calls, keine Completions. Dafür gibt es gepflegte
   Werkzeuge; zwei Produkte in einem verwässern beides.

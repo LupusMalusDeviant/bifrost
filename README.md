@@ -1,12 +1,12 @@
-# MCP-MCP
+# B.I.F.R.O.S.T
 
-[![ci](https://github.com/LupusMalusDeviant/mcp-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/LupusMalusDeviant/mcp-mcp/actions/workflows/ci.yml)
+[![ci](https://github.com/LupusMalusDeviant/bifrost/actions/workflows/ci.yml/badge.svg)](https://github.com/LupusMalusDeviant/bifrost/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
 
 **A self-hosted meta-MCP gateway on .NET** — connect one endpoint to your agents, and manage all your MCP servers behind it.
 
-> **[Pre-release v0.8.2](https://github.com/LupusMalusDeviant/mcp-mcp/releases/tag/v0.8.2)** is the current build. It brings everything that had accumulated on `main` since v0.5.0 into a tagged state: WASI plugins with an out-of-process Rust host, container isolation for CLI upstreams, long-running tasks, the capability model, OpenRPC, signed connector packages, upstream OAuth, rug-pull protection, OTel traces, and skills with a schema, an editor and package delivery.
+> **[Pre-release v0.8.2](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.8.2)** is the current build. It brings everything that had accumulated on `main` since v0.5.0 into a tagged state: WASI plugins with an out-of-process Rust host, container isolation for CLI upstreams, long-running tasks, the capability model, OpenRPC, signed connector packages, upstream OAuth, rug-pull protection, OTel traces, and skills with a schema, an editor and package delivery.
 >
 > The version is deliberately below 1.0 — and it is marked as a **pre-release** for a reason: the code is feature-complete for its scope and covered by tests against SQLite *and* real PostgreSQL, but **it still has no operational uptime behind it**. 1.0 follows from running it, not from adding features.
 
@@ -14,9 +14,9 @@
 
 Every agent × every MCP server = a config entry, a credential copy, and a pile of tool schemas eating your context window. No central log answers *which agent called which tool with which arguments*, no access control separates read-only agents from write-capable ones, and every server change means restarting agent sessions.
 
-## What MCP-MCP does about it
+## What B.I.F.R.O.S.T does about it
 
-MCP-MCP is a reverse proxy for the Model Context Protocol: to your agents it is a single MCP server, to your MCP servers it is a single client. Every call flows through one enforcement pipeline — rate limit → RBAC → schema validation → guardrail → approval → audit — which is what makes the features below possible *by construction* rather than by convention. There is no second path around it: REST, MCP, the web UI and webhook triggers all end up in the same invoker.
+B.I.F.R.O.S.T is a reverse proxy for the Model Context Protocol: to your agents it is a single MCP server, to your MCP servers it is a single client. Every call flows through one enforcement pipeline — rate limit → RBAC → schema validation → guardrail → approval → audit — which is what makes the features below possible *by construction* rather than by convention. There is no second path around it: REST, MCP, the web UI and webhook triggers all end up in the same invoker.
 
 | Feature | How |
 |---|---|
@@ -58,13 +58,13 @@ docker compose up -d
 ```
 
 ```bash
-docker compose logs mcpmcp
+docker compose logs bifrost
 ```
 
 The first start prints an agent **API key** (`mcpk_…`) and a **UI password** for user `admin`, once. Then:
 
 ```bash
-claude mcp add --transport http mcpmcp http://localhost:8080/mcp --header "Authorization: Bearer <API-KEY>"
+claude mcp add --transport http bifrost http://localhost:8080/mcp --header "Authorization: Bearer <API-KEY>"
 ```
 
 The web UI is at `http://localhost:8080`. Add upstream servers, roles and profiles from there or via the REST API — no config files. Always run behind a TLS reverse proxy in production; see [docs/operations.md](docs/operations.md).
@@ -72,30 +72,30 @@ The web UI is at `http://localhost:8080`. Add upstream servers, roles and profil
 ## Building from source
 
 ```bash
-git clone https://github.com/LupusMalusDeviant/mcp-mcp.git
+git clone https://github.com/LupusMalusDeviant/bifrost.git
 ```
 
 ```bash
-dotnet build MCPMCP.slnx
+dotnet build Bifrost.slnx
 ```
 
 ```bash
-dotnet test MCPMCP.slnx
+dotnet test Bifrost.slnx
 ```
 
 ```bash
-dotnet run --project src/McpMcp.Server
+dotnet run --project src/Bifrost.Server
 ```
 
-Requires the .NET 10 SDK. The integration tests spawn reference MCP servers (`tests/McpMcp.TestServers/*`) as real stdio/HTTP processes.
+Requires the .NET 10 SDK. The integration tests spawn reference MCP servers (`tests/Bifrost.TestServers/*`) as real stdio/HTTP processes.
 
 Some proofs need extra infrastructure and **skip** without it — deliberately, so a machine without Docker or Rust doesn't fail the build. Set the matching variable to turn a skip into a failure, which is what CI does:
 
 | Variable | Turns on | Needs |
 |---|---|---|
-| `MCPMCP_REQUIRE_POSTGRES=1` | PostgreSQL persistence tests | Docker (Testcontainers) |
-| `MCPMCP_REQUIRE_CONTAINER=1` | CLI container isolation against a live runtime | Docker in Linux-container mode |
-| `MCPMCP_REQUIRE_WASI_HOST=1` | WASI tests against the real Rust host | `cargo build --release` in `spikes/wasi-component-runtime` |
+| `BIFROST_REQUIRE_POSTGRES=1` | PostgreSQL persistence tests | Docker (Testcontainers) |
+| `BIFROST_REQUIRE_CONTAINER=1` | CLI container isolation against a live runtime | Docker in Linux-container mode |
+| `BIFROST_REQUIRE_WASI_HOST=1` | WASI tests against the real Rust host | `cargo build --release` in `spikes/wasi-component-runtime` |
 
 ## Security
 
@@ -129,7 +129,7 @@ The full design documentation lives in [`docs/`](docs/) — written in **German*
 | M5 "Gap closure" | 23 planned-but-missing items found by independent requirement-versus-code audits | ✅ done |
 | M6 "Guardrails" | Secret detection in the invoker, runtime-editable rules ([ADR-0011](docs/adr/0011-secret-erkennung-als-guardrail.md)) | ✅ done |
 | M7 "All optional reqs" | Approval flows ([ADR-0012](docs/adr/0012-approval-flows-asynchron.md)) and signed webhook triggers ([ADR-0013](docs/adr/0013-webhook-trigger.md)) built; FR-04 documented as a deviation | ✅ done |
-| M8 "v0.5.0 release" | [Acceptance against the actual state](docs/acceptance/v1.2.md), then the release | ✅ [released](https://github.com/LupusMalusDeviant/mcp-mcp/releases/tag/v0.5.0) |
+| M8 "v0.5.0 release" | [Acceptance against the actual state](docs/acceptance/v1.2.md), then the release | ✅ [released](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.5.0) |
 | CLI transport | Typed manifests, byte caps, isolated environment, path roots, optional SHA-256 pin, process-tree lifecycle — plus container mode proven against a live runtime ([ADR-0014](docs/adr/0014-cli-programme-als-upstream-transport.md), [ADR-0018](docs/adr/0018-native-prozess-und-container-isolation.md)) | ✅ on `main` |
 | Gateway CLI | Official public-contract client for status, tool discovery/invocation, servers, approvals and audit ([usage](docs/gateway-cli.md)) | ✅ on `main` |
 | WASI plugin path | Signed components, out-of-process Rust host, per-interface grants, module cache, IPC contract v4 with correlation, concurrency and confirmed cancellation | ✅ on `main`; `stream`/`future` deferred |
@@ -143,8 +143,8 @@ The full design documentation lives in [`docs/`](docs/) — written in **German*
 | gRPC / GraphQL | Unary gRPC has a design spike; GraphQL has a decision matrix | ⏳ open |
 | Skills | Declared metadata (when-to-use, references, required tools), validation against the live catalog, version history with rollback, size limit, and `list_skills` / `read_skill` as meta-tools | ✅ on `main` |
 | Skills in packages | A connector package carries the skills that explain its connector; consent is bound to the text, not the publisher ([ADR-0021](docs/adr/0021-skills-in-paketen.md)) | ✅ on `main`; a package type for skill bundles without a connector is decided but not built |
-| M9 "v0.6.0 pre-release" | Everything since v0.5.0 brought into a tagged build | ✅ [pre-release](https://github.com/LupusMalusDeviant/mcp-mcp/releases/tag/v0.6.0) |
-| First real operation | An instance running on real hardware — which surfaced three defects no test could have found: a silently dropped session cookie over HTTP, `http://` redirects behind a TLS proxy, and **an admin UI that was never interactive at all** because the Blazor entry point was never served | ✅ fixed in [v0.6.1](https://github.com/LupusMalusDeviant/mcp-mcp/releases/tag/v0.6.1) and [v0.6.2](https://github.com/LupusMalusDeviant/mcp-mcp/releases/tag/v0.6.2) |
+| M9 "v0.6.0 pre-release" | Everything since v0.5.0 brought into a tagged build | ✅ [pre-release](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.6.0) |
+| First real operation | An instance running on real hardware — which surfaced three defects no test could have found: a silently dropped session cookie over HTTP, `http://` redirects behind a TLS proxy, and **an admin UI that was never interactive at all** because the Blazor entry point was never served | ✅ fixed in [v0.6.1](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.6.1) and [v0.6.2](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.6.2) |
 | "1.0" | Real-world operation over time — the one thing tests can't provide | ⏳ open |
 
 ## License

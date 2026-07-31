@@ -36,13 +36,13 @@ jobs:
         env:
           # Auf Linux ist Docker da — ein nicht startbarer Postgres-Container ist dort ein
           # echter Fehler und darf nicht zum stillen Skip werden.
-          MCPMCP_REQUIRE_POSTGRES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+          BIFROST_REQUIRE_POSTGRES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
           # Ebenso fuer die Container-Isolation: Auf Linux ist die Runtime da, ein Skip waere ein
           # stiller Ausfall des Nachweises. Auf Windows fehlen Linux-Container — dort wird
           # uebersprungen, und das Skip-Gate laeuft ohnehin nur auf Linux.
-          MCPMCP_REQUIRE_CONTAINER: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+          BIFROST_REQUIRE_CONTAINER: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
         # Alle WasiRealHost*-Tests brauchen das gebaute Rust-Binary und laufen deshalb im Job
-        # wasi-component-spike (dort mit MCPMCP_REQUIRE_WASI_HOST=1, also ohne Skip-Option).
+        # wasi-component-spike (dort mit BIFROST_REQUIRE_WASI_HOST=1, also ohne Skip-Option).
         # Hier ausgeschlossen statt übersprungen: sonst reißt das Skip-Gate unten.
         run: dotnet test --configuration Release --no-build --filter "FullyQualifiedName!~WasiRealHost" --collect:"XPlat Code Coverage" --results-directory ./coverage --logger "trx;LogFileName=results.trx"
 
@@ -70,16 +70,16 @@ jobs:
         run: |
           BEST=0
           for f in $(find coverage -name 'coverage.cobertura.xml'); do
-            RATE=$(grep -o '<package name="McpMcp.Core" line-rate="[0-9.]*"' "$f" \
+            RATE=$(grep -o '<package name="Bifrost.Core" line-rate="[0-9.]*"' "$f" \
                    | grep -o 'line-rate="[0-9.]*"' | grep -o '[0-9.]*' || true)
             if [ -n "$RATE" ]; then
               PCT=$(awk -v r="$RATE" 'BEGIN { printf "%d", r * 10000 }')
               [ "$PCT" -gt "$BEST" ] && BEST=$PCT
             fi
           done
-          echo "McpMcp.Core Zeilenabdeckung: $(awk -v b="$BEST" 'BEGIN { printf "%.2f", b / 100 }') %"
+          echo "Bifrost.Core Zeilenabdeckung: $(awk -v b="$BEST" 'BEGIN { printf "%.2f", b / 100 }') %"
           if [ "$BEST" -lt 8000 ]; then
-            echo "::error::Zeilenabdeckung von McpMcp.Core unter der NFR-08-Schwelle von 80 %."
+            echo "::error::Zeilenabdeckung von Bifrost.Core unter der NFR-08-Schwelle von 80 %."
             exit 1
           fi
 
@@ -104,8 +104,8 @@ jobs:
 
       - name: Run load benchmark
         env:
-          MCPMCP_RUN_BENCHMARK: "1"
-        run: dotnet test tests/McpMcp.Integration.Tests --configuration Release --filter "FullyQualifiedName~PerformanceBenchmarkTests" --logger "console;verbosity=detailed"
+          BIFROST_RUN_BENCHMARK: "1"
+        run: dotnet test tests/Bifrost.Integration.Tests --configuration Release --filter "FullyQualifiedName~PerformanceBenchmarkTests" --logger "console;verbosity=detailed"
 
   wasi-component-spike:
     strategy:
@@ -150,14 +150,14 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           # Das Binary ist hier garantiert da — ein Skip wäre ein stiller Ausfall des Nachweises.
-          MCPMCP_REQUIRE_WASI_HOST: "1"
-        run: dotnet test tests/McpMcp.Upstream.Tests --configuration Release --filter "FullyQualifiedName~WasiRealHost" --logger "console;verbosity=normal"
+          BIFROST_REQUIRE_WASI_HOST: "1"
+        run: dotnet test tests/Bifrost.Upstream.Tests --configuration Release --filter "FullyQualifiedName~WasiRealHost" --logger "console;verbosity=normal"
 
       - name: Signiertes Component durch die Governance-Pipeline (M2)
         working-directory: ${{ github.workspace }}
         env:
-          MCPMCP_REQUIRE_WASI_HOST: "1"
-        run: dotnet test tests/McpMcp.Integration.Tests --configuration Release --filter "FullyQualifiedName~WasiRealHost" --logger "console;verbosity=normal"
+          BIFROST_REQUIRE_WASI_HOST: "1"
+        run: dotnet test tests/Bifrost.Integration.Tests --configuration Release --filter "FullyQualifiedName~WasiRealHost" --logger "console;verbosity=normal"
 
   isolation-comparison:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -186,7 +186,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Build image
-        run: docker build -t mcpmcp:ci .
+        run: docker build -t bifrost:ci .
 
       # Plan 0003, WP7.1: Der WASI-Host wird MIT ausgeliefert. Ohne diese Prüfung wäre "der
       # Pluginpfad ist deploybar" eine Behauptung — ein fehlendes oder für die falsche
@@ -211,7 +211,7 @@ jobs:
           import json,struct,sys
           msg=json.dumps({'id':1,'type':'hello','protocolVersion':'$VERSION'}).encode()
           sys.stdout.buffer.write(struct.pack('>I',len(msg))+msg)" \
-            | docker run -i --rm --entrypoint /usr/local/bin/mcpmcp-wasi-host mcpmcp:ci host \
+            | docker run -i --rm --entrypoint /usr/local/bin/bifrost-wasi-host bifrost:ci host \
             | tr -d '\0')
           echo "Host-Antwort: $ANSWER"
 
@@ -227,7 +227,7 @@ jobs:
 
       - name: Container läuft non-root (WP7.2)
         run: |
-          CONTAINER_UID=$(docker run --rm --entrypoint id mcpmcp:ci -u)
+          CONTAINER_UID=$(docker run --rm --entrypoint id bifrost:ci -u)
           echo "Container-UID: $CONTAINER_UID"
           if [ "$CONTAINER_UID" = "0" ]; then
             echo "::error::Der Container läuft als root."
@@ -244,7 +244,7 @@ jobs:
       # ein verdoppeltes Image durchzulassen.
       - name: Verify image size < 350 MB (WP7 DoD, angehoben in v0.6.2)
         run: |
-          BYTES=$(docker image inspect mcpmcp:ci --format '{{.Size}}')
+          BYTES=$(docker image inspect bifrost:ci --format '{{.Size}}')
           MB=$((BYTES / 1024 / 1024))
           echo "Image size: ${MB} MB"
           if [ "$MB" -ge 350 ]; then
@@ -259,7 +259,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Verify linux/arm64 image builds
-        run: docker buildx build --platform linux/arm64 -t mcpmcp:ci-arm64 .
+        run: docker buildx build --platform linux/arm64 -t bifrost:ci-arm64 .
 
       - name: Compose-Beispiele sind gültig (SQLite-Default und Postgres-Override)
         run: |
@@ -268,14 +268,14 @@ jobs:
 
       - name: Smoke-test container starts and answers /healthz
         run: |
-          docker run -d --name mcpmcp-ci -p 8080:8080 mcpmcp:ci
+          docker run -d --name bifrost-ci -p 8080:8080 bifrost:ci
           for i in $(seq 1 30); do
-            if docker exec mcpmcp-ci dotnet McpMcp.Server.dll --healthcheck; then
-              echo "healthy"; docker rm -f mcpmcp-ci; exit 0
+            if docker exec bifrost-ci dotnet Bifrost.Server.dll --healthcheck; then
+              echo "healthy"; docker rm -f bifrost-ci; exit 0
             fi
             sleep 2
           done
           echo "::error::Container wurde nicht healthy."
-          docker logs mcpmcp-ci
-          docker rm -f mcpmcp-ci
+          docker logs bifrost-ci
+          docker rm -f bifrost-ci
           exit 1

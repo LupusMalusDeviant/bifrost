@@ -7,7 +7,7 @@
 
 ## Kontext und Problemstellung
 
-Mehrere Agenten sollen viele MCP-Server nutzen. Bei Direktanbindung wächst der Verwaltungsaufwand mit Agenten × Server, und die vier Kernanforderungen aus [PRD 0001](../prd/0001-mcp-mcp-meta-gateway.md) — zentrales Logging (FR-21), RBAC (FR-27 ff.), Token-Sparen (FR-11 ff.) und Hot-Swap (FR-06) — sind nur an einer Stelle durchsetzbar, durch die *jeder* Call fließt. Der User fragte explizit, ob Steuerung „über einen Proxy-Gateway" machbar ist.
+Mehrere Agenten sollen viele MCP-Server nutzen. Bei Direktanbindung wächst der Verwaltungsaufwand mit Agenten × Server, und die vier Kernanforderungen aus [PRD 0001](../prd/0001-bifrost-meta-gateway.md) — zentrales Logging (FR-21), RBAC (FR-27 ff.), Token-Sparen (FR-11 ff.) und Hot-Swap (FR-06) — sind nur an einer Stelle durchsetzbar, durch die *jeder* Call fließt. Der User fragte explizit, ob Steuerung „über einen Proxy-Gateway" machbar ist.
 
 **Kernfrage:** Über welche Grundarchitektur werden Agenten mit MCP-Servern verbunden, sodass Logging, RBAC, Token-Optimierung und Hot-Swap zentral erzwungen werden können?
 

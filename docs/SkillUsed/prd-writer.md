@@ -2,7 +2,7 @@
 
 ## 2026-07-17 — Run
 
-**Aufgabe:** PRD für MCP-MCP (Self-hosted Meta-MCP-Gateway auf .NET) mit 7 Keyfeatures erstellen.
+**Aufgabe:** PRD für B.I.F.R.O.S.T (Self-hosted Meta-MCP-Gateway auf .NET) mit 7 Keyfeatures erstellen.
 
 **Entscheidungen:**
 - Einsatzkontext: Self-hosted Multi-Agent
@@ -12,7 +12,7 @@
 - Hinweis: `references/`-Ordner des Skills fehlte — PRD ohne Template/Checkliste nach Skill-Abschnittsstruktur erstellt.
 
 **Artefakte:**
-- docs/prd/0001-mcp-mcp-meta-gateway.md (neu, docs/prd/ angelegt)
+- docs/prd/0001-bifrost-meta-gateway.md (neu, docs/prd/ angelegt)
 
 **Status:** abgeschlossen
 

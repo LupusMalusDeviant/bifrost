@@ -58,7 +58,7 @@ Werkzeuge legen kann.
 
 ## 2026-07-17 — Run
 
-**Aufgabe:** Initialer ADR-Satz (8 Entscheidungen) für MCP-MCP aus PRD 0001 ableiten.
+**Aufgabe:** Initialer ADR-Satz (8 Entscheidungen) für B.I.F.R.O.S.T aus PRD 0001 ableiten.
 
 **Entscheidungen:**
 - Alle 8 Entscheidungen vom Product Owner vorab bestätigt (AskUserQuestion-Runde vor PRD) → Status direkt „Akzeptiert".

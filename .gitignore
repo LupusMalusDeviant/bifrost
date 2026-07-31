@@ -481,3 +481,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Lokale Laufzeitdaten eines "dotnet run" (SQLite-DB + DataProtection-Key-Ring)
+src/Bifrost.Server/data/

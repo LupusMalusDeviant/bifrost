@@ -1,10 +1,10 @@
-# Betrieb — MCP-MCP Gateway
+# Betrieb — B.I.F.R.O.S.T Gateway
 
 Praxisleitfaden zum Deployment und Betrieb. Zielgruppe: Self-hosted Single-Operator (ADR-0001).
 
 ### Die Web-UI braucht HTTPS — sonst hält die Anmeldung nicht
 
-**Hinter einem TLS-Proxy zusätzlich `MCPMCP_TRUSTED_PROXIES` setzen.** Sonst sieht der Gateway nur
+**Hinter einem TLS-Proxy zusätzlich `BIFROST_TRUSTED_PROXIES` setzen.** Sonst sieht der Gateway nur
 HTTP und baut seine Umleitungen daraus: Wer eine geschützte Seite abgemeldet aufruft, wird von einer
 `https`-Seite auf eine `http`-Adresse geschickt und bekommt vom Proxy ein
 `400 The plain HTTP request was sent to HTTPS port`.
@@ -48,7 +48,7 @@ einem API-Key im Header, nicht mit einem Cookie.
 
 ```bash
 docker compose up -d          # SQLite-Default, ein Volume
-docker compose logs mcpmcp    # Bootstrap-Zugangsdaten NUR beim Erststart ablesen
+docker compose logs bifrost    # Bootstrap-Zugangsdaten NUR beim Erststart ablesen
 ```
 
 Beim **Erststart** legt der Gateway zwei Zugänge an und loggt sie **genau einmal** (Henne-Ei — danach nie wieder):
@@ -67,26 +67,26 @@ Beide Werte sofort sichern. Verloren? Siehe [Zugang zurücksetzen](#zugang-zurü
 
 | Variable | Default | Zweck |
 |---|---|---|
-| `MCPMCP_DATA_DIR` | `data` (bzw. `/data` im Container) | Verzeichnis für SQLite-DB **und** DataProtection-Key-Ring |
-| `MCPMCP_DB_PROVIDER` | `sqlite` | `sqlite` oder `postgres` |
-| `MCPMCP_DB_CONNECTION` | `Data Source=<datadir>/mcpmcp.db` | Connection-String (bei Postgres Pflicht) |
-| `MCPMCP_AUDIT_MODE` | `best-effort` | `best-effort` verwirft bei Überlast gezählt; `compliance` meldet Überlast explizit und retryt DB-Fehler mit Backpressure |
+| `BIFROST_DATA_DIR` | `data` (bzw. `/data` im Container) | Verzeichnis für SQLite-DB **und** DataProtection-Key-Ring |
+| `BIFROST_DB_PROVIDER` | `sqlite` | `sqlite` oder `postgres` |
+| `BIFROST_DB_CONNECTION` | `Data Source=<datadir>/bifrost.db` | Connection-String (bei Postgres Pflicht) |
+| `BIFROST_AUDIT_MODE` | `best-effort` | `best-effort` verwirft bei Überlast gezählt; `compliance` meldet Überlast explizit und retryt DB-Fehler mit Backpressure |
 | `ASPNETCORE_URLS` | `http://+:8080` (Container) | Bind-Adresse/Port |
-| `MCPMCP_KEYRING_CERT_PATH` | *(nicht gesetzt)* | PFX-Zertifikat zum Verschlüsseln des Key-Rings (siehe [Key-Ring schützen](#key-ring-schützen)) |
-| `MCPMCP_KEYRING_CERT_PASSWORD` | *(nicht gesetzt)* | Passwort des PFX |
-| `MCPMCP_OAUTH_ISSUER` | *(nicht gesetzt)* | Authorization Server, dem für **eingehende** Agenten-Token vertraut wird. Gesetzt = der Gateway ist zusätzlich OAuth-Resource-Server (siehe [Agenten über OAuth](#agenten-über-oauth)) |
-| `MCPMCP_OAUTH_AUDIENCE` | `MCPMCP_PUBLIC_BASE_URL` | Kanonische Adresse dieses Gateways; ein Token muss darauf lauten |
-| `MCPMCP_WASI_HOST` | *(nicht gesetzt)* | Pfad zum WASI-Host-Binary. **Pflicht für die Installation von Connector-Paketen** — ohne ihn lässt sich ein Paket nicht proben, und ungeprobt wird nichts aktiv |
-| `MCPMCP_PUBLIC_BASE_URL` | *(nicht gesetzt)* | Öffentliche Adresse des Gateways; nötig für die Redirect-URI der Upstream-Autorisierung (siehe [OAuth gegen Upstreams](#oauth-gegen-upstreams)) |
+| `BIFROST_KEYRING_CERT_PATH` | *(nicht gesetzt)* | PFX-Zertifikat zum Verschlüsseln des Key-Rings (siehe [Key-Ring schützen](#key-ring-schützen)) |
+| `BIFROST_KEYRING_CERT_PASSWORD` | *(nicht gesetzt)* | Passwort des PFX |
+| `BIFROST_OAUTH_ISSUER` | *(nicht gesetzt)* | Authorization Server, dem für **eingehende** Agenten-Token vertraut wird. Gesetzt = der Gateway ist zusätzlich OAuth-Resource-Server (siehe [Agenten über OAuth](#agenten-über-oauth)) |
+| `BIFROST_OAUTH_AUDIENCE` | `BIFROST_PUBLIC_BASE_URL` | Kanonische Adresse dieses Gateways; ein Token muss darauf lauten |
+| `BIFROST_WASI_HOST` | *(nicht gesetzt)* | Pfad zum WASI-Host-Binary. **Pflicht für die Installation von Connector-Paketen** — ohne ihn lässt sich ein Paket nicht proben, und ungeprobt wird nichts aktiv |
+| `BIFROST_PUBLIC_BASE_URL` | *(nicht gesetzt)* | Öffentliche Adresse des Gateways; nötig für die Redirect-URI der Upstream-Autorisierung (siehe [OAuth gegen Upstreams](#oauth-gegen-upstreams)) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | *(nicht gesetzt)* | Ziel für Metriken **und** Traces (siehe [Metriken und Traces](#metriken-und-traces)) |
-| `MCPMCP_AUDIT_DEBUG_PAYLOADS` | *(aus)* | `1`/`true` schaltet den Debug-Modus des Audits ein (siehe [Audit-Debug-Modus](#audit-debug-modus)) |
-| `MCPMCP_AUDIT_RETENTION_DAYS` | `30` | Aufbewahrung der Audit-Ereignisse in Tagen; ältere werden täglich gelöscht (FR-25) |
-| `MCPMCP_MAX_RESULT_CHARS` | *(aus)* | Kürzt Tool-Ergebnisse oberhalb dieser Zeichenzahl (FR-16, siehe [Ergebnis-Kompression](#ergebnis-kompression)) |
-| `MCPMCP_GUARD_ENABLED` | `1` | `0`/`false` schaltet die Secret-Guardrail global ab (Not-Aus) |
-| `MCPMCP_GUARD_MAX_SCAN_CHARS` | `262144` | Nutzlasten darüber werden nicht geprüft und **abgewiesen** |
-| `MCPMCP_GUARD_ALLOW_CUSTOM_PATTERNS` | *(aus)* | Erlaubt Admins eigene Regex in der UI (siehe [Guardrails](#guardrails)) |
-| `MCPMCP_MCP_STATELESS` | `1` | `0`/`false` schaltet auf den Sitzungsbetrieb der alten Protokollrevision zurück (siehe [Protokollstand](#protokollstand-sessionlos-oder-mit-sitzung)) |
-| `MCPMCP_MCP_LIST_TTL_SECONDS` | `60` | Wie lange ein Client die Werkzeug-, Resource- und Prompt-Listen für frisch halten darf. `0` = kein Hinweis |
+| `BIFROST_AUDIT_DEBUG_PAYLOADS` | *(aus)* | `1`/`true` schaltet den Debug-Modus des Audits ein (siehe [Audit-Debug-Modus](#audit-debug-modus)) |
+| `BIFROST_AUDIT_RETENTION_DAYS` | `30` | Aufbewahrung der Audit-Ereignisse in Tagen; ältere werden täglich gelöscht (FR-25) |
+| `BIFROST_MAX_RESULT_CHARS` | *(aus)* | Kürzt Tool-Ergebnisse oberhalb dieser Zeichenzahl (FR-16, siehe [Ergebnis-Kompression](#ergebnis-kompression)) |
+| `BIFROST_GUARD_ENABLED` | `1` | `0`/`false` schaltet die Secret-Guardrail global ab (Not-Aus) |
+| `BIFROST_GUARD_MAX_SCAN_CHARS` | `262144` | Nutzlasten darüber werden nicht geprüft und **abgewiesen** |
+| `BIFROST_GUARD_ALLOW_CUSTOM_PATTERNS` | *(aus)* | Erlaubt Admins eigene Regex in der UI (siehe [Guardrails](#guardrails)) |
+| `BIFROST_MCP_STATELESS` | `1` | `0`/`false` schaltet auf den Sitzungsbetrieb der alten Protokollrevision zurück (siehe [Protokollstand](#protokollstand-sessionlos-oder-mit-sitzung)) |
+| `BIFROST_MCP_LIST_TTL_SECONDS` | `60` | Wie lange ein Client die Werkzeug-, Resource- und Prompt-Listen für frisch halten darf. `0` = kein Hinweis |
 
 ## Protokollstand: sessionlos oder mit Sitzung
 
@@ -104,10 +104,10 @@ im sessionlosen Betrieb:
   (der Aufruf endet mit einer Frage, der Client wiederholt ihn mit der Antwort). Ein älterer Client
   bekommt sie nicht — für ihn bleibt die Freigabe-Warteschlange in der Oberfläche.
 - **`tools/list_changed`.** An seine Stelle tritt die Cache-Frist auf den Listen
-  (`MCPMCP_MCP_LIST_TTL_SECONDS`): Der Client holt sich den Stand nach Ablauf selbst. Eine Änderung
+  (`BIFROST_MCP_LIST_TTL_SECONDS`): Der Client holt sich den Stand nach Ablauf selbst. Eine Änderung
   am Katalog ist also nach höchstens einer Frist sichtbar, nicht sofort.
 
-**Wann `MCPMCP_MCP_STATELESS=0` sinnvoll ist:** wenn *alle* angeschlossenen Clients auf dem alten
+**Wann `BIFROST_MCP_STATELESS=0` sinnvoll ist:** wenn *alle* angeschlossenen Clients auf dem alten
 Stand sind und die Rückfrage im laufenden Aufruf gebraucht wird.
 
 > **Der Schalter gilt für den ganzen Gateway, nicht je Client.** Im Sitzungsbetrieb wird eine
@@ -177,14 +177,14 @@ Zwei weitere Punkte:
   Secrets in ein zweites und meist schwächer geschütztes System.
 - **Über der Prüfgrenze wird abgewiesen**, nicht durchgelassen — sonst wäre die Grenze genau der
   blinde Fleck, den man ansteuert. Wer große Ergebnisse erwartet, kombiniert das mit
-  `MCPMCP_MAX_RESULT_CHARS`: Die Kürzung greift vorher, und das gekürzte Ergebnis läuft durch.
+  `BIFROST_MAX_RESULT_CHARS`: Die Kürzung greift vorher, und das gekürzte Ergebnis läuft durch.
 
 ### Eigene Regeln
 
 Der **geführte Editor** ist der Normalfall: Präfix, Zeichenart und Längenbereich als Felder,
 daraus wird das Muster erzeugt. Das deckt praktisch alle Token-Formate ab.
 
-Freitext-Regex ist standardmäßig **aus** und über `MCPMCP_GUARD_ALLOW_CUSTOM_PATTERNS=1`
+Freitext-Regex ist standardmäßig **aus** und über `BIFROST_GUARD_ALLOW_CUSTOM_PATTERNS=1`
 einschaltbar. Das ist eine bewusste Vertrauensentscheidung: .NET bietet laut Microsoft keine
 Sicherheitsgrenze gegen bösartige Muster — auch die hier verwendete backtracking-freie Engine
 schützt gegen teure *Eingaben*, nicht gegen bösartige *Muster*. Wer den Schalter setzt, erlaubt
@@ -211,7 +211,7 @@ Welcher Weg das ist, hängt vom Protokollstand des Clients ab
   das Formular und wiederholt den Aufruf mit der Antwort. Das funktioniert auch ohne Sitzung und ist
   im Normalbetrieb der einzige Weg.
 - **`2025-11-25` und älter:** über die klassische **Elicitation** — nur im Sitzungsbetrieb
-  (`MCPMCP_MCP_STATELESS=0`), weil der Gateway den Client dafür während des Aufrufs erreichen muss.
+  (`BIFROST_MCP_STATELESS=0`), weil der Gateway den Client dafür während des Aufrufs erreichen muss.
 
 > **Ein Client auf dem neuen Stand, der kein Formular anzeigen kann,** bekommt beim Aufruf eines
 > freigabepflichtigen Werkzeugs einen Fehler seines eigenen SDK (*„no ElicitationHandler is
@@ -346,7 +346,7 @@ Zentrale Skills (Assets) gehen auf **zwei** Wegen an die Agenten, und der Unters
 
 | Weg | Wer löst aus | Wo er auftaucht |
 |---|---|---|
-| MCP-**Prompt** `assets__<name>` und Resource `mcpmcp://assets/<name>` | **der Mensch** | Slash-Menü bzw. Anhang-Menü des Clients |
+| MCP-**Prompt** `assets__<name>` und Resource `bifrost://assets/<name>` | **der Mensch** | Slash-Menü bzw. Anhang-Menü des Clients |
 | Meta-Tools `list_skills` / `read_skill` | **das Modell** | im Tool-Katalog, wie jedes andere Tool |
 
 Der Prompt-Weg allein reicht nicht, wenn ein Agent *selbst* merken soll, dass es für seine Aufgabe
@@ -466,8 +466,8 @@ anmelden. Der Gateway ist dann **Resource Server** im Sinne der MCP-Autorisierun
 keine Token aus, das bleibt Sache des Authorization Servers.
 
 ```bash
-MCPMCP_OAUTH_ISSUER=https://login.example.com/realms/mcpmcp
-MCPMCP_PUBLIC_BASE_URL=https://gateway.example.com
+BIFROST_OAUTH_ISSUER=https://login.example.com/realms/bifrost
+BIFROST_PUBLIC_BASE_URL=https://gateway.example.com
 ```
 
 Damit passieren drei Dinge:
@@ -481,7 +481,7 @@ Damit passieren drei Dinge:
   Ohne diese Prüfung wäre der Gateway die Stelle, an der fremde Token eingelöst werden.
 
 **API-Keys bleiben bestehen.** Sie werden zuerst geprüft, das Token danach; ein Agent, der heute
-läuft, läuft ohne Umstellung weiter. Ohne `MCPMCP_OAUTH_ISSUER` ändert sich gar nichts — der
+läuft, läuft ohne Umstellung weiter. Ohne `BIFROST_OAUTH_ISSUER` ändert sich gar nichts — der
 Standard nennt Autorisierung ausdrücklich optional.
 
 > **Wie eine neue Identität entsteht:** Beim ersten gültigen Token eines unbekannten Subjects legt
@@ -499,12 +499,12 @@ nicht. Mit `Http.OAuth` holt sich der Gateway ein Token beim Authorization Serve
 ```json
 "Http": {
   "Endpoint": "https://upstream.example.com/mcp",
-  "OAuth": { "ClientId": "mcpmcp-gateway", "ClientSecret": "…" }
+  "OAuth": { "ClientId": "bifrost-gateway", "ClientSecret": "…" }
 }
 ```
 
 **Voraussetzung:** Der Gateway ist als Client beim Authorization Server registriert, mit der
-Redirect-URI `<MCPMCP_PUBLIC_BASE_URL>/oauth/upstream/callback`. Dynamic Client Registration ist im
+Redirect-URI `<BIFROST_PUBLIC_BASE_URL>/oauth/upstream/callback`. Dynamic Client Registration ist im
 Standard abgelöst, und Client-ID-Metadata-Documents verlangen ein öffentlich abrufbares Dokument —
 ein selbst gehosteter Gateway steht oft nicht im Netz. Vorregistrierung ist deshalb der Weg, der
 ohne öffentliche Erreichbarkeit funktioniert.
@@ -717,7 +717,7 @@ Aufruf — dafür braucht es einen eigenen Entwurf.
 
 Ein signiertes WebAssembly-Component läuft in einem eigenen Rust-Host-Prozess
 ([ADR-0020](adr/0020-wasi-runtime-out-of-process-rust-host.md)). Der Host **liegt im Image** unter
-`/usr/local/bin/mcpmcp-wasi-host` — genau dieser Pfad gehört in `Wasi.HostExecutable` eines
+`/usr/local/bin/bifrost-wasi-host` — genau dieser Pfad gehört in `Wasi.HostExecutable` eines
 WASI-Upstreams.
 
 Vertrauen kommt **ausschließlich** aus dem Publisher-Trust-Store, nicht aus der Upstream-Config:
@@ -858,7 +858,7 @@ Der Trigger-Endpunkt ist `POST /webhooks/{id}/trigger` und ist der **einzige una
 Pfad**. Absicherung über HMAC-SHA256:
 
 - Der Absender signiert `{timestamp}.{body}` mit dem Secret und schickt zwei Header:
-  `X-McpMcp-Signature: sha256=<hmac>` und `X-McpMcp-Timestamp: <unix-sekunden>`.
+  `X-Bifrost-Signature: sha256=<hmac>` und `X-Bifrost-Timestamp: <unix-sekunden>`.
 - Anfragen älter als **5 Minuten** werden abgewiesen (Replay-Schutz).
 - Fehlende, falsche oder abgelaufene Signatur → **401**. Eine unbekannte Webhook-Id liefert
   ebenfalls 401, damit sich keine gültigen Ids durchprobieren lassen.
@@ -872,14 +872,14 @@ als seine Identität ohnehin darf.
 ## Ergebnis-Kompression
 
 Ein einzelnes umfangreiches Tool-Ergebnis kann die Token-Ersparnis der Profile wieder auffressen.
-`MCPMCP_MAX_RESULT_CHARS` begrenzt das:
+`BIFROST_MAX_RESULT_CHARS` begrenzt das:
 
 ```
-MCPMCP_MAX_RESULT_CHARS=20000
+BIFROST_MAX_RESULT_CHARS=20000
 ```
 
 Standardmäßig **aus** — Kürzen ist verlustbehaftet, das soll niemand unbemerkt bekommen. Wenn es
-greift, bleibt das Ergebnis gültiges JSON und trägt das Feld `_mcpmcp_truncated: true` samt Hinweis,
+greift, bleibt das Ergebnis gültiges JSON und trägt das Feld `_bifrost_truncated: true` samt Hinweis,
 wie viel fehlt. Bei Listen bleiben die vorderen Einträge erhalten und `totalItems` nennt die
 Gesamtzahl; bei einzelnen großen Objekten ist der Ausschnitt ausdrücklich als nicht parsbar
 gekennzeichnet. Das Audit hält weiterhin die **ungekürzte** Größe fest, damit man die Kürzung
@@ -910,7 +910,7 @@ Standardmäßig schreibt das Audit **keine** Ergebnis-Payloads mit — nur deren
 Zur Fehlersuche lässt sich das umschalten:
 
 ```
-MCPMCP_AUDIT_DEBUG_PAYLOADS=1
+BIFROST_AUDIT_DEBUG_PAYLOADS=1
 ```
 
 Dann landet der vollständige Antwort-Payload im Audit-Log, **maskiert** durch dieselbe Redaction
@@ -927,7 +927,7 @@ Admin pflegen; sie gelten zusätzlich zu den globalen Mustern (`password`, `toke
 ## Agent anbinden
 
 ```bash
-claude mcp add --transport http mcpmcp http://localhost:8080/mcp \
+claude mcp add --transport http bifrost http://localhost:8080/mcp \
   --header "Authorization: Bearer <API-KEY>"
 ```
 
@@ -939,7 +939,7 @@ Für größere Setups (viel Audit-Volumen, mehrere Instanzen an einer DB):
 
 ```bash
 docker compose --profile postgres up -d
-# in docker-compose.yml MCPMCP_DB_PROVIDER + MCPMCP_DB_CONNECTION einkommentieren,
+# in docker-compose.yml BIFROST_DB_PROVIDER + BIFROST_DB_CONNECTION einkommentieren,
 # und das Passwort (CHANGE_ME) ersetzen.
 ```
 
@@ -960,12 +960,12 @@ Der Gateway verwaltet sein Datenbankschema über EF-Core-Migrationen. Beim Start
 Es ist **kein manueller Schritt nötig** — der Gateway erkennt das Alt-Schema selbst und stempelt die Baseline. Trotzdem gilt die übliche Sorgfalt:
 
 1. Dienst stoppen.
-2. **Datenverzeichnis sichern** (`mcpmcp.db` **und** `keys/`, siehe [Backup](#backup)).
+2. **Datenverzeichnis sichern** (`bifrost.db` **und** `keys/`, siehe [Backup](#backup)).
 3. Neue Version starten und im Log `BaselinedLegacySchema` bestätigen.
 
 Bei einem Rollback auf einen solchen Alt-Build ist die zusätzliche Tabelle `__EFMigrationsHistory` unschädlich — er ignoriert sie.
 
-Jeder Provider hat eine eigene Migrations-Assembly (`McpMcp.Persistence.Migrations.Sqlite` bzw. `.Postgres`), weil SQLite und PostgreSQL unterschiedliches DDL brauchen. Beide sind im Image enthalten; die Auswahl erfolgt automatisch über `MCPMCP_DB_PROVIDER`.
+Jeder Provider hat eine eigene Migrations-Assembly (`Bifrost.Persistence.Migrations.Sqlite` bzw. `.Postgres`), weil SQLite und PostgreSQL unterschiedliches DDL brauchen. Beide sind im Image enthalten; die Auswahl erfolgt automatisch über `BIFROST_DB_PROVIDER`.
 
 ## TLS / Reverse-Proxy
 
@@ -981,9 +981,9 @@ Der Proxy sollte `X-Forwarded-*`-Header setzen; das UI-Cookie ist `SameSite=Stri
 
 ## Backup
 
-Alles Persistente liegt im Datenverzeichnis (`MCPMCP_DATA_DIR`):
+Alles Persistente liegt im Datenverzeichnis (`BIFROST_DATA_DIR`):
 
-- `mcpmcp.db` — Konfiguration, RBAC, API-Key-Hashes, Audit-Log (bei SQLite).
+- `bifrost.db` — Konfiguration, RBAC, API-Key-Hashes, Audit-Log (bei SQLite).
 - `keys/` — **DataProtection-Key-Ring**. Ohne ihn sind die verschlüsselten Upstream-Credentials unbrauchbar.
 
 Beide **zusammen** sichern (Volume-Snapshot bei gestopptem Container oder DB-Dump + `keys/`-Kopie). Bei PostgreSQL: DB separat dumpen, `keys/` weiterhin aus dem Datenvolume sichern.
@@ -994,12 +994,12 @@ Das Audit-Log wächst mit jedem Call. Default-Aufbewahrung: 30 Tage, stündliche
 
 ## Metriken und Traces
 
-Der Gateway misst jeden Tool-Call (FR-26) unter dem Meter `McpMcp.Gateway`:
+Der Gateway misst jeden Tool-Call (FR-26) unter dem Meter `Bifrost.Gateway`:
 
 | Instrument | Bedeutung | Dimensionen |
 |---|---|---|
-| `mcpmcp.tool_calls` | Zähler aller Calls — daraus ergeben sich Calls/s und Fehlerquote | `server`, `tool`, `status`, `origin` |
-| `mcpmcp.tool_call_duration` | Latenz-Histogramm (ms) — daraus Perzentile | `server`, `tool`, `status` |
+| `bifrost.tool_calls` | Zähler aller Calls — daraus ergeben sich Calls/s und Fehlerquote | `server`, `tool`, `status`, `origin` |
+| `bifrost.tool_call_duration` | Latenz-Histogramm (ms) — daraus Perzentile | `server`, `tool`, `status` |
 
 Der Export ist **aus**, solange kein Ziel konfiguriert ist (sonst würde der Exporter dauerhaft ins Leere laufen):
 
@@ -1011,14 +1011,14 @@ Exportiert wird per **OTLP** — der OpenTelemetry-Standard. Für **Prometheus**
 
 ### Traces
 
-Derselbe Schalter aktiviert **Traces** aus der Quelle `McpMcp.Gateway`. Metriken beantworten „wie
+Derselbe Schalter aktiviert **Traces** aus der Quelle `Bifrost.Gateway`. Metriken beantworten „wie
 viele und wie schnell im Mittel", Traces beantworten „wo ist die Zeit *dieses einen* Aufrufs
 geblieben":
 
 | Span | Bedeutung | Tags |
 |---|---|---|
-| `mcpmcp.tool_call` | Der gesamte Aufruf durch die Pipeline | `mcpmcp.tool`, `mcpmcp.server`, `mcpmcp.status`, `mcpmcp.origin`, `mcpmcp.caller` |
-| `mcpmcp.upstream_call` | Nur der Fremdanteil, als Kind-Span | `mcpmcp.server`, `mcpmcp.upstream_tool` |
+| `bifrost.tool_call` | Der gesamte Aufruf durch die Pipeline | `bifrost.tool`, `bifrost.server`, `bifrost.status`, `bifrost.origin`, `bifrost.caller` |
+| `bifrost.upstream_call` | Nur der Fremdanteil, als Kind-Span | `bifrost.server`, `bifrost.upstream_tool` |
 
 Die Differenz zwischen beiden ist der **Gateway-Overhead** — genau die Frage, die NFR-01 stellt.
 Ohne die Trennung sieht man in einer langsamen Antwort nicht, wer sie verursacht hat.
@@ -1040,7 +1040,7 @@ Trace-Strom fluten, ohne etwas über einen Tool-Aufruf zu sagen.
 - `GET /healthz` — Prozess lebt (anonym).
 - `GET /readyz` — DB erreichbar + Upstream-Zustände (anonym).
 
-Der Container-Healthcheck nutzt `dotnet McpMcp.Server.dll --healthcheck` (self-ping, da das schlanke Runtime-Image kein `curl` enthält). Der Container läuft als non-root `app`-User.
+Der Container-Healthcheck nutzt `dotnet Bifrost.Server.dll --healthcheck` (self-ping, da das schlanke Runtime-Image kein `curl` enthält). Der Container läuft als non-root `app`-User.
 
 ## Key-Ring schützen
 
@@ -1050,12 +1050,12 @@ Er lässt sich mit einem X509-Zertifikat verschlüsseln (bewusst zertifikatsbasi
 
 ```bash
 # Zertifikat einmalig erzeugen (Beispiel, OpenSSL):
-openssl req -x509 -newkey rsa:2048 -keyout k.pem -out c.pem -days 3650 -nodes -subj "/CN=mcpmcp-keyring"
+openssl req -x509 -newkey rsa:2048 -keyout k.pem -out c.pem -days 3650 -nodes -subj "/CN=bifrost-keyring"
 openssl pkcs12 -export -out keyring.pfx -inkey k.pem -in c.pem -password pass:GEHEIM
 
 # Gateway damit starten:
-MCPMCP_KEYRING_CERT_PATH=/secrets/keyring.pfx
-MCPMCP_KEYRING_CERT_PASSWORD=GEHEIM
+BIFROST_KEYRING_CERT_PATH=/secrets/keyring.pfx
+BIFROST_KEYRING_CERT_PASSWORD=GEHEIM
 ```
 
 **Was das schützt und was nicht:** Liegt das PFX-Passwort in derselben Compose-Datei neben dem
@@ -1073,15 +1073,15 @@ Bootstrap-Zugänge werden nur bei **leerer** DB erzeugt. Für verlorene Zugänge
 ```bash
 # UI-Passwort zurücksetzen (Default-Benutzer "admin"; Rolle bleibt unverändert,
 # ein fehlender Nutzer wird als Admin angelegt):
-docker compose run --rm mcpmcp dotnet McpMcp.Server.dll --reset-ui-admin
-docker compose run --rm mcpmcp dotnet McpMcp.Server.dll --reset-ui-admin betreiber
+docker compose run --rm bifrost dotnet Bifrost.Server.dll --reset-ui-admin
+docker compose run --rm bifrost dotnet Bifrost.Server.dll --reset-ui-admin betreiber
 
 # Notfall-API-Key: legt eine NEUE Agenten-Identität mit Global-Grant an
 # (bestehende bleiben unangetastet):
-docker compose run --rm mcpmcp dotnet McpMcp.Server.dll --issue-bootstrap-key
+docker compose run --rm bifrost dotnet Bifrost.Server.dll --issue-bootstrap-key
 ```
 
-Ohne Container analog mit `dotnet run --project src/McpMcp.Server -- --reset-ui-admin`. Den Notfall-Zugang nach Gebrauch wieder entfernen, falls er nur der Wiederherstellung diente.
+Ohne Container analog mit `dotnet run --project src/Bifrost.Server -- --reset-ui-admin`. Den Notfall-Zugang nach Gebrauch wieder entfernen, falls er nur der Wiederherstellung diente.
 
 - **UI-Passwort vergessen, aber anderer Admin existiert** → einfacher über die UI (Seite „UI-Nutzer") neu setzen.
 

@@ -59,6 +59,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "bifrost-wasi-component-spike"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "ed25519-dalek",
+ "getrandom 0.4.3",
+ "hmac",
+ "serde",
+ "serde_json",
+ "sha2",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wat",
+ "wit-component",
+ "wit-parser 0.254.0",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -892,25 +911,6 @@ name = "maybe-owned"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4facc753ae494aeb6e3c22f839b158aebd4f9270f55cd3c79906c45476c47ab4"
-
-[[package]]
-name = "mcpmcp-wasi-component-spike"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "ed25519-dalek",
- "getrandom 0.4.3",
- "hmac",
- "serde",
- "serde_json",
- "sha2",
- "wasmtime",
- "wasmtime-wasi",
- "wat",
- "wit-component",
- "wit-parser 0.254.0",
-]
 
 [[package]]
 name = "memchr"

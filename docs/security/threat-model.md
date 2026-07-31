@@ -1,4 +1,4 @@
-# Threat-Model & Security-Posture — MCP-MCP v1.0
+# Threat-Model & Security-Posture — B.I.F.R.O.S.T v1.0
 
 Stand: 2026-07-24. Ergänzt [SECURITY.md](../../SECURITY.md).
 
@@ -69,13 +69,13 @@ prüft die Signatur, setzt Grants durch und führt aus. Vollständiger Review:
   SHA-256-Pin, isoliertes Environment, typisierte Parameter, Byte-/Zeit-/Parallelitätslimits und
   Prozessbaum-Kill reduzieren die Angriffsfläche, bilden aber keine Kernel-Sandbox. Untrusted native
   Programme benötigen den geplanten Containerpfad; neue Plugins sollen WASI Components verwenden.
-- **DataProtection-Key-Ring standardmäßig im Klartext auf der Platte** (`<datadir>/keys/`): entschlüsselt die at-rest verschlüsselten Upstream-Credentials. ✅ **v1.1 entschärft:** per `MCPMCP_KEYRING_CERT_PATH` lässt sich der Key-Ring mit einem X509-Zertifikat verschlüsseln (siehe [operations.md](../operations.md#key-ring-schützen)); ohne Konfiguration warnt der Gateway beim Start. Bleibt es beim Default, gilt weiterhin: **Datenvolume-Zugriff restriktiv** halten und wie ein Secret behandeln.
+- **DataProtection-Key-Ring standardmäßig im Klartext auf der Platte** (`<datadir>/keys/`): entschlüsselt die at-rest verschlüsselten Upstream-Credentials. ✅ **v1.1 entschärft:** per `BIFROST_KEYRING_CERT_PATH` lässt sich der Key-Ring mit einem X509-Zertifikat verschlüsseln (siehe [operations.md](../operations.md#key-ring-schützen)); ohne Konfiguration warnt der Gateway beim Start. Bleibt es beim Default, gilt weiterhin: **Datenvolume-Zugriff restriktiv** halten und wie ein Secret behandeln.
 - **Bootstrap-Key/UI-Passwort einmalig im Klartext geloggt**: bewusste Henne-Ei-Ausnahme (nur bei leerer DB, einmalig, LogLevel Warning). Ohne sie wäre eine frische Instanz unbenutzbar.
 - **Login-Endpoint ohne Antiforgery-Token**: vor der Anmeldung existiert kein gültiges Token; Login-CSRF-Restrisiko durch `SameSite=Strict` mitigiert.
 - **UI-Tool-Test unter Global-Grant-Identität**: UI-Operatoren können jedes Tool testen, unabhängig vom per-Key-RBAC — gerahmt durch die UI-Rollen (nur Operator/Admin). So gewollt („Test-Aufruf mit Admin-Rechten").
 - **Existenz-Leak bei `tools/call`-Deny**: ein verbotenes Tool liefert `Denied` (statt `ToolNotFound`), bestätigt also seine Existenz. `describe_tool` leakt bewusst nicht (verhält sich wie „nicht gefunden"). Minor Info-Disclosure.
 - **Federations-Loop-Erkennung deckt nur den direkten Selbstbezug** (FR-05): Der Header
-  `X-McpMcp-Instance` wird beim Aufbau der Upstream-Verbindung *einmal* gesetzt und kennt den
+  `X-Bifrost-Instance` wird beim Aufbau der Upstream-Verbindung *einmal* gesetzt und kennt den
   auslösenden Request nicht — eine Instanz-Kette lässt sich damit nicht weiterreichen. Erkannt wird
   daher A→A, **nicht** A→B→A. Die Fehlermeldung behauptete zwischenzeitlich „direkt oder transitiv";
   das war eine Zusicherung, die der Mechanismus nie eingelöst hat, und ist korrigiert.
@@ -123,4 +123,4 @@ prüft die Signatur, setzt Grants durch und führt aus. Vollständiger Review:
 
 ## Reporting
 
-Schwachstellen bitte über [GitHub Private Vulnerability Reporting](https://github.com/LupusMalusDeviant/mcp-mcp/security/advisories/new) melden (siehe SECURITY.md).
+Schwachstellen bitte über [GitHub Private Vulnerability Reporting](https://github.com/LupusMalusDeviant/bifrost/security/advisories/new) melden (siehe SECURITY.md).

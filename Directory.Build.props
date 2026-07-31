@@ -8,8 +8,8 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <Authors>MCP-MCP Project</Authors>
-    <Product>MCP-MCP</Product>
+    <Authors>B.I.F.R.O.S.T Project</Authors>
+    <Product>B.I.F.R.O.S.T</Product>
     <VersionPrefix>0.10.0</VersionPrefix>
     <Version>$(VersionPrefix)</Version>
     <PackageVersion>$(VersionPrefix)</PackageVersion>

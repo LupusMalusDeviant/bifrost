@@ -8,7 +8,7 @@
   <ItemGroup>
     <!-- MCP-Protokoll (ADR-0002). SDK 2.0.0 spricht die Spec-Revision 2026-07-28 und handelt mit
          aelteren Gegenstellen 2025-11-25 und frueher aus (Down-Level-Interop im SDK).
-         Die Aufteilung ist neu: .Core ist Client + Low-Level-Server (reicht fuer McpMcp.Upstream),
+         Die Aufteilung ist neu: .Core ist Client + Low-Level-Server (reicht fuer Bifrost.Upstream),
          das Hauptpaket bringt Hosting/DI und Attribut-Discovery dazu, .AspNetCore den Streamable-
          HTTP-Server. Extensions.Tasks bleibt bewusst DRAUSSEN: Unsere Vorgaenge laufen ueber den
          eigenen ITaskStore und die REST-Fassade (ADR-0019, Polling ist der Vertrag) — und die

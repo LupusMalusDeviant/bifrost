@@ -1,3 +1,8 @@
+// NICHT UMBENENNEN, solange die Fixtures nicht neu signiert werden koennen: Der Paketname steht in
+// den ausgelieferten, SIGNIERTEN Components unter spikes/wasi-component-runtime/fixtures und
+// bestimmt dort jeden Exportpfad ('mcpmcp:spike/tools@0.1.0.run') und damit den abgeleiteten
+// Werkzeugnamen. Im Repo liegt nur der oeffentliche Schluessel — ein neu gebautes Component liesse
+// sich hier nicht signieren. Der Name wechselt nur zusammen mit den Artefakten.
 package mcpmcp:spike@0.1.0;
 
 interface tools {

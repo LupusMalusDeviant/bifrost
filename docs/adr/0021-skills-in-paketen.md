@@ -13,7 +13,7 @@
 > | F3 Präfix `<paket-id>/<skill>` | **steht** (`ConnectorPackageInstaller`) |
 > | F4 Überschreiben mit Hinweis | **steht** (`SkillPublication.ReplacedLocalEdit`) |
 > | F5 Deinstallieren nimmt die Skills mit | **steht** (`IAssetStore.DeleteFromPackageAsync`, Ankündigung über `PreviewRemovalAsync`) |
-> | F1 Eigener Pakettyp `mcpmcp.skills.v1` | **offen** — heute trägt nur ein Connector-Paket Skills |
+> | F1 Eigener Pakettyp `bifrost.skills.v1` | **offen** — heute trägt nur ein Connector-Paket Skills |
 
 ## Kontext
 
@@ -39,7 +39,7 @@ Dem steht eine Asymmetrie gegenüber, die das ganze ADR bestimmt:
 ### 1. Umfang: zwei Pakettypen (F1)
 
 Neben dem Connector-Paket, das Skills mitbringen darf, kommt ein **eigener Pakettyp**
-`mcpmcp.skills.v1` für Skill-Bündel **ohne** Konnektor.
+`bifrost.skills.v1` für Skill-Bündel **ohne** Konnektor.
 
 Der Grund für einen zweiten Typ statt eines gelockerten ersten: `Transport` und `EntryPoint` sind
 im Connector-Manifest Pflichtfelder, und die **Probe** ist das Tor zur Aktivierung — der Grund,

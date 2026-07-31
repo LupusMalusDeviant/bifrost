@@ -1,0 +1,253 @@
+@page "/guardrails"
+@using Bifrost.Core.Guardrails
+@attribute [Authorize(Policy = UiPolicies.Admin)]
+@inject IGuardRuleStore Rules
+@inject GuardOptions Options
+@inject IAuditSink Audit
+@inject TimeProvider Time
+@inject AuthenticationStateProvider AuthState
+
+<h1>Guardrails</h1>
+<p class="muted">
+    Prüft Tool-Argumente und -Ergebnisse auf Zugangsdaten (ADR-0011). Treffer im Modus
+    <strong>Blockieren</strong> brechen den Aufruf ab bzw. halten das Ergebnis zurück.
+</p>
+
+@if (!Options.Enabled)
+{
+    <div class="card" style="border-color:var(--warn)">
+        <strong class="msg-err">Guardrail global abgeschaltet</strong>
+        <p class="muted" style="margin:.3rem 0 0">
+            <span class="mono">BIFROST_GUARD_ENABLED=0</span> ist gesetzt — es wird nichts geprüft,
+            unabhängig von den Regeln unten.
+        </p>
+    </div>
+}
+
+<div class="card">
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>Regel</th><th>Richtung</th><th>Modus</th><th>Aktiv</th><th>Herkunft</th><th></th></tr>
+            </thead>
+            <tbody>
+                @foreach (var rule in _rules)
+                {
+                    <tr>
+                        <td>
+                            <div>@rule.Description</div>
+                            <div class="mono muted" style="font-size:.85em">@rule.Id</div>
+                        </td>
+                        <td>@DirectionLabel(rule.Direction)</td>
+                        <td>
+                            <select value="@rule.Mode" @onchange="e => SetMode(rule, e.Value?.ToString())">
+                                <option value="@GuardMode.Block">Blockieren</option>
+                                <option value="@GuardMode.Observe">Beobachten</option>
+                            </select>
+                        </td>
+                        <td>
+                            <input type="checkbox" checked="@rule.Enabled" style="width:auto"
+                                   @onchange="e => SetEnabled(rule, (bool)e.Value!)" />
+                        </td>
+                        <td class="muted">@(rule.IsCustom ? "eigene" : "mitgeliefert")</td>
+                        <td>
+                            @if (rule.IsCustom)
+                            {
+                                <button class="btn-sm btn-danger" @onclick="() => Remove(rule.Id)">Löschen</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    @if (_message is not null)
+    {
+        <p class="@(_ok ? "msg-ok" : "msg-err")">@_message</p>
+    }
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0">Neue Regel</h3>
+
+    <div class="row">
+        <div><label>Bezeichnung</label><input @bind="_description" placeholder="Internes Deploy-Token" /></div>
+        <div>
+            <label>Richtung</label>
+            <select @bind="_direction">
+                <option value="@GuardDirection.Both">beide Richtungen</option>
+                <option value="@GuardDirection.Outbound">nur Argumente (Agent → Tool)</option>
+                <option value="@GuardDirection.Inbound">nur Ergebnisse (Tool → Agent)</option>
+            </select>
+        </div>
+    </div>
+
+    @if (!_freeText)
+    {
+        <p class="muted" style="margin:.6rem 0 .3rem">
+            Geführt: Die meisten Zugangsdaten haben ein festes Präfix und eine feste Länge.
+            Daraus wird das Muster erzeugt — ohne dass jemand Regex schreiben muss.
+        </p>
+        <div class="row">
+            <div><label>Präfix</label><input @bind="_prefix" placeholder="deploy_" /></div>
+            <div>
+                <label>Zeichen danach</label>
+                <select @bind="_charClass">
+                    <option value="alnum">Buchstaben und Ziffern</option>
+                    <option value="hex">Hexadezimal</option>
+                    <option value="base64">Buchstaben, Ziffern, - _ und =</option>
+                </select>
+            </div>
+            <div><label>Mindestlänge</label><input type="number" @bind="_minLen" min="8" /></div>
+            <div><label>Maximallänge</label><input type="number" @bind="_maxLen" min="8" /></div>
+        </div>
+        <p class="muted">Erzeugtes Muster: <span class="mono">@GuidedPattern()</span></p>
+    }
+    else
+    {
+        <label>Regex-Muster</label>
+        <input class="mono" @bind="_pattern" placeholder="\bdeploy_[a-zA-Z0-9]{32}\b" />
+        <div class="row">
+            <div><label>Vorfilter-Zeichenfolge (optional, beschleunigt)</label><input @bind="_keyword" placeholder="deploy_" /></div>
+        </div>
+        <p class="muted">
+            Lookahead, Lookbehind und Rückwärtsreferenzen sind nicht verfügbar — die Prüf-Engine
+            arbeitet ohne Backtracking, damit ein Muster den Gateway nicht anhalten kann.
+        </p>
+    }
+
+    <div class="toolbar" style="margin-top:.75rem">
+        <button @onclick="Add">Regel anlegen</button>
+        @if (Options.AllowCustomPatterns)
+        {
+            <label class="pill">
+                <input type="checkbox" @bind="_freeText" style="width:auto" /> Eigenes Regex-Muster schreiben
+            </label>
+        }
+    </div>
+
+    @if (!Options.AllowCustomPatterns)
+    {
+        <p class="muted" style="margin-top:.5rem">
+            Freitext-Regex ist abgeschaltet. Einschaltbar über
+            <span class="mono">BIFROST_GUARD_ALLOW_CUSTOM_PATTERNS=1</span> — das erlaubt Admins,
+            Rechenzeit im Gateway-Prozess zu verbrauchen, und ist deshalb eine bewusste
+            Vertrauensentscheidung (ADR-0011).
+        </p>
+    }
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0">Was die Prüfung leistet — und was nicht</h3>
+    <p class="muted" style="margin:0">
+        Erkannt wird, was ein Muster hat: <span class="mono">AKIA…</span>,
+        <span class="mono">ghp_…</span>, <span class="mono">sk-ant-…</span>, PEM-Blöcke.
+        <strong>Nicht</strong> erkannt wird, was keins hat — ein 32-stelliges Zufallspasswort ist
+        von einer Datei-Id nicht zu unterscheiden. Die Guardrail ist eine zusätzliche Schicht,
+        kein Ersatz dafür, Zugangsdaten aus Tool-Ergebnissen herauszuhalten.
+    </p>
+    <p class="muted">
+        Neue eigene Regeln starten sinnvollerweise auf <strong>Beobachten</strong>, bis ihre
+        Trefferquote bekannt ist. Eine Regel scharfzuschalten, die man nie hat feuern sehen, ist
+        der direkte Weg zu abgebrochenen Arbeitsschritten.
+    </p>
+</div>
+
+@code {
+    private IReadOnlyList<GuardRule> _rules = [];
+    private string _description = "", _pattern = "", _keyword = "", _prefix = "", _charClass = "alnum";
+    private int _minLen = 20, _maxLen = 64;
+    private GuardDirection _direction = GuardDirection.Both;
+    private bool _freeText, _ok;
+    private string? _message;
+
+    protected override void OnInitialized() => Reload();
+
+    private void Reload() => _rules = Rules.All;
+
+    private static string DirectionLabel(GuardDirection d) => d switch
+    {
+        GuardDirection.Outbound => "Argumente",
+        GuardDirection.Inbound => "Ergebnisse",
+        _ => "beide",
+    };
+
+    private string GuidedPattern()
+    {
+        var cls = _charClass switch
+        {
+            "hex" => "[a-fA-F0-9]",
+            "base64" => "[A-Za-z0-9_=-]",
+            _ => "[A-Za-z0-9]",
+        };
+        var min = Math.Max(1, _minLen);
+        var max = Math.Max(min, _maxLen);
+        return $@"\b{System.Text.RegularExpressions.Regex.Escape(_prefix)}{cls}{{{min},{max}}}\b";
+    }
+
+    private async Task<string> UserAsync()
+        => (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "?";
+
+    private async Task Add()
+    {
+        _message = null;
+        if (string.IsNullOrWhiteSpace(_description)) { _ok = false; _message = "Bezeichnung fehlt."; return; }
+
+        var pattern = _freeText ? _pattern.Trim() : GuidedPattern();
+        var keyword = _freeText
+            ? (string.IsNullOrWhiteSpace(_keyword) ? null : _keyword.Trim())
+            : (string.IsNullOrWhiteSpace(_prefix) ? null : _prefix.Trim());
+
+        if (!_freeText && string.IsNullOrWhiteSpace(_prefix))
+        {
+            _ok = false; _message = "Ohne Präfix wäre das Muster zu unspezifisch."; return;
+        }
+
+        try
+        {
+            // Beim Speichern validieren, nicht erst im Hot Path: Die Engine lehnt nicht
+            // unterstützte Konstrukte schon beim Kompilieren ab — das gehört als Formularfehler
+            // hierher, nicht in einen Produktionsfehler.
+            SecretGuard.ValidatePattern(pattern, Options.MatchTimeout);
+        }
+        catch (ArgumentException ex)
+        {
+            _ok = false; _message = ex.Message; return;
+        }
+
+        var id = $"custom-{Guid.NewGuid():N}"[..20];
+        // Eigene Regeln starten im Probelauf (ADR-0011, E1).
+        var rule = new GuardRule(id, _description.Trim(), pattern, keyword, _direction, GuardMode.Observe,
+            Enabled: true, IsCustom: true);
+
+        await Rules.UpsertAsync(rule, CancellationToken.None);
+        UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged, $"guard-rule-added:{id}");
+        _ok = true;
+        _message = "Angelegt — startet im Modus Beobachten. Nach Sichtung der Treffer auf Blockieren stellen.";
+        _description = _pattern = _keyword = _prefix = "";
+        Reload();
+    }
+
+    private async Task SetMode(GuardRule rule, string? value)
+    {
+        if (!Enum.TryParse<GuardMode>(value, out var mode)) { return; }
+        await Rules.UpsertAsync(rule with { Mode = mode }, CancellationToken.None);
+        UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged, $"guard-rule-mode:{rule.Id}:{mode}");
+        Reload();
+    }
+
+    private async Task SetEnabled(GuardRule rule, bool enabled)
+    {
+        await Rules.UpsertAsync(rule with { Enabled = enabled }, CancellationToken.None);
+        UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged,
+            $"guard-rule-{(enabled ? "enabled" : "disabled")}:{rule.Id}");
+        Reload();
+    }
+
+    private async Task Remove(string id)
+    {
+        await Rules.RemoveAsync(id, CancellationToken.None);
+        UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged, $"guard-rule-removed:{id}");
+        Reload();
+    }
+}

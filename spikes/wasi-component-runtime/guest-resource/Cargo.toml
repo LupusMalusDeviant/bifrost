@@ -3,7 +3,7 @@
 [workspace]
 
 [package]
-name = "mcpmcp-wasi-guest-resource"
+name = "bifrost-wasi-guest-resource"
 version = "0.1.0"
 edition = "2024"
 publish = false

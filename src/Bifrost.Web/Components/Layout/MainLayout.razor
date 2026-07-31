@@ -1,0 +1,52 @@
+@inherits LayoutComponentBase
+
+<AuthorizeView>
+    <Authorized>
+        <div class="layout">
+            <nav class="sidebar">
+                <BrandMark />
+                @* Ueberschriften statt einer blossen Trennlinie: Die untere Haelfte ist nur fuer
+                   Admins sichtbar, und ohne Beschriftung sieht eine Liste, die bei manchen Nutzern
+                   kuerzer ist, nach einem Fehler aus statt nach einer Berechtigung. *@
+                <div class="nav">
+                    <div class="nav-label">Betrieb</div>
+                    <NavLink href="/" Match="NavLinkMatch.All">Dashboard</NavLink>
+                    <NavLink href="/servers">Server</NavLink>
+                    <NavLink href="/tools">Tool-Explorer</NavLink>
+                    <NavLink href="/logs">Audit-Log</NavLink>
+                    <NavLink href="/approvals">Freigaben</NavLink>
+                    <NavLink href="/tasks">Vorgänge</NavLink>
+                    <AuthorizeView Policy="@UiPolicies.Admin" Context="admin">
+                        <div class="nav-label">Verwaltung</div>
+                        <NavLink href="/rbac">RBAC</NavLink>
+                        <NavLink href="/profiles">Profile &amp; Token</NavLink>
+                        <NavLink href="/assets">Skills / Assets</NavLink>
+                        <NavLink href="/guardrails">Guardrails</NavLink>
+                        <NavLink href="/packages">Connector-Pakete</NavLink>
+                        <NavLink href="/webhooks">Webhooks</NavLink>
+                        <NavLink href="/users">UI-Nutzer</NavLink>
+                    </AuthorizeView>
+                </div>
+                <div class="sidebar-footer">
+                    <div>@context.User.Identity?.Name</div>
+                    <div class="badge badge-muted" style="margin:.3rem 0">@RoleName(context)</div>
+                    <form action="/auth/logout" method="post">
+                        <AntiforgeryToken />
+                        <button class="btn-ghost btn-sm" type="submit" style="width:100%">Abmelden</button>
+                    </form>
+                </div>
+            </nav>
+            <main class="content">
+                @Body
+            </main>
+        </div>
+    </Authorized>
+    <NotAuthorized>
+        <RedirectToLogin />
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    private static string RoleName(AuthenticationState state)
+        => state.User.FindFirst(UiPolicies.RoleClaim)?.Value ?? "?";
+}

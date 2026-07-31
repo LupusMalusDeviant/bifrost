@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- xUnit v3: Testprojekte sind eigenstaendige Executables, der Runner laeuft im selben Prozess. -->
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Bifrost.Upstream\Bifrost.Upstream.csproj" />
+    <ProjectReference Include="..\Bifrost.TestServers\CliProbe\Bifrost.TestServers.CliProbe.csproj" />
+    <ProjectReference Include="..\Bifrost.TestServers\WasiHostStub\Bifrost.TestServers.WasiHostStub.csproj" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+  </ItemGroup>
+
+</Project>

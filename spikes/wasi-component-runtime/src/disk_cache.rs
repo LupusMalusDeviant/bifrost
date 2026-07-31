@@ -35,7 +35,7 @@ use crate::sha256_hex;
 type HmacSha256 = Hmac<Sha256>;
 
 /// Dateikennung, damit ein fremder Dateiinhalt nicht als Eintrag missverstanden wird.
-const MAGIC: &[u8; 8] = b"MCPMCPCW";
+const MAGIC: &[u8; 8] = b"BIFROSTC";
 /// Format-Version des Eintrags; ein Wechsel macht alte Einträge ungültig statt sie zu misslesen.
 const FORMAT_VERSION: u8 = 1;
 const KEY_FILE: &str = "mac.key";
@@ -348,7 +348,7 @@ mod tests {
 
     fn scratch(name: &str) -> PathBuf {
         let path =
-            std::env::temp_dir().join(format!("mcpmcp-diskcache-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("bifrost-diskcache-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         path
     }

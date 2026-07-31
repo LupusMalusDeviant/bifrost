@@ -117,7 +117,7 @@ Ausschlaggebend war die einheitlich erzwingbare Sicherheit plus der minimale Ein
 
 ### Scope
 
-Betrifft die Upstream-Connector-Familie in `McpMcp.Upstream` und den Config-Vertrag in `McpMcp.Abstractions`. Der Prototyp ist bewusst generisch (ein `args`-String-Array je Kommando) und **nicht** produktionsgehärtet. Ausgenommen und als Folge-Entscheidungen gelistet: UI, Auto-Discovery, feingranulare Schemas.
+Betrifft die Upstream-Connector-Familie in `Bifrost.Upstream` und den Config-Vertrag in `Bifrost.Abstractions`. Der Prototyp ist bewusst generisch (ein `args`-String-Array je Kommando) und **nicht** produktionsgehärtet. Ausgenommen und als Folge-Entscheidungen gelistet: UI, Auto-Discovery, feingranulare Schemas.
 
 ### Referenzen
 

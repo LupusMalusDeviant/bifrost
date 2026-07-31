@@ -5,10 +5,10 @@
 # Vor dem ersten Start das Passwort ersetzen — an BEIDEN Stellen.
 
 services:
-  mcpmcp:
+  bifrost:
     environment:
-      MCPMCP_DB_PROVIDER: postgres
-      MCPMCP_DB_CONNECTION: "Host=db;Database=mcpmcp;Username=mcpmcp;Password=CHANGE_ME"
+      BIFROST_DB_PROVIDER: postgres
+      BIFROST_DB_CONNECTION: "Host=db;Database=bifrost;Username=bifrost;Password=CHANGE_ME"
     depends_on:
       db:
         # Auf den Healthcheck warten, nicht nur auf den Start: der Gateway legt beim Hochfahren
@@ -18,17 +18,17 @@ services:
   db:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: mcpmcp
-      POSTGRES_USER: mcpmcp
+      POSTGRES_DB: bifrost
+      POSTGRES_USER: bifrost
       POSTGRES_PASSWORD: CHANGE_ME
     volumes:
-      - mcpmcp-pgdata:/var/lib/postgresql/data
+      - bifrost-pgdata:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mcpmcp -d mcpmcp"]
+      test: ["CMD-SHELL", "pg_isready -U bifrost -d bifrost"]
       interval: 5s
       timeout: 5s
       retries: 10
 
 volumes:
-  mcpmcp-pgdata:
+  bifrost-pgdata:

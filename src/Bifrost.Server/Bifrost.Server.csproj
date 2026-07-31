@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <Description>ASP.NET-Core-Host: MCP-Endpoint, REST-Fassade, AuthN, Health. Einziges src-Projekt neben Upstream mit MCP-SDK-Sicht (Server-Seite, ab WP4).</Description>
+    <!--
+      Der SDK setzt RequiresAspNetWebAssets nur automatisch, wenn das Projekt SELBST .razor-Dateien
+      enthaelt. Unsere liegen alle in der Razor-Klassenbibliothek Bifrost.Web (ADR-0004) — dadurch
+      wurde 'Microsoft.AspNetCore.App.Internal.Assets' nie eingebunden und '_framework/blazor.web.js'
+      lief ins Leere. Folge: Der Blazor-Circuit startete nie, und in der GESAMTEN Oberflaeche tat kein
+      @onclick und kein @bind etwas — waehrend die Seiten serverseitig gerendert wurden und deshalb
+      benutzbar aussahen. Gefunden erst im echten Betrieb.
+    -->
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
+
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bifrost.Core\Bifrost.Core.csproj" />
+    <ProjectReference Include="..\Bifrost.Upstream\Bifrost.Upstream.csproj" />
+    <ProjectReference Include="..\Bifrost.Persistence\Bifrost.Persistence.csproj" />
+    <!-- Provider-Migrationen: nur zur Laufzeit geladen (MigrationsAssembly), daher ohne Code-Abhängigkeit. -->
+    <ProjectReference Include="..\Bifrost.Persistence.Migrations.Sqlite\Bifrost.Persistence.Migrations.Sqlite.csproj" />
+    <ProjectReference Include="..\Bifrost.Persistence.Migrations.Postgres\Bifrost.Persistence.Migrations.Postgres.csproj" />
+    <ProjectReference Include="..\Bifrost.Web\Bifrost.Web.csproj" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <!-- Nur fuer die Tokenpruefung als Resource Server (MCP-Autorisierung). -->
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
+  </ItemGroup>
+
+</Project>

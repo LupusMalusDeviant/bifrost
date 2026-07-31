@@ -1,4 +1,4 @@
-# PRD 0001 — MCP-MCP: Self-hosted Meta-MCP-Gateway
+# PRD 0001 — B.I.F.R.O.S.T: Self-hosted Meta-MCP-Gateway
 
 | | |
 |---|---|
@@ -37,10 +37,10 @@ Wer heute mehrere KI-Agenten (Claude Code, eigene Agenten, andere MCP-fähige Cl
 
 ## 3. Non-Goals
 
-- **Kein LLM-Gateway / Model-Router.** MCP-MCP routet Tool-Calls, keine Chat-Completions. (Kein Konkurrent zu LiteLLM/Portkey.)
+- **Kein LLM-Gateway / Model-Router.** B.I.F.R.O.S.T routet Tool-Calls, keine Chat-Completions. (Kein Konkurrent zu LiteLLM/Portkey.)
 - **Kein öffentlicher SaaS-Dienst.** Self-hosted, Single-Tenant. Mandantenfähigkeit ist nicht Scope v1.
 - **Kein SSO/OIDC in v1.** Auth erfolgt über API-Keys pro Agent; menschliche Nutzer der Web-UI über lokales Login. OAuth 2.1-Durchreichung an Upstream-Server ist v2-Kandidat.
-- **Keine eigene MCP-Server-Implementierung von Fachlogik.** MCP-MCP stellt keine eigenen Fach-Tools bereit, nur Meta-Tools (Discovery, Invoke, Health).
+- **Keine eigene MCP-Server-Implementierung von Fachlogik.** B.I.F.R.O.S.T stellt keine eigenen Fach-Tools bereit, nur Meta-Tools (Discovery, Invoke, Health).
 - **Kein Marketplace/Registry-Hosting.** Es wird keine öffentliche Server-Registry betrieben; Kataloge Dritter können referenziert werden (v2).
 - **Keine Windows-GUI/Desktop-App.** Web-UI only.
 - **Kein automatisches Sandboxing der Upstream-Server-Prozesse in v1.** Prozess-Isolation (Container pro Server) ist v2-Kandidat; v1 dokumentiert das Risiko.
@@ -64,7 +64,7 @@ Priorität: **M** = Must (v1), **S** = Should (v1 wenn möglich), **C** = Could 
 - **FR-02 (M):** Das System kann sich mit Upstream-MCP-Servern über die Transporte `stdio` (lokaler Prozess) und `Streamable HTTP` (remote) verbinden. SSE-Legacy-Transport: S.
 - **FR-03 (M):** Tool-Namen werden pro Server namespaced (z. B. `github__create_issue`), sodass Namenskollisionen zwischen Servern ausgeschlossen sind.
 - **FR-04 (M):** Neben Tools werden auch Resources und Prompts der Upstream-Server durchgereicht (Aggregation mit Namespacing). Sampling/Elicitation-Durchreichung: C. — *Muss-Teil erfüllt. Der Kann-Teil (Sampling/Elicitation) wird **bewusst nicht umgesetzt**, siehe [ADR-0010](../adr/0010-sampling-elicitation-nicht-durchreichen.md): Eine server-initiierte Anfrage lässt sich keinem konkreten Downstream-Agenten zuordnen — das Protokoll trägt keine Korrelation, der SDK-Handler bekommt keinen Kontext, und die Upstream-Verbindung ist geteilt. Zudem könnte der Gateway die Spezifikationszusage „ein Mensch kann immer ablehnen" architektonisch nicht einlösen.*
-- **FR-05 (S):** Der Gateway kann selbst als Upstream eines weiteren MCP-MCP dienen (Federation-fähig, keine Endlosschleifen — Loop-Detection).
+- **FR-05 (S):** Der Gateway kann selbst als Upstream eines weiteren B.I.F.R.O.S.T dienen (Federation-fähig, keine Endlosschleifen — Loop-Detection).
 
 ### FR-Gruppe B — Hot-Swap & Lifecycle
 
@@ -81,7 +81,7 @@ Priorität: **M** = Must (v1), **S** = Should (v1 wenn möglich), **C** = Could 
 - **FR-13 (M):** Beide Modi sind pro Profil kombinierbar (z. B. 5 Pinned-Tools voll sichtbar + Rest lazy).
 - **FR-14 (S):** Tool-Beschreibungen können serverseitig gekürzt/überschrieben werden (Description-Override pro Tool), um Schema-Bloat einzelner Upstream-Server zu bändigen.
 - **FR-15 (S):** Das System misst und zeigt pro Profil die geschätzte Token-Last des exponierten Tool-Sets (Basis für Z-2-Nachweis).
-- **FR-16 (C):** Ergebnis-Kompression: übergroße Tool-Ergebnisse können (konfigurierbar) truncated/paginiert zurückgegeben werden. — *Umgesetzt (`MCPMCP_MAX_RESULT_CHARS`, Default aus). Gekürzte Ergebnisse bleiben gültiges JSON und tragen `_mcpmcp_truncated`; Paginierung im Sinne eines Cursors ist **nicht** enthalten — Listen werden vorne beschnitten und melden die Gesamtzahl.*
+- **FR-16 (C):** Ergebnis-Kompression: übergroße Tool-Ergebnisse können (konfigurierbar) truncated/paginiert zurückgegeben werden. — *Umgesetzt (`BIFROST_MAX_RESULT_CHARS`, Default aus). Gekürzte Ergebnisse bleiben gültiges JSON und tragen `_bifrost_truncated`; Paginierung im Sinne eines Cursors ist **nicht** enthalten — Listen werden vorne beschnitten und melden die Gesamtzahl.*
 
 ### FR-Gruppe D — API↔MCP-Bridge
 

@@ -107,7 +107,7 @@ Ein sessionloser und ein sitzungsbasierter Endpunkt im selben Prozess.
 
 ### Option 2: Sessionlos als Vorgabe, Sitzungsbetrieb als Schalter
 
-`Stateless = true` als Vorgabe, umschaltbar über `MCPMCP_MCP_STATELESS=0`. Die Rückfrage wandert auf
+`Stateless = true` als Vorgabe, umschaltbar über `BIFROST_MCP_STATELESS=0`. Die Rückfrage wandert auf
 MRTR, `tools/list_changed` bekommt einen Ersatz.
 
 **Positiv:**
@@ -139,7 +139,7 @@ Rückfrage — und für den ist der Sitzungsbetrieb objektiv besser. Der Test
 
 ### Was daraus folgt
 
-| | Sessionlos (Vorgabe) | Sitzungsbetrieb (`MCPMCP_MCP_STATELESS=0`) |
+| | Sessionlos (Vorgabe) | Sitzungsbetrieb (`BIFROST_MCP_STATELESS=0`) |
 |---|---|---|
 | Client auf `2026-07-28` | voll bedient, Rückfrage über MRTR | abgewiesen (`-32022`), handelt `2025-11-25` aus |
 | Client auf `2025-11-25` | arbeitet; Rückfrage nur über die Warteschlange | arbeitet; Rückfrage im laufenden Aufruf |

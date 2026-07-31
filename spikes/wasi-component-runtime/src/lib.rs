@@ -2186,7 +2186,7 @@ mod tests {
 
     #[test]
     fn canonical_containment_rejects_symlink_escape() -> Result<()> {
-        let base = std::env::temp_dir().join(format!("mcpmcp-spike-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("bifrost-spike-{}", std::process::id()));
         let inside = base.join("inside");
         let outside = base.join("outside");
         std::fs::create_dir_all(&inside)?;
@@ -2860,7 +2860,7 @@ mod tests {
     /// den Konfigurationsfehler.
     #[test]
     fn preopen_roots_are_resolved_and_missing_ones_fail_closed() -> Result<()> {
-        let root = std::env::temp_dir().join(format!("mcpmcp-preopen-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("bifrost-preopen-{}", std::process::id()));
         std::fs::create_dir_all(&root)?;
         let uncanonical = root.join("..").join(root.file_name().unwrap());
 

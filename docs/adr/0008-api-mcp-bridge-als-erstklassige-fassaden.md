@@ -50,7 +50,7 @@ REST-Controller mit eigener Logik; OpenAPI-Import als Codegenerator, der pro API
 
 ### Option 2: Externes API-Gateway (z. B. Kong/YARP-Ebene) für die REST-Seite
 
-REST-Fassade als separates Gateway-Produkt davor, MCP-MCP nur MCP.
+REST-Fassade als separates Gateway-Produkt davor, B.I.F.R.O.S.T nur MCP.
 
 **Positiv:**
 - Ausgereifte API-Gateway-Features (Rate-Limit, Keys) geschenkt.

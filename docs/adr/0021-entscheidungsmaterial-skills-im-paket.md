@@ -3,7 +3,7 @@
 > **Erledigt am 2026-07-28.** Alle fünf Fragen wurden mit dem Product Owner durchgegangen und
 > entschieden; die Entscheidungen stehen in [ADR-0021](0021-skills-in-paketen.md) (Status
 > *Akzeptiert*). Zwei davon weichen von dem ab, was beim Bauen von Option B als Annahme entstanden
-> war: **F1** wurde zu Option **C** (eigener Pakettyp `mcpmcp.skills.v1` neben dem
+> war: **F1** wurde zu Option **C** (eigener Pakettyp `bifrost.skills.v1` neben dem
 > Connector-Paket), **F5** zu **Skills mitnehmen** statt stehen lassen. Beides ist noch nicht
 > umgesetzt.
 >
@@ -42,7 +42,7 @@ ist implementiert.
 | Installation | fertig | `ConnectorPackageInstaller` | Prüfen → Quarantäne → **echte Probe** → atomare Aktivierung → Rollback |
 | Skills | fertig, versioniert | `EfAssetStore`, `SkillMetadata` | Append-only Versionen, Historie, Zurückschalten, deklarierte Referenzen und `required-tools` |
 | Prüfung der `required-tools` | fertig | `SkillValidator` | Prüft gegen den Katalog — kann aber nur **melden**, nicht **herstellen** |
-| Auslieferung | fertig | `GatewayMcpHandlers`, `MetaToolService` | Prompt `assets__<name>`, Resource `mcpmcp://assets/<name>`, `list_skills` / `read_skill` |
+| Auslieferung | fertig | `GatewayMcpHandlers`, `MetaToolService` | Prompt `assets__<name>`, Resource `bifrost://assets/<name>`, `list_skills` / `read_skill` |
 
 Der interessanteste Befund steht in Zeile 2: Das Paketformat ist an dieser Stelle **nicht**
 konnektor-spezifisch. Wer Skills ins Paket will, ändert nicht das Archiv, sondern gibt einer
@@ -118,7 +118,7 @@ Installieren. Kein neues Format, keine zweite Installationsroute.
 Preis: Nur WASI-Pakete sind heute überhaupt installierbar (ADR-0016 weist alles andere ab). Ein
 Skill-**ohne**-Konnektor ginge damit nicht — und das ist vermutlich das, was Leute zuerst wollen.
 
-### C — Eigener Pakettyp „Skill-Bündel" (`mcpmcp.skills.v1`)
+### C — Eigener Pakettyp „Skill-Bündel" (`bifrost.skills.v1`)
 
 Skills ohne Konnektor, eigenes Schema, eigene Installationsroute. Erlaubt das Teilen von
 Skill-Sammlungen, wofür heute nichts existiert.
@@ -134,7 +134,7 @@ Ein Paket erklärt, was es mitbringt: Konnektor, Skills oder beides. Die saubers
 sie deckt B und C ab.
 
 Preis: `Transport` und `EntryPoint` sind heute **Pflichtfelder** in `ConnectorManifest`. Das ist
-eine Schemaänderung — also `mcpmcp.connector.v2` oder ein v1-Leser, der beides toleriert. Und die
+eine Schemaänderung — also `bifrost.connector.v2` oder ein v1-Leser, der beides toleriert. Und die
 **Probe** muss ausfallen dürfen, wenn es nichts zu proben gibt; heute ist sie das Tor zur
 Aktivierung und der Grund, warum eine kaputte Version nie in Betrieb steht. Ein Paket ohne Probe
 umgeht diese Sicherung nicht — für Text gibt es sie schlicht nicht. Das gehört benannt, nicht

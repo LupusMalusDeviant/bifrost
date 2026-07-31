@@ -1,0 +1,355 @@
+@* Root-Dokument der Blazor-Server-UI (WP6). Selbst-enthaltenes CSS, keine externen Ressourcen —
+   keine Webfonts, keine Icon-Pakete, kein Stylesheet als eigene Datei. Der Grund steht in Program.cs:
+   Genau EINE ausgelagerte Datei ('_framework/blazor.web.js') hat im ersten echten Betrieb gefehlt,
+   und die Oberflaeche sah danach benutzbar aus, ohne es zu sein. Was hier inline steht, kann nicht
+   fehlen. *@
+<!DOCTYPE html>
+<html lang="de" data-theme="bifrost">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <base href="/" />
+    <title>B.I.F.R.O.S.T</title>
+    @* Die Bruecke als Marke: ein Bogen ueber dem Horizont. Kein Emoji — ein Emoji-Favicon sieht auf
+       jedem System anders aus und ist bei 16 px nicht lesbar. *@
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a1522'/%3E%3Cpath d='M4 25C7.5 9 24.5 9 28 25' fill='none' stroke='%236fd3ff' stroke-width='3.2' stroke-linecap='round'/%3E%3Cpath d='M4 25C7.5 9 24.5 9 28 25' fill='none' stroke='%23d8f2ff' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M5 27h22' stroke='%23204a6b' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <style>
+        /* ══ B.I.F.R.O.S.T ═══════════════════════════════════════════════════════════════════
+           Die Bruecke zwischen den Welten — Gletschernacht, nicht Neon.
+
+           Drei Regeln, an denen sich hier alles messen lassen muss:
+
+           1. EIS IST DIE FARBE. Blau und Cyan tragen die Oberflaeche; die Statusfarben sind auf
+              dieselbe Kaelte gestimmt (Aurora-Mint statt Ampelgruen, Rosenrot statt Signalrot).
+              Sie sollen sich einfuegen, nicht anspringen.
+           2. DAS SPEKTRUM IST EINE SIGNATUR, KEIN HINTERGRUND. Bifroest ist die schimmernde
+              Bruecke — deshalb gibt es das Farbband. Es erscheint an GENAU ZWEI Stellen und ist
+              zwei Pixel hoch. Als Flaeche waere es Kitsch; als Haarlinie ist es die Marke.
+           3. KEIN VERLAUF ALS TAPETE. Der Hintergrund ist gebaut, nicht hingeschuettet:
+              Polarlichtfelder, ein verloeschendes Raster und feines Korn. Das Korn ist der
+              wichtigste Teil — es nimmt den Flaechen das Sterile und dem Blau das Banding.
+           ═══════════════════════════════════════════════════════════════════════════════════ */
+        :root {
+            /* Grund: Mitternacht unter Eis. */
+            --void: #060b12;
+            --deep: #0a1220;
+
+            /* Glas. Flaechen sind durchscheinend, nicht gefuellt — deshalb rgba, keine Hex-Panels. */
+            --glass: rgba(122, 176, 226, .055);
+            --glass-2: rgba(130, 186, 236, .085);
+            --glass-3: rgba(138, 196, 245, .13);
+            --edge: rgba(150, 205, 250, .13);
+            --edge-strong: rgba(170, 220, 255, .26);
+            /* Die Lichtkante oben: Was echtes Milchglas von einem grauen Kasten unterscheidet. */
+            --sheen: rgba(198, 232, 255, .16);
+
+            --text: #dbe9f7;
+            --muted: #7c93ad;
+            --dim: #55697f;
+
+            /* Eis — der Leitton. */
+            --ice: #6fd3ff;
+            --ice-soft: #a8e6ff;
+            --ice-deep: #2f8fd8;
+            --ice-wash: rgba(111, 211, 255, .12);
+
+            /* Status, auf dieselbe Kaelte gestimmt. */
+            --ok: #56e0bd;
+            --warn: #f4b860;
+            --err: #ff6b83;
+            --degraded: #f09a52;
+
+            /* Das Farbband der Bruecke. Entsaettigt: Polarlicht, keine Fahne. */
+            --bifrost: linear-gradient(90deg,
+                #8b7cf0 0%, #4f8ff5 18%, #4fd0f0 38%, #56e0bd 56%, #d9c86a 74%, #ef8f8f 90%, #b07ce0 100%);
+
+            --radius: 10px;
+            --radius-sm: 7px;
+            --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+            --shadow: 0 10px 34px rgba(2, 8, 18, .5);
+        }
+
+        * { box-sizing: border-box; }
+
+        html { background: var(--void); }
+
+        body {
+            margin: 0;
+            font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+            background: var(--void);
+            color: var(--text);
+            font-size: 14px;
+            line-height: 1.55;
+            -webkit-font-smoothing: antialiased;
+            text-rendering: optimizeLegibility;
+            min-height: 100vh;
+        }
+
+        /* Polarlichtfelder. Weiche Felder aus verschiedenen Richtungen statt einer Diagonalen —
+           eine 135°-Diagonale von Violett nach Blau ist der Verlauf, den jede zweite Oberflaeche
+           traegt, und genau deshalb steht hier keiner. */
+        body::before {
+            content: ''; position: fixed; inset: 0; z-index: -2; pointer-events: none;
+            background:
+                radial-gradient(120% 78% at 10% -12%, rgba(66, 156, 240, .17), transparent 62%),
+                radial-gradient(80% 55% at 102% 6%, rgba(70, 214, 200, .085), transparent 58%),
+                radial-gradient(150% 95% at 46% 118%, rgba(28, 70, 150, .22), transparent 68%);
+        }
+
+        /* Raster und Korn. Das Raster verloescht nach unten (Maske) — es soll Praezision andeuten,
+           nicht Millimeterpapier sein. Das Korn liegt darueber und nimmt dem Blau das Banding. */
+        body::after {
+            content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+            background-image:
+                url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E"),
+                linear-gradient(to right, rgba(146, 203, 255, .032) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(146, 203, 255, .032) 1px, transparent 1px);
+            background-size: 140px 140px, 58px 58px, 58px 58px;
+            opacity: .5;
+            -webkit-mask-image: radial-gradient(135% 105% at 50% -5%, #000 28%, transparent 88%);
+            mask-image: radial-gradient(135% 105% at 50% -5%, #000 28%, transparent 88%);
+        }
+
+        a { color: var(--ice); text-decoration: none; }
+        a:hover { color: var(--ice-soft); text-decoration: underline; text-underline-offset: 3px; }
+
+        h1 { font-size: 1.55rem; margin: 0 0 .3rem; font-weight: 620; letter-spacing: -.02em; }
+        h2 { font-size: 1.1rem; margin: 1.75rem 0 .8rem; font-weight: 600; letter-spacing: -.01em; }
+        h3 { font-size: .98rem; margin: 1rem 0 .5rem; font-weight: 600; }
+        code, .mono { font-family: var(--mono); font-size: .92em; }
+        ::selection { background: rgba(111, 211, 255, .28); color: #fff; }
+
+        /* ── Geruest ─────────────────────────────────────────────────────────────────────── */
+        .layout { display: flex; min-height: 100vh; }
+
+        .sidebar {
+            width: 232px; flex-shrink: 0; display: flex; flex-direction: column;
+            padding: 1.1rem .7rem 1rem;
+            background: linear-gradient(180deg, rgba(120, 178, 232, .075), rgba(110, 165, 220, .03));
+            backdrop-filter: blur(18px) saturate(1.35);
+            -webkit-backdrop-filter: blur(18px) saturate(1.35);
+            border-right: 1px solid var(--edge);
+            box-shadow: inset -1px 0 0 rgba(255, 255, 255, .03);
+            position: sticky; top: 0; height: 100vh;
+        }
+
+        /* ── Marke ───────────────────────────────────────────────────────────────────────── */
+        .brand { display: flex; align-items: center; gap: .6rem; padding: .35rem .55rem .8rem; }
+        .brand-mark { flex-shrink: 0; filter: drop-shadow(0 0 7px rgba(111, 211, 255, .4)); }
+        .brand-text { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+        /* Der Punkt im Akronym bleibt stehen, tritt aber zurueck: Er gliedert, er ruft nicht. */
+        .brand-name { font-size: .95rem; font-weight: 700; letter-spacing: .055em; color: #eaf5ff; }
+        .brand-name i { font-style: normal; color: var(--ice); opacity: .5; }
+        .brand-sub {
+            font-family: var(--mono); font-size: .61rem; letter-spacing: .19em;
+            text-transform: uppercase; color: var(--dim);
+        }
+
+        /* Erste von zwei Stellen fuers Farbband: die Bruecke unter der Marke. */
+        .brand-rule {
+            height: 2px; margin: 0 .55rem 1rem; border-radius: 2px;
+            background: var(--bifrost); opacity: .72;
+        }
+
+        /* ── Navigation ──────────────────────────────────────────────────────────────────── */
+        .nav { display: flex; flex-direction: column; gap: 1px; }
+        .nav a {
+            display: block; padding: .44rem .7rem; border-radius: var(--radius-sm);
+            color: var(--muted); font-size: .875rem; position: relative;
+            border: 1px solid transparent; transition: color .12s ease, background-color .12s ease;
+        }
+        .nav a:hover { background: var(--glass); color: var(--text); text-decoration: none; }
+        .nav a.active {
+            background: var(--ice-wash); color: #eaf7ff; border-color: rgba(111, 211, 255, .2);
+        }
+        /* Zweite Stelle fuers Farbband: die Kante des aktiven Eintrags. */
+        .nav a.active::before {
+            content: ''; position: absolute; left: 0; top: 22%; bottom: 22%; width: 2px;
+            border-radius: 2px; background: var(--bifrost);
+        }
+        .nav-label {
+            font-family: var(--mono); font-size: .6rem; letter-spacing: .17em; text-transform: uppercase;
+            color: var(--dim); padding: .9rem .7rem .3rem;
+        }
+
+        .sidebar-footer {
+            margin-top: auto; padding: .8rem .7rem 0; font-size: .8rem; color: var(--muted);
+            border-top: 1px solid var(--edge);
+        }
+
+        .content { flex: 1; padding: 1.9rem 2.2rem; overflow-x: auto; max-width: 100%; min-width: 0; }
+
+        /* ── Glas ────────────────────────────────────────────────────────────────────────── */
+        /* Der leichte Verlauf ist keine Deko, sondern die Dicke der Scheibe: oben faengt sie mehr
+           Licht als unten. Zusammen mit der Lichtkante (inset) wird daraus Milchglas statt Kasten. */
+        .card {
+            background: linear-gradient(180deg, var(--glass-2), var(--glass));
+            backdrop-filter: blur(14px) saturate(1.25);
+            -webkit-backdrop-filter: blur(14px) saturate(1.25);
+            border: 1px solid var(--edge);
+            border-radius: var(--radius);
+            box-shadow: inset 0 1px 0 var(--sheen), var(--shadow);
+            padding: 1.05rem 1.3rem; margin-bottom: 1rem;
+        }
+
+        /* Wo kein Backdrop-Filter zur Verfuegung steht, wird aus durchscheinend sonst durchsichtig —
+           dann traegt eine gefuellte Flaeche. */
+        @@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+            .card, .sidebar { background: #101a28; }
+        }
+
+        /* Ein Geheimnis, das genau einmal zu sehen ist, darf nicht aussehen wie ein Absatz.
+           Vorher war das ein etwas helleres Kaestchen im Kaestchen — die Kante in Eis macht daraus
+           einen Moment, an dem man haengenbleibt. */
+        .card-accent {
+            background: linear-gradient(180deg, rgba(111, 211, 255, .11), rgba(111, 211, 255, .04));
+            border-color: rgba(111, 211, 255, .3);
+            box-shadow: inset 2px 0 0 var(--ice), inset 0 1px 0 var(--sheen), var(--shadow);
+        }
+
+        .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); }
+
+        /* ── Kennzahlen ──────────────────────────────────────────────────────────────────── */
+        .stat {
+            font-size: 2.1rem; font-weight: 600; letter-spacing: -.035em; color: #f0f8ff;
+            /* Ziffern gleicher Breite: Ein Zaehler, der im Sekundentakt aktualisiert, darf die
+               Zeile nicht zappeln lassen. */
+            font-variant-numeric: tabular-nums; line-height: 1.15;
+        }
+        .stat-label {
+            color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .14em;
+            font-weight: 600;
+        }
+
+        /* ── Tabellen ────────────────────────────────────────────────────────────────────── */
+        table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+        th, td { text-align: left; padding: .5rem .65rem; border-bottom: 1px solid rgba(150, 205, 250, .085); vertical-align: top; }
+        th {
+            color: var(--muted); font-weight: 600; font-size: .68rem; text-transform: uppercase;
+            letter-spacing: .13em; border-bottom-color: var(--edge); white-space: nowrap;
+        }
+        tbody tr { transition: background-color .1s ease; }
+        tbody tr:hover td { background: rgba(111, 211, 255, .05); }
+        tbody tr:last-child td { border-bottom: none; }
+        .table-wrap { overflow-x: auto; }
+
+        /* ── Eingaben ────────────────────────────────────────────────────────────────────── */
+        input, select, textarea {
+            background: rgba(8, 16, 28, .55); border: 1px solid var(--edge); color: var(--text);
+            border-radius: var(--radius-sm); padding: .45rem .65rem; font-size: .9rem; width: 100%;
+            font-family: inherit; transition: border-color .12s ease, box-shadow .12s ease;
+        }
+        input::placeholder, textarea::placeholder { color: var(--dim); }
+        textarea.mono { font-family: var(--mono); }
+        input:hover, select:hover, textarea:hover { border-color: rgba(150, 205, 250, .24); }
+        input:focus, select:focus, textarea:focus {
+            outline: none; border-color: rgba(111, 211, 255, .55);
+            box-shadow: 0 0 0 3px rgba(111, 211, 255, .13);
+        }
+        input[type=checkbox] { width: auto; accent-color: var(--ice); }
+        label { display: block; font-size: .78rem; color: var(--muted); margin: .6rem 0 .22rem; letter-spacing: .01em; }
+
+        /* ── Schaltflaechen ──────────────────────────────────────────────────────────────── */
+        /* Eis mit dunkler Schrift statt blauer Flaeche mit weisser: Der Kontrast ist hoeher, und
+           die Flaeche wirkt wie Licht auf Eis, nicht wie ein eingefaerbter Kasten. */
+        button, .btn {
+            background: var(--ice); color: #04121e; border: 1px solid rgba(168, 230, 255, .5);
+            border-radius: var(--radius-sm); padding: .44rem .95rem; font-size: .875rem;
+            cursor: pointer; font-family: inherit; font-weight: 600; letter-spacing: .01em;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 2px 10px rgba(47, 143, 216, .22);
+            transition: filter .12s ease, transform .06s ease, box-shadow .12s ease;
+        }
+        button:hover, .btn:hover { filter: brightness(1.12); }
+        button:active, .btn:active { transform: translateY(1px); }
+        button:focus-visible, .btn:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
+            outline: 2px solid var(--ice-soft); outline-offset: 2px;
+        }
+        button:disabled { opacity: .4; cursor: not-allowed; filter: none; box-shadow: none; }
+        .btn-sm { padding: .24rem .6rem; font-size: .78rem; }
+        .btn-danger {
+            background: rgba(255, 107, 131, .14); color: #ffb3bf; border-color: rgba(255, 107, 131, .38);
+            box-shadow: none;
+        }
+        .btn-danger:hover { background: rgba(255, 107, 131, .22); filter: none; }
+        .btn-ghost {
+            background: var(--glass-2); color: var(--text); border-color: var(--edge);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+        }
+        .btn-ghost:hover { background: var(--glass-3); filter: none; }
+
+        /* ── Marken ──────────────────────────────────────────────────────────────────────── */
+        /* Rand in derselben Farbe wie die Fuellung: Ein reiner Farbfleck franst aus, mit Kante
+           bleibt er ein Objekt. */
+        .badge {
+            display: inline-block; padding: .08rem .5rem; border-radius: 999px; font-size: .7rem;
+            font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
+            border: 1px solid transparent;
+        }
+        .badge-ok { background: rgba(86, 224, 189, .13); color: var(--ok); border-color: rgba(86, 224, 189, .32); }
+        .badge-err { background: rgba(255, 107, 131, .13); color: var(--err); border-color: rgba(255, 107, 131, .32); }
+        .badge-warn { background: rgba(244, 184, 96, .13); color: var(--warn); border-color: rgba(244, 184, 96, .3); }
+        .badge-muted { background: var(--glass-2); color: var(--muted); border-color: var(--edge); }
+
+        .pill-list { display: flex; flex-wrap: wrap; gap: .35rem; }
+        .pill {
+            background: var(--glass-2); border: 1px solid var(--edge); border-radius: 999px;
+            padding: .1rem .58rem; font-size: .76rem; font-family: var(--mono); color: var(--muted);
+        }
+
+        /* ── Kleinteile ──────────────────────────────────────────────────────────────────── */
+        .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end; }
+        .row > * { flex: 1; min-width: 140px; }
+        .msg-ok { color: var(--ok); } .msg-err { color: var(--err); }
+        .muted { color: var(--muted); }
+        .toolbar { display: flex; gap: .5rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; }
+
+        pre {
+            background: rgba(4, 10, 19, .65); border: 1px solid var(--edge); border-radius: var(--radius-sm);
+            padding: .8rem; overflow-x: auto; font-family: var(--mono); font-size: .8rem; margin: 0;
+            color: #c3d8ec;
+        }
+
+        /* ── Anmeldung ───────────────────────────────────────────────────────────────────── */
+        .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 1rem; }
+        .login-card { width: 358px; padding: 1.6rem 1.7rem 1.7rem; }
+        .login-card .brand { padding: 0 0 .7rem; }
+        .login-card .brand-rule { margin: 0 0 1.3rem; }
+
+        /* ── Bildlaufleisten ─────────────────────────────────────────────────────────────── */
+        * { scrollbar-width: thin; scrollbar-color: rgba(111, 211, 255, .22) transparent; }
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(111, 211, 255, .18); border-radius: 999px;
+            border: 3px solid transparent; background-clip: content-box;
+        }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(111, 211, 255, .34); background-clip: content-box; }
+
+        @@media (prefers-reduced-motion: reduce) {
+            * { transition: none !important; animation: none !important; }
+        }
+
+        @@media (max-width: 860px) {
+            .layout { flex-direction: column; }
+            .sidebar { width: 100%; height: auto; position: static; border-right: none; border-bottom: 1px solid var(--edge); }
+            .content { padding: 1.2rem 1rem; }
+        }
+    </style>
+    <HeadOutlet @rendermode="InteractiveServer" />
+</head>
+<body>
+    <Routes @rendermode="InteractiveServer" />
+    <script src="_framework/blazor.web.js"></script>
+    <script>
+        window.bifrostDownload = (filename, mime, base64) => {
+            const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+            const blob = new Blob([bytes], { type: mime });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+            document.body.removeChild(a); URL.revokeObjectURL(url);
+        };
+    </script>
+</body>
+</html>

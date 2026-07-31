@@ -31,7 +31,7 @@ Crash-Isolation, Update/Rollback und ein Trust-Modell.
 
 ## Entscheidung
 
-Der externe Vertrag wird als `mcpmcp.connector.v1` versioniert. Ein Connector-Paket enthält ein
+Der externe Vertrag wird als `bifrost.connector.v1` versioniert. Ein Connector-Paket enthält ein
 signiertes Manifest, ein connector-spezifisches JSON-Schema und genau einen isolierten Entry Point.
 Das Manifest deklariert:
 

@@ -22,7 +22,7 @@ Aufrufbreite begrenzt heute, *wofür* der Pfad taugt, nicht *wie sicher* er ist.
 ## Vertrauensgrenzen des neuen Pfades
 
 ```
-[ Agent ] --API-Key--> [ GATEWAY ] --length-prefixed JSON über stdio--> [ mcpmcp-wasi-host ]
+[ Agent ] --API-Key--> [ GATEWAY ] --length-prefixed JSON über stdio--> [ bifrost-wasi-host ]
                         │  RBAC, Guardrail, Approval,                    │  Signaturprüfung,
                         │  Audit, Trust-Store                            │  Grants, Limits
                         │                                                └──> [ WASM-Component ]

@@ -11,19 +11,19 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
 WORKDIR /src
 
 # Restore zuerst (Layer-Cache): nur die Projekt-/Props-Dateien kopieren.
-COPY Directory.Build.props Directory.Packages.props nuget.config MCPMCP.slnx ./
-COPY src/McpMcp.Abstractions/McpMcp.Abstractions.csproj src/McpMcp.Abstractions/
-COPY src/McpMcp.Core/McpMcp.Core.csproj src/McpMcp.Core/
-COPY src/McpMcp.Upstream/McpMcp.Upstream.csproj src/McpMcp.Upstream/
-COPY src/McpMcp.Persistence/McpMcp.Persistence.csproj src/McpMcp.Persistence/
-COPY src/McpMcp.Persistence.Migrations.Sqlite/McpMcp.Persistence.Migrations.Sqlite.csproj src/McpMcp.Persistence.Migrations.Sqlite/
-COPY src/McpMcp.Persistence.Migrations.Postgres/McpMcp.Persistence.Migrations.Postgres.csproj src/McpMcp.Persistence.Migrations.Postgres/
-COPY src/McpMcp.Web/McpMcp.Web.csproj src/McpMcp.Web/
-COPY src/McpMcp.Server/McpMcp.Server.csproj src/McpMcp.Server/
-RUN dotnet restore src/McpMcp.Server/McpMcp.Server.csproj
+COPY Directory.Build.props Directory.Packages.props nuget.config Bifrost.slnx ./
+COPY src/Bifrost.Abstractions/Bifrost.Abstractions.csproj src/Bifrost.Abstractions/
+COPY src/Bifrost.Core/Bifrost.Core.csproj src/Bifrost.Core/
+COPY src/Bifrost.Upstream/Bifrost.Upstream.csproj src/Bifrost.Upstream/
+COPY src/Bifrost.Persistence/Bifrost.Persistence.csproj src/Bifrost.Persistence/
+COPY src/Bifrost.Persistence.Migrations.Sqlite/Bifrost.Persistence.Migrations.Sqlite.csproj src/Bifrost.Persistence.Migrations.Sqlite/
+COPY src/Bifrost.Persistence.Migrations.Postgres/Bifrost.Persistence.Migrations.Postgres.csproj src/Bifrost.Persistence.Migrations.Postgres/
+COPY src/Bifrost.Web/Bifrost.Web.csproj src/Bifrost.Web/
+COPY src/Bifrost.Server/Bifrost.Server.csproj src/Bifrost.Server/
+RUN dotnet restore src/Bifrost.Server/Bifrost.Server.csproj
 
 COPY src/ src/
-RUN dotnet publish src/McpMcp.Server/McpMcp.Server.csproj \
+RUN dotnet publish src/Bifrost.Server/Bifrost.Server.csproj \
     -c Release -o /app --no-restore /p:UseAppHost=false
 
 # ── WASI-Host (Rust, ADR-0020, Plan 0003/WP7.1) ─────────────────────────────
@@ -62,24 +62,24 @@ RUN case "$TARGETARCH" in \
     && CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
        cargo build --locked --release --target "$TARGET" \
-    && cp "target/$TARGET/release/mcpmcp-wasi-component-spike" /mcpmcp-wasi-host
+    && cp "target/$TARGET/release/bifrost-wasi-component-spike" /bifrost-wasi-host
 
 # ── Runtime (Ubuntu-noble-Basis mit Shell, non-root; ~230 MB < 300 MB) ───────
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
 WORKDIR /app
 COPY --from=build /app ./
 # Fester Pfad im Image: Er gehört in die Wasi.HostExecutable eines WASI-Upstreams.
-COPY --from=wasi-host /mcpmcp-wasi-host /usr/local/bin/mcpmcp-wasi-host
+COPY --from=wasi-host /bifrost-wasi-host /usr/local/bin/bifrost-wasi-host
 
 # Datenverzeichnis (SQLite-DB + DataProtection-Keys) beschreibbar anlegen und dem non-root
 # app-User geben. Chiseled-Images haben keine Shell für RUN chmod — die Ubuntu-Basis schon,
 # was diese Verzeichnisrechte zuverlässig macht.
 RUN mkdir -p /data && chown app:app /data && chmod 0770 /data
 
-ENV MCPMCP_DATA_DIR=/data \
+ENV BIFROST_DATA_DIR=/data \
     ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 USER app
 VOLUME /data
 
-ENTRYPOINT ["dotnet", "McpMcp.Server.dll"]
+ENTRYPOINT ["dotnet", "Bifrost.Server.dll"]

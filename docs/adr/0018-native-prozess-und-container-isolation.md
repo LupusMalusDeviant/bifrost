@@ -16,8 +16,8 @@
 >
 > **Umgesetzt stattdessen:** Ein stdio-Kindprozess erbt nicht mehr die vollständige Umgebung des
 > Gateways, sondern sieht eine kurze, namentliche Allowlist (`StdioProcessEnvironment`). Vorher
-> standen dort `MCPMCP_DB_CONNECTION` — bei Postgres samt Passwort — und
-> `MCPMCP_KEYRING_CERT_PASSWORD` für jeden gestarteten Server lesbar. Der CLI-Transport räumt seine
+> standen dort `BIFROST_DB_CONNECTION` — bei Postgres samt Passwort — und
+> `BIFROST_KEYRING_CERT_PASSWORD` für jeden gestarteten Server lesbar. Der CLI-Transport räumt seine
 > Umgebung seit ADR-0014 auf; beim ältesten Transport fehlte derselbe Schritt.
 >
 > **Was das ausdrücklich nicht ist:** eine Sandbox. Der Prozess läuft weiterhin als derselbe
@@ -69,7 +69,7 @@ Argumentübergabe verhindert Command Injection, bildet aber keine Sandbox.
 
 ## Entscheidung
 
-MCPMCP bietet drei explizite Runtime-Modi:
+B.I.F.R.O.S.T bietet drei explizite Runtime-Modi:
 
 1. **WASI Component:** Default für neue Plugins.
 2. **Native Container:** Default für vorhandene, nicht vertrauenswürdige CLI-/stdio-Programme.

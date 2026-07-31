@@ -386,7 +386,7 @@ impl Session {
                     Response::Hello {
                         protocol_version: PROTOCOL_VERSION.to_owned(),
                         runtime: RUNTIME_VERSION.to_owned(),
-                        host: format!("mcpmcp-wasi-host/{}", env!("CARGO_PKG_VERSION")),
+                        host: format!("bifrost-wasi-host/{}", env!("CARGO_PKG_VERSION")),
                         features: HostFeatures::current(),
                     },
                     Control::Continue,
@@ -1130,7 +1130,7 @@ mod tests {
             } => {
                 assert_eq!(protocol_version, PROTOCOL_VERSION);
                 assert!(runtime.contains("wasmtime"));
-                assert!(host.starts_with("mcpmcp-wasi-host/"));
+                assert!(host.starts_with("bifrost-wasi-host/"));
                 // Der Handshake nennt die Fähigkeiten (ADR-0016) — auch die fehlenden.
                 assert_eq!(features, HostFeatures::current());
                 assert!(features.cancellation && features.drain && features.readiness);
@@ -1232,7 +1232,7 @@ mod tests {
     /// zusammenpassen — dieselben drei Dateien fährt der .NET-Kompatibilitätstest (Plan 0003,
     /// WP6.2) über die echte IPC-Leitung. Bricht dieser Test, wurde eine der Dateien ohne die
     /// anderen erneuert; regenerieren mit:
-    /// `mcpmcp-wasi-component-spike sign fixtures/wasi-p2-guest.component.wasm <seed-hex>`
+    /// `bifrost-wasi-component-spike sign fixtures/wasi-p2-guest.component.wasm <seed-hex>`
     /// (Dev-Testvektor-Seed: 0x03 × 32 — kein Geheimnis, nur ein reproduzierbarer Testschlüssel).
     ///
     /// Dasselbe gilt für `tools-interface.component.wasm`; dessen Quelle liegt unter

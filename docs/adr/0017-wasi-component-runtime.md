@@ -19,7 +19,7 @@ Grundlagen:
 
 ## Entscheidung
 
-MCPMCP bevorzugt WebAssembly Components für neue lokale Tools und externe Connectoren. Ein Component
+B.I.F.R.O.S.T bevorzugt WebAssembly Components für neue lokale Tools und externe Connectoren. Ein Component
 erhält standardmäßig:
 
 - kein Netzwerk;
@@ -103,7 +103,7 @@ angenommen:
 - content-adressierter Modul-Cache mit Rollback, Platten-Kompilate über einen host-lokalen
   Schlüssel MAC-gesichert.
 
-**Unter Vorbehalt** steht der Satz „MCPMCP bevorzugt WebAssembly Components für neue lokale Tools
+**Unter Vorbehalt** steht der Satz „B.I.F.R.O.S.T bevorzugt WebAssembly Components für neue lokale Tools
 und externe Connectoren" — inzwischen aber deutlich enger als beim Statuswechsel.
 
 *Nachtrag 2026-07-25:* Die zugesagte Behandlung von `list<u8>` als begrenzte Binärdaten und

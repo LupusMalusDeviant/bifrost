@@ -1,0 +1,138 @@
+@page "/webhooks"
+@using Bifrost.Core.Webhooks
+@attribute [Authorize(Policy = UiPolicies.Admin)]
+@inject IWebhookStore Store
+@inject IRbacManagement Rbac
+@inject IToolCatalog Catalog
+@inject IAuditSink Audit
+@inject TimeProvider Time
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+
+<h1>Webhooks</h1>
+<p class="muted">
+    Ein signierter, eingehender Webhook löst genau einen Tool-Aufruf im Namen einer festen
+    Identität aus (FR-20). Der Aufruf läuft durch die volle Pipeline — RBAC, Guardrail, Audit.
+</p>
+
+<div class="card">
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Name</th><th>Tool</th><th>Identität</th><th>Trigger-URL</th><th>Aktiv</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var w in _hooks)
+                {
+                    <tr>
+                        <td>@w.Name</td>
+                        <td class="mono">@w.Tool.Value</td>
+                        <td class="muted">@IdentityName(w.Caller)</td>
+                        <td class="mono" style="font-size:.85em">@TriggerUrl(w.Id)</td>
+                        <td>
+                            <input type="checkbox" checked="@w.Enabled" style="width:auto"
+                                   @onchange="e => SetEnabled(w.Id, (bool)e.Value!)" />
+                        </td>
+                        <td><button class="btn-sm btn-danger" @onclick="() => Remove(w.Id)">Löschen</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    @if (_hooks.Count == 0) { <p class="muted">Noch keine Webhooks.</p> }
+</div>
+
+@if (_newSecret is not null)
+{
+    <div class="card card-accent">
+        <strong class="msg-ok">Signatur-Secret (wird NIE wieder angezeigt):</strong>
+        <pre class="mono">@_newSecret</pre>
+        <p class="muted" style="margin:.3rem 0 0">
+            Der Absender signiert damit den Request. Erwartet werden die Header
+            <span class="mono">@WebhookSignature.SignatureHeader</span> (Wert
+            <span class="mono">sha256=&lt;hmac&gt;</span> über <span class="mono">{timestamp}.{body}</span>)
+            und <span class="mono">@WebhookSignature.TimestampHeader</span> (Unix-Sekunden).
+            Anfragen älter als 5 Minuten werden abgewiesen.
+        </p>
+    </div>
+}
+
+<div class="card">
+    <h3 style="margin-top:0">Neuer Webhook</h3>
+    <div class="row">
+        <div><label>Name</label><input @bind="_name" placeholder="ci-deploy" /></div>
+        <div>
+            <label>Identität (deren Rechte gelten)</label>
+            <select @bind="_callerId">
+                <option value="">(wählen)</option>
+                @foreach (var i in _identities) { <option value="@i.Id.Value">@i.Name</option> }
+            </select>
+        </div>
+        <div>
+            <label>Tool</label>
+            <select @bind="_tool">
+                <option value="">(wählen)</option>
+                @foreach (var t in _tools) { <option value="@t.Value">@t.Value</option> }
+            </select>
+        </div>
+    </div>
+    <div class="toolbar" style="margin-top:.75rem">
+        <button @onclick="Create">Webhook anlegen</button>
+        @if (_message is not null) { <span class="@(_ok ? "msg-ok" : "msg-err")">@_message</span> }
+    </div>
+</div>
+
+@code {
+    private IReadOnlyList<WebhookDefinition> _hooks = [];
+    private IReadOnlyList<Identity> _identities = [];
+    private IReadOnlyList<NamespacedToolName> _tools = [];
+    private string _name = "", _callerId = "", _tool = "";
+    private string? _newSecret, _message;
+    private bool _ok;
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        _hooks = await Store.ListAsync(CancellationToken.None);
+        _identities = await Rbac.ListIdentitiesAsync(CancellationToken.None);
+        _tools = Catalog.Snapshot.Where(e => e.Kind == CatalogEntryKind.Tool)
+            .Select(e => e.Name).OrderBy(n => n.Value, StringComparer.Ordinal).ToList();
+    }
+
+    private string IdentityName(IdentityId id)
+        => _identities.FirstOrDefault(i => i.Id == id)?.Name ?? id.ToString();
+
+    private string TriggerUrl(Guid id) => new Uri(new Uri(Nav.BaseUri), $"/webhooks/{id}/trigger").ToString();
+
+    private async Task<string> UserAsync()
+        => (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "?";
+
+    private async Task Create()
+    {
+        _message = null; _newSecret = null;
+        if (string.IsNullOrWhiteSpace(_name)) { _ok = false; _message = "Name fehlt."; return; }
+        if (!Guid.TryParse(_callerId, out var cid)) { _ok = false; _message = "Identität wählen."; return; }
+        if (string.IsNullOrWhiteSpace(_tool)) { _ok = false; _message = "Tool wählen."; return; }
+
+        var (def, secret) = await Store.CreateAsync(
+            _name.Trim(), new IdentityId(cid), new NamespacedToolName(_tool), CancellationToken.None);
+        UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged, $"webhook-added:{def.Id}");
+        _newSecret = secret; _ok = true; _message = "Angelegt. Secret jetzt notieren.";
+        _name = _callerId = _tool = "";
+        await Reload();
+    }
+
+    private async Task SetEnabled(Guid id, bool enabled)
+    {
+        await Store.SetEnabledAsync(id, enabled, CancellationToken.None);
+        UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged,
+            $"webhook-{(enabled ? "enabled" : "disabled")}:{id}");
+        await Reload();
+    }
+
+    private async Task Remove(Guid id)
+    {
+        await Store.RemoveAsync(id, CancellationToken.None);
+        UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged, $"webhook-removed:{id}");
+        await Reload();
+    }
+}

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>SQLite-Migrationen für BifrostDbContext (v1.1). Eigene Assembly, weil EF pro Provider eigenes DDL erzeugt.</Description>
+    <!-- Generierter Migrations-Code folgt nicht allen Analyzer-Regeln. -->
+    <NoWarn>$(NoWarn);CA1861;CA1062;CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bifrost.Persistence\Bifrost.Persistence.csproj" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

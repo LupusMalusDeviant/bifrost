@@ -1,0 +1,647 @@
+@page "/servers"
+@attribute [Authorize(Policy = UiPolicies.Operator)]
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@inject IUpstreamSupervisor Supervisor
+@inject Bifrost.Core.Upstreams.UpstreamSupervisor ConcreteSupervisor
+@inject IToolDefinitionPinStore ToolPins
+@inject IUpstreamConfigStore ConfigStore
+@inject IUpstreamConnectionTester Tester
+@inject IAuditSink Audit
+@inject TimeProvider Time
+@inject AuthenticationStateProvider AuthState
+
+<h1>Server-Verwaltung</h1>
+<p class="muted">MCP-, OpenAPI- und gehärtete CLI-Quellen zur Laufzeit hinzufügen, ohne Neustart (FR-06/34).</p>
+
+<div class="card">
+    <h3 style="margin-top:0">Angeschlossene Server</h3>
+    @if (_statuses.Count == 0)
+    {
+        <p class="muted">Noch nichts angeschlossen.</p>
+    }
+    else
+    {
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Slug</th><th>Status</th><th>Tools</th><th>Letzter Fehler</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var s in _statuses)
+                    {
+                        <tr>
+                            <td class="mono">@s.Slug</td>
+                            <td><StateBadge State="s.State" /></td>
+                            <td>@s.ToolCount</td>
+                            <td class="muted" style="max-width:260px">@(s.LastError ?? "—")</td>
+                            <td style="white-space:nowrap">
+                                @if (s.State == UpstreamState.Stopped)
+                                {
+                                    <button class="btn-sm btn-ghost" @onclick="() => SetEnabled(s.Id, true)">Aktivieren</button>
+                                }
+                                else
+                                {
+                                    <button class="btn-sm btn-ghost" @onclick="() => SetEnabled(s.Id, false)">Deaktivieren</button>
+                                }
+                                @if (EditableKind(s.Id) is not { } nichtEditierbar)
+                                {
+                                    <button class="btn-sm btn-ghost" @onclick="() => StartEdit(s.Id)">Bearbeiten</button>
+                                }
+                                else
+                                {
+                                    @* Kein toter Knopf: Das Formular hat fuer diese Art keine Felder,
+                                       und der Auffangzweig haette daraus etwas anderes gebaut. *@
+                                    <span class="muted" title="@ServerFormKinds.ReasonNotEditable(nichtEditierbar)">
+                                        nicht im Formular
+                                    </span>
+                                }
+                                <button class="btn-sm btn-ghost" @onclick="() => ShowHistory(s.Id, s.Slug)">Versionen</button>
+                                @if (_oauthServers.Contains(s.Id))
+                                {
+                                    @* Echte Navigation statt Blazor-Klick: Der Autorisierungsvorgang
+                                       endet in einer Weiterleitung aus dem Browser zurück, und ein
+                                       Circuit kann das nicht. *@
+                                    <a class="btn-sm btn-ghost" href="@($"/oauth/upstream/{s.Id.Value}/connect")">Verbinden</a>
+                                }
+                                <button class="btn-sm btn-danger" @onclick="() => Remove(s.Id, s.Slug)">Entfernen</button>
+                            </td>
+                        </tr>
+                        @if (s.QuarantinedTools is { Count: > 0 } held)
+                        {
+                            @* Ein zurückgehaltenes Tool muss sichtbar sein. Sonst sucht jemand ein
+                               Tool, das ohne Erklärung verschwunden ist — und schaltet am Ende den
+                               Schutz ab, statt die Änderung anzusehen. *@
+                            <tr>
+                                <td colspan="5" class="muted">
+                                    <strong>Definition geändert:</strong>
+                                    Diese Tools werden zurückgehalten, bis die neue Fassung
+                                    angenommen ist — sie sind weder sichtbar noch aufrufbar.
+                                    @foreach (var tool in held)
+                                    {
+                                        <span class="mono" style="margin-left:.5rem">@tool</span>
+                                        <button class="btn-sm" style="margin-left:.3rem"
+                                                @onclick="() => AcceptDefinition(s.Id, s.Slug, tool)"
+                                                disabled="@_busy">Neue Fassung annehmen</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@if (_historyServer is not null)
+{
+    <div class="card">
+        <h3 style="margin-top:0">Konfigurations-Historie: <span class="mono">@_historySlug</span></h3>
+        <p class="muted">
+            Jede Änderung erzeugt eine neue Version (append-only). Ein Rollback stellt eine frühere
+            Konfiguration wieder her und wird selbst als neue Version geführt (FR-10).
+        </p>
+        @if (_history.Count == 0)
+        {
+            <p class="muted">Keine Versionen gefunden.</p>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Version</th><th>Gespeichert (UTC)</th><th>Slug</th><th>Transport</th><th>Aktiv</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var v in _history.OrderByDescending(v => v.Version.Value))
+                        {
+                            <tr>
+                                <td>v@(v.Version.Value)</td>
+                                <td class="mono muted">@v.SavedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)</td>
+                                <td class="mono">@v.Config.Slug</td>
+                                <td>@v.Config.Kind</td>
+                                <td>@(v.Config.Enabled ? "ja" : "nein")</td>
+                                <td>
+                                    @if (v.Version.Value != _history.Max(x => x.Version.Value))
+                                    {
+                                        <button class="btn-sm btn-ghost" @onclick="() => Rollback(v.Version)">Zurücksetzen</button>
+                                    }
+                                    else
+                                    {
+                                        <span class="muted">aktuell</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <p class="muted" style="margin-bottom:0">
+                Credentials (Env-Variablen, Header, OpenAPI-Secrets) werden hier bewusst nicht angezeigt.
+            </p>
+        }
+        <div class="toolbar" style="margin-top:.75rem">
+            <button class="btn-ghost" @onclick="() => _historyServer = null">Schließen</button>
+            @if (_historyMessage is not null)
+            {
+                <span class="@(_historyOk ? "msg-ok" : "msg-err")">@_historyMessage</span>
+            }
+        </div>
+    </div>
+}
+
+<div class="card">
+    @if (_editServer is null)
+    {
+        <h3 style="margin-top:0">Neuen Server anschließen</h3>
+    }
+    else
+    {
+        <h3 style="margin-top:0">Server bearbeiten: <span class="mono">@_editSlug</span></h3>
+        <p class="muted">
+            Speichern erzeugt eine neue Konfigurations-Version und startet den Server damit neu (FR-10/34).
+            Secret-Felder sind leer: <strong>leer lassen heißt unverändert</strong> — bestehende Werte
+            werden nicht angezeigt und nicht überschrieben.
+        </p>
+    }
+    <div class="row">
+        <div>
+            <label>Transport</label>
+            @* Aus ServerFormKinds, damit Auswahlliste und Bau-Zweig nicht auseinanderlaufen. *@
+            <select @bind="_kind">
+                @foreach (var kind in ServerFormKinds.Supported)
+                {
+                    <option value="@kind">@KindLabel(kind)</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label>Slug (Namespace)</label>
+            <input @bind="_slug" placeholder="z.B. github" />
+        </div>
+        <div>
+            <label>Anzeigename</label>
+            <input @bind="_displayName" placeholder="GitHub" />
+        </div>
+    </div>
+
+    @if (_kind == UpstreamTransportKind.Stdio)
+    {
+        <div class="row">
+            <div style="flex:2"><label>Kommando</label><input @bind="_command" placeholder="npx" /></div>
+            <div style="flex:3"><label>Argumente (durch Leerzeichen)</label><input @bind="_args" placeholder="-y @@modelcontextprotocol/server-github" /></div>
+        </div>
+        <label>Environment (KEY=VALUE pro Zeile)</label>
+        <textarea class="mono" rows="3" @bind="_env" placeholder="GITHUB_TOKEN=ghp_..."></textarea>
+    }
+    else if (_kind == UpstreamTransportKind.Cli)
+    {
+        <div class="row">
+            <div style="flex:2"><label>Executable (absolut)</label><input @bind="_cliExecutable" placeholder="/usr/bin/git" /></div>
+            <div style="flex:2"><label>Working Directory (optional, absolut)</label><input @bind="_cliWorkingDirectory" /></div>
+        </div>
+        <div class="row">
+            <div><label>Timeout (Sekunden)</label><input type="number" min="1" max="3600" @bind="_cliTimeoutSeconds" /></div>
+            <div><label>Output-Cap pro Stream (Bytes)</label><input type="number" min="1" @bind="_cliMaxOutputBytes" /></div>
+            <div><label>Max. Parallelität</label><input type="number" min="1" max="64" @bind="_cliMaxConcurrency" /></div>
+        </div>
+        <label title="Nur für lokale Entwicklung; Produktion verlangt absolute Executables.">
+            <input type="checkbox" @bind="_cliAllowPathLookup" style="width:auto" />
+            Unsichere PATH-Auflösung erlauben (Development)
+        </label>
+        <label>Tools (JSON-Array aus CliToolSpec)</label>
+        <textarea class="mono" rows="12" @bind="_cliToolsJson"
+                  placeholder='[{"name":"status","fixedArguments":["status"],"risk":"Read"}]'></textarea>
+        <div class="row">
+            <div>
+                <label>Executable-Wurzeln (eine pro Zeile)</label>
+                <textarea class="mono" rows="3" @bind="_cliExecutableRoots"></textarea>
+            </div>
+            <div>
+                <label>Working-Directory-Wurzeln (eine pro Zeile)</label>
+                <textarea class="mono" rows="3" @bind="_cliWorkingRoots"></textarea>
+            </div>
+            <div>
+                <label>Lese-Wurzeln für Path-Parameter (eine pro Zeile)</label>
+                <textarea class="mono" rows="3" @bind="_cliReadRoots"></textarea>
+            </div>
+            <div>
+                <label>Schreib-Wurzeln für Path-Parameter (eine pro Zeile)</label>
+                <textarea class="mono" rows="3" @bind="_cliWriteRoots"></textarea>
+            </div>
+        </div>
+        <label>Environment (KEY=VALUE pro Zeile; bestehende Werte bleiben verborgen)</label>
+        <textarea class="mono" rows="3" @bind="_cliEnvironment"></textarea>
+        <label>
+            <input type="checkbox" @bind="_clearCliEnvironment" style="width:auto" />
+            Alle bestehenden CLI-Environment-Secrets explizit löschen
+        </label>
+    }
+    else if (_kind == UpstreamTransportKind.StreamableHttp)
+    {
+        <label>Endpoint-URL</label>
+        <input @bind="_httpUrl" placeholder="https://host/mcp" />
+        <label>Header (KEY=VALUE pro Zeile)</label>
+        <textarea class="mono" rows="2" @bind="_headers" placeholder="Authorization=Bearer ..."></textarea>
+        <label title="HTTP+SSE ist im MCP-Standard durch Streamable HTTP abgelöst und wird künftig entfernt.">
+            <input type="checkbox" @bind="_allowLegacySse" style="width:auto" />
+            Rückfall auf HTTP+SSE erlauben, wenn der Server kein Streamable HTTP spricht (FR-02)
+        </label>
+    }
+    else
+    {
+        <div class="row">
+            <div style="flex:2"><label>Spec-URL oder file://-Pfad</label><input @bind="_specUrl" placeholder="https://api.example.com/openapi.json" /></div>
+            <div><label>Base-URL (optional)</label><input @bind="_baseUrl" placeholder="https://api.example.com" /></div>
+        </div>
+        <div class="row">
+            <div>
+                <label>Auth</label>
+                <select @bind="_openApiAuth">
+                    <option value="@OpenApiAuthKind.None">Keine</option>
+                    <option value="@OpenApiAuthKind.Bearer">Bearer</option>
+                    <option value="@OpenApiAuthKind.Basic">Basic (user:pass)</option>
+                    <option value="@OpenApiAuthKind.ApiKeyHeader">API-Key-Header</option>
+                </select>
+            </div>
+            <div><label>Credential</label><input @bind="_credential" type="password" /></div>
+            @if (_openApiAuth == OpenApiAuthKind.ApiKeyHeader)
+            {
+                <div><label>Header-Name</label><input @bind="_apiKeyHeader" placeholder="X-Api-Key" /></div>
+            }
+        </div>
+        <label title="Ohne diese Freigabe werden Spec-Quelle und Ziel-API im internen Netz abgewiesen.">
+            <input type="checkbox" @bind="_allowPrivateTargets" style="width:auto" />
+            Ziele im internen Netz erlauben (Loopback, privates Netz, Link-Local)
+        </label>
+    }
+
+    <div class="toolbar" style="margin-top:1rem">
+        <button class="btn-ghost" @onclick="Test" disabled="@_busy">Verbindung testen</button>
+        @if (_editServer is null)
+        {
+            <button @onclick="Add" disabled="@_busy">Anschließen</button>
+        }
+        else
+        {
+            <button @onclick="SaveEdit" disabled="@_busy">Änderungen speichern</button>
+            <button class="btn-ghost" @onclick="CancelEdit" disabled="@_busy">Abbrechen</button>
+        }
+        @if (_message is not null)
+        {
+            <span class="@(_ok ? "msg-ok" : "msg-err")">@_message</span>
+        }
+    </div>
+</div>
+
+@code {
+    private IReadOnlyList<UpstreamStatus> _statuses = [];
+
+    /// <summary>Upstreams, für die eine OAuth-Anbindung konfiguriert ist — nur die zeigen den Knopf.</summary>
+    private HashSet<ServerId> _oauthServers = [];
+    private UpstreamTransportKind _kind = UpstreamTransportKind.Stdio;
+    private string _slug = "", _displayName = "", _command = "", _args = "", _env = "";
+    private string _httpUrl = "", _headers = "";
+    private string _cliExecutable = "", _cliWorkingDirectory = "", _cliToolsJson = "[]";
+    private string _cliExecutableRoots = "", _cliWorkingRoots = "", _cliReadRoots = "", _cliWriteRoots = "";
+    private string _cliEnvironment = "";
+    private int _cliTimeoutSeconds = 30, _cliMaxOutputBytes = 64 * 1024, _cliMaxConcurrency = 4;
+    private bool _cliAllowPathLookup, _clearCliEnvironment;
+    private bool _allowLegacySse = true;
+    private string _specUrl = "", _baseUrl = "", _credential = "", _apiKeyHeader = "X-Api-Key";
+    private OpenApiAuthKind _openApiAuth = OpenApiAuthKind.None;
+    // Vorgabe fail-closed wie im Konnektor: Wer ein internes Ziel einbindet, hakt es bewusst an.
+    private bool _allowPrivateTargets;
+    private bool _busy, _ok;
+    private string? _message;
+    private static readonly JsonSerializerOptions CliManifestJson = CreateCliManifestJson();
+
+    private ServerId? _editServer;
+    private string _editSlug = "";
+    private UpstreamServerConfig? _editBase;
+
+    /// <summary>Art je Server — fuer die Frage, ob das Formular ihn abbilden kann.</summary>
+    private Dictionary<ServerId, UpstreamTransportKind> _kinds = [];
+
+    private ServerId? _historyServer;
+    private string _historySlug = "";
+    private IReadOnlyList<UpstreamConfigVersion> _history = [];
+    private string? _historyMessage;
+    private bool _historyOk;
+
+    protected override void OnInitialized() => Reload();
+
+    private void Reload()
+    {
+        _statuses = Supervisor.Statuses.OrderBy(s => s.Slug).ToList();
+
+        // Ob ein Upstream OAuth braucht und welcher Art er ist, steht in seiner Konfiguration,
+        // nicht im Status.
+        var latest = ConfigStore.GetAllLatestAsync(CancellationToken.None).GetAwaiter().GetResult();
+        _oauthServers = [.. latest.Where(kv => kv.Value.Config.Http?.OAuth is not null).Select(kv => kv.Key)];
+        _kinds = latest.ToDictionary(kv => kv.Key, kv => kv.Value.Config.Kind);
+    }
+
+    private async Task<string> UserAsync()
+        => (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "?";
+
+    private UpstreamServerConfig? BuildConfig(out string? error)
+    {
+        error = null;
+        try
+        {
+            return _kind switch
+            {
+                UpstreamTransportKind.Stdio => new UpstreamServerConfig(
+                    _slug.Trim(), Display(), _kind, true,
+                    Stdio: new StdioTransportOptions(
+                        _command.Trim(),
+                        _args.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                        ParseKeyValues(_env))),
+                UpstreamTransportKind.StreamableHttp => new UpstreamServerConfig(
+                    _slug.Trim(), Display(), _kind, true,
+                    Http: new HttpTransportOptions(
+                        new Uri(_httpUrl.Trim()), ParseKeyValues(_headers), _allowLegacySse)),
+                UpstreamTransportKind.Cli => new UpstreamServerConfig(
+                    _slug.Trim(), Display(), _kind, true,
+                    Cli: new CliTransportOptions(
+                        _cliExecutable.Trim(),
+                        JsonSerializer.Deserialize<List<CliToolSpec>>(
+                            _cliToolsJson, CliManifestJson)
+                            ?? throw new JsonException("CLI-Tools fehlen."),
+                        string.IsNullOrWhiteSpace(_cliWorkingDirectory)
+                            ? null
+                            : _cliWorkingDirectory.Trim(),
+                        _clearCliEnvironment
+                            ? new Dictionary<string, string>()
+                            : ParseKeyValues(_cliEnvironment),
+                        _cliTimeoutSeconds,
+                        _cliMaxOutputBytes,
+                        _cliAllowPathLookup,
+                        ParseLines(_cliExecutableRoots),
+                        ParseLines(_cliWorkingRoots),
+                        ParseLines(_cliReadRoots),
+                        ParseLines(_cliWriteRoots),
+                        _cliMaxConcurrency)),
+                UpstreamTransportKind.OpenApi => new UpstreamServerConfig(
+                    _slug.Trim(), Display(), _kind, true,
+                    OpenApi: new OpenApiTransportOptions(
+                        new Uri(_specUrl.Trim()),
+                        string.IsNullOrWhiteSpace(_baseUrl) ? null : new Uri(_baseUrl.Trim()),
+                        _openApiAuth,
+                        string.IsNullOrWhiteSpace(_credential) ? null : _credential,
+                        _openApiAuth == OpenApiAuthKind.ApiKeyHeader ? _apiKeyHeader.Trim() : null,
+                        _allowPrivateTargets)),
+
+                // Kein Auffangzweig mehr: Vorher wurde JEDE unbekannte Art zu einer
+                // OpenAPI-Konfiguration. Eine neue Art soll hier auffallen, nicht durchrutschen.
+                _ => throw new NotSupportedException(ServerFormKinds.ReasonNotEditable(_kind)),
+            };
+        }
+        catch (Exception ex)
+        {
+            error = $"Konfiguration ungültig: {ex.Message}";
+            return null;
+        }
+    }
+
+    private string Display() => string.IsNullOrWhiteSpace(_displayName) ? _slug.Trim() : _displayName.Trim();
+
+    /// <summary>Die Art des Servers, wenn das Formular sie NICHT abbilden kann; sonst null.</summary>
+    private UpstreamTransportKind? EditableKind(ServerId id)
+        => _kinds.TryGetValue(id, out var kind) && !ServerFormKinds.CanEdit(kind) ? kind : null;
+
+    private static string KindLabel(UpstreamTransportKind kind) => kind switch
+    {
+        UpstreamTransportKind.Stdio => "stdio (lokaler Prozess)",
+        UpstreamTransportKind.StreamableHttp => "Streamable HTTP",
+        UpstreamTransportKind.OpenApi => "OpenAPI-Import",
+        UpstreamTransportKind.Cli => "CLI-Manifest (lokaler Prozess)",
+        _ => kind.ToString(),
+    };
+
+    private static IReadOnlyDictionary<string, string>? ParseKeyValues(string text)
+    {
+        var dict = new Dictionary<string, string>();
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var idx = line.IndexOf('=');
+            if (idx > 0)
+            {
+                dict[line[..idx].Trim()] = line[(idx + 1)..].Trim();
+            }
+        }
+        return dict.Count > 0 ? dict : null;
+    }
+
+    private static IReadOnlyList<string>? ParseLines(string text)
+    {
+        var values = text.Split(
+            '\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return values.Length > 0 ? values : null;
+    }
+
+    private async Task Test()
+    {
+        _busy = true; _message = null;
+        var config = BuildConfig(out var err);
+        if (config is null) { _ok = false; _message = err; _busy = false; return; }
+
+        var result = await Tester.TestAsync(config, CancellationToken.None);
+        _ok = result.Success;
+        _message = result.Success
+            ? $"Verbindung ok — {result.ToolCount} Tool(s) entdeckt."
+            : $"Fehlgeschlagen: {result.Error}";
+        _busy = false;
+    }
+
+    private async Task Add()
+    {
+        _busy = true; _message = null;
+        var config = BuildConfig(out var err);
+        if (config is null) { _ok = false; _message = err; _busy = false; return; }
+
+        try
+        {
+            var id = await Supervisor.AddAsync(config, CancellationToken.None);
+            UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged, $"server-added:{config.Slug}", id);
+            _ok = true; _message = $"'{config.Slug}' angeschlossen.";
+            ClearForm();
+            Reload();
+        }
+        catch (Exception ex)
+        {
+            _ok = false; _message = ex.Message;
+        }
+        _busy = false;
+    }
+
+    private async Task StartEdit(ServerId id)
+    {
+        _message = null; _historyServer = null;
+        var history = await ConfigStore.GetHistoryAsync(id, CancellationToken.None);
+        var current = history.OrderByDescending(v => v.Version.Value).FirstOrDefault()?.Config;
+        if (current is null)
+        {
+            _ok = false; _message = "Keine gespeicherte Konfiguration gefunden.";
+            return;
+        }
+
+        _editServer = id; _editSlug = current.Slug; _editBase = current;
+        _kind = current.Kind;
+        _slug = current.Slug;
+        _displayName = current.DisplayName;
+
+        // Secrets (stdio-/CLI-Env, Header, Credential) werden bewusst NICHT vorbefüllt — sie stünden sonst
+        // im Klartext im DOM. Leer gelassen übernimmt SaveEdit die bestehenden Werte.
+        _command = current.Stdio?.Command ?? "";
+        _args = current.Stdio?.Arguments is { } a ? string.Join(' ', a) : "";
+        _env = "";
+        _cliExecutable = current.Cli?.Executable ?? "";
+        _cliWorkingDirectory = current.Cli?.WorkingDirectory ?? "";
+        _cliToolsJson = current.Cli?.Tools is { } tools
+            ? JsonSerializer.Serialize(tools, CliManifestJson)
+            : "[]";
+        _cliExecutableRoots = JoinLines(current.Cli?.AllowedExecutableRoots);
+        _cliWorkingRoots = JoinLines(current.Cli?.AllowedWorkingDirectoryRoots);
+        _cliReadRoots = JoinLines(current.Cli?.AllowedReadRoots);
+        _cliWriteRoots = JoinLines(current.Cli?.AllowedWriteRoots);
+        _cliEnvironment = "";
+        _cliTimeoutSeconds = current.Cli?.TimeoutSeconds ?? 30;
+        _cliMaxOutputBytes = current.Cli?.MaxOutputBytes ?? 64 * 1024;
+        _cliMaxConcurrency = current.Cli?.MaxConcurrency ?? 4;
+        _cliAllowPathLookup = current.Cli?.AllowPathLookup ?? false;
+        _clearCliEnvironment = false;
+        _httpUrl = current.Http?.Endpoint.ToString() ?? "";
+        _headers = "";
+        _allowLegacySse = current.Http?.AllowLegacySse ?? true;
+        _specUrl = current.OpenApi?.SpecLocation.ToString() ?? "";
+        _baseUrl = current.OpenApi?.BaseAddress?.ToString() ?? "";
+        _openApiAuth = current.OpenApi?.AuthKind ?? OpenApiAuthKind.None;
+        _apiKeyHeader = current.OpenApi?.ApiKeyHeaderName ?? "X-Api-Key";
+        _allowPrivateTargets = current.OpenApi?.AllowPrivateTargets ?? false;
+        _credential = "";
+    }
+
+    private void CancelEdit()
+    {
+        _editServer = null; _editBase = null; _message = null;
+        ClearForm();
+    }
+
+    private async Task SaveEdit()
+    {
+        if (_editServer is not { } id || _editBase is not { } previous) { return; }
+
+        _busy = true; _message = null;
+        var config = BuildConfig(out var err);
+        if (config is null) { _ok = false; _message = err; _busy = false; return; }
+
+        config = Bifrost.Core.Upstreams.UpstreamConfigMerge.CarryOverSecrets(config, previous);
+
+        try
+        {
+            var version = await Supervisor.ReconfigureAsync(id, config, CancellationToken.None);
+            UiAudit.Record(
+                Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged,
+                $"server-reconfigured:{config.Slug}:v{version.Value}", id);
+            _ok = true; _message = $"'{config.Slug}' gespeichert als v{version.Value}.";
+            _editServer = null; _editBase = null;
+            ClearForm();
+            Reload();
+        }
+        catch (Exception ex)
+        {
+            _ok = false; _message = ex.Message;
+        }
+        _busy = false;
+    }
+
+    private void ClearForm()
+    {
+        _slug = _displayName = _command = _args = _env = _httpUrl = _headers = _specUrl =
+            _baseUrl = _credential = _cliExecutable = _cliWorkingDirectory = _cliEnvironment =
+            _cliExecutableRoots = _cliWorkingRoots = _cliReadRoots = _cliWriteRoots = "";
+        _cliToolsJson = "[]";
+        _clearCliEnvironment = false;
+        _allowPrivateTargets = false;
+    }
+
+    private static string JoinLines(IReadOnlyList<string>? values)
+        => values is { Count: > 0 } ? string.Join('\n', values) : "";
+
+    private static JsonSerializerOptions CreateCliManifestJson()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            WriteIndented = true,
+        };
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
+    }
+
+    private async Task SetEnabled(ServerId id, bool enabled)
+    {
+        await Supervisor.SetEnabledAsync(id, enabled, CancellationToken.None);
+        UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged, enabled ? "server-enabled" : "server-disabled", id);
+        Reload();
+    }
+
+    /// <summary>
+    /// Nimmt die geänderte Definition an und fragt den Katalog neu ab. Erst danach ist das Tool
+    /// wieder da — mit der neuen Fassung, die jemand angesehen hat.
+    /// </summary>
+    private async Task AcceptDefinition(ServerId id, string slug, string tool)
+    {
+        _busy = true;
+        try
+        {
+            await ToolPins.AcceptAsync(id, tool, CancellationToken.None);
+            await ConcreteSupervisor.RediscoverAsync(id, CancellationToken.None);
+            UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged,
+                $"tool-definition-accepted:{slug}__{tool}", id);
+        }
+        finally
+        {
+            _busy = false;
+            Reload();
+        }
+    }
+
+    private async Task ShowHistory(ServerId id, string slug)
+    {
+        _historyServer = id;
+        _historySlug = slug;
+        _historyMessage = null;
+        _history = await ConfigStore.GetHistoryAsync(id, CancellationToken.None);
+    }
+
+    private async Task Rollback(ConfigVersionId version)
+    {
+        if (_historyServer is not { } id)
+        {
+            return;
+        }
+
+        _historyMessage = null;
+        try
+        {
+            await Supervisor.RollbackAsync(id, version, CancellationToken.None);
+            UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged,
+                $"server-rollback:{_historySlug}:v{version.Value}", id);
+            _historyOk = true;
+            _historyMessage = $"Auf v{version.Value} zurückgesetzt.";
+            _history = await ConfigStore.GetHistoryAsync(id, CancellationToken.None);
+            Reload();
+        }
+        catch (Exception ex)
+        {
+            _historyOk = false;
+            _historyMessage = ex.Message;
+        }
+    }
+
+    private async Task Remove(ServerId id, string slug)
+    {
+        await Supervisor.RemoveAsync(id, DrainPolicy.Graceful(TimeSpan.FromSeconds(5)), CancellationToken.None);
+        UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged, $"server-removed:{slug}", id);
+        Reload();
+    }
+}

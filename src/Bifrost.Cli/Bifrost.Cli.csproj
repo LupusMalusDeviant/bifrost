@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>bifrost</AssemblyName>
+    <RootNamespace>Bifrost.Cli</RootNamespace>
+    <Description>Offizieller, öffentlicher HTTP-Client für das B.I.F.R.O.S.T-Gateway.</Description>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>bifrost</ToolCommandName>
+    <PackageId>Bifrost.Cli</PackageId>
+  </PropertyGroup>
+
+</Project>

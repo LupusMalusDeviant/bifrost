@@ -3,13 +3,13 @@
 [workspace]
 
 [package]
-name = "mcpmcp-wasi-guest"
+name = "bifrost-wasi-guest"
 version = "0.1.0"
 edition = "2024"
 publish = false
 
 [[bin]]
-name = "mcpmcp-wasi-guest"
+name = "bifrost-wasi-guest"
 path = "src/main.rs"
 
 [profile.release]

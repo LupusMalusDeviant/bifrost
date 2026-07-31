@@ -1,0 +1,41 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Bifrost.Abstractions/Bifrost.Abstractions.csproj" />
+    <Project Path="src/Bifrost.Cli/Bifrost.Cli.csproj" />
+    <Project Path="src/Bifrost.Core/Bifrost.Core.csproj" />
+    <Project Path="src/Bifrost.Persistence.Migrations.Postgres/Bifrost.Persistence.Migrations.Postgres.csproj" />
+    <Project Path="src/Bifrost.Persistence.Migrations.Sqlite/Bifrost.Persistence.Migrations.Sqlite.csproj" />
+    <Project Path="src/Bifrost.Persistence/Bifrost.Persistence.csproj" />
+    <Project Path="src/Bifrost.Server/Bifrost.Server.csproj" />
+    <Project Path="src/Bifrost.Upstream/Bifrost.Upstream.csproj" />
+    <Project Path="src/Bifrost.Web/Bifrost.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Bifrost.Cli.Tests/Bifrost.Cli.Tests.csproj" />
+    <Project Path="tests/Bifrost.Core.Tests/Bifrost.Core.Tests.csproj" />
+    <Project Path="tests/Bifrost.Integration.Tests/Bifrost.Integration.Tests.csproj" />
+    <Project Path="tests/Bifrost.Upstream.Tests/Bifrost.Upstream.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Bifrost.TestServers/" />
+  <Folder Name="/tests/Bifrost.TestServers/WasiHostStub/">
+    <Project Path="tests/Bifrost.TestServers/WasiHostStub/Bifrost.TestServers.WasiHostStub.csproj" />
+  </Folder>
+  <Folder Name="/tests/Bifrost.TestServers/CliProbe/">
+    <Project Path="tests/Bifrost.TestServers/CliProbe/Bifrost.TestServers.CliProbe.csproj" />
+  </Folder>
+  <Folder Name="/tests/Bifrost.TestServers/BulkServer/">
+    <Project Path="tests/Bifrost.TestServers/BulkServer/Bifrost.TestServers.BulkServer.csproj" />
+  </Folder>
+  <Folder Name="/tests/Bifrost.TestServers/CrashServer/">
+    <Project Path="tests/Bifrost.TestServers/CrashServer/Bifrost.TestServers.CrashServer.csproj" />
+  </Folder>
+  <Folder Name="/tests/Bifrost.TestServers/EchoServer/">
+    <Project Path="tests/Bifrost.TestServers/EchoServer/Bifrost.TestServers.EchoServer.csproj" />
+  </Folder>
+  <Folder Name="/tests/Bifrost.TestServers/HttpServer/">
+    <Project Path="tests/Bifrost.TestServers/HttpServer/Bifrost.TestServers.HttpServer.csproj" />
+  </Folder>
+  <Folder Name="/tests/Bifrost.TestServers/SlowServer/">
+    <Project Path="tests/Bifrost.TestServers/SlowServer/Bifrost.TestServers.SlowServer.csproj" />
+  </Folder>
+</Solution>

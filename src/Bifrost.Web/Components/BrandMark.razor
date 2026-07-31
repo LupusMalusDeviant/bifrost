@@ -1,0 +1,31 @@
+@* Die Marke: ein Bogen ueber dem Horizont — die Bruecke, nach der das Ding heisst.
+   Als Inline-SVG und nicht als Bilddatei, weil die Oberflaeche keine externen Ressourcen laedt
+   (siehe App.razor). Der Bogen ist die einzige Stelle, an der das Spektrum eine Flaeche bekommt;
+   ueberall sonst ist es eine zwei Pixel hohe Linie. *@
+<div class="brand">
+    <svg class="brand-mark" width="27" height="27" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+        <defs>
+            <linearGradient id="bifrost-arc" x1="0" y1="1" x2="1" y2="0">
+                <stop offset="0" stop-color="#8b7cf0" />
+                <stop offset=".3" stop-color="#4fa8f5" />
+                <stop offset=".55" stop-color="#6fd3ff" />
+                <stop offset=".78" stop-color="#56e0bd" />
+                <stop offset="1" stop-color="#d9c86a" />
+            </linearGradient>
+        </defs>
+        <path d="M3.5 25.5C7.5 8 24.5 8 28.5 25.5" fill="none" stroke="url(#bifrost-arc)"
+              stroke-width="3.4" stroke-linecap="round" />
+        <path d="M3.5 25.5C7.5 8 24.5 8 28.5 25.5" fill="none" stroke="#e8f7ff"
+              stroke-width=".9" stroke-linecap="round" opacity=".45" />
+        <path d="M4.5 28.5h23" fill="none" stroke="#2b5f86" stroke-width="1.8" stroke-linecap="round" />
+    </svg>
+    <div class="brand-text">
+        <span class="brand-name">B<i>.</i>I<i>.</i>F<i>.</i>R<i>.</i>O<i>.</i>S<i>.</i>T</span>
+        <span class="brand-sub">@Subtitle</span>
+    </div>
+</div>
+<div class="brand-rule"></div>
+
+@code {
+    [Parameter] public string Subtitle { get; set; } = "MCP Gateway";
+}

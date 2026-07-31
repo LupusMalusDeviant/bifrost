@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "mcpmcp-wasi-guest"
+name = "bifrost-wasi-guest"
 version = "0.1.0"

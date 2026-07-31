@@ -23,7 +23,7 @@
 | 0 – Bestandsaufnahme | **ABGESCHLOSSEN** | Befund, Risiken, Dateiplan, Testplan und Commit-Aufteilung in `docs/plans/0002-cli-haertung-gateway-cli-und-connector-roadmap.md`. |
 | 1 – Secret-Fixes | **ABGESCHLOSSEN** | Zentrale Redaction, CLI-Secret-Scrubbing, sichere Carry-over-/Wechsel-/Reset-Semantik und API-/Core-Regressionstests. |
 | 2 – CLI-Prozesshärtung | **ABGESCHLOSSEN für Trusted Host Process** | Streaming-Bytecaps, getrenntes stdout/stderr, minimale Umgebung, Pfad-/Root-/Hash-Policy, Lifecycle, Prozessbaum-Kill, Parallelitätslimits, typisierte Manifeste und Approval-Defaults. Direkter Hostmodus bleibt ausdrücklich **keine Sandbox**. |
-| 3 – Gateway-CLI | **ABGESCHLOSSEN** | Offizielle `mcp-mcp`-CLI ausschließlich über öffentliche HTTP-Verträge, inklusive JSON-Modus, Pipelines, Exitcodes und Administration. |
+| 3 – Gateway-CLI | **ABGESCHLOSSEN** | Offizielle `bifrost`-CLI ausschließlich über öffentliche HTTP-Verträge, inklusive JSON-Modus, Pipelines, Exitcodes und Administration. |
 | 4 – Capability-Modell | **WEITGEHEND** | CapabilityDescriptorV1, CapabilityResultV1 mit strukturiertem Fehler, SchemaRef mit Herkunft und Hash, stabile Capability-Ids, LegacyCapabilityAdapter und CapabilityResultMapper sind gebaut und angeschlossen: GET /api/v1/capabilities zeigt sie, POST /api/v1/capabilities/{id}/invoke ruft ueber denselben Invocation-Kern auf und liefert die Huelle. Stabile Gateway-Codes mit retryable-Urteil; ein freigabepflichtiger Aufruf ist ein Vorgang (202 + Task-Id) statt eines Fehlers. Query/Mutation/Resource/Prompt/Task sind anbietbar; Event, Subscription und AgentDelegation bleiben gesperrt (EventV1 vertagt, A2A offen). Offen: Artifacts und Pagination — beide haben heute keinen Produzenten. |
 | 5 – Connector-/Plugin-Vertrag | **UMGESETZT fuer WASI** | Laufzeitteil am WASI-Host: Handshake mit Capability-Flags, Correlation-Id, normierte Fehlerhuelle, Discovery mit Schema-Normalisierung, bestaetigte Cancellation, Readiness getrennt von Liveness, Lifecycle bis drain/stop. Paketteil seit 2026-07-27: .mcpkg als ZIP mit signiertem Manifest (Ed25519 ueber die Manifest-Bytes, SHA-256 je Nutzdatei), Pruefreihenfolge Archivgrenzen -> Signatur -> Manifest -> Hashes, nicht deklarierte Eintraege abgewiesen, Zip-Slip und doppelte Eintraege abgewiesen. Installation ueber Quarantaene mit echter Probe (Host startet, Katalog wird abgefragt), atomare Aktivierung, Update und Rollback auf die liegengebliebene Vorversion. Vier Vertrauensstufen mit Zustimmung je Zugriff; Core ist nicht installierbar. Upstreams zeigen ueber Wasi.PackageId auf ein Paket statt auf Pfade. Offen: nur WASI-Transport paketierbar, keine Bezugsquelle (Upload statt Registry). |
 | 6 – WASI/Component Model | **WEITGEHEND; Streams zurückgestellt** | Produktionshost im Image, Publisher-Trust-Store mit sofortigem Entzug, feingranulare WASI-P2-Grants (deny-before-instantiation), Modul- und Platten-Cache, IPC-Vertrag v4 mit Korrelation, Nebenläufigkeit und bestätigtem Abbruch. Aufrufbreite deckt alle WIT-Typen ab **außer** `future`/`stream` — die sind am 2026-07-25 zurückgestellt worden, weil ein dynamischer Host sie nur für fest einkompilierte Payload-Typen lesen kann. ADR-0017 akzeptiert, ADR-0020 akzeptiert. |
@@ -61,12 +61,12 @@
 - Connector-Matrix und Releasefolge:
   `docs/plans/connector-entscheidung-und-release-roadmap.md`
 - Secret-Redaction:
-  `src/McpMcp.Core/Upstreams/UpstreamConfigRedactor.cs`
+  `src/Bifrost.Core/Upstreams/UpstreamConfigRedactor.cs`
 - CLI-Härtung:
-  `src/McpMcp.Upstream/Cli/CliUpstreamConnector.cs`,
+  `src/Bifrost.Upstream/Cli/CliUpstreamConnector.cs`,
   `CliProcessPolicy.cs`, `CliArgumentBinder.cs`, `BoundedProcessOutput.cs`
 - Gateway-CLI:
-  `src/McpMcp.Cli/` und `docs/gateway-cli.md`
+  `src/Bifrost.Cli/` und `docs/gateway-cli.md`
 - Architektur:
   `docs/adr/0015-*` bis `docs/adr/0019-*`
 - Ausführbarer M4-Spike:
@@ -94,8 +94,8 @@
 Reproduzierbare Prüfkommandos:
 
 ```text
-dotnet build MCPMCP.slnx --no-restore --nologo
-dotnet test MCPMCP.slnx --no-build --no-restore --nologo
+dotnet build Bifrost.slnx --no-restore --nologo
+dotnet test Bifrost.slnx --no-build --no-restore --nologo
 
 cd spikes/wasi-component-runtime
 cargo fmt --check
@@ -143,7 +143,7 @@ cargo run --locked --quiet -- probe
 
 ## Rolle und Arbeitsweise
 
-Du arbeitest als Senior Software Architect und Security Engineer im Repository MCPMCP.
+Du arbeitest als Senior Software Architect und Security Engineer im Repository B.I.F.R.O.S.T.
 
 Der CLI-Upstream aus ADR-0014 ist bereits als Prototyp implementiert. Baue ihn nicht noch einmal von Grund auf. Prüfe den aktuellen Stand und härte ihn systematisch.
 
@@ -159,7 +159,7 @@ Vor jeder Änderung:
 
 ## Produktziel
 
-MCPMCP soll sich zu einer selbst gehosteten **Tool and Agent Control Plane** entwickeln:
+B.I.F.R.O.S.T soll sich zu einer selbst gehosteten **Tool and Agent Control Plane** entwickeln:
 
 - einheitliche Discovery für MCP-, API-, CLI- und Plugin-Tools;
 - zentrale Identitäten, RBAC, Policies und Guardrails;
@@ -176,13 +176,13 @@ Der Produktwert ist nicht die bloße Zahl unterstützter Protokolle. Der Produkt
 Lies mindestens:
 
 - `docs/adr/0014-cli-programme-als-upstream-transport.md`
-- `src/McpMcp.Upstream/Cli/CliUpstreamConnector.cs`
-- `src/McpMcp.Abstractions/Upstream.cs`
-- `src/McpMcp.Core/Upstreams/UpstreamConfigValidator.cs`
-- `src/McpMcp.Core/Upstreams/UpstreamConnectionTester.cs`
-- `src/McpMcp.Core/Upstreams/UpstreamConfigMerge.cs`
-- `src/McpMcp.Server/ApiEndpoints.cs`
-- `src/McpMcp.Web/Components/Pages/Servers.razor`
+- `src/Bifrost.Upstream/Cli/CliUpstreamConnector.cs`
+- `src/Bifrost.Abstractions/Upstream.cs`
+- `src/Bifrost.Core/Upstreams/UpstreamConfigValidator.cs`
+- `src/Bifrost.Core/Upstreams/UpstreamConnectionTester.cs`
+- `src/Bifrost.Core/Upstreams/UpstreamConfigMerge.cs`
+- `src/Bifrost.Server/ApiEndpoints.cs`
+- `src/Bifrost.Web/Components/Pages/Servers.razor`
 - Audit-Sink und Audit-Batch-Writer
 - Versionsangaben und ServerInfo in `Program.cs`
 - bestehende Core-, Upstream- und Integrationstests
@@ -356,20 +356,20 @@ Baue nicht bloß Curl-Beispiele. Erstelle einen schlanken offiziellen CLI-Client
 Zieloberfläche:
 
 ```text
-mcp-mcp status
-mcp-mcp tools search <query>
-mcp-mcp tools describe <tool>
-mcp-mcp tools invoke <tool> --json '{...}'
-mcp-mcp tools invoke <tool> --file args.json
-mcp-mcp servers list
-mcp-mcp servers add --file server.json
-mcp-mcp servers enable <id>
-mcp-mcp servers disable <id>
-mcp-mcp servers remove <id>
-mcp-mcp approvals list
-mcp-mcp approvals approve <id>
-mcp-mcp approvals deny <id>
-mcp-mcp audit tail
+bifrost status
+bifrost tools search <query>
+bifrost tools describe <tool>
+bifrost tools invoke <tool> --json '{...}'
+bifrost tools invoke <tool> --file args.json
+bifrost servers list
+bifrost servers add --file server.json
+bifrost servers enable <id>
+bifrost servers disable <id>
+bifrost servers remove <id>
+bifrost approvals list
+bifrost approvals approve <id>
+bifrost approvals deny <id>
+bifrost audit tail
 ```
 
 Anforderungen:
@@ -452,7 +452,7 @@ Reduziere nicht jedes Protokoll zwanghaft auf einen ausschließlich synchronen T
 
 ## Phase 5 – Stabile Connector-/Plugin-Schnittstelle — TEILWEISE
 
-MCPMCP soll keine monolithische Sammlung fest eingebauter Adapter werden. Entwickle einen versionierten Connector-Vertrag.
+B.I.F.R.O.S.T soll keine monolithische Sammlung fest eingebauter Adapter werden. Entwickle einen versionierten Connector-Vertrag.
 
 Der Vertrag benötigt:
 
@@ -644,7 +644,7 @@ Offizielle Grundlage:
 
 ## Phase 11 – Internes Task- und Event-Modell — TEILWEISE
 
-Vor AsyncAPI und A2A benötigt MCPMCP persistente Modelle für asynchrone Vorgänge.
+Vor AsyncAPI und A2A benötigt B.I.F.R.O.S.T persistente Modelle für asynchrone Vorgänge.
 
 ### Task
 
