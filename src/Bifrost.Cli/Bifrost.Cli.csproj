@@ -10,4 +10,60 @@
     <PackageId>Bifrost.Cli</PackageId>
   </PropertyGroup>
 
+  <!--
+    Verteilung als eigenständiges Programm (WP1.3, docs/plans/m1-distribution-contract.md §2).
+
+    Die Bedingung auf RuntimeIdentifier ist Absicht: Nur ein Lauf mit '-r <rid>' ist ein
+    Verteilungsbau. 'dotnet build', 'dotnet test' und 'dotnet pack' (die CLI ist auch ein
+    dotnet-tool) sehen davon nichts und bleiben so schnell und so plattformneutral wie bisher.
+
+    Unterstützte RIDs laut Vertrag: win-x64, linux-x64, linux-arm64, osx-x64, osx-arm64.
+    Sie stehen bewusst NICHT in <RuntimeIdentifiers>, weil das jede Wiederherstellung — auch die
+    der Entwickler und der Tests — fünf Runtime-Packs ziehen ließe, die nur der Release braucht.
+
+    SelfContained: Der Vertrag verspricht ein Archiv mit genau einer ausführbaren Datei plus
+    LICENSE. Framework-abhängig wäre zwar ~330-mal kleiner, verlangte aber eine passend
+    installierte .NET-Laufzeit auf dem Zielrechner — genau die Voraussetzung, die WP1.3
+    beseitigen soll.
+
+    PublishTrimmed bleibt aus. Der Trimmer meldet elf IL2026-Fehler, alle aus der
+    reflexionsbasierten System.Text.Json-Nutzung in GatewayCli und CliConfiguration. Sie
+    verschwänden nur durch eine Umstellung auf quellgenerierte Serialisierungskontexte — das
+    wäre eine Produktionscodeänderung, die der M1-Vertrag (§7) ausschließt. Ohne Trimmen ist die
+    Reflexion nachweislich unverändert; getrimmt wäre sie eine Wette.
+
+    DebugType embedded statt none: legt die Symbole in die gebündelte Assembly, statt eine .pdb
+    neben die Programmdatei zu legen. Das hält das Archiv eindateilig und erhält trotzdem
+    Zeilennummern in Stapelüberwachungen.
+  -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <!-- Vorgabe, keine Fessel: Wer '-p:SelfContained=false' übergibt, bekommt auch genau das.
+         Ohne die Leerprüfung gewönne die Projektdatei gegen die Kommandozeile und täte still
+         das Gegenteil der übergebenen Option. -->
+    <SelfContained Condition="'$(SelfContained)' == ''">true</SelfContained>
+    <PublishSingleFile Condition="'$(PublishSingleFile)' == ''">true</PublishSingleFile>
+    <PublishTrimmed Condition="'$(PublishTrimmed)' == ''">false</PublishTrimmed>
+    <DebugType>embedded</DebugType>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!--
+    Rückfallebene für den Commit in der Versionsausgabe.
+
+    Im Normalfall füllt das SDK 'SourceRevisionId' selbst aus dem Arbeitsbaum (SourceLink ist seit
+    .NET 8 im SDK enthalten) und hängt ihn an die InformationalVersion. Fehlt das '.git'-Verzeichnis
+    (Quell-Tarball, exotischer Checkout), bliebe der Commit leer und die Versionsausgabe nennte
+    nur die SemVer. In GitHub Actions steht der SHA dann immer noch in GITHUB_SHA; den nehmen wir.
+    Eine eigene Git-Abfrage per Exec wäre die schlechtere Wahl: Sie liefe auch dort, wo das SDK
+    bereits eine bessere Antwort hat, und würde in Containern ohne git-Binary erneut scheitern.
+  -->
+  <Target Name="BifrostCommitAusWorkflowUebernehmen"
+          BeforeTargets="AddSourceRevisionToInformationalVersion"
+          DependsOnTargets="InitializeSourceControlInformation"
+          Condition="'$(SourceRevisionId)' == '' and '$(GITHUB_SHA)' != ''">
+    <PropertyGroup>
+      <SourceRevisionId>$(GITHUB_SHA)</SourceRevisionId>
+    </PropertyGroup>
+  </Target>
+
 </Project>

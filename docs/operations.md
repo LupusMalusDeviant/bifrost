@@ -44,12 +44,152 @@ die beim korrekten Aufbau mitläuft, wird ignoriert.
 Der Zugang über `/mcp` und `/api` ist davon **nicht** betroffen: Agenten authentifizieren sich mit
 einem API-Key im Header, nicht mit einem Cookie.
 
-## Schnellstart (Docker)
+## Installation (Docker)
+
+Drei Befehle. Es wird **nichts** gebaut — der Standardweg zieht ein veröffentlichtes Image:
 
 ```bash
-docker compose up -d          # SQLite-Default, ein Volume
-docker compose logs bifrost    # Bootstrap-Zugangsdaten NUR beim Erststart ablesen
+cp .env.example .env           # darin BIFROST_VERSION auf ein veröffentlichtes Release setzen
+docker compose up -d           # SQLite-Default, ein Volume
+curl -fsS http://localhost:8080/healthz
 ```
+
+Danach die Bootstrap-Zugangsdaten abholen: `docker compose logs bifrost`.
+
+### Es gibt kein `latest`
+
+Das Image liegt unter `ghcr.io/lupusmalusdeviant/bifrost`, getaggt mit `<version>` (`0.12.0`),
+`<major>.<minor>` (`0.12`) und `sha-<kurz-sha>`. Ein `latest` wird bewusst **nicht** gesetzt: Ein
+beweglicher Zeiger macht aus einem Neustart — einem Stromausfall, einem `restart: unless-stopped`
+— unbemerkt ein Upgrade. Welche Version läuft, gehört in eine Datei, die man liest, bevor man sie
+ändert. Das ist `.env`:
+
+```bash
+BIFROST_VERSION=0.12.0
+```
+
+**Für den Produktivbetrieb den Digest festnageln.** Ein Tag lässt sich in der Registry neu setzen,
+ein Digest nicht — erst damit läuft nach jedem Neustart nachweislich dasselbe Image. `BIFROST_IMAGE`
+ersetzt die Referenz vollständig und nimmt beide Formen:
+
+```bash
+BIFROST_IMAGE=ghcr.io/lupusmalusdeviant/bifrost@sha256:<64-hex>
+```
+
+Der Digest steht in der Release-Ausgabe; von einem bereits gezogenen Image holt ihn
+`docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/lupusmalusdeviant/bifrost:0.12.0`.
+
+### Upgrade
+
+```bash
+docker compose down                      # Container stoppen, Volumes bleiben
+# BIFROST_VERSION (oder BIFROST_IMAGE) in .env auf die neue Fassung setzen
+docker compose pull && docker compose up -d
+docker compose logs -f bifrost           # Migrationsmeldung bestätigen (siehe Schema & Upgrades)
+```
+
+Vorher das Datenverzeichnis sichern (siehe [Backup](#backup)) — das Schema wird beim Start
+automatisch migriert, und eine Migration ist nicht rückwärts fahrbar. Ein Rollback ist der Weg
+zurück auf die vorherige Zeile in `.env`, nicht ein zweites `up`.
+
+`docker compose pull` ist auch bei einem Digest sinnvoll: Es holt genau dieses Manifest und
+scheitert, wenn es nicht mehr existiert, statt still ein lokal vorhandenes älteres zu nehmen.
+
+### Aus dem Quelltext bauen (Entwicklerpfad)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+Das ist ausdrücklich **kein** Installationsweg: Was dabei entsteht, trägt weder Provenance noch
+Signatur. Es heißt deshalb `bifrost-local:dev` und nie so wie das Release-Image — sonst ließe sich
+später nicht mehr sagen, welches von beiden gerade läuft.
+
+### Konfiguration liegt in `.env`, nicht in der Compose-Datei
+
+`.env` wirkt an zwei Stellen: Compose ersetzt damit die `${…}` in den Compose-Dateien (Image, Port,
+Datenbankpasswort), und der Container bekommt den Inhalt als Umgebung (`env_file`). Betriebs-
+geheimnisse gehören deshalb dorthin und nicht in eine versionierte Datei. `.env` steht in
+`.gitignore`; `chmod 600 .env`.
+
+Weil der Inhalt vollständig in die Container-Umgebung geht, gehören dort **nur** `BIFROST_*`,
+`POSTGRES_*`, `COMPOSE_*` und `OTEL_*` hinein — eine Zeile `PATH=` überschriebe die Umgebung des
+Containers.
+
+### Der Volume-Name — die teuerste Zeile dieser Seite
+
+Compose stellt jedem Volume den **Projektnamen** voran. Ohne Angabe ist der Projektname der
+kleingeschriebene Name des Verzeichnisses, in dem die Compose-Datei liegt. Aus `bifrost-data` wird
+so `<projekt>_bifrost-data`.
+
+```bash
+docker compose config --volumes        # die Schlüssel
+docker compose config | tail -6        # die vollständigen Namen, inklusive Präfix
+```
+
+Wer den Schlüssel umbenennt, das Verzeichnis umbenennt oder die Compose-Datei woanders hinlegt,
+zeigt damit auf ein **anderes** Volume. Docker legt es stillschweigend neu und leer an, der Gateway
+findet eine leere Datenbank vor, richtet sie ein und meldet sich fehlerfrei als bereit — ohne
+Server, ohne Rollen, ohne Key-Ring. **Der Ausfall sieht aus wie ein gelungener Start.** Erst wenn
+jemand ein Tool aufruft oder sich anmelden will, fällt es auf.
+
+Wer davor sicher sein will, setzt den Projektnamen einmal fest, statt ihn vom Verzeichnis abhängen
+zu lassen:
+
+```bash
+COMPOSE_PROJECT_NAME=bifrost           # in .env
+```
+
+Das ändert den Volume-Namen **ebenfalls** — also nur bei einer Neuinstallation setzen, oder
+zusammen mit dem Umzug unten.
+
+### Umstieg einer MCP-MCP-Installation
+
+Eine Installation aus der Zeit vor der Umbenennung (2026-07-31) hat Service und Volume unter dem
+alten Namen: Service `mcpmcp`, Volume `<projekt>_mcpmcp-data`. Die heutige Compose-Datei nennt
+beides `bifrost`. Ein `docker compose up -d` auf der alten Installation startet damit **auf einem
+neuen, leeren Volume** — mit genau dem Fehlerbild von oben.
+
+Erst nachsehen, dann handeln:
+
+```bash
+docker volume ls | grep -E 'mcpmcp|bifrost'
+docker compose config | tail -6        # welchen Namen die neue Fassung erwartet
+```
+
+Stimmen die beiden nicht überein, ist der Inhalt umzuziehen. Docker kann Volumes nicht umbenennen;
+kopiert wird über einen Wegwerf-Container, bei **gestopptem** Gateway:
+
+```bash
+docker compose down                    # oder: docker stop <alter-container>
+
+docker volume create mcpmcp_bifrost-data          # Zielname aus 'docker compose config'
+
+docker run --rm \
+  -v mcpmcp_mcpmcp-data:/from \
+  -v mcpmcp_bifrost-data:/to \
+  alpine sh -c 'cp -a /from/. /to/'
+
+docker run --rm -v mcpmcp_bifrost-data:/d alpine ls -la /d      # bifrost.db bzw. mcpmcp.db + keys/
+```
+
+`cp -a` erhält Rechte und Eigentümer — der Container läuft als non-root `app`, ein Kopieren ohne
+`-a` liefert ihm ein Verzeichnis, das er nicht beschreiben kann.
+
+Danach `docker compose up -d` und im Log prüfen, dass die Daten da sind (`Migrated` bzw.
+`BaselinedLegacySchema`, siehe [Schema & Upgrades](#schema--upgrades)), **bevor** das alte Volume
+gelöscht wird. Es kostet ein paar hundert Megabyte, es noch eine Weile stehen zu lassen.
+
+Zwei Dinge nimmt der Gateway einem dabei ab, und zwar ohne Zutun:
+
+- Eine Datenbankdatei, die noch `mcpmcp.db` heißt, wird weiterverwendet — es entsteht keine leere
+  `bifrost.db` daneben.
+- Alt benannte Umgebungsvariablen (`MCPMCP_*`) werden beim Start als `BIFROST_*` übernommen und im
+  Log genannt. Der neue Name gewinnt, wenn beide gesetzt sind. Trotzdem umbenennen: Die Übernahme
+  ist eine Übergangshilfe, keine Zusage.
+
+Der DataProtection-Anwendungsname bleibt aus demselben Grund `MCPMCP` — er geht in die
+Schlüsselableitung ein, und ihn zu ändern machte jeden gespeicherten Geheimtext unlesbar.
 
 Beim **Erststart** legt der Gateway zwei Zugänge an und loggt sie **genau einmal** (Henne-Ei — danach nie wieder):
 
@@ -935,13 +1075,32 @@ Der Agent sieht dann die Meta-Tools `search_tools` / `describe_tool` / `invoke_t
 
 ## PostgreSQL statt SQLite
 
-Für größere Setups (viel Audit-Volumen, mehrere Instanzen an einer DB):
+Für größere Setups (viel Audit-Volumen, mehrere Instanzen an einer DB) die Override-Datei
+dazunehmen. Sie setzt Provider und Connection-String selbst; einzutragen ist nur das Passwort:
 
 ```bash
-docker compose --profile postgres up -d
-# in docker-compose.yml BIFROST_DB_PROVIDER + BIFROST_DB_CONNECTION einkommentieren,
-# und das Passwort (CHANGE_ME) ersetzen.
+echo 'POSTGRES_PASSWORD=…' >> .env
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
 ```
+
+Das Passwort steht bewusst **nicht** mehr in der Compose-Datei. Ein Vorgabewert wie das frühere
+`CHANGE_ME` wird übernommen und nie geändert — fehlt es dagegen, kommt die Datenbank mit einer
+eindeutigen Meldung gar nicht erst hoch (*„Database is uninitialized and superuser password is not
+specified"*). Alternativ liest das Postgres-Image es aus einer Datei (`POSTGRES_PASSWORD_FILE`); der
+Block dafür steht auskommentiert in `docker-compose.postgres.yml`. Der Gateway selbst kann das
+nicht — sein Connection-String braucht den Wert in der Umgebung.
+
+Die Override-Datei lässt sich mit dem Entwicklerpfad kombinieren; die Reihenfolge der `-f` ist
+beliebig, solange `docker-compose.yml` zuerst kommt:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml \
+               -f docker-compose.postgres.yml up -d --build
+```
+
+> **Das Datenverzeichnis bleibt auch mit PostgreSQL nötig.** Der DataProtection-Key-Ring unter
+> `/data/keys` liegt nicht in der Datenbank; ohne ihn sind die verschlüsselten
+> Upstream-Zugangsdaten unbrauchbar. Beides gehört zusammen ins Backup.
 
 Das Schema wird beim Start automatisch über EF-Migrationen angelegt (siehe [Schema & Upgrades](#schema--upgrades)).
 
@@ -1057,6 +1216,27 @@ openssl pkcs12 -export -out keyring.pfx -inkey k.pem -in c.pem -password pass:GE
 BIFROST_KEYRING_CERT_PATH=/secrets/keyring.pfx
 BIFROST_KEYRING_CERT_PASSWORD=GEHEIM
 ```
+
+### Unter Compose: das PFX als Secret, das Passwort aus `.env`
+
+Das Zertifikat kommt als **Compose-Secret** in den Container, nicht als Bind-Mount aus dem
+Arbeitsverzeichnis. Der Block dafür steht auskommentiert in `docker-compose.yml`; die Datei muss
+**vor** dem Einkommentieren liegen — ein deklariertes, aber fehlendes Secret bricht `up` ab.
+
+```bash
+mkdir -p secrets && cp keyring.pfx secrets/ && chmod 600 secrets/keyring.pfx
+# in docker-compose.yml die beiden 'secrets:'-Blöcke einkommentieren, dann in .env:
+#   BIFROST_KEYRING_CERT_PATH=/run/secrets/bifrost-keyring-pfx
+#   BIFROST_KEYRING_CERT_PASSWORD=…
+docker compose up -d
+```
+
+> **Das Passwort kann der Gateway heute nicht aus einer Datei lesen.** Er nimmt genau
+> `BIFROST_KEYRING_CERT_PASSWORD` aus der Konfiguration; eine `…_FILE`-Variante gibt es nicht. Es
+> steht damit als Klartext in `.env` und als Umgebungsvariable im Container — sichtbar für jeden,
+> der `docker inspect` ausführen darf. Ein Compose-Secret gibt es deshalb nur für das PFX, nicht für
+> sein Passwort. Das ist eine offene Lücke, kein Betriebsfehler; sie zu schließen ist eine Änderung
+> am Produktionscode.
 
 **Was das schützt und was nicht:** Liegt das PFX-Passwort in derselben Compose-Datei neben dem
 Volume, hat jemand mit Zugriff auf die Maschine beides. Der Gewinn liegt woanders und ist real:

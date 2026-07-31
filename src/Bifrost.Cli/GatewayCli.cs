@@ -281,22 +281,61 @@ public sealed class GatewayCli
             _jsonOutput ? JsonSerializer.Serialize(json) : human);
     }
 
+    /// <summary>Der Hilfetext, den <c>--help</c> und die Fehlermeldung bei Fehlbedienung teilen.</summary>
+    public const string UsageText =
+        """
+        Nutzung:
+          bifrost [--json] [--config PATH] [--token-stdin] status
+          bifrost [Optionen] tools search <query>
+          bifrost [Optionen] tools describe <tool>
+          bifrost [Optionen] tools invoke <tool> --json '{...}'
+          bifrost [Optionen] tools invoke <tool> --file <args.json|->
+          bifrost [Optionen] servers list|add|enable|disable|remove
+          bifrost [Optionen] approvals list|approve|deny
+          bifrost [Optionen] audit tail
+          bifrost --version
+          bifrost --help
+
+        Authentifizierung: BIFROST_TOKEN, Token-Datei in --config oder --token-stdin.
+        """;
+
+    /// <summary>
+    /// Behandelt die beiden Befehle, die weder Konfiguration noch erreichbares Gateway brauchen:
+    /// <c>--version</c> und <c>--help</c>. Sie muessen vor dem Laden der Konfiguration laufen,
+    /// sonst scheitert <c>bifrost --version</c> an einer kaputten Endpunkt-Einstellung — also
+    /// genau dann, wenn man die Version fuer eine Fehlermeldung braucht.
+    /// </summary>
+    /// <returns>
+    /// Der Exitcode, oder <see langword="null"/>, wenn <paramref name="args"/> keiner der beiden
+    /// Befehle ist und normal weitergereicht werden muss.
+    /// </returns>
+    public static int? TryRunInfoCommand(
+        IReadOnlyList<string> args, bool jsonOutput, TextWriter output)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        ArgumentNullException.ThrowIfNull(output);
+        if (args.Count != 1)
+        {
+            return null;
+        }
+
+        switch (args[0])
+        {
+            case "--version":
+                output.WriteLine(CliVersion.Describe(jsonOutput));
+                return Success;
+            case "--help":
+            case "-h":
+                output.WriteLine(UsageText);
+                return Success;
+            default:
+                return null;
+        }
+    }
+
     private async Task<int> UsageAsync()
     {
-        await _error.WriteLineAsync(
-            """
-            Nutzung:
-              bifrost [--json] [--config PATH] [--token-stdin] status
-              bifrost [Optionen] tools search <query>
-              bifrost [Optionen] tools describe <tool>
-              bifrost [Optionen] tools invoke <tool> --json '{...}'
-              bifrost [Optionen] tools invoke <tool> --file <args.json|->
-              bifrost [Optionen] servers list|add|enable|disable|remove
-              bifrost [Optionen] approvals list|approve|deny
-              bifrost [Optionen] audit tail
-
-            Authentifizierung: BIFROST_TOKEN, Token-Datei in --config oder --token-stdin.
-            """);
+        await _error.WriteLineAsync(UsageText);
         return UsageError;
     }
 

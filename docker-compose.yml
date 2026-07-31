@@ -1,23 +1,42 @@
-# B.I.F.R.O.S.T Gateway — Standard: SQLite (Zero-Setup, ein Volume).
+# B.I.F.R.O.S.T Gateway — Standardweg: fertiges Image aus der Registry, SQLite, ein Volume.
 #
+#   cp .env.example .env      # darin BIFROST_VERSION auf ein veroeffentlichtes Release setzen
 #   docker compose up -d
+#   curl -fsS http://localhost:8080/healthz
 #
-# Für PostgreSQL die Override-Datei dazunehmen (startet die DB mit und wartet auf sie):
+# Es wird NICHT lokal gebaut. Wer aus dem Quelltext bauen will, nimmt den Entwicklerpfad dazu:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# Fuer PostgreSQL die Override-Datei dazunehmen (startet die DB mit und wartet auf sie):
 #
 #   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
 #
 # Bewusst ohne Compose-Profile: ein 'depends_on' auf einen nur im Profil aktiven Service
-# lässt den Default-Pfad je nach Compose-Version scheitern.
+# laesst den Default-Pfad je nach Compose-Version scheitern.
 
 services:
   bifrost:
-    build: .
-    image: bifrost:latest
+    # KEIN 'latest' — das Tag wird bewusst nicht gesetzt
+    # (docs/plans/m1-distribution-contract.md). Welche Version laeuft, steht in .env und
+    # nicht in dieser Datei; so aendert ein Upgrade eine Zeile in .env, keine versionierte
+    # Datei. BIFROST_IMAGE ueberschreibt die ganze Referenz und nimmt auch die Digest-Form
+    # 'ghcr.io/lupusmalusdeviant/bifrost@sha256:...' — der Weg fuer den Produktivbetrieb.
+    image: ${BIFROST_IMAGE:-ghcr.io/lupusmalusdeviant/bifrost:${BIFROST_VERSION:-0.11.0}}
     ports:
-      - "8080:8080"
+      - "${BIFROST_HTTP_PORT:-8080}:8080"
     volumes:
       - bifrost-data:/data
+    # Die gesamte Konfiguration des Gateways sind Umgebungsvariablen (siehe docs/operations.md).
+    # Sie kommen aus .env — dort stehen auch die geheimen Werte, statt im Klartext in dieser
+    # versionierten Datei. .env ist in .gitignore und gehoert auf 0600.
+    # 'required: false' haelt den Standardstart ohne .env lauffaehig.
+    env_file:
+      - path: .env
+        required: false
     environment:
+      # Nicht ueber .env aenderbar (environment schlaegt env_file): der Container lauscht
+      # immer auf 8080, nach aussen verschiebt man den Port ueber BIFROST_HTTP_PORT.
       ASPNETCORE_URLS: http://+:8080
     restart: unless-stopped
     healthcheck:
@@ -27,5 +46,32 @@ services:
       retries: 3
       start_period: 20s
 
+    # ── Key-Ring-Zertifikat als Compose-Secret (optional, siehe docs/operations.md) ───────
+    # Das PFX wird nach /run/secrets/bifrost-keyring-pfx eingehaengt, statt es als Bind-Mount
+    # aus dem Arbeitsverzeichnis zu holen. Beide Bloecke zusammen einkommentieren und die
+    # Datei vorher anlegen — ein deklariertes, aber fehlendes Secret bricht 'up' ab.
+    # In .env dann:
+    #   BIFROST_KEYRING_CERT_PATH=/run/secrets/bifrost-keyring-pfx
+    #   BIFROST_KEYRING_CERT_PASSWORD=<passwort des PFX>
+    # secrets:
+    #   - bifrost-keyring-pfx
+
+# secrets:
+#   bifrost-keyring-pfx:
+#     file: ./secrets/keyring.pfx
+
 volumes:
+  # ── VOLUME-NAME NICHT AENDERN ────────────────────────────────────────────────────────────
+  # Der wirksame Name traegt den Projektnamen als Praefix: <projekt>_bifrost-data. Der
+  # Projektname ist standardmaessig der Name des Verzeichnisses, in dem die Compose-Datei
+  # liegt (kleingeschrieben), oder COMPOSE_PROJECT_NAME aus .env.
+  #
+  # Wer diesen Schluessel umbenennt — oder das Verzeichnis umbenennt, oder in ein anderes
+  # kopiert — bekommt ein NEUES, LEERES Volume. Der Gateway legt darin eine frische Datenbank
+  # an und meldet sich fehlerfrei als bereit: ohne Server, ohne Rollen, ohne Schluessel. Der
+  # Ausfall sieht wie ein gelungener Start aus.
+  #
+  # 'docker compose config' nennt den vollstaendigen Namen; im Zweifel vor jedem Umzug
+  # vergleichen. Der Umstieg von einer MCP-MCP-Installation steht in docs/operations.md
+  # unter "Umstieg einer MCP-MCP-Installation".
   bifrost-data:

@@ -79,7 +79,44 @@ Damit steht die Anforderung gegen den Ist-Zustand. Zwei Wege:
 
 Bis zur Entscheidung beschreibt die Dokumentation den **Ist-Zustand**, nicht die Zielregel.
 
-## Nicht begonnen
+## Laufender Meilenstein: M1 — Distribution
 
-M1 bis M8 sind nicht angefasst. Nach Pflichtenheft darf M1 erst starten, wenn M0 vollständig grün
-ist — es fehlt der Nachweis aus WP0.4.
+Vertrag eingefroren in [`m1-distribution-contract.md`](m1-distribution-contract.md). Vier Pakete
+laufen parallel mit disjunkten Dateizonen; `release.yml` hat genau einen Schreiber.
+
+| WP | Status | Nachweis |
+|---|---|---|
+| WP1.1 Multi-Arch-Image | `done` | `actionlint` sauber, amd64-Build und Smoke lokal grün, kein `latest`, alle Actions SHA-gepinnt |
+| WP1.2 SBOM/Provenance/Signatur | `done` | Syft/Trivy/Cosign containerisiert ausgeführt, Action-SHAs stichprobenartig gegen die API geprüft |
+| WP1.3 Native CLI-Artefakte | `done` | 12 CLI-Tests grün, `--version` trägt den echten HEAD-Commit |
+| WP1.4 Compose-/Installationspfade | `done` | drei `docker compose config`-Läufe grün, Volume-Name nachgeprüft |
+| WP1.5 Release-Automation | `done` | sechs Jobs zusammengeführt, `actionlint` auf `release.yml` ohne Befund, 783 Tests grün |
+
+**Die Abnahme steht aus.** Alle fünf Pakete sind implementiert und lokal geprüft, aber **kein
+einziger Releaselauf hat stattgefunden**. Was erst der erste echte Tag zeigt: arm64-Build unter
+QEMU, GHCR-Login und Push, die Form von `steps.push.outputs.digest`, Attestation und Signatur mit
+den gesetzten Berechtigungen, und ob die fünf CLI-Runner-Labels für dieses Repository verfügbar
+sind. Nach der Abschlussregel des Pflichtenhefts (Kapitel 20, Punkt 6) muss der Nachweis **auf dem
+gebauten Releaseartefakt** erfolgen — M1 ist damit implementiert, aber nicht abgenommen.
+
+### WP1.4 — Prüfergebnis des Lead
+
+Nachgeprüft und bestätigt: alle Compose-Kombinationen gültig, Volume löst auf
+`mcpmcp_bifrost-data` auf, kein `latest`-Tag, Image zeigt auf die Registry aus dem Vertrag.
+
+**Der wichtigste Fund betrifft eigene frühere Arbeit.** Der Umbenennungs-Commit `c7cb446` hat in
+`docker-compose.yml` auch das Volume mitgezogen (`mcpmcp-data` → `bifrost-data`). Beim Deploy auf
+Badwolf war das aufgefallen und dort umgangen — die Datei im Repository blieb aber die Falle, und
+niemand hätte es gemerkt: Eine Bestandsinstallation bekäme ein leeres Volume und meldete sich
+fehlerfrei als „bereit". Der Umstiegsweg steht jetzt in `docs/operations.md`.
+
+Zwei Punkte gehen als Entscheidung an den Lead bzw. weiter:
+
+1. **Der Standardweg ist bis zum ersten Release-Lauf kaputt.** `docker compose up -d` zieht ein
+   Image, das es noch nicht gibt — vorher wurde lokal gebaut. Das ist die vom Pflichtenheft
+   verlangte Richtung (WP1.4), aber die Lücke muss WP1.5 schließen: Der Vorgabewert der Version in
+   `docker-compose.yml` und `.env.example` gehört an den ersten veröffentlichten Tag gekoppelt.
+2. **Das Key-Ring-Passwort lässt sich nicht als Datei-Secret zuführen** (`Program.cs` liest nur die
+   Umgebungsvariable). Das PFX selbst geht als Compose-Secret, das Passwort nicht. FR-P048 ist damit
+   nur halb erfüllt; der Fix wäre ein `…_FILE`-Suffix oder `AddKeyPerFile`. Bewusst **nicht**
+   nebenbei gemacht — Produktionscode gehört nicht in ein Doku-/Compose-Paket.

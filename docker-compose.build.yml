@@ -1,0 +1,29 @@
+# Entwicklerpfad: aus dem Quelltext bauen statt das veroeffentlichte Image zu ziehen.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# Mit PostgreSQL (Reihenfolge beliebig, die Overrides ueberschneiden sich nicht):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml \
+#                  -f docker-compose.postgres.yml up -d --build
+#
+# Diese Datei ist ein OVERRIDE und nicht allein lauffaehig: Ports, Volume, Healthcheck und
+# env_file stehen in docker-compose.yml. Allein aufgerufen ist sie zwar gueltiges Compose,
+# beschreibt aber nur den Bau — kein betriebsfaehiges Setup.
+#
+# Warum getrennt: Der Standardweg einer Installation soll ein geprueftes, signiertes Artefakt
+# ziehen und nicht auf dem Zielrechner ein zweites, unbeobachtetes Build-Ergebnis erzeugen.
+# Was hier entsteht, traegt weder Provenance noch Signatur und darf deshalb nicht so aussehen
+# wie das Release-Image.
+
+services:
+  bifrost:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Eigener lokaler Name — nie ein Tag unter ghcr.io/lupusmalusdeviant/bifrost. Sonst
+    # steht ein selbstgebautes Image unter demselben Namen wie ein veroeffentlichtes, und
+    # niemand kann spaeter sagen, welches der beiden gerade laeuft.
+    image: bifrost-local:dev
+    # Ohne das zieht Compose bei vorhandenem Tag ggf. nur und baut nicht neu.
+    pull_policy: build

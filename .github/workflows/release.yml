@@ -1,0 +1,1006 @@
+name: release
+
+# Ausgeloest wird ein Release durch das Tag, nicht durch einen Push auf main
+# (m1-distribution-contract, Abschnitt 3). `workflow_dispatch` ist bewusst dabei, aber als
+# Trockenlauf: ohne Tag-Ref wird gebaut und geprueft, jedoch NICHT nach GHCR gepusht.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# Zwei Laeufe auf demselben Tag duerfen sich nicht ueberholen — sonst zeigt ein Tag am Ende auf
+# den Digest des langsameren Laufs. Nicht abbrechen: ein halb veroeffentlichtes Release waere
+# schlimmer als ein doppelter Lauf (WP1.5).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Fest aus dem Vertrag (Abschnitt 1). Bewusst nicht aus github.repository abgeleitet:
+  # GHCR verlangt Kleinschreibung, der Owner schreibt sich aber gemischt.
+  REGISTRY_IMAGE: ghcr.io/lupusmalusdeviant/bifrost
+
+jobs:
+  # ── verify ──────────────────────────────────────────────────────────────────
+  # Baut und testet aus dem getaggten Commit und legt die Versionsangaben fest, mit denen alle
+  # folgenden Jobs arbeiten. Was hier nicht gruen ist, wird gar nicht erst gebaut.
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      # <VersionPrefix> aus Directory.Build.props, z. B. 0.11.0
+      version: ${{ steps.version.outputs.version }}
+      # Version fuer den Image-Tag, inklusive Pre-Release-Suffix, z. B. 0.12.0-rc.1
+      image_version: ${{ steps.version.outputs.image_version }}
+      # <major>.<minor>, z. B. 0.11
+      minor: ${{ steps.version.outputs.minor }}
+      # 'true', wenn das Tag ein SemVer-Suffix traegt (Vertrag Abschnitt 3)
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      # 'true' nur bei einem echten Tag-Lauf; steuert Push und spaetere Veroeffentlichung
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Einzige Quelle der Version ist <VersionPrefix>. Ein Tag, das nicht dazu passt, ist ein
+      # Fehler im Release und kein Grund, die Version aus dem Tag zu uebernehmen.
+      - name: Version aus Directory.Build.props lesen und gegen das Tag pruefen
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION=$(sed -n 's|.*<VersionPrefix>\(.*\)</VersionPrefix>.*|\1|p' Directory.Build.props \
+            | head -1 | tr -d ' \r')
+          if [ -z "$VERSION" ]; then
+            echo "::error::<VersionPrefix> liess sich nicht aus Directory.Build.props lesen."
+            exit 1
+          fi
+          echo "VersionPrefix: $VERSION"
+
+          MINOR=$(echo "$VERSION" | cut -d. -f1,2)
+
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "Tag: $TAG"
+
+            # Build-Metadaten ('+') sind in SemVer erlaubt, in einem Docker-Tag nicht. Lieber hier
+            # klar abbrechen als spaeter mit einem unverstaendlichen Registry-Fehler.
+            if [[ "$TAG" != v* ]] || \
+               ! [[ "${TAG#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::Tag '$TAG' ist kein gueltiges Release-Tag (erwartet vX.Y.Z[-suffix], ohne Build-Metadaten)."
+              exit 1
+            fi
+
+            TAG_VERSION="${TAG#v}"
+            TAG_CORE="${TAG_VERSION%%-*}"
+            if [ "$TAG_CORE" != "$VERSION" ]; then
+              echo "::error::Tag '$TAG' passt nicht zu <VersionPrefix> '$VERSION' aus Directory.Build.props."
+              exit 1
+            fi
+
+            # Pre-Release-Kennzeichnung kommt aus dem SemVer-Suffix, nicht aus einer Eingabe.
+            if [ "$TAG_VERSION" = "$TAG_CORE" ]; then PRERELEASE=false; else PRERELEASE=true; fi
+
+            IMAGE_VERSION="$TAG_VERSION"
+            PUBLISH=true
+          else
+            # Trockenlauf ueber workflow_dispatch auf einem Branch: alles bauen und pruefen,
+            # aber nichts veroeffentlichen. Ein Push waere hier eine Version ohne Release.
+            echo "::notice::Kein Tag-Ref (${GITHUB_REF}) — Trockenlauf ohne Push nach GHCR."
+            IMAGE_VERSION="$VERSION"
+            PRERELEASE=true
+            PUBLISH=false
+          fi
+
+          {
+            echo "version=$VERSION"
+            echo "image_version=$IMAGE_VERSION"
+            echo "minor=$MINOR"
+            echo "prerelease=$PRERELEASE"
+            echo "publish=$PUBLISH"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build (warnings are errors)
+        run: dotnet build --configuration Release
+
+      # ADR-0018: Die Container-Isolation laeuft gegen eine echte Runtime. Das Image vorher holen,
+      # damit der Pull nicht in das Zeitlimit des Aufrufs faellt.
+      - name: Pull image for the container isolation tests
+        run: docker pull alpine:3.20
+
+      - name: Test with coverage
+        env:
+          # Wie in ci.yml: Auf Linux sind Docker und Postgres da — ein Skip waere dort ein stiller
+          # Ausfall des Nachweises und darf einen Release-Lauf nicht gruen faerben.
+          BIFROST_REQUIRE_POSTGRES: "1"
+          BIFROST_REQUIRE_CONTAINER: "1"
+        # Die WasiRealHost*-Tests brauchen das gebaute Rust-Binary und laufen in ci.yml im Job
+        # wasi-component-spike. Hier ausgeschlossen statt uebersprungen (sonst reisst das
+        # Skip-Gate unten) — der WASI-Nachweis fuer das Release erfolgt im Job 'image' gegen das
+        # tatsaechlich auszuliefernde Binary im Image.
+        run: dotnet test --configuration Release --no-build --filter "FullyQualifiedName!~WasiRealHost" --collect:"XPlat Code Coverage" --results-directory ./coverage --logger "trx;LogFileName=results.trx"
+
+      # Ohne dieses Gate koennte die ganze Suite still wegskippen und der Release trotzdem gruen sein.
+      - name: Postgres- und Container-Nachweis muessen tatsaechlich gelaufen sein
+        shell: bash
+        run: |
+          # Kein Treffer heisst 0 uebersprungen, nicht "Schritt kaputt": grep gibt dann 1 zurueck,
+          # und mit dem pipefail der Runner-Shell wuerde die Zuweisung sonst den Job abbrechen.
+          SKIPPED=$(grep -o 'outcome="NotExecuted"' coverage/results.trx | wc -l) || SKIPPED=0
+          echo "Uebersprungene Tests: $SKIPPED"
+          # Erlaubt ist genau der Benchmark, der in ci.yml einen eigenen Job hat.
+          if [ "$SKIPPED" -gt 1 ]; then
+            echo "::error::$SKIPPED Tests uebersprungen — erwartet war hoechstens der Benchmark."
+            grep -o 'testName="[^"]*"[^>]*outcome="NotExecuted"' coverage/results.trx || true
+            exit 1
+          fi
+
+      # NFR-08 gilt auch fuer einen Release-Lauf: ein Release unter der Schwelle waere ein
+      # veroeffentlichter Rueckschritt.
+      - name: Coverage-Schwelle Kern-Bibliothek (NFR-08)
+        shell: bash
+        run: |
+          BEST=0
+          # while-read statt einer for-Schleife ueber die find-Ausgabe: Pfade mit Leerzeichen
+          # wuerden dort auseinanderfallen und die Schwelle still auf 0 setzen.
+          while IFS= read -r f; do
+            RATE=$(grep -o '<package name="Bifrost.Core" line-rate="[0-9.]*"' "$f" \
+                   | grep -o 'line-rate="[0-9.]*"' | grep -o '[0-9.]*' || true)
+            if [ -n "$RATE" ]; then
+              PCT=$(awk -v r="$RATE" 'BEGIN { printf "%d", r * 10000 }')
+              [ "$PCT" -gt "$BEST" ] && BEST=$PCT
+            fi
+          done < <(find coverage -name 'coverage.cobertura.xml')
+          echo "Bifrost.Core Zeilenabdeckung: $(awk -v b="$BEST" 'BEGIN { printf "%.2f", b / 100 }') %"
+          if [ "$BEST" -lt 8000 ]; then
+            echo "::error::Zeilenabdeckung von Bifrost.Core unter der NFR-08-Schwelle von 80 %."
+            exit 1
+          fi
+
+  # ── image ───────────────────────────────────────────────────────────────────
+  # Multi-Arch-Build, Smoke je Architektur, dann erst Push. Gibt den Digest aus, an dem sich
+  # 'supply-chain' und 'release' spaeter festmachen.
+  image:
+    needs: verify
+    runs-on: ubuntu-latest
+    # arm64 laeuft im Smoke unter QEMU-Emulation; das ist der langsamste Teil des Laufs.
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      image: ${{ steps.meta.outputs.image }}
+      # Vollstaendige, unveraenderliche Referenz fuer nachgelagerte Jobs (Signatur, SBOM, Notes).
+      image_ref: ${{ steps.meta.outputs.image }}@${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # QEMU wird zweimal gebraucht: fuer den arm64-Build der .NET-Stage und dafuer, das
+      # fertige arm64-Image im Smoke wirklich zu starten statt es nur zu bauen.
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Tags und OCI-Labels bestimmen
+        id: meta
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.image_version }}
+          MINOR: ${{ needs.verify.outputs.minor }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+
+          # Genau die drei Tags aus dem Vertrag (Abschnitt 1). Kein 'latest' — das kommt
+          # fruehestens mit dem ersten stabilen Release (FR-P007).
+          {
+            echo "image=${REGISTRY_IMAGE}"
+            echo "short_sha=${SHORT_SHA}"
+            echo "tags<<EOF"
+            echo "${REGISTRY_IMAGE}:${VERSION}"
+            echo "${REGISTRY_IMAGE}:${MINOR}"
+            echo "${REGISTRY_IMAGE}:sha-${SHORT_SHA}"
+            echo "EOF"
+            echo "labels<<EOF"
+            echo "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            echo "org.opencontainers.image.revision=${GITHUB_SHA}"
+            echo "org.opencontainers.image.version=${VERSION}"
+            echo "org.opencontainers.image.licenses=MIT"
+            echo "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "org.opencontainers.image.title=B.I.F.R.O.S.T"
+            echo "org.opencontainers.image.description=Self-hosted meta-MCP gateway: one endpoint for your agents and every MCP server behind it."
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Tags:"; echo "${REGISTRY_IMAGE}:${VERSION}"; echo "${REGISTRY_IMAGE}:${MINOR}"; echo "${REGISTRY_IMAGE}:sha-${SHORT_SHA}"
+
+      # Erst laden, dann pruefen, dann pushen. Die beiden Einzelbuilds landen im lokalen Cache
+      # desselben buildx-Builders — der spaetere Multi-Arch-Build baut sie deshalb nicht erneut.
+      - name: Build linux/amd64 (nur laden, noch kein Push)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: bifrost:smoke-amd64
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Build linux/arm64 (nur laden, noch kein Push)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/arm64
+          load: true
+          push: false
+          tags: bifrost:smoke-arm64
+          labels: ${{ steps.meta.outputs.labels }}
+
+      # Der Vertrag verspricht, dass ein Pull per Digest auf amd64 UND arm64 gesund startet.
+      # Genau das wird hier belegt — vor dem Push, damit ein kaputtes Image gar nicht erst in
+      # der Registry landet. Geprueft je Architektur: gemeldete Architektur, non-root,
+      # WASI-Host-Handshake und /healthz ueber HTTP.
+      - name: Smoke vor dem Push (amd64 und arm64)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Die Vertragsversion kommt aus der Quelle, nicht aus diesem Skript — eine feste Zahl
+          # hier waere beim naechsten Versionssprung stillschweigend falsch.
+          WASI_VERSION=$(sed -n 's/^pub const PROTOCOL_VERSION: &str = "\(.*\)";$/\1/p' \
+            spikes/wasi-component-runtime/src/host.rs)
+          if [ -z "$WASI_VERSION" ]; then
+            echo "::error::PROTOCOL_VERSION liess sich nicht aus host.rs lesen."
+            exit 1
+          fi
+          echo "Erwartete WASI-Vertragsversion: $WASI_VERSION"
+
+          smoke() {
+            local IMAGE="$1" PLATFORM="$2" EXPECTED_ARCH="$3" PORT="$4"
+            local NAME="bifrost-smoke-${EXPECTED_ARCH}"
+            echo "::group::Smoke $PLATFORM ($IMAGE)"
+
+            # 1) Architektur: der Build hat gebaut, was er bauen sollte.
+            local ARCH
+            ARCH=$(docker image inspect "$IMAGE" --format '{{.Architecture}}')
+            echo "Gemeldete Architektur: $ARCH"
+            if [ "$ARCH" != "$EXPECTED_ARCH" ]; then
+              echo "::error::$PLATFORM: Image meldet Architektur '$ARCH', erwartet '$EXPECTED_ARCH'."
+              return 1
+            fi
+
+            # 2) non-root (WP7.2)
+            local UID_IN_CONTAINER
+            UID_IN_CONTAINER=$(docker run --rm --platform "$PLATFORM" --entrypoint id "$IMAGE" -u)
+            echo "Container-UID: $UID_IN_CONTAINER"
+            if [ "$UID_IN_CONTAINER" = "0" ]; then
+              echo "::error::$PLATFORM: Der Container laeuft als root."
+              return 1
+            fi
+
+            # 3) Der WASI-Host liegt im Image und spricht den Vertrag (Plan 0003, WP7.1).
+            # Das Laengenpraefix sind vier rohe Bytes — deshalb Python statt printf, dessen
+            # Escapes sich je nach Shell unterscheiden. --entrypoint ist Pflicht, sonst haengt
+            # der Aufruf am dotnet-Entrypoint des Images.
+            local ANSWER
+            ANSWER=$(python3 -c "
+          import json,struct,sys
+          msg=json.dumps({'id':1,'type':'hello','protocolVersion':'$WASI_VERSION'}).encode()
+          sys.stdout.buffer.write(struct.pack('>I',len(msg))+msg)" \
+              | docker run -i --rm --platform "$PLATFORM" \
+                  --entrypoint /usr/local/bin/bifrost-wasi-host "$IMAGE" host \
+              | tr -d '\0')
+            echo "Host-Antwort: $ANSWER"
+            local EXPECTED
+            for EXPECTED in '"id":1' "\"protocolVersion\":\"$WASI_VERSION\"" '"features"' '"cancellation":true'; do
+              case "$ANSWER" in
+                *"$EXPECTED"*) ;;
+                *) echo "::error::$PLATFORM: '$EXPECTED' fehlt in der Handshake-Antwort des WASI-Hosts."; return 1 ;;
+              esac
+            done
+
+            # 4) /healthz ueber HTTP — nicht der interne --healthcheck-Schalter, sondern der
+            # Endpunkt, den ein Betreiber tatsaechlich abfragt. Unter QEMU startet arm64
+            # deutlich langsamer, deshalb das grosszuegige Zeitfenster.
+            docker run -d --name "$NAME" --platform "$PLATFORM" -p "${PORT}:8080" "$IMAGE"
+            local i
+            for i in $(seq 1 90); do
+              if curl -fsS --max-time 5 "http://localhost:${PORT}/healthz" > /dev/null 2>&1; then
+                echo "/healthz antwortet (nach ${i} Versuchen)"
+                docker rm -f "$NAME" > /dev/null
+                echo "::endgroup::"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "::error::$PLATFORM: Container hat /healthz nicht beantwortet."
+            docker logs "$NAME" || true
+            docker rm -f "$NAME" > /dev/null
+            return 1
+          }
+
+          smoke bifrost:smoke-amd64 linux/amd64 amd64 8080
+          smoke bifrost:smoke-arm64 linux/arm64 arm64 8081
+
+      # Login erst hier: bis zum bestandenen Smoke braucht der Lauf keinen Schreibzugriff
+      # auf die Registry.
+      - name: Login an ghcr.io
+        if: needs.verify.outputs.publish == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Multi-Arch-Build und Push
+        id: push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ needs.verify.outputs.publish == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # SBOM und Provenance liefert WP1.2 als GitHub-Attestation ueber den Digest. Die
+          # eingebauten Attestationen hier bewusst aus, damit die Manifest-Liste genau die
+          # zwei zugesagten Architekturen enthaelt und nichts sonst.
+          provenance: false
+          sbom: false
+
+      # Ein Digest, den niemand geprueft hat, ist eine Zusage ohne Beleg. Nach dem Push steht
+      # in der Registry, was der Vertrag verspricht: beide Architekturen unter einem Digest.
+      - name: Manifest-Liste enthaelt beide Architekturen
+        if: needs.verify.outputs.publish == 'true'
+        shell: bash
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DIGEST}" ]; then
+            echo "::error::Der Build hat keinen Digest ausgegeben."
+            exit 1
+          fi
+          REF="${REGISTRY_IMAGE}@${DIGEST}"
+          echo "Referenz: $REF"
+          docker buildx imagetools inspect "$REF"
+          # Leerraum raus, bevor verglichen wird: ob die Registry das Manifest kompakt oder
+          # eingerueckt zurueckgibt, darf ueber diesen Nachweis nicht entscheiden.
+          MANIFEST=$(docker buildx imagetools inspect "$REF" --raw | tr -d ' \n\r\t')
+          for PLATFORM in '"architecture":"amd64"' '"architecture":"arm64"'; do
+            case "$MANIFEST" in
+              *"$PLATFORM"*) ;;
+              *) echo "::error::Die Manifest-Liste enthaelt $PLATFORM nicht."; exit 1 ;;
+            esac
+          done
+          echo "Multi-Arch-Manifest ok: $REF"
+
+      - name: Zusammenfassung
+        shell: bash
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          PUBLISH: ${{ needs.verify.outputs.publish }}
+          VERSION: ${{ needs.verify.outputs.image_version }}
+        run: |
+          {
+            echo "### Image"
+            echo ""
+            if [ "$PUBLISH" = "true" ]; then
+              echo "- Veroeffentlicht: \`${REGISTRY_IMAGE}@${DIGEST}\`"
+              echo "- Tags: \`${VERSION}\`, \`${{ needs.verify.outputs.minor }}\`, \`sha-${GITHUB_SHA:0:7}\`"
+            else
+              echo "- Trockenlauf ohne Push (kein Tag-Ref)."
+            fi
+            echo "- Architekturen: linux/amd64, linux/arm64"
+            echo "- Pre-Release: ${{ needs.verify.outputs.prerelease }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+
+  # ── cli (WP1.3) ─────────────────────────────────────────────────────────────
+  # Publiziert je RID eine eigenstaendige Einzeldatei, prueft sie auf dem passenden Runner und
+  # packt sie mit LICENSE. Eigenstaendigkeit, Einzeldatei und eingebettete Symbole stehen in
+  # src/Bifrost.Cli/Bifrost.Cli.csproj — hier bewusst NICHT wiederholt, damit es eine Quelle gibt.
+  cli:
+    needs: verify
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { rid: win-x64, os: windows-latest }
+          - { rid: linux-x64, os: ubuntu-latest }
+          - { rid: linux-arm64, os: ubuntu-24.04-arm }
+          - { rid: osx-x64, os: macos-15-intel }
+          - { rid: osx-arm64, os: macos-latest }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      # ContinuousIntegrationBuild macht die Pfade im Artefakt deterministisch. Der Commit kommt
+      # ueber SourceLink aus dem Checkout; GITHUB_SHA ist nur die Rueckfallebene in der csproj.
+      - name: Publish ${{ matrix.rid }}
+        shell: bash
+        run: |
+          dotnet publish src/Bifrost.Cli \
+            -c Release -r ${{ matrix.rid }} --self-contained true \
+            -p:ContinuousIntegrationBuild=true \
+            -o out/${{ matrix.rid }}
+          cp LICENSE out/${{ matrix.rid }}/
+
+      # Der Smoke prueft nicht nur "startet", sondern "nennt die Version, die dieses Release
+      # traegt". Ein Artefakt mit fremder Version ist schlimmer als eins, das gar nicht startet.
+      - name: Smoke (Start, --version, --help)
+        shell: bash
+        env:
+          ERWARTET: ${{ needs.verify.outputs.version }}
+        run: |
+          BIN=out/${{ matrix.rid }}/bifrost
+          if [ "${{ runner.os }}" = "Windows" ]; then BIN="$BIN.exe"; else chmod +x "$BIN"; fi
+          "$BIN" --help
+          "$BIN" --version
+          GEMELDET=$("$BIN" --json --version)
+          echo "$GEMELDET"
+          echo "$GEMELDET" | grep -q "\"version\":\"$ERWARTET\"" \
+            || { echo "::error::--version meldet nicht $ERWARTET"; exit 1; }
+          echo "$GEMELDET" | grep -Eq "\"commit\":\"[0-9a-f]{7,40}\"" \
+            || { echo "::error::--version traegt keinen Commit-SHA"; exit 1; }
+
+      # Archivnamen aus Vertrag Abschnitt 2. image_version statt version, damit ein
+      # Pre-Release-Tag (v0.12.0-rc.1) auch im Dateinamen steht.
+      - name: Archiv packen
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.image_version }}
+        run: |
+          mkdir -p dist
+          NAME="bifrost-cli-$VERSION-${{ matrix.rid }}"
+          cd out/${{ matrix.rid }}
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a -tzip "../../dist/$NAME.zip" bifrost.exe LICENSE
+          else
+            chmod +x bifrost   # ohne das landet die Datei ohne x-Bit im tar
+            tar -czf "../../dist/$NAME.tar.gz" bifrost LICENSE
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-${{ matrix.rid }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ── cli-checksums (WP1.3) ───────────────────────────────────────────────────
+  # Der Vertrag verlangt EINE gemeinsame checksums.txt. Sie kann erst entstehen, wenn alle
+  # Matrixzweige fertig sind — deshalb ein eigener Job und kein Schritt in 'cli'.
+  cli-checksums:
+    needs: cli
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: cli-*
+          merge-multiple: true
+          path: dist
+      - name: checksums.txt erzeugen
+        working-directory: dist
+        shell: bash
+        run: |
+          # Sortiert, damit die Datei bei gleichem Inhalt gleich aussieht. Ueber ein Array
+          # statt ueber 'ls' in einer Kommandosubstitution: Letzteres zerlegt Dateinamen an
+          # Leerzeichen. Die Namen sind heute erzeugt und harmlos — aber eine Pruefsummendatei,
+          # die bei einem ungewoehnlichen Dateinamen still das Falsche tut, ist keine.
+          mapfile -t ARCHIVE < <(find . -maxdepth 1 -type f -printf '%f\n' | sort)
+          sha256sum "${ARCHIVE[@]}" > checksums.txt
+          cat checksums.txt
+          test "$(grep -c . checksums.txt)" -eq 5 \
+            || { echo "::error::checksums.txt deckt nicht alle 5 Archive ab"; exit 1; }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-artefakte
+          path: dist/*
+          if-no-files-found: error
+
+  supply-chain:
+    # Vertrag §5: laeuft nach `image` und `cli`.
+    # Lead-Korrektur bei der Integration: Abhaengigkeit auf `cli-checksums`, nicht auf `cli`.
+    # Das Artefakt `cli-artefakte` entsteht erst dort — mit `cli` waere der Download ein Rennen,
+    # das meistens gewonnen und irgendwann verloren wird.
+    needs: [verify, image, cli-checksums]
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write # OIDC-Token fuer keyless Cosign und fuer Sigstore
+      attestations: write # GitHub Artifact Attestations schreiben
+      packages: write # Vertrag §6, ergaenzt am 2026-07-31: Cosign legt die Signatur in der Registry ab
+
+    env:
+      IMAGE: ghcr.io/lupusmalusdeviant/bifrost
+      IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
+      # Die Version kommt aus `verify`; der Fallback leitet sie aus dem Tag ab, damit der
+      # Block auch dann laeuft, wenn WP1.1 den Output anders benennt.
+      # image_version statt version: Ein Pre-Release-Suffix (0.12.0-rc.1) gehoert in den
+      # Artefaktnamen, sonst heissen RC und finale Fassung gleich.
+      VERSION: ${{ needs.verify.outputs.image_version || github.ref_name }}
+      # Die Identitaet, gegen die spaeter jeder Anwender prueft. Genau dieser Ausdruck steht
+      # auch in docs/security/verifying-releases.md — Aenderungen hier brechen die Anleitung.
+      COSIGN_IDENTITY: ^https://github\.com/LupusMalusDeviant/bifrost/\.github/workflows/release\.yml@refs/tags/v
+      COSIGN_ISSUER: https://token.actions.githubusercontent.com
+
+    steps:
+      - name: Quellstand auschecken
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # ---------------------------------------------------------------------------------
+      # Vorbereitung
+      # ---------------------------------------------------------------------------------
+
+      - name: Version normalisieren und Digest pruefen
+        shell: bash
+        run: |
+          set -euo pipefail
+          V="${VERSION#v}"
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          echo "Version: $V"
+
+          # Ein leerer oder unvollstaendiger Digest wuerde alles Folgende zu einem stillen
+          # Nichts machen: Cosign signierte dann ein Tag statt eines unveraenderlichen
+          # Inhalts, und die Anleitung waere eine Luege. Deshalb hier hart abbrechen.
+          case "${IMAGE_DIGEST:-}" in
+            sha256:[0-9a-f][0-9a-f]*) ;;
+            *) echo "::error::IMAGE_DIGEST ist kein sha256-Digest: '${IMAGE_DIGEST:-<leer>}'"; exit 1 ;;
+          esac
+          echo "Image: ${IMAGE}@${IMAGE_DIGEST}"
+
+      - name: CLI-Artefakte holen
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli-artefakte # angeglichen an den Job `cli` (WP1.3)
+          path: dist
+
+      - name: An GHCR anmelden
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Bewusst `docker login` statt einer weiteren fremden Action: eine Abhaengigkeit
+        # weniger, die gepinnt und gepflegt werden muss. Der Token ist der kurzlebige
+        # Job-Token, kein hinterlegtes Secret.
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Cosign installieren
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          # Auch die Werkzeugversion wird gepinnt, nicht nur die Action. Ohne diese Zeile
+          # zoege der Default der Action (derzeit v3.0.6) die Version unbemerkt mit.
+          cosign-release: v3.1.2
+
+      - name: Syft installieren
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          syft-version: v1.50.0
+
+      # ---------------------------------------------------------------------------------
+      # 1. SBOM — CycloneDX, je Artefakt eine Datei
+      #    Format-Entscheidung samt Begruendung: docs/security/supply-chain.md, Abschnitt 2.
+      # ---------------------------------------------------------------------------------
+
+      - name: SBOM des Images erzeugen
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sbom
+          # Quelle ist der DIGEST, nicht das Tag: sonst beschreibt die SBOM womoeglich ein
+          # anderes Image als das signierte.
+          syft "${IMAGE}@${IMAGE_DIGEST}" \
+            -o "cyclonedx-json=sbom/bifrost-${VERSION}-image.cdx.json"
+
+          # Die SBOM muss die veroeffentlichte Version nennen, sonst ist sie nicht zuordenbar
+          # (Pflichtenheft WP1.2, Test "SBOM referenziert korrekte Version").
+          if ! grep -q "${IMAGE_DIGEST}" "sbom/bifrost-${VERSION}-image.cdx.json"; then
+            echo "::error::Die Image-SBOM nennt den signierten Digest nicht."
+            exit 1
+          fi
+
+      - name: SBOMs der CLI-Artefakte erzeugen
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sbom extract
+          shopt -s nullglob
+          COUNT=0
+          for ARCHIVE in dist/bifrost-cli-"${VERSION}"-*.tar.gz dist/bifrost-cli-"${VERSION}"-*.zip; do
+            BASE="$(basename "$ARCHIVE")"
+            RID="${BASE#bifrost-cli-"${VERSION}"-}"
+            RID="${RID%.tar.gz}"; RID="${RID%.zip}"
+            rm -rf "extract/$RID"; mkdir -p "extract/$RID"
+            case "$ARCHIVE" in
+              *.tar.gz) tar -xzf "$ARCHIVE" -C "extract/$RID" ;;
+              *.zip)    unzip -q "$ARCHIVE" -d "extract/$RID" ;;
+            esac
+            syft "dir:extract/$RID" \
+              -o "cyclonedx-json=sbom/bifrost-cli-${VERSION}-${RID}.cdx.json"
+            COUNT=$((COUNT + 1))
+          done
+          # Vertrag §2 nennt fuenf Runtime-IDs. Weniger Archive heisst: der Job `cli` hat
+          # etwas nicht geliefert — das darf nicht als vollstaendiges Release durchgehen.
+          if [ "$COUNT" -ne 5 ]; then
+            echo "::error::Erwartet waren 5 CLI-Archive, gefunden: $COUNT"
+            ls -la dist
+            exit 1
+          fi
+
+      # ---------------------------------------------------------------------------------
+      # 2. Schwachstellen-Gate — blockiert bei Critical/High
+      #    Ausnahmeprozess (nur PO, befristet, dokumentiert): siehe supply-chain.md, Abschn. 4.
+      # ---------------------------------------------------------------------------------
+
+      - name: Trivy — Image (blockiert bei CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE }}@${{ env.IMAGE_DIGEST }}
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          # `ignore-unfixed: false` ist Absicht: ein Fund ohne Fix bleibt ein Fund. Er wird
+          # ueber die befristete Ausnahmeliste sichtbar gemacht, nicht per Schalter versteckt.
+          ignore-unfixed: false
+          exit-code: "1"
+          trivyignores: .trivyignore.yaml
+        env:
+          TRIVY_VERSION: v0.72.0
+
+      - name: Trivy — CLI-Artefakte ueber ihre SBOMs (blockiert bei CRITICAL/HIGH)
+        shell: bash
+        # Ueber die SBOM statt ueber das Verzeichnis: dann prueft das Gate exakt die
+        # Stueckliste, die veroeffentlicht wird. Weichen beide ab, faellt es hier auf.
+        run: |
+          set -euo pipefail
+          for S in sbom/bifrost-cli-*.cdx.json; do
+            echo "::group::Trivy $S"
+            docker run --rm -v "$PWD:/work" -w /work aquasec/trivy:0.72.0 \
+              sbom --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed=false \
+              --exit-code 1 --no-progress "$S"
+            echo "::endgroup::"
+          done
+
+      # ---------------------------------------------------------------------------------
+      # 3. Provenance — GitHub Artifact Attestations (SLSA v1)
+      # ---------------------------------------------------------------------------------
+
+      - name: Provenance fuer das Image
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ env.IMAGE_DIGEST }}
+          push-to-registry: true # braucht `packages: write` — siehe Punkt (1)
+
+      - name: Provenance fuer alle CLI-Archive
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          # `subject-checksums` nimmt die Pruefsummendatei aus Vertrag §2 direkt entgegen —
+          # ein Subject je Archiv, ohne fuenf einzelne Schritte.
+          subject-checksums: dist/checksums.txt
+
+      # ---------------------------------------------------------------------------------
+      # 4. SBOM-Attestation — bindet die Stueckliste an den Digest
+      #    `actions/attest-sbom` ist zugunsten von `actions/attest` abgekuendigt; deshalb
+      #    hier direkt `actions/attest` mit `sbom-path`.
+      #    Kein Schleifenkonstrukt: GitHub Actions kennt keine Wiederholung auf Schrittebene,
+      #    und ein eigener Matrix-Job wuerde die im Vertrag §5 festgelegten Jobnamen sprengen.
+      # ---------------------------------------------------------------------------------
+
+      - name: SBOM-Attestation — Image
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ env.IMAGE_DIGEST }}
+          sbom-path: sbom/bifrost-${{ env.VERSION }}-image.cdx.json
+          push-to-registry: true
+
+      - name: SBOM-Attestation — CLI win-x64
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: dist/bifrost-cli-${{ env.VERSION }}-win-x64.zip
+          sbom-path: sbom/bifrost-cli-${{ env.VERSION }}-win-x64.cdx.json
+
+      - name: SBOM-Attestation — CLI linux-x64
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: dist/bifrost-cli-${{ env.VERSION }}-linux-x64.tar.gz
+          sbom-path: sbom/bifrost-cli-${{ env.VERSION }}-linux-x64.cdx.json
+
+      - name: SBOM-Attestation — CLI linux-arm64
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: dist/bifrost-cli-${{ env.VERSION }}-linux-arm64.tar.gz
+          sbom-path: sbom/bifrost-cli-${{ env.VERSION }}-linux-arm64.cdx.json
+
+      - name: SBOM-Attestation — CLI osx-x64
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: dist/bifrost-cli-${{ env.VERSION }}-osx-x64.tar.gz
+          sbom-path: sbom/bifrost-cli-${{ env.VERSION }}-osx-x64.cdx.json
+
+      - name: SBOM-Attestation — CLI osx-arm64
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: dist/bifrost-cli-${{ env.VERSION }}-osx-arm64.tar.gz
+          sbom-path: sbom/bifrost-cli-${{ env.VERSION }}-osx-arm64.cdx.json
+
+      # ---------------------------------------------------------------------------------
+      # 5. Signatur — keyless ueber OIDC, kein langlebiges Secret (Vertrag §7)
+      # ---------------------------------------------------------------------------------
+
+      - name: Image signieren (keyless)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE}@${IMAGE_DIGEST}"
+
+      - name: Pruefsummendatei signieren (keyless)
+        shell: bash
+        # Signiert wird `checksums.txt`, nicht jedes Archiv einzeln: die Datei enthaelt die
+        # SHA-256 aller Archive, damit haengt jedes Archiv an derselben Signatur. Ein
+        # Anwender braucht zwei Befehle statt zehn — und uebersieht keinen.
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes \
+            --bundle dist/checksums.txt.cosign.bundle \
+            dist/checksums.txt
+
+      # ---------------------------------------------------------------------------------
+      # 6. Selbsttest — POSITIV und NEGATIV
+      #    Der Negativteil ist der eigentliche Beleg. Eine Pruefung, die immer gruen ist,
+      #    beweist nichts; erst wenn das Falsche nachweislich durchfaellt, sagt das Gruene
+      #    etwas aus (Lastenheft, Leitsatz 6).
+      # ---------------------------------------------------------------------------------
+
+      - name: Selbsttest POSITIV — richtiger Digest, richtige Identitaet
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "P1: cosign verify gegen den signierten Index-Digest"
+          cosign verify \
+            --certificate-identity-regexp "$COSIGN_IDENTITY" \
+            --certificate-oidc-issuer "$COSIGN_ISSUER" \
+            "${IMAGE}@${IMAGE_DIGEST}" > /dev/null
+
+          echo "P2: cosign verify-blob gegen die Pruefsummendatei"
+          cosign verify-blob \
+            --bundle dist/checksums.txt.cosign.bundle \
+            --certificate-identity-regexp "$COSIGN_IDENTITY" \
+            --certificate-oidc-issuer "$COSIGN_ISSUER" \
+            dist/checksums.txt
+
+          echo "P3: Pruefsummen der Archive stimmen"
+          (cd dist && sha256sum --check --ignore-missing checksums.txt)
+
+          echo "P4: GitHub-Attestation fuer das Image"
+          gh attestation verify "oci://${IMAGE}@${IMAGE_DIGEST}" \
+            --repo "${{ github.repository }}" \
+            --signer-workflow "${{ github.repository }}/.github/workflows/release.yml"
+
+          echo "P5: GitHub-Attestation fuer ein CLI-Archiv"
+          gh attestation verify "dist/bifrost-cli-${VERSION}-linux-x64.tar.gz" \
+            --repo "${{ github.repository }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Selbsttest NEGATIV — Falsches MUSS durchfallen
+        shell: bash
+        run: |
+          set -uo pipefail
+          FEHLER=0
+
+          # ---- N1: richtiger Digest, aber fremde Signierer-Identitaet -------------------
+          # Belegt, dass die Signatur an DIESES Repository und DIESEN Workflow gebunden ist
+          # und nicht bloss "irgendwie von Sigstore" stammt.
+          if cosign verify \
+               --certificate-identity-regexp '^https://github\.com/example-org/nicht-bifrost/' \
+               --certificate-oidc-issuer "$COSIGN_ISSUER" \
+               "${IMAGE}@${IMAGE_DIGEST}" > /dev/null 2>&1; then
+            echo "::error::N1 hat NICHT abgelehnt — eine fremde Identitaet wurde akzeptiert."
+            FEHLER=1
+          else
+            echo "N1 ok — fremde Identitaet abgelehnt."
+          fi
+
+          # ---- N2: existierender, aber NICHT signierter Digest --------------------------
+          # Signiert wird der Multi-Arch-Index. Die Architektur-Manifeste darunter existieren
+          # wirklich, tragen aber keine Signatur. Das ist der ehrlichste Negativfall: kein
+          # erfundener Digest, sondern ein echter, der nicht Gegenstand der Signatur ist.
+          CHILD=$(docker buildx imagetools inspect "${IMAGE}@${IMAGE_DIGEST}" --raw \
+                  | jq -r '.manifests[]? | select(.platform.architecture=="amd64" and .platform.os=="linux") | .digest' \
+                  | head -n1)
+          if [ -z "${CHILD:-}" ]; then
+            echo "::error::N2 nicht durchfuehrbar — kein amd64-Untermanifest gefunden."
+            FEHLER=1
+          elif cosign verify \
+                 --certificate-identity-regexp "$COSIGN_IDENTITY" \
+                 --certificate-oidc-issuer "$COSIGN_ISSUER" \
+                 "${IMAGE}@${CHILD}" > /dev/null 2>&1; then
+            echo "::error::N2 hat NICHT abgelehnt — ein unsignierter Digest ($CHILD) wurde akzeptiert."
+            FEHLER=1
+          else
+            echo "N2 ok — unsignierter Digest $CHILD abgelehnt."
+          fi
+
+          # ---- N3: veraendertes Archiv --------------------------------------------------
+          # Belegt, dass die Pruefsummenkette wirklich am Inhalt haengt.
+          rm -rf negativprobe && mkdir -p negativprobe
+          cp "dist/bifrost-cli-${VERSION}-linux-x64.tar.gz" negativprobe/
+          cp dist/checksums.txt negativprobe/
+          printf 'manipuliert' >> "negativprobe/bifrost-cli-${VERSION}-linux-x64.tar.gz"
+          if (cd negativprobe && sha256sum --check --ignore-missing checksums.txt > /dev/null 2>&1); then
+            echo "::error::N3 hat NICHT abgelehnt — ein veraendertes Archiv galt als unversehrt."
+            FEHLER=1
+          else
+            echo "N3 ok — veraendertes Archiv abgelehnt."
+          fi
+
+          # ---- N4: Attestation gegen ein fremdes Repository ------------------------------
+          if gh attestation verify "oci://${IMAGE}@${IMAGE_DIGEST}" \
+               --repo "actions/checkout" > /dev/null 2>&1; then
+            echo "::error::N4 hat NICHT abgelehnt — Attestation eines fremden Repos akzeptiert."
+            FEHLER=1
+          else
+            echo "N4 ok — fremde Repository-Herkunft abgelehnt."
+          fi
+
+          rm -rf negativprobe
+          if [ "$FEHLER" -ne 0 ]; then
+            echo "::error::Der Negativ-Selbsttest ist gescheitert. Das Release wird nicht veroeffentlicht."
+            exit 1
+          fi
+          echo "Alle Negativproben haben abgelehnt — die Verifikation trennt Richtig von Falsch."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ---------------------------------------------------------------------------------
+      # 7. Uebergabe an den Job `release` (dieser Job hat kein `contents: write`)
+      # ---------------------------------------------------------------------------------
+
+      - name: SBOMs und Signatur-Bundle als Artefakt ablegen
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: supply-chain
+          path: |
+            sbom/*.cdx.json
+            dist/checksums.txt.cosign.bundle
+          if-no-files-found: error
+
+  # ── release (WP1.5) ─────────────────────────────────────────────────────────
+  # Das Tor. Ein Tag darf NUR dann ein Release erzeugen, wenn alles davor bestanden hat:
+  # Version geprueft, Tests gruen, Image gebaut und gepusht, CLI-Artefakte erzeugt und
+  # geprueft, SBOM/Signatur/Provenance vorhanden. `needs` ist hier die eigentliche Politik —
+  # faellt einer aus, entsteht gar kein Release statt eines halben.
+  #
+  # Warum das der letzte Job ist und nicht der erste: Ein Release, das vor den Nachweisen
+  # angelegt wird, ist genau so lange eine Zusage ohne Deckung, wie der Rest laeuft. Und wenn
+  # der Rest scheitert, steht die Zusage trotzdem im Netz.
+  release:
+    needs: [verify, image, cli-checksums, supply-chain]
+    if: needs.verify.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # Vertrag §6: NUR hier — dieser Job legt das GitHub-Release an
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # WP1.5: Der Changelog-Abschnitt der Version muss existieren. Ein Release ohne Eintrag
+      # zwingt jeden Anwender, den Diff zu lesen, um zu erfahren, was sich geaendert hat —
+      # und genau das soll die Datei ersparen.
+      - name: Changelog-Abschnitt vorhanden
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.image_version }}
+        run: |
+          if [ ! -f CHANGELOG.md ]; then
+            echo "::error::CHANGELOG.md fehlt."
+            exit 1
+          fi
+          if ! grep -qE "^## \[?${VERSION}\]?" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md hat keinen Abschnitt '## [$VERSION]'."
+            exit 1
+          fi
+          echo "Changelog-Abschnitt fuer $VERSION gefunden."
+
+      - name: Release-Notiz aus dem Changelog schneiden
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.image_version }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+          IMAGE: ${{ needs.image.outputs.image }}
+        run: |
+          # Vom Versionsabschnitt bis zur naechsten Ueberschrift gleicher Ebene.
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[?" v "\\]?" { drin=1; next }
+            drin && /^## / { exit }
+            drin { print }
+          ' CHANGELOG.md > notiz.md
+
+          {
+            echo ""
+            echo "## Artefakte"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Image | \`${IMAGE}@${DIGEST}\` |"
+            echo "| Architekturen | linux/amd64, linux/arm64 |"
+            echo "| CLI | fuenf Plattformen, siehe \`checksums.txt\` |"
+            echo ""
+            echo "Pruefung der Artefakte: siehe [docs/security/verifying-releases.md](docs/security/verifying-releases.md)."
+            echo ""
+            echo "> Es gibt kein \`latest\`-Tag. Fuer den Betrieb den Digest oben pinnen."
+          } >> notiz.md
+          cat notiz.md
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli-artefakte
+          path: dist
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: supply-chain
+          path: dist
+
+      - name: Artefakte auflisten
+        shell: bash
+        run: ls -la dist
+
+      # Idempotent: Laeuft der Workflow fuer dasselbe Tag erneut, wird das vorhandene Release
+      # aktualisiert statt ein zweites anzulegen. `gh release create --clobber` gibt es nicht,
+      # deshalb die Fallunterscheidung.
+      - name: GitHub-Release anlegen oder aktualisieren
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.verify.outputs.image_version }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+        run: |
+          FLAGS=(--title "B.I.F.R.O.S.T $VERSION" --notes-file notiz.md)
+          # Vertrag/FR-P007: Ein Pre-Release wird als solches markiert. `latest` setzt dieser
+          # Workflow NIE — weder als Image-Tag noch als Release-Markierung.
+          if [ "$PRERELEASE" = "true" ]; then FLAGS+=(--prerelease); fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG existiert — wird aktualisiert."
+            gh release edit "$TAG" "${FLAGS[@]}"
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" "${FLAGS[@]}" dist/*
+          fi
+
+      - name: Zusammenfassung
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          {
+            echo "### Release"
+            echo ""
+            echo "- Tag: \`$TAG\`"
+            echo "- Alle Gates bestanden: verify, image, cli, supply-chain"
+          } >> "$GITHUB_STEP_SUMMARY"

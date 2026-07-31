@@ -39,6 +39,13 @@ while (arguments.Count > 0)
     break;
 }
 
+// Vor dem Laden der Konfiguration: '--version' und '--help' duerfen weder eine Konfigurationsdatei
+// noch eine gueltige Endpunkt-Einstellung voraussetzen.
+if (GatewayCli.TryRunInfoCommand(arguments, jsonOutput, Console.Out) is { } infoExitCode)
+{
+    return infoExitCode;
+}
+
 using var cancellation = new CancellationTokenSource();
 Console.CancelKeyPress += (_, eventArgs) =>
 {

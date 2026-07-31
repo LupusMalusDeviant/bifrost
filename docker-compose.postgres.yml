@@ -1,34 +1,63 @@
-# Override für PostgreSQL statt SQLite:
+# Override fuer PostgreSQL statt SQLite:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
 #
-# Vor dem ersten Start das Passwort ersetzen — an BEIDEN Stellen.
+# Funktioniert genauso mit dem Entwicklerpfad:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml \
+#                  -f docker-compose.postgres.yml up -d --build
+#
+# Das Passwort steht NICHT mehr in dieser Datei, sondern in .env (POSTGRES_PASSWORD) —
+# einmal gesetzt, an beiden Stellen wirksam. Fehlt es, kommt die Datenbank mit einer
+# eindeutigen Meldung nicht hoch ("Database is uninitialized and superuser password is not
+# specified"). Das ist Absicht: Ein Vorgabepasswort in einer versionierten Datei wird
+# uebernommen und nie geaendert.
+#
+# Achtung: Das Datenverzeichnis des Gateways bleibt auch hier noetig — der
+# DataProtection-Key-Ring unter /data/keys entschluesselt die Upstream-Zugangsdaten und
+# liegt NICHT in der Datenbank.
 
 services:
   bifrost:
     environment:
       BIFROST_DB_PROVIDER: postgres
-      BIFROST_DB_CONNECTION: "Host=db;Database=bifrost;Username=bifrost;Password=CHANGE_ME"
+      # 'environment' schlaegt 'env_file'; die veraenderlichen Teile kommen deshalb ueber
+      # Compose-Interpolation aus .env herein statt als fester Text.
+      BIFROST_DB_CONNECTION: "Host=db;Database=${POSTGRES_DB:-bifrost};Username=${POSTGRES_USER:-bifrost};Password=${POSTGRES_PASSWORD:-}"
     depends_on:
       db:
         # Auf den Healthcheck warten, nicht nur auf den Start: der Gateway legt beim Hochfahren
-        # das Schema an und würde gegen eine noch nicht annehmende Datenbank scheitern.
+        # das Schema an und wuerde gegen eine noch nicht annehmende Datenbank scheitern.
         condition: service_healthy
 
   db:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: bifrost
-      POSTGRES_USER: bifrost
-      POSTGRES_PASSWORD: CHANGE_ME
+      POSTGRES_DB: ${POSTGRES_DB:-bifrost}
+      POSTGRES_USER: ${POSTGRES_USER:-bifrost}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      # Alternative ohne Umgebungsvariable: Das Postgres-Image liest das Passwort auch aus
+      # einer Datei. Dazu POSTGRES_PASSWORD oben entfernen, hier und im secrets-Block unten
+      # einkommentieren und ./secrets/postgres-password anlegen (ein deklariertes, aber
+      # fehlendes Secret bricht 'up' ab). Der Gateway selbst kann das noch nicht — sein
+      # Connection-String braucht den Wert weiterhin in der Umgebung.
+      # POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+    # secrets:
+    #   - postgres-password
     volumes:
       - bifrost-pgdata:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bifrost -d bifrost"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bifrost} -d ${POSTGRES_DB:-bifrost}"]
       interval: 5s
       timeout: 5s
       retries: 10
 
+# secrets:
+#   postgres-password:
+#     file: ./secrets/postgres-password
+
 volumes:
+  # Auch hier gilt die Praefix-Regel aus docker-compose.yml: der wirksame Name ist
+  # <projekt>_bifrost-pgdata. Umbenennen heisst leere Datenbank.
   bifrost-pgdata:
