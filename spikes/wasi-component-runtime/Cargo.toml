@@ -11,7 +11,7 @@ base64 = "0.22.1"
 ed25519-dalek = "2.1.1"
 # HMAC-SHA256 über die Platten-Kompilate (WP5). RustCrypto wie sha2, teilt dessen digest-Basis;
 # `verify_slice` vergleicht in konstanter Zeit. Kein Handbau von HMAC.
-hmac = "0.12.1"
+hmac = "0.13.0"
 # Nur für den 32-Byte-Host-Schlüssel des Caches; liegt ohnehin transitiv im Baum.
 getrandom = "0.4.3"
 serde = { version = "1.0.228", features = ["derive"] }
