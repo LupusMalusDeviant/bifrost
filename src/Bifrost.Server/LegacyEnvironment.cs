@@ -29,14 +29,43 @@ internal static class LegacyEnvironment
     private const string NewPrefix = "BIFROST_";
 
     /// <summary>
-    /// Übernimmt alle noch alt benannten Variablen und liefert deren Namen — sortiert, damit die
-    /// Warnung beim Start bei jedem Neustart gleich aussieht und nicht wie eine neue Meldung wirkt.
+    /// Übernimmt alle noch alt benannten Variablen ins Prozessumfeld und liefert deren Namen.
     /// </summary>
     public static IReadOnlyList<string> Adopt()
     {
-        var adopted = new List<string>();
+        var plan = PlanAdoption(Environment.GetEnvironmentVariables());
+        foreach (var (_, newName, value) in plan)
+        {
+            Environment.SetEnvironmentVariable(newName, value);
+        }
 
-        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        return [.. plan.Select(entry => entry.OldName)];
+    }
+
+    /// <summary>
+    /// Was übernommen werden müsste — als reine Rechnung über einer übergebenen Umgebung, damit sich
+    /// die Regel prüfen lässt, ohne das Prozessumfeld eines Testlaufs anzufassen.
+    /// <para>
+    /// Sortiert, damit die Warnung beim Start bei jedem Neustart gleich aussieht und nicht wie eine
+    /// neue Meldung wirkt.
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<(string OldName, string NewName, string Value)> PlanAdoption(
+        IDictionary environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        var present = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (DictionaryEntry entry in environment)
+        {
+            if (entry.Key is string key && entry.Value is string { Length: > 0 })
+            {
+                present.Add(key);
+            }
+        }
+
+        var plan = new List<(string OldName, string NewName, string Value)>();
+        foreach (DictionaryEntry entry in environment)
         {
             if (entry.Key is not string key
                 || !key.StartsWith(OldPrefix, StringComparison.Ordinal)
@@ -45,18 +74,15 @@ internal static class LegacyEnvironment
                 continue;
             }
 
-            var current = NewPrefix + key[OldPrefix.Length..];
-            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(current)))
+            var newName = NewPrefix + key[OldPrefix.Length..];
+            if (!present.Contains(newName))
             {
-                continue;
+                plan.Add((key, newName, value));
             }
-
-            Environment.SetEnvironmentVariable(current, value);
-            adopted.Add(key);
         }
 
-        adopted.Sort(StringComparer.Ordinal);
-        return adopted;
+        plan.Sort((left, right) => string.CompareOrdinal(left.OldName, right.OldName));
+        return plan;
     }
 
     /// <summary>

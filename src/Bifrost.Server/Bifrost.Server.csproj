@@ -15,6 +15,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Die Uebernahme alt benannter Umgebungsvariablen ist eine Regel, keine Sichtpruefung:
+         Sie entscheidet, ob eine bestehende Installation nach der Umbenennung ihre Konfiguration
+         behaelt oder lautlos auf Vorgabewerte faellt. -->
+    <InternalsVisibleTo Include="Bifrost.Integration.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Bifrost.Core\Bifrost.Core.csproj" />
     <ProjectReference Include="..\Bifrost.Upstream\Bifrost.Upstream.csproj" />
     <ProjectReference Include="..\Bifrost.Persistence\Bifrost.Persistence.csproj" />

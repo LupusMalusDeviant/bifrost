@@ -4,7 +4,7 @@
     {
       "name": "bifrost",
       "runtimeExecutable": "dotnet",
-      "runtimeArgs": ["run", "--project", "src/McpMcp.Server/McpMcp.Server.csproj", "--urls", "http://localhost:5199"],
+      "runtimeArgs": ["run", "--project", "src/Bifrost.Server/Bifrost.Server.csproj", "--urls", "http://localhost:5199"],
       "port": 5199
     }
   ]
