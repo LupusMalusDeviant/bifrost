@@ -1,0 +1,58 @@
+@* Zerstörende Aktion mit Rückfrage — zweistufig an Ort und Stelle, ohne Dialogfenster.
+
+   WARUM ZWEISTUFIG UND NICHT MODAL:
+   Der Knopf steht in der Zeile des Objekts, um das es geht. Die Zeile IST der Zusammenhang — ein
+   Dialogfenster müsste den Namen wiederholen, verdeckt dabei die Liste und beantwortet die Frage
+   „welches denn?" schlechter als die Zeile selbst.
+
+   WARUM KEIN window.confirm:
+   Es sieht in jedem Browser anders aus, lässt sich nicht gestalten, und es wäre die einzige Stelle
+   der Oberfläche, die JavaScript für ihre Funktion braucht. Diese Oberfläche lädt bewusst keine
+   externen Ressourcen und kommt ohne eigenes Skript aus (siehe App.razor).
+
+   WAS DAS SCHÜTZT:
+   Nichts hier war bisher rückfragepflichtig — eine Rolle, eine Identität, ein Upstream oder ein
+   UI-Nutzer verschwand beim ersten Klick. Bei einem Produkt, dessen Zweck Zugriffskontrolle ist,
+   ist eine versehentlich gelöschte Rolle keine Kleinigkeit; beim letzten UI-Admin sperrt man sich
+   selbst aus. *@
+
+@if (!_armed)
+{
+    <button class="btn-sm btn-danger" title="@Title" @onclick="() => _armed = true">@Label</button>
+}
+else
+{
+    <span class="confirm">
+        <strong class="confirm-q">Wirklich?</strong>
+        <button class="btn-sm btn-danger" aria-label="@Title" @onclick="ConfirmAsync">Ja</button>
+        <button class="btn-sm btn-ghost" @onclick="() => _armed = false">Nein</button>
+    </span>
+}
+
+@code {
+    private bool _armed;
+
+    /// <summary>Beschriftung im Ruhezustand — „Löschen", „Entfernen", „Widerrufen".</summary>
+    [Parameter] public string Label { get; set; } = "Löschen";
+
+    /// <summary>
+    /// Was hier verschwindet. Steht nicht im Text, sondern im Titel und in der Vorlesehilfe: Die
+    /// Zeile zeigt es ohnehin, und ein langer Name würde die Tabellenspalte auseinanderziehen.
+    /// </summary>
+    [Parameter] public string? What { get; set; }
+
+    [Parameter, EditorRequired] public EventCallback OnConfirmed { get; set; }
+
+    private string Title => What is { Length: > 0 } ? $"{Label}: {What}" : Label;
+
+    /// <summary>
+    /// Nach der Ausführung zurück in den Ruhezustand. Das ist kein Schönheitsdetail: Blazor kann
+    /// dieselbe Komponenteninstanz für die nächste Zeile wiederverwenden, wenn sich die Liste
+    /// verkürzt — ein hängengebliebenes „Wirklich?" stünde dann an einem fremden Eintrag.
+    /// </summary>
+    private async Task ConfirmAsync()
+    {
+        _armed = false;
+        await OnConfirmed.InvokeAsync();
+    }
+}

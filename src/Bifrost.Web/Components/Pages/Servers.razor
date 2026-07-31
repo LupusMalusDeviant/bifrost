@@ -62,7 +62,7 @@
                                        Circuit kann das nicht. *@
                                     <a class="btn-sm btn-ghost" href="@($"/oauth/upstream/{s.Id.Value}/connect")">Verbinden</a>
                                 }
-                                <button class="btn-sm btn-danger" @onclick="() => Remove(s.Id, s.Slug)">Entfernen</button>
+                                <ConfirmButton Label="Entfernen" What="@($"Upstream {s.Slug}")" OnConfirmed="() => Remove(s.Id, s.Slug)" />
                             </td>
                         </tr>
                         @if (s.QuarantinedTools is { Count: > 0 } held)

@@ -86,8 +86,15 @@ dotnet test Bifrost.slnx
 ```
 
 ```bash
-dotnet run --project src/Bifrost.Server
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/Bifrost.Server
 ```
+
+> **Keep `Development` when running from source.** Outside it, ASP.NET does not load the static web
+> assets: `_framework/blazor.web.js` is served with `200` and **zero bytes**, the Blazor circuit
+> never starts, and *no button in the admin UI does anything* — while pages still render
+> server-side and therefore look perfectly usable. The published Docker image is unaffected; it
+> serves the real files. (`dotnet run --environment Development` does **not** help — that argument
+> is swallowed; the variable has to come from the environment.)
 
 Requires the .NET 10 SDK. The integration tests spawn reference MCP servers (`tests/Bifrost.TestServers/*`) as real stdio/HTTP processes.
 

@@ -23,7 +23,7 @@
                         <td class="mono">@r.Name</td>
                         <td><div class="pill-list">@foreach (var g in r.Grants) { <span class="pill">@GrantLabel(g)</span> }</div></td>
                         <td>@(r.RateLimit is { } rl ? $"{rl.CallsPerMinute}/min" : "—")</td>
-                        <td><button class="btn-sm btn-danger" @onclick="() => RemoveRole(r.Id)">Löschen</button></td>
+                        <td><ConfirmButton What="@($"Rolle {r.Name}")" OnConfirmed="() => RemoveRole(r.Id)" /></td>
                     </tr>
                 }
             </tbody>
@@ -88,7 +88,7 @@
                         <td class="muted">@(i.Profile is { } p ? ProfileName(p) : "—")</td>
                         <td>
                             <button class="btn-sm btn-ghost" @onclick="() => SelectForKey(i.Id)">Keys</button>
-                            <button class="btn-sm btn-danger" @onclick="() => RemoveIdentity(i.Id)">Löschen</button>
+                            <ConfirmButton What="@($"Identität {i.Name}")" OnConfirmed="() => RemoveIdentity(i.Id)" />
                         </td>
                     </tr>
                 }
@@ -157,7 +157,7 @@
                             <td class="mono muted">@k.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)</td>
                             <td class="mono muted">@(k.ExpiresAt?.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "—")</td>
                             <td>@(k.RevokedAt is null ? new MarkupString("<span class='badge badge-ok'>aktiv</span>") : new MarkupString("<span class='badge badge-muted'>widerrufen</span>"))</td>
-                            <td>@if (k.RevokedAt is null) { <button class="btn-sm btn-danger" @onclick="() => RevokeKey(k.KeyId)">Widerrufen</button> }</td>
+                            <td>@if (k.RevokedAt is null) { <ConfirmButton Label="Widerrufen" What="@($"Key {k.Label}")" OnConfirmed="() => RevokeKey(k.KeyId)" /> }</td>
                         </tr>
                     }
                 </tbody>

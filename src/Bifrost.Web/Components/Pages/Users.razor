@@ -20,7 +20,7 @@
                         <td>
                             @if (u.Username != _me)
                             {
-                                <button class="btn-sm btn-danger" @onclick="() => Remove(u.Id)">Löschen</button>
+                                <ConfirmButton What="@($"UI-Nutzer {u.Username}")" OnConfirmed="() => Remove(u.Id)" />
                             }
                             else { <span class="muted">(du)</span> }
                         </td>

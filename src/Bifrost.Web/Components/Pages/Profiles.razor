@@ -46,7 +46,7 @@
                         <td>@(p.LazyToolsEnabled ? "an" : "aus")</td>
                         <td>@tokens</td>
                         <td>@Savings(tokens)</td>
-                        <td><button class="btn-sm btn-danger" @onclick="() => Remove(p.Id)">Löschen</button></td>
+                        <td><ConfirmButton What="@p.Name" OnConfirmed="() => Remove(p.Id)" /></td>
                     </tr>
                 }
             </tbody>

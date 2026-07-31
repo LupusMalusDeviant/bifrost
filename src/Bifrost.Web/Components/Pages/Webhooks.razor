@@ -31,7 +31,7 @@
                             <input type="checkbox" checked="@w.Enabled"
                                    @onchange="e => SetEnabled(w.Id, (bool)e.Value!)" />
                         </td>
-                        <td><button class="btn-sm btn-danger" @onclick="() => Remove(w.Id)">Löschen</button></td>
+                        <td><ConfirmButton What="@w.Name" OnConfirmed="() => Remove(w.Id)" /></td>
                     </tr>
                 }
             </tbody>
