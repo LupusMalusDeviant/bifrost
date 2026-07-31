@@ -72,9 +72,22 @@ public sealed class ProcessLifecycleTests
 
     /// <summary>
     /// Die Gegenprobe zur Baseline: Nach einem vollständigen Testlauf dieser Klasse darf kein
-    /// zusätzlicher Upstream-Prozess übrig sein. Bewusst gegen den Prozess<b>namen</b> und nicht
-    /// gegen ein Muster wie „alles mit bifrost im Namen" — ein Test, der fremde Prozesse abräumt,
-    /// ist gefährlicher als der Zustand, den er beheben soll.
+    /// zusätzlicher Upstream-Prozess übrig sein.
+    /// <para>
+    /// <b>Warum „läuft" an der Prozess-Id hängt und nicht an einer Namenszählung:</b> Der Wirt
+    /// meldet die Id des Kindes, das er gerade gestartet hat — das ist eine Tatsache. Eine Zählung
+    /// nach Namen ist eine Vermutung darüber, wie das Betriebssystem den Prozess benennt, und diese
+    /// Vermutung ist im ersten Releaselauf zweimal falsch gewesen: erst wegen der 15-Zeichen-Grenze
+    /// von <c>/proc/&lt;pid&gt;/comm</c>, dann noch einmal, obwohl der Wirt sein Kind im selben
+    /// Moment gefunden hatte.
+    /// </para>
+    /// <para>
+    /// Die Namenszählung bleibt — aber nur dort, wo sie hingehört: als <b>Aufräumprobe</b> am Ende.
+    /// Findet sie nichts, schlägt sie nicht fehl; sie kann nur zu viel finden, und genau das soll
+    /// sie melden. Bewusst gegen den Prozessnamen und nicht gegen ein Muster wie „alles mit bifrost
+    /// im Namen": Ein Test, der fremde Prozesse abräumt, ist gefährlicher als der Zustand, den er
+    /// beheben soll.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task The_suite_returns_to_its_process_baseline()
@@ -83,11 +96,15 @@ public sealed class ProcessLifecycleTests
         var baseline = UpstreamProcessLookup.FindByExecutableName(UpstreamProcessName).Count;
 
         var host = StartHost(TestPaths.EchoServerExecutable);
+        int childId;
         try
         {
-            await ReadChildProcessIdAsync(host, ct);
-            UpstreamProcessLookup.FindByExecutableName(UpstreamProcessName).Count
-                .Should().BeGreaterThan(baseline, "waehrend der Wirt laeuft, laeuft auch sein Upstream");
+            var reported = await ReadChildProcessIdAsync(host, ct);
+            reported.Should().NotBeNull("der Wirt meldet die Prozess-Id seines Upstreams");
+            childId = reported!.Value;
+
+            HasExited(childId).Should().BeFalse(
+                "waehrend der Wirt laeuft, laeuft auch sein Upstream");
 
             host.Kill(entireProcessTree: false);
             await host.WaitForExitAsync(ct);
@@ -103,9 +120,14 @@ public sealed class ProcessLifecycleTests
         }
 
         await WaitUntilAsync(
-            () => UpstreamProcessLookup.FindByExecutableName(UpstreamProcessName).Count <= baseline,
+            () => HasExited(childId),
             timeoutMs: 20000,
-            because: "nach dem Lauf muss die Zahl der Upstream-Prozesse wieder auf dem Ausgangswert sein");
+            because: "nach dem Lauf darf der Upstream-Prozess des Wirts nicht mehr laufen");
+
+        UpstreamProcessLookup.FindByExecutableName(UpstreamProcessName).Count
+            .Should().BeLessThanOrEqualTo(
+                baseline,
+                "diese Klasse darf keinen zusaetzlichen Upstream-Prozess hinterlassen");
     }
 
     private static Process StartHost(string upstreamExecutable)
