@@ -128,7 +128,29 @@ Zwei Punkte gehen als Entscheidung an den Lead bzw. weiter:
    zwei Quellen desselben Secrets wäre eine Regel, die man im Zweifel falsch erinnert.
    `docker-compose.yml` führt den zweiten Secret-Block jetzt.
 
-## Laufender Meilenstein: M3 — Sichere Vorgaben
+## Abgeschlossener Meilenstein: M3 — Sichere Vorgaben
+
+**Alle sechs Pakete implementiert**, 1271 Tests grün. Die drei Rückstände sind abgeräumt:
+
+| Rückstand | Erledigt |
+|---|---|
+| wasmtime 47.0.2 mit zwei RUSTSEC-Meldungen | auf 47.0.3; `cargo audit` meldet nichts mehr, 110 Rust-Tests und die zwei Real-Host-Tests grün |
+| `.trivyignore.yaml` fehlte, `release.yml` verwies darauf | angelegt und **bewusst leer** — Ausnahmen laufen über das befristete Register, nicht über eine Ignorierliste, die niemand liest |
+| CODEOWNERS fehlte vollständig | angelegt, kurz gehalten: Gates, Release-Pipeline, `CryptographicNames.cs`, ADRs |
+
+**Einschränkung zu CODEOWNERS, die nicht untergehen darf:** Die Datei allein erzwingt nichts. In
+den Branch-Protection-Regeln für `main` muss „Require review from Code Owners" eingeschaltet sein,
+sonst ist der Eintrag ein Vorschlag. Das ist eine Repository-Einstellung und lässt sich nicht
+mitliefern; sie steht als Hinweis im Kopf der Datei. Bis dahin bleibt die PO-Freigabepflicht
+dokumentiert und **nicht durchgesetzt**.
+
+Zum wasmtime-Sprung: Beide Meldungen waren LOW und hätten kein Gate blockiert. Betroffen war aber
+ausgerechnet die WASI-Sandbox selbst — eine Schwachstelle in genau der Komponente, deren Aufgabe die
+Isolation ist, verdient keine Einstufung nach Punktzahl. Die Real-Host-Tests wurden gesondert
+gefahren, weil `verify-dotnet` sie ausschließt und ein veralteter Release-Stand dort hängt statt
+fehlzuschlagen.
+
+### Verlauf
 
 Entscheidung vorab in [ADR-0025](../adr/0025-host-ausfuehrung-verbieten-und-bestehende-instanzen-migrieren.md),
 Vertrag eingefroren in [`m3-secure-defaults-contract.md`](m3-secure-defaults-contract.md).

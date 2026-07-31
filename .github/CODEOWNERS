@@ -1,0 +1,43 @@
+# CODEOWNERS — wer eine Änderung freigeben muss (WP3.5)
+#
+# ── Wozu diese Datei ──────────────────────────────────────────────────────────────────────
+# docs/security-gates.md verlangt für ein Übergehen eines Security-Gates die namentliche
+# Freigabe des Product Owners. Ohne CODEOWNERS war das eine Regel in einem Dokument: Wer
+# das Ausnahmeregister ändert, hätte seine eigene Ausnahme eintragen können, und niemand
+# hätte es gemerkt. Diese Datei macht daraus eine Bedingung, die GitHub durchsetzt.
+#
+# ── Damit sie wirkt ───────────────────────────────────────────────────────────────────────
+# CODEOWNERS allein erzwingt nichts. In den Branch-Protection-Regeln für 'main' muss
+# "Require review from Code Owners" eingeschaltet sein — sonst ist der Eintrag ein
+# Vorschlag. Das ist eine Einstellung im Repository und lässt sich hier nicht mitliefern.
+#
+# ── Warum nur wenige Zeilen ───────────────────────────────────────────────────────────────
+# Aufgeführt ist, wo ein Fehler still und teuer ist: die Sicherheitsgates, die Release-
+# Pipeline, und die Bezeichner, an denen jeder gespeicherte Geheimtext hängt. Eine Liste,
+# die alles abdeckt, wird zur Formalie — jede Änderung braucht dann dieselbe Freigabe, und
+# die Freigabe sagt nichts mehr aus.
+
+# Vorgabe: keine. Der Alltag braucht keinen Torposten.
+
+# ── Sicherheitsgates und ihr Ausweg ───────────────────────────────────────────────────────
+# Wer hier ändert, ändert die Bedingung, unter der ein Release blockiert wird.
+/.github/workflows/security.yml      @LupusMalusDeviant
+/.github/security-exceptions.yml     @LupusMalusDeviant
+/.github/scripts/                    @LupusMalusDeviant
+/.trivyignore.yaml                   @LupusMalusDeviant
+
+# ── Release-Pipeline ──────────────────────────────────────────────────────────────────────
+# Signatur, Attestation und Veröffentlichung.
+/.github/workflows/release.yml       @LupusMalusDeviant
+/.github/CODEOWNERS                  @LupusMalusDeviant
+
+# ── Die Bezeichner, die keine Namen sind ──────────────────────────────────────────────────
+# Jeder Wert dort geht in die Schlüsselableitung ein. Eine Umbenennung macht auf JEDER
+# bestehenden Installation jeden gespeicherten Geheimtext unlesbar — ohne Fehlermeldung
+# beim Start. Es gibt dazu einen Test; diese Zeile ist die zweite Sicherung.
+/src/Bifrost.Persistence/CryptographicNames.cs   @LupusMalusDeviant
+
+# ── Entscheidungen ────────────────────────────────────────────────────────────────────────
+# Ein ADR beschreibt nicht nur, was gilt, sondern warum es so entschieden wurde. Wer ihn
+# nachträglich ändert, ändert die Begründung einer Entscheidung, die andere getroffen haben.
+/docs/adr/                           @LupusMalusDeviant

@@ -1,0 +1,27 @@
+# Trivy-Ausnahmen — bewusst LEER (WP3.5)
+#
+# ── Warum diese Datei existiert, obwohl nichts darin steht ────────────────────────────────
+# `release.yml` verwies auf sie, ohne dass es sie gab. Die Trivy-Action bricht bei einem
+# fehlenden Ignorefile ab — der allererste Releaselauf wäre daran gescheitert, und zwar
+# nicht an einem Scanergebnis, sondern an einem Pfad. Gefunden hat das WP3.5 beim Aufbau
+# der Security-Gates, nachdem die Pipeline drei Meilensteine lang ungelaufen dagestanden
+# hatte.
+#
+# ── Wie eine Ausnahme hier hineinkommt: gar nicht ─────────────────────────────────────────
+# Diese Datei ist NICHT der Ort, an dem ein Fund stummgeschaltet wird. Der Ausweg steht in
+# `.github/security-exceptions.yml`: ausdrücklich, befristet auf höchstens 90 Tage,
+# begründet und namentlich vom Product Owner freigegeben. Ein abgelaufener Eintrag lässt
+# den Lauf scheitern, statt bloß wirkungslos zu werden.
+#
+# Das Ausnahmeregister prüft diese Datei zusätzlich auf Abweichung: Wer hier etwas einträgt,
+# ohne dass drüben ein gültiger Eintrag steht, macht den Lauf rot. Eine stille Absenkung
+# der Anforderung soll es nicht geben — auch nicht durch die Hintertür einer Ignorierliste,
+# die niemand liest.
+#
+# ── Format ────────────────────────────────────────────────────────────────────────────────
+# https://trivy.dev/latest/docs/configuration/filtering/#by-finding-ids
+
+vulnerabilities: []
+misconfigurations: []
+secrets: []
+licenses: []
