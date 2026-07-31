@@ -82,4 +82,21 @@ public sealed record OAuthAuthorizationAttempt(
     Uri RedirectUri,
     string Resource,
     IReadOnlyList<string> Scopes,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt)
+{
+    /// <summary>
+    /// Hat der Authorization Server beim Start ausgewiesen, dass er den <c>iss</c>-Parameter
+    /// mitschickt (<c>authorization_response_iss_parameter_supported</c>)?
+    /// <para>
+    /// <b>Dann ist ein fehlender <c>iss</c> ein Abbruchgrund</b>, kein Grund zur Nachsicht: Genau so
+    /// sähe der Angriff aus, gegen den RFC 9207 schützt — die Antwort eines anderen Authorization
+    /// Servers, untergeschoben ohne den Parameter, der sie verraten würde. Die MCP-Autorisierung
+    /// verlangt die Prüfung seit der Spec-Revision 2026-07-28 ausdrücklich.
+    /// </para>
+    /// <para>
+    /// Weist der Server den Parameter nicht aus, bleibt es bei der Nachsicht — dort trägt die
+    /// Bindung an den Token-Endpunkt aus demselben Metadaten-Dokument.
+    /// </para>
+    /// </summary>
+    public bool IssuerParameterRequired { get; init; }
+}

@@ -72,7 +72,13 @@ public static class OAuthFlow
 
         return (url, new OAuthAuthorizationAttempt(
             state, server, verifier, metadata.Issuer, metadata.TokenEndpoint, redirectUri,
-            resource, scopes, now + AttemptLifetime));
+            resource, scopes, now + AttemptLifetime)
+        {
+            // Was der Server beim Start über sich gesagt hat, gilt beim Zurückkommen. Der Wert
+            // wurde bisher gelesen und weggeworfen — damit lief die Prüfung selbst dann nachsichtig,
+            // wenn der Server den Parameter zugesagt hatte.
+            IssuerParameterRequired = metadata.IssuerParameterSupported,
+        });
     }
 
     /// <summary>
@@ -89,9 +95,20 @@ public static class OAuthFlow
         ArgumentNullException.ThrowIfNull(attempt);
         if (issuerFromResponse is null)
         {
-            // Fehlt der Parameter, greift die Regel des Standards nach der Metadaten-Angabe. Wir
-            // lassen es zu — die Bindung an den Token-Endpunkt aus demselben Metadaten-Dokument
-            // trägt hier weiter.
+            // Fehlt der Parameter, entscheidet die Zusage des Servers aus den Metadaten. Hat er
+            // 'authorization_response_iss_parameter_supported' ausgewiesen, ist sein Fehlen genau
+            // das Bild, gegen das RFC 9207 schützt: eine Antwort, die nicht von ihm stammt. Dann
+            // wird abgebrochen.
+            if (attempt.IssuerParameterRequired)
+            {
+                throw new OAuthDiscoveryException(
+                    $"Die Antwort trägt keinen 'iss'-Parameter, obwohl der Authorization Server "
+                    + $"'{attempt.ExpectedIssuer}' ihn in seinen Metadaten zusagt. Der Vorgang wird "
+                    + "abgebrochen.");
+            }
+
+            // Sonst bleibt es bei der Nachsicht — die Bindung an den Token-Endpunkt aus demselben
+            // Metadaten-Dokument trägt hier weiter.
             return;
         }
 

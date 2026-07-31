@@ -119,6 +119,50 @@ public sealed class OAuthFlowTests
     }
 
     /// <summary>
+    /// Sagt der Authorization Server den <c>iss</c>-Parameter in seinen Metadaten zu, ist sein
+    /// <b>Fehlen</b> ein Abbruchgrund — genau so sähe die untergeschobene Antwort eines anderen
+    /// Servers aus. Die MCP-Autorisierung verlangt diese Prüfung seit der Spec-Revision 2026-07-28
+    /// ausdrücklich.
+    /// <para>
+    /// Der Wert wurde vorher aus den Metadaten gelesen und weggeworfen: Die Prüfung lief auch dann
+    /// nachsichtig, wenn der Server sie zugesagt hatte.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void A_missing_iss_is_refused_when_the_server_promised_it()
+    {
+        var (_, attempt) = Begin();
+        attempt.IssuerParameterRequired.Should().BeTrue("die Metadaten sagen ihn zu");
+
+        var act = () => OAuthFlow.EnsureIssuerMatches(attempt, null);
+
+        act.Should().Throw<OAuthDiscoveryException>().WithMessage("*keinen 'iss'-Parameter*");
+    }
+
+    /// <summary>
+    /// Weist ein Server den Parameter <em>nicht</em> aus, bleibt es bei der Nachsicht — sonst wäre
+    /// jeder ältere Authorization Server unbenutzbar, obwohl der Standard ihm den Parameter gar
+    /// nicht vorschreibt. Die Bindung an den Token-Endpunkt aus demselben Metadaten-Dokument trägt
+    /// dort weiter.
+    /// </summary>
+    [Fact]
+    public void A_missing_iss_is_tolerated_when_the_server_never_promised_it()
+    {
+        var (_, attempt) = OAuthFlow.Begin(
+            new ServerId(Guid.NewGuid()),
+            Metadata with { IssuerParameterSupported = false },
+            Options,
+            new Uri("https://gateway.example.com/oauth/callback"),
+            "https://upstream.example.com/mcp",
+            ["mcp:read"],
+            DateTimeOffset.UnixEpoch);
+
+        var act = () => OAuthFlow.EnsureIssuerMatches(attempt, null);
+
+        act.Should().NotThrow();
+    }
+
+    /// <summary>
     /// Ein Authorization Server, der S256 nicht ausweist, wird abgelehnt. Der Standard sagt
     /// ausdrücklich, dass der Client dann <b>nicht</b> fortfahren darf.
     /// </summary>
