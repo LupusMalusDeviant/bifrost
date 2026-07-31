@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Security.Cryptography.X509Certificates;
 
 using Bifrost.Abstractions;
 using Bifrost.Abstractions.Execution;
@@ -15,6 +14,7 @@ using Bifrost.Persistence;
 using Bifrost.Persistence.Audit;
 using Bifrost.Server;
 using Bifrost.Server.Execution;
+using Bifrost.Server.KeyRing;
 using Bifrost.Server.Operations;
 using Bifrost.Upstream;
 using Bifrost.Web;
@@ -49,6 +49,19 @@ if (args.Contains("--healthcheck"))
 // startet eine bestehende Installation nach der Umbenennung lautlos auf Vorgabewerten
 // (siehe LegacyEnvironment). Die Meldung dazu kommt weiter unten, sobald es einen Logger gibt.
 var adoptedLegacyVariables = LegacyEnvironment.Adopt();
+
+// Key-Ring einrichten, pruefen, einen Zertifikatswechsel durchspielen (WP3.3). Ohne Gateway-Start:
+// Beim Einrichten gibt es ihn noch nicht, und wenn der Key-Ring das Problem ist, kommt er nicht hoch.
+if (KeyRingCommands.IsKeyRingCommand(args))
+{
+    return KeyRingCommands.Run(
+        args,
+        Environment.GetEnvironmentVariable,
+        Environment.GetEnvironmentVariable("BIFROST_DATA_DIR") ?? "data",
+        TimeProvider.System,
+        Console.Out,
+        Console.Error);
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -98,20 +111,13 @@ var keyRing = builder.Services.AddDataProtection()
     // dennoch aendern will, braucht einen Migrationslauf, der alles entschluesselt und neu
     // verschluesselt — nicht eine Textersetzung.
     .SetApplicationName(CryptographicNames.DataProtectionApplication)
-    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dataDir, "keys")));
+    .PersistKeysToFileSystem(new DirectoryInfo(KeyRingDirectory.PathFor(dataDir)));
 
-var keyCertPath = builder.Configuration["BIFROST_KEYRING_CERT_PATH"];
-var keyRingProtected = false;
-if (!string.IsNullOrWhiteSpace(keyCertPath))
-{
-    var certPassword = builder.Configuration["BIFROST_KEYRING_CERT_PASSWORD"];
-    var certificate = X509CertificateLoader.LoadPkcs12FromFile(keyCertPath, certPassword);
-    keyRing.ProtectKeysWithCertificate(certificate)
-        // Für Zertifikatswechsel: mit dem alten Zertifikat verschlüsselte Keys bleiben lesbar,
-        // solange es hier weiterhin angegeben wird.
-        .UnprotectKeysWithAnyCertificate(certificate);
-    keyRingProtected = true;
-}
+// WP3.3: Betriebsart auflösen (Zertifikat / Datei-Secret / ausdrücklich ungeschützt), Zertifikate
+// laden und die Verlusterkennung anmelden. Ein fehlendes oder falsches Zertifikat kostet ab hier
+// den Start und nicht den ersten Tool-Aufruf.
+builder.Services.AddBifrostKeyRing(keyRing, builder.Configuration, dataDir);
+
 builder.Services.AddDbContextFactory<BifrostDbContext>(options =>
     options.UseBifrostDatabase(dbProvider, connectionString));
 builder.Services.AddSingleton<DatabaseInitializer>();
@@ -515,21 +521,22 @@ if (app.Logger.IsEnabled(LogLevel.Information))
 #pragma warning restore CA1848
 }
 
-if (!keyRingProtected)
-{
-    // CA1848: einmaliger Start-Log, LoggerMessage-Codegen brächte hier nichts.
-#pragma warning disable CA1848
-    app.Logger.LogWarning(
-        "DataProtection-Key-Ring liegt ungeschützt unter {Path}. Er entschlüsselt die gespeicherten " +
-        "Upstream-Credentials — Verzeichnis restriktiv halten oder BIFROST_KEYRING_CERT_PATH setzen.",
-        Path.Combine(dataDir, "keys"));
-#pragma warning restore CA1848
-}
-
-// Recovery-Kommandos (WP8.4) laufen ohne Gateway-Start und beenden den Prozess.
+// Recovery-Kommandos (WP8.4) laufen ohne Gateway-Start und beenden den Prozess. Sie stehen VOR der
+// Key-Ring-Prüfung: Wer seinen Zugang verloren hat, muss ihn auch dann zurücksetzen können, wenn der
+// Key-Ring gerade das zweite Problem ist.
 if (AdminCommands.IsAdminCommand(args))
 {
     return await AdminCommands.RunAsync(app, args);
+}
+
+// ── Key-Ring: Verlusterkennung vor dem ersten Zugriff (WP3.3) ────────────────
+// Fehlt Schlüsselmaterial, das laut Zeugeneintrag oder laut Geheimtext in der Datenbank vorhanden
+// sein müsste, bricht der Start hier ab — statt einen frischen Ring anzulegen und sich als „bereit"
+// zu melden, während jede gespeicherte Zugangsdatei unlesbar ist. Der Schritt läuft, BEVOR
+// irgendetwas den ersten Protector anfordert; danach wäre der Schaden schon geschrieben.
+if (await app.EnsureKeyRingUsableAsync() is { } keyRingExitCode)
+{
+    return keyRingExitCode;
 }
 
 // Das Sitzungs-Cookie der Web-UI trägt außerhalb von Development immer 'Secure' (NFR-04). Ein

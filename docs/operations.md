@@ -212,8 +212,12 @@ Beide Werte sofort sichern. Verloren? Siehe [Zugang zurücksetzen](#zugang-zurü
 | `BIFROST_DB_CONNECTION` | `Data Source=<datadir>/bifrost.db` | Connection-String (bei Postgres Pflicht) |
 | `BIFROST_AUDIT_MODE` | `best-effort` | `best-effort` verwirft bei Überlast gezählt; `compliance` meldet Überlast explizit und retryt DB-Fehler mit Backpressure |
 | `ASPNETCORE_URLS` | `http://+:8080` (Container) | Bind-Adresse/Port |
-| `BIFROST_KEYRING_CERT_PATH` | *(nicht gesetzt)* | PFX-Zertifikat zum Verschlüsseln des Key-Rings (siehe [Key-Ring schützen](#key-ring-schützen)) |
-| `BIFROST_KEYRING_CERT_PASSWORD` | *(nicht gesetzt)* | Passwort des PFX |
+| `BIFROST_KEYRING_PROTECTION` | *(nicht gesetzt)* | Ausdrückliche Betriebsart: `certificate`, `file-secret` oder `none` (siehe [Key-Ring schützen](#key-ring-schützen)). Nicht gesetzt = **keine Wahl getroffen**, der Start warnt |
+| `BIFROST_KEYRING_CERT_PATH` | *(nicht gesetzt)* | PFX-Zertifikat zum Verschlüsseln des Key-Rings |
+| `BIFROST_KEYRING_CERT_PASSWORD` | *(nicht gesetzt)* | Passwort des PFX. **Steht damit in der Prozessumgebung** und ist per `docker inspect` lesbar |
+| `BIFROST_KEYRING_CERT_PASSWORD_FILE` | *(nicht gesetzt)* | Dasselbe Passwort als **Datei-Secret** (FR-P048). Sind beide Formen gesetzt, bricht der Start ab — es gibt bewusst keine Rangfolge |
+| `BIFROST_KEYRING_CERT_PATH_PREVIOUS` | *(nicht gesetzt)* | Das **vorherige** Zertifikat beim Wechsel. Es verschlüsselt nichts mehr, entschlüsselt aber weiterhin |
+| `BIFROST_KEYRING_CERT_PASSWORD_PREVIOUS` | *(nicht gesetzt)* | Passwort dazu; ebenfalls mit `_FILE`-Suffix möglich |
 | `BIFROST_OAUTH_ISSUER` | *(nicht gesetzt)* | Authorization Server, dem für **eingehende** Agenten-Token vertraut wird. Gesetzt = der Gateway ist zusätzlich OAuth-Resource-Server (siehe [Agenten über OAuth](#agenten-über-oauth)) |
 | `BIFROST_OAUTH_AUDIENCE` | `BIFROST_PUBLIC_BASE_URL` | Kanonische Adresse dieses Gateways; ein Token muss darauf lauten |
 | `BIFROST_WASI_HOST` | *(nicht gesetzt)* | Pfad zum WASI-Host-Binary. **Pflicht für die Installation von Connector-Paketen** — ohne ihn lässt sich ein Paket nicht proben, und ungeprobt wird nichts aktiv |
@@ -1378,48 +1382,146 @@ Der Container-Healthcheck nutzt `dotnet Bifrost.Server.dll --healthcheck` (self-
 
 ## Key-Ring schützen
 
-Der DataProtection-Key-Ring unter `<datadir>/keys/` entschlüsselt die at-rest verschlüsselten Upstream-Credentials. Ohne Zusatzschutz liegt er im Klartext neben der Datenbank — der Gateway warnt beim Start entsprechend.
+Der DataProtection-Key-Ring unter `<datadir>/keys/` entschlüsselt **sämtliche** at-rest
+verschlüsselten Upstream-Zugangsdaten, OAuth-Token und Webhook-Secrets dieser Instanz. Wie er
+geschützt wird, ist eine von **drei** Betriebsarten — und keine davon ist ein Vorgabezustand.
 
-Er lässt sich mit einem X509-Zertifikat verschlüsseln (bewusst zertifikatsbasiert statt Cloud-KMS, damit es self-hosted funktioniert):
+| Betriebsart | Was sie verlangt | Was sie schützt | Was sie nicht schützt |
+|---|---|---|---|
+| `certificate` | `BIFROST_KEYRING_CERT_PATH` (PFX mit privatem Schlüssel), Passwort in `BIFROST_KEYRING_CERT_PASSWORD` | Die Schlüsseldateien sind verschlüsselt. Ein **Backup oder Volume-Abzug allein** reicht nicht mehr für die Zugangsdaten | Das Passwort steht in `.env` und in der Prozessumgebung — lesbar für jeden, der `docker inspect` darf |
+| `file-secret` | dasselbe, aber das Passwort über `BIFROST_KEYRING_CERT_PASSWORD_FILE` aus einer Datei (Compose-/K8s-Secret) | zusätzlich: das Passwort verlässt nie die Secret-Ablage. Weder `.env` noch `docker inspect` noch `/proc/<pid>/environ` zeigen es | Wer Root auf der Maschine ist, kommt an beides. Das ist die Grenze jedes dateibasierten Verfahrens |
+| `none` | ausdrücklich `BIFROST_KEYRING_PROTECTION=none` | **nichts** — die Schlüsseldateien liegen im Klartext. Vertretbar für eine Einzelinstanz mit restriktiven Verzeichnisrechten | Jede Sicherung des Datenverzeichnisses enthält damit die Upstream-Zugangsdaten (ADR-0024 E3) |
+
+Ist **gar nichts** gesetzt, gilt keine dieser Betriebsarten: Der Ring liegt zwar wie bei `none` im
+Klartext, aber niemand hat das entschieden. Der Start warnt, `bifrost doctor` meldet `BFR-KEY-0002`
+als Warnung, und `--keyring-check` endet mit Exit-Code 3. Wer den ungeschützten Betrieb will, wählt
+ihn — dann ist es eine Entscheidung und keine Lücke, und die Diagnose wird grün.
+
+### Einrichten
+
+Der Serverprozess bringt den Weg mit. Er erzeugt Zertifikat **und** Passwortdatei und setzt beiden
+restriktive Rechte (Unix `0600`, Windows eine ACL ohne Vererbung) — genau der Schritt, den eine
+`openssl`-Zeile aus einer Anleitung nicht tut:
 
 ```bash
-# Zertifikat einmalig erzeugen (Beispiel, OpenSSL):
-openssl req -x509 -newkey rsa:2048 -keyout k.pem -out c.pem -days 3650 -nodes -subj "/CN=bifrost-keyring"
-openssl pkcs12 -export -out keyring.pfx -inkey k.pem -in c.pem -password pass:GEHEIM
-
-# Gateway damit starten:
-BIFROST_KEYRING_CERT_PATH=/secrets/keyring.pfx
-BIFROST_KEYRING_CERT_PASSWORD=GEHEIM
+docker compose run --rm bifrost dotnet Bifrost.Server.dll --keyring-setup --cert /secrets/keyring.pfx
 ```
 
-### Unter Compose: das PFX als Secret, das Passwort aus `.env`
+Die Ausgabe nennt Fingerabdruck, Ablauf, die gesetzten Rechte und die drei Zeilen, die danach in die
+Konfiguration gehören. Ein vorhandenes Zertifikat wird **nie** überschrieben: Ein zweiter
+Setup-Lauf, der die Datei ersetzt, hätte den Ring der Instanz entwertet, bevor irgendjemand gefragt
+wurde.
 
-Das Zertifikat kommt als **Compose-Secret** in den Container, nicht als Bind-Mount aus dem
-Arbeitsverzeichnis. Der Block dafür steht auskommentiert in `docker-compose.yml`; die Datei muss
-**vor** dem Einkommentieren liegen — ein deklariertes, aber fehlendes Secret bricht `up` ab.
+Das Zertifikat gehört **neben** das Datenverzeichnis, nicht hinein — sonst liegt es in jedem Backup
+mit drin und schützt gegen nichts mehr.
+
+### Unter Compose: PFX **und** Passwort als Secret
 
 ```bash
-mkdir -p secrets && cp keyring.pfx secrets/ && chmod 600 secrets/keyring.pfx
-# in docker-compose.yml die beiden 'secrets:'-Blöcke einkommentieren, dann in .env:
+mkdir -p secrets
+# Zertifikat und Passwortdatei erzeugen lassen (s. o.), beide landen in ./secrets
+# in docker-compose.yml die 'secrets:'-Blöcke einkommentieren, dann in .env:
+#   BIFROST_KEYRING_PROTECTION=file-secret
 #   BIFROST_KEYRING_CERT_PATH=/run/secrets/bifrost-keyring-pfx
-#   BIFROST_KEYRING_CERT_PASSWORD=…
+#   BIFROST_KEYRING_CERT_PASSWORD_FILE=/run/secrets/bifrost-keyring-password
 docker compose up -d
 ```
 
-> **Das Passwort kann der Gateway heute nicht aus einer Datei lesen.** Er nimmt genau
-> `BIFROST_KEYRING_CERT_PASSWORD` aus der Konfiguration; eine `…_FILE`-Variante gibt es nicht. Es
-> steht damit als Klartext in `.env` und als Umgebungsvariable im Container — sichtbar für jeden,
-> der `docker inspect` ausführen darf. Ein Compose-Secret gibt es deshalb nur für das PFX, nicht für
-> sein Passwort. Das ist eine offene Lücke, kein Betriebsfehler; sie zu schließen ist eine Änderung
-> am Produktionscode.
+Ein deklariertes, aber fehlendes Secret bricht schon `up` ab — die Dateien müssen **vor** dem
+Einkommentieren liegen.
 
-**Was das schützt und was nicht:** Liegt das PFX-Passwort in derselben Compose-Datei neben dem
-Volume, hat jemand mit Zugriff auf die Maschine beides. Der Gewinn liegt woanders und ist real:
-Ein **Backup oder ein Volume-Abzug** allein reicht dann nicht mehr, um an die gespeicherten
-Upstream-Credentials zu kommen. Wer mehr will, legt das PFX auf ein Medium, das nicht mitgesichert
-wird.
+> **`_FILE` gilt je Einstellung und kennt keine Rangfolge.** Sind `BIFROST_KEYRING_CERT_PASSWORD`
+> und `BIFROST_KEYRING_CERT_PASSWORD_FILE` beide gesetzt, bricht der Start mit Meldung ab. Welche
+> gewänne, wäre eine Regel, die man nachlesen muss — und wer sie falsch erinnert, betreibt danach
+> eine Instanz mit dem falschen Geheimnis. Aus der Secret-Datei fällt genau **ein** abschließender
+> Zeilenumbruch weg (`echo geheim > datei` schreibt einen); weiter wird nicht getrimmt.
 
-Danach enthalten die XML-Dateien im Key-Ring nur noch verschlüsseltes Material. **Das Zertifikat wird zum Entschlüsseln gebraucht** — geht es verloren, sind die gespeicherten Upstream-Credentials unbrauchbar (die Server müssen dann neu konfiguriert werden). Zertifikat also getrennt vom Datenverzeichnis sichern. Beim Zertifikatswechsel bleibt Altmaterial lesbar, solange das alte Zertifikat weiterhin angegeben wird.
+**Was das schützt und was nicht:** Der Gewinn ist real und liegt beim Backup — ein Volume-Abzug
+allein reicht dann nicht mehr, um an die gespeicherten Upstream-Credentials zu kommen. Wer mehr
+will, legt das PFX auf ein Medium, das nicht mitgesichert wird.
+
+### Prüfen
+
+```bash
+docker compose exec bifrost dotnet Bifrost.Server.dll --keyring-check
+```
+
+Meldet Betriebsart, Zertifikatslage, Dateirechte, Zeugeneintrag — und **öffnet den vorhandenen Ring
+probehalber auf einer Kopie**. Exit-Codes wie bei `bifrost doctor`: `0` ok, `3` Warnung, `4` Befund.
+
+### Zertifikat wechseln
+
+**Erst durchspielen, dann umstellen.** Ein Wechsel, der erst im Betrieb auffällt, hat die Instanz
+bereits unlesbar gemacht:
+
+```bash
+docker compose exec bifrost dotnet Bifrost.Server.dll --keyring-rotate --new-cert /secrets/keyring-neu.pfx --new-password-file /secrets/keyring-neu.password
+```
+
+Der Befehl kopiert den Ring, versucht ihn mit **neuem und altem** Zertifikat zu öffnen und sagt
+entweder „gefahrlos" samt der zu setzenden Zeilen oder „NICHT UMSTELLEN" (Exit-Code 4).
+
+Danach:
+
+```
+BIFROST_KEYRING_CERT_PATH=/secrets/keyring-neu.pfx
+BIFROST_KEYRING_CERT_PATH_PREVIOUS=/secrets/keyring.pfx
+```
+
+Das vorherige Zertifikat bleibt nötig, solange auch nur ein Schlüssel damit verschlüsselt ist.
+DataProtection verschlüsselt bestehende Schlüssel **nicht** nach — sie werden erst mit der Zeit
+durch neue abgelöst.
+
+### Wenn der Key-Ring fehlt, startet der Gateway nicht mehr
+
+Das ist die wichtigste Änderung. Früher legte DataProtection bei leerem Verzeichnis einfach einen
+neuen Ring an: Der Dienst kam hoch, meldete „bereit" — und konnte keine einzige gespeicherte
+Zugangsdatei mehr entschlüsseln. Beim v0.11.0-Umstieg hat genau das zugeschlagen (umbenanntes
+Volume, leere Ablage, fehlerfreier Start).
+
+Der Start prüft jetzt zwei unabhängige Zeugen:
+
+- **`<datadir>/config/keyring.json`** hält fest, wie viele Schlüssel diese Instanz zuletzt hatte und
+  welche. Liegt die Datei vor und ist das Schlüsselverzeichnis leer, ist der Ring verloren.
+- **Geheimtext in der Datenbank.** Der Zeugeneintrag liegt im selben Volume wie der Ring und
+  verschwindet mit ihm. Steht die Datenbank noch (PostgreSQL, oder eine zurückgespielte
+  SQLite-Datei) und enthält verschlüsselte Datensätze, kann es keine frische Installation sein.
+
+Trifft eines von beidem zu, **bricht der Start mit Exit-Code 78 ab** und legt keinen Ersatzring an.
+Dasselbe gilt, wenn der Ring da ist, sich mit der konfigurierten Zertifikatslage aber nicht öffnen
+lässt — auch dann würde DataProtection sonst daneben einen frischen Schlüssel anlegen, und ab da
+wäre auch mit dem richtigen Zertifikat nichts mehr zu retten.
+
+Was dann zu tun ist:
+
+1. Zeigt `BIFROST_DATA_DIR` auf das richtige Volume? Ein umbenanntes Volume sieht genau so aus.
+2. Sonst den Key-Ring aus der Sicherung zurückspielen — er liegt im Vollbackup unter `keyring/`
+   (ADR-0024 E3: Datenbank und Key-Ring gehören in dieselbe Sicherung, weil sie sich nur gemeinsam
+   benutzen lassen).
+
+Die Recovery-Kommandos (`--reset-ui-admin`, `--issue-bootstrap-key`, `--db-unblock`) laufen **vor**
+dieser Prüfung und bleiben deshalb erreichbar, wenn der Key-Ring gerade das zweite Problem ist.
+
+Ein **vollständig ausgetauschter** Ring (kein einziger der zuletzt gesehenen Schlüssel ist noch da)
+bricht den Start dagegen **nicht** ab: So sieht auch eine legitime Wiederherstellung aus. Er wird
+aber einmal deutlich protokolliert und als Audit-Ereignis festgehalten.
+
+### Was der Diagnosebericht sagt — und was nicht
+
+`bifrost doctor` und die Betriebsseite der Oberfläche sind **Admin-only** (`RequireAdmin`
+beziehungsweise `UiPolicies.Admin`). Der Bericht nennt trotzdem nie den **Ort** von
+Schlüsselmaterial: Vom PFX und von der Passwortdatei steht nur der Dateiname da (`…/keyring.pfx`).
+Das Datenverzeichnis und das Schlüsselverzeichnis stehen vollständig darin — sie sind die Angabe,
+wegen der ein Betreiber die Diagnose aufruft, und er hat sie selbst gesetzt. Das Passwort erscheint
+nirgends, in keiner Form.
+
+| Code | Aussage |
+|---|---|
+| `BFR-KEY-0001` | Ist Schlüsselmaterial da? |
+| `BFR-KEY-0002` | Welche Betriebsart? `none` ausdrücklich gewählt besteht; gar nichts erklärt warnt |
+| `BFR-KEY-0003` | Liegen die konfigurierten Zertifikate an ihrem Platz? |
+| `BFR-KEY-0004` | **Fehlt Schlüsselmaterial, das laut Zeugeneintrag da sein müsste?** |
+| `BFR-KEY-0005` | Kommt das Zertifikatspasswort aus einer Datei oder aus der Umgebung? |
 
 ## Zugang zurücksetzen
 

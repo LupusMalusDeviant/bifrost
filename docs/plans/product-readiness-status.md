@@ -116,10 +116,17 @@ Zwei Punkte gehen als Entscheidung an den Lead bzw. weiter:
    Image, das es noch nicht gibt — vorher wurde lokal gebaut. Das ist die vom Pflichtenheft
    verlangte Richtung (WP1.4), aber die Lücke muss WP1.5 schließen: Der Vorgabewert der Version in
    `docker-compose.yml` und `.env.example` gehört an den ersten veröffentlichten Tag gekoppelt.
-2. **Das Key-Ring-Passwort lässt sich nicht als Datei-Secret zuführen** (`Program.cs` liest nur die
-   Umgebungsvariable). Das PFX selbst geht als Compose-Secret, das Passwort nicht. FR-P048 ist damit
-   nur halb erfüllt; der Fix wäre ein `…_FILE`-Suffix oder `AddKeyPerFile`. Bewusst **nicht**
-   nebenbei gemacht — Produktionscode gehört nicht in ein Doku-/Compose-Paket.
+2. ~~**Das Key-Ring-Passwort lässt sich nicht als Datei-Secret zuführen**~~ — **erledigt in WP3.3.**
+   Der Befund stand hier seit M1: `Program.cs` las nur die Umgebungsvariable, das PFX ging als
+   Compose-Secret, das Passwort landete in `.env` und damit in `docker inspect`. FR-P048 war
+   dadurch nur halb erfüllt.
+
+   Gelöst über `…_FILE` als **allgemeine Regel**, nicht als Einzelfall. Gegen `AddKeyPerFile`
+   sprach, dass es ein ganzes Verzeichnis als Konfigurationsquelle einhängt — eine zweite, anders
+   geformte Oberfläche neben dem dokumentierten `BIFROST_*`-Vertrag, die alles liest, was jemand
+   hineinlegt. Sind Wert und `…_FILE` beide gesetzt, bricht der Start ab: Eine Rangfolge zwischen
+   zwei Quellen desselben Secrets wäre eine Regel, die man im Zweifel falsch erinnert.
+   `docker-compose.yml` führt den zweiten Secret-Block jetzt.
 
 ## Laufender Meilenstein: M3 — Sichere Vorgaben
 
@@ -179,7 +186,7 @@ Vorgabe für Neuanlagen fehlt. Das gehört zu WP3.2, wo die Erzeugungswege ohneh
 |---|---|---|
 | 3.1 Host-Execution-Policy + Bestandsübernahme | `implementiert` | 607 Core-Tests, Architekturtest über Reflexion und IL |
 | 3.2 Container als Standard | `implementiert` | ein Startmodell für stdio und CLI, echte Container-Tests, +50 Tests |
-| 3.3 Key-Ring-Setup | `offen` | kam nicht über die Pflichtlektüre hinaus |
+| 3.3 Key-Ring-Setup | `implementiert` | drei Betriebsmodi, Verlusterkennung mit zwei Zeugen, FR-P048 erledigt |
 | 3.4 Bootstrap statt Log-Credentials | `offen` | wartet ohnehin auf 3.3 (`Program.cs`) |
 | 3.5 Security- und Supply-Chain-Gates | `implementiert` | Negativnachweis je Gate außer Containerscan |
 | 3.6 Sicherheitsinvarianten | `implementiert` | 62 Tests, zwei echte SSRF-Funde |
@@ -212,6 +219,30 @@ Zeitüberschreitung im Container weiter, denn den Client zu töten reicht nicht.
 Die Kernfrage ist entschieden: **ein** Startmodell. `Cli/ContainerLaunchPolicy.cs` ist gelöscht,
 stdio und CLI gehen durch dieselbe Mindestpolicy und unterscheiden sich nur in der Lebensdauer
 (`PerInvocation` gegen `Session`) und darin, ob stdin offen bleibt.
+
+### WP3.3: Der Verlust wird jetzt erkannt, statt überschrieben
+
+Der Kern war nicht die Zertifikatsverwaltung, sondern ein Ausfallmodus, den dieses Projekt schon
+einmal getroffen hat: Fehlt der Key-Ring, ist jeder gespeicherte Geheimtext unlesbar — **und der
+Dienst startet trotzdem und meldet sich als bereit**. Beim v0.11.0-Umstieg hat dieselbe Kombination
+an der Datenbank zugeschlagen.
+
+Erkannt wird der Verlust über **zwei unabhängige Zeugen**, und das ist die eigentliche Arbeit:
+
+1. `config/keyring.json` hält Anzahl und Ids der zuletzt gesehenen Schlüssel fest. Zeuge da,
+   Verzeichnis leer → Verlust. Zeuge **unlesbar** → ebenfalls Verlust, nie „frische Instanz".
+2. Geheimtext in der Datenbank. Der erste Zeuge liegt im selben Volume wie der Ring — verschwinden
+   beide zusammen, trägt die Datenbank die Beweislast. Genau der Fall eines umbenannten Volumes.
+
+Folge: Exit-Code 78, Critical-Log, Audit-Eintrag, **kein neuer Ring**. Ein vollständig
+ausgetauschter Ring blockiert dagegen nicht — so sieht auch eine legitime Wiederherstellung aus —,
+wird aber laut protokolliert. Die Prüfung sitzt bewusst *nach* den Recovery-Kommandos, damit
+`--reset-ui-admin` erreichbar bleibt.
+
+Eine ungeschriebene Annahme hat der Agent dabei selbst offengelegt: `config/keyring.json` reist
+**nicht** im Backup mit, weil `BackupSections.Config` nur `instance.json` sichert. Für die
+Verlusterkennung ist das richtig — ein zurückgespielter Zeuge ohne Ring wäre ein Falschbefund —,
+aber ein künftiger Ausbau des Config-Bereichs könnte es still kippen.
 
 ### Der Blindfleck, den WP3.2 selbst gemeldet hat
 

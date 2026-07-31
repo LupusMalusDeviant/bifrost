@@ -57,6 +57,12 @@ public static class DiagnosticCodes
     /// <summary>Konfiguriertes Key-Ring-Zertifikat ist am angegebenen Pfad vorhanden.</summary>
     public const string KeyRingCertificate = "BFR-KEY-0003";
 
+    /// <summary>Fehlt Schlüsselmaterial, das laut Zeugeneintrag vorhanden sein müsste? (WP3.3)</summary>
+    public const string KeyRingLoss = "BFR-KEY-0004";
+
+    /// <summary>Herkunft des Zertifikatspassworts — Umgebung oder Datei-Secret (FR-P048).</summary>
+    public const string KeyRingPasswordSource = "BFR-KEY-0005";
+
     // ── BFR-NET: Ports, öffentliche Adresse, Proxy-Vertrauen ────────────────────────────────────
 
     /// <summary>Konfigurierter Port frei bzw. erwartbar belegt.</summary>
@@ -112,6 +118,8 @@ public static class DiagnosticCodes
         KeyRingPresent,
         KeyRingUnprotected,
         KeyRingCertificate,
+        KeyRingLoss,
+        KeyRingPasswordSource,
         ListenPort,
         InsecureCookieTransport,
         TrustedProxies,

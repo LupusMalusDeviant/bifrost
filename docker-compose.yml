@@ -46,19 +46,31 @@ services:
       retries: 3
       start_period: 20s
 
-    # ── Key-Ring-Zertifikat als Compose-Secret (optional, siehe docs/operations.md) ───────
-    # Das PFX wird nach /run/secrets/bifrost-keyring-pfx eingehaengt, statt es als Bind-Mount
-    # aus dem Arbeitsverzeichnis zu holen. Beide Bloecke zusammen einkommentieren und die
-    # Datei vorher anlegen — ein deklariertes, aber fehlendes Secret bricht 'up' ab.
+    # ── Key-Ring-Schutz als Compose-Secrets (optional, siehe docs/operations.md) ──────────
+    # PFX UND Passwort gehen als Secret. Das Passwort ueber die Umgebungsvariable zu setzen
+    # waere die halbe Miete: Es stuende dann in .env, in 'docker inspect' und in
+    # /proc/<pid>/environ — also genau dort, wo ein Secret nicht hingehoert. Deshalb liest
+    # der Server jede BIFROST_*-Einstellung auch aus <NAME>_FILE.
+    #
+    # Beide Bloecke zusammen einkommentieren und die Dateien vorher anlegen — ein
+    # deklariertes, aber fehlendes Secret bricht 'up' ab.
     # In .env dann:
+    #   BIFROST_KEYRING_PROTECTION=file-secret
     #   BIFROST_KEYRING_CERT_PATH=/run/secrets/bifrost-keyring-pfx
-    #   BIFROST_KEYRING_CERT_PASSWORD=<passwort des PFX>
+    #   BIFROST_KEYRING_CERT_PASSWORD_FILE=/run/secrets/bifrost-keyring-password
+    #
+    # NICHT beides setzen: Sind BIFROST_KEYRING_CERT_PASSWORD und ..._FILE gleichzeitig
+    # gesetzt, bricht der Start ab. Eine Rangfolge zwischen zwei Quellen desselben Secrets
+    # waere eine Regel, die man im Zweifel falsch erinnert.
     # secrets:
     #   - bifrost-keyring-pfx
+    #   - bifrost-keyring-password
 
 # secrets:
 #   bifrost-keyring-pfx:
 #     file: ./secrets/keyring.pfx
+#   bifrost-keyring-password:
+#     file: ./secrets/keyring-password.txt
 
 volumes:
   # ── VOLUME-NAME NICHT AENDERN ────────────────────────────────────────────────────────────

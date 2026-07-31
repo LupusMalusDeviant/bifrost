@@ -67,6 +67,8 @@ public sealed class DiagnosticService : IDiagnosticService
         new KeyRingPresenceCheck(),
         new KeyRingProtectionCheck(),
         new KeyRingCertificateCheck(),
+        new KeyRingLossCheck(),
+        new KeyRingPasswordSourceCheck(),
 
         new ListenPortCheck(),
         new InsecureCookieTransportCheck(),
