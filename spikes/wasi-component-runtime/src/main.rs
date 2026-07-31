@@ -3,10 +3,10 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use ed25519_dalek::{Signer, SigningKey};
 use bifrost_wasi_component_spike::{
     compare_with_container, discover_wit, pinned_publisher, run_runtime_probe,
 };
+use ed25519_dalek::{Signer, SigningKey};
 
 const HOST_USAGE: &str =
     "usage: bifrost-wasi-component-spike host [--cache-dir <pfad>] [--cache-max-bytes <n>]";

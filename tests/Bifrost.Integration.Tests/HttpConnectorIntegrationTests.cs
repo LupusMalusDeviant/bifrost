@@ -70,6 +70,18 @@ public class HttpConnectorIntegrationTests
 
     private static Process StartHttpServer(int port)
     {
+        // Der EINZIGE Startpfad eines Testservers, der nicht ueber den Produktweg laeuft: Alle
+        // anderen gehen ueber StdioTransportOptions und damit ueber StdioUpstreamConnector, der die
+        // Prozess-Hygiene selbst herstellt. Hier startet der Test direkt — und ohne diese Zeile
+        // haengt das Kind an keinem Job-Objekt.
+        //
+        // Folge ohne sie: Ein hart abgebrochener Testlauf (Strg+C, Timeout des Runners, gekillter
+        // Testhost) laesst diesen Prozess stehen. Er haelt dann seinen Port UND seine eigene
+        // Programmdatei — der naechste Build scheitert mit "wird von einem anderen Prozess
+        // verwendet", und die Ursache steht zwei Laeufe frueher. Genau dieses Bild gab es in dieser
+        // Arbeitsumgebung mehrfach (WP0.4).
+        ProcessHygiene.EnsureInitialized();
+
         var psi = new ProcessStartInfo
         {
             FileName = TestPaths.Executable("HttpServer"),

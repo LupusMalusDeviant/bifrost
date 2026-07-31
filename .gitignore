@@ -484,3 +484,8 @@ $RECYCLE.BIN/
 
 # Lokale Laufzeitdaten eines "dotnet run" (SQLite-DB + DataProtection-Key-Ring)
 src/Bifrost.Server/data/
+
+# Externe Planungsdokumente zur Produktreife (Lasten-/Pflichtenheft, Runbook).
+# Bewusst NICHT versioniert: Sie kommen von aussen, werden dort gepflegt und sind
+# Arbeitsgrundlage, nicht Projektstand.
+docs/produktreife/
