@@ -226,7 +226,7 @@ Die Teilarbeit liegt vollständig auf `wip/wp3.2-isolation` — inklusive eines 
 `Cli/ContainerLaunchPolicy.cs` steht. Welcher von beiden bleibt, ist die unerledigte Kernfrage des
 Pakets: Zwei Launchmodelle wären genau die zwei Wahrheiten, die der Auftrag verhindern sollte.
 
-`main` wurde auf `6e05a5d` zurückgesetzt und baut. Nichts von der Teilarbeit ist verloren, und
+`main` wurde auf `3ceb5e3` zurückgesetzt und baut. Nichts von der Teilarbeit ist verloren, und
 nichts davon ist in einem Zustand, in dem man darauf aufbauen sollte, ohne den Rename zu Ende zu
 führen.
 
