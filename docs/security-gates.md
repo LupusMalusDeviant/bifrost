@@ -179,7 +179,7 @@ Das Image selbst (G4) wurde in diesem Paket **nicht** gescannt — siehe §6.
 
 Zwei Mechanismen, bewusst getrennt:
 
-**`.github/gitleaks-baseline.json`** hält die 19 triagierten Altfunde fest (redigiert erzeugt: das
+**`.github/gitleaks-baseline.json`** hält die 10 triagierten Altfunde von `main` fest (redigiert erzeugt: das
 Feld `Secret` enthält `REDACTED`, es wandern also keine secret-förmigen Zeichenfolgen in eine neue
 Datei). Eine Baseline gilt nur für den festgehaltenen Stand; jeder neue Fund kommt durch.
 
