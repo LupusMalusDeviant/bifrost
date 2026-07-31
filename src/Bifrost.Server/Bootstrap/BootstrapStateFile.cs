@@ -138,15 +138,35 @@ public sealed class BootstrapStateFile : IBootstrapStateStore
             return null;
         }
 
+        // Ein Lesen, das ins Schreibfenster faellt, findet die Datei BELEGT — nicht unlesbar.
+        // Der Unterschied ist nicht sprachlich: Wer ihn nicht macht, laesst bei zwei gleichzeitigen
+        // Einloesungen beide verlieren, statt eine gewinnen zu lassen. Unter Windows passte das
+        // Zeitverhalten zufaellig; erst der erste Releaselauf unter Linux hat es gezeigt.
+        //
+        // Dieselben Konstanten wie beim Schreiben: Der Austausch dauert einen Dateisystemvorgang,
+        // die Wiederholung ueberbrueckt genau den.
         string content;
-        try
+        for (var attempt = 1; ; attempt++)
         {
-            content = File.ReadAllText(_path);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            throw new BootstrapStateException(
-                $"Der Erstzugangs-Eintrag in '{_path}' ist nicht lesbar.", exception);
+            try
+            {
+                content = File.ReadAllText(_path);
+                break;
+            }
+            catch (FileNotFoundException)
+            {
+                // Zwischen dem Existenztest oben und hier hat ein Austausch die Datei ersetzt.
+                return null;
+            }
+            catch (IOException) when (attempt < LockAttempts)
+            {
+                Thread.Sleep(LockRetryDelay);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                throw new BootstrapStateException(
+                    $"Der Erstzugangs-Eintrag in '{_path}' ist nicht lesbar.", exception);
+            }
         }
 
         // Eine leere Datei ist kein beschädigter Eintrag, sondern gar keiner: Sie entsteht, wenn

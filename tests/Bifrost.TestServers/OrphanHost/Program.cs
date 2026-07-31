@@ -1,4 +1,5 @@
 using Bifrost.Abstractions;
+using Bifrost.TestServers.Common;
 using Bifrost.Upstream;
 
 // Wirt fuer den Nachweis aus WP0.4.
@@ -31,7 +32,7 @@ var config = new UpstreamServerConfig(
 // Vor dem Start merken, welche Prozesse dieses Namens es schon gibt — die Zeile unten soll den
 // NEUEN nennen und nicht irgendeinen.
 var name = Path.GetFileNameWithoutExtension(args[0]);
-var before = System.Diagnostics.Process.GetProcessesByName(name).Select(p => p.Id).ToHashSet();
+var before = UpstreamProcessLookup.FindByExecutableName(name).ToHashSet();
 
 await using var connection = await connector.ConnectAsync(new ServerId(Guid.NewGuid()), config, CancellationToken.None);
 
@@ -39,10 +40,21 @@ await using var connection = await connector.ConnectAsync(new ServerId(Guid.NewG
 // antwortet — ein gestarteter Prozess allein waere ein schwaecherer Nachweis.
 await connection.DiscoverAsync(CancellationToken.None);
 
-var child = System.Diagnostics.Process.GetProcessesByName(name)
-    .FirstOrDefault(p => !before.Contains(p.Id));
+var child = UpstreamProcessLookup.FindByExecutableName(name)
+    .Where(id => !before.Contains(id))
+    .Select(id => (int?)id)
+    .FirstOrDefault();
 
-Console.WriteLine($"READY {child?.Id.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "?"}");
+// Ohne Kind ist der Nachweis nicht zu fuehren. Das laut zu sagen ist wichtiger, als eine Zeile
+// auszugeben, auf die der Test dann vergeblich wartet: Genau so sah der Linux-Fehlschlag aus.
+if (child is null)
+{
+    Console.Error.WriteLine(
+        $"FEHLER: kein neuer Prozess '{name}' gefunden — der Waisen-Nachweis ist so nicht fuehrbar.");
+    return 3;
+}
+
+Console.WriteLine($"READY {child.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
 Console.Out.Flush();
 
 // Warten, bis jemand diesen Prozess beendet. Kein Timeout: Der Test raeumt auf, und ein Wirt, der

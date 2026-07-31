@@ -16,6 +16,11 @@
     <ProjectReference Include="..\Bifrost.TestServers\HttpServer\Bifrost.TestServers.HttpServer.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Bifrost.TestServers\BulkServer\Bifrost.TestServers.BulkServer.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Bifrost.TestServers\WasiHostStub\Bifrost.TestServers.WasiHostStub.csproj" ReferenceOutputAssembly="false" />
+    <!-- Dieselbe Prozesssuche wie im OrphanHost. Getrennte Fassungen waeren zwei Wahrheiten
+         darueber, was "der Upstream laeuft" heisst — und der Unterschied faellt erst auf einer
+         anderen Plattform auf. -->
+    <Compile Include="..\Bifrost.TestServers\Common\UpstreamProcessLookup.cs"
+             Link="Common\UpstreamProcessLookup.cs" />
     <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Testcontainers.PostgreSql" />

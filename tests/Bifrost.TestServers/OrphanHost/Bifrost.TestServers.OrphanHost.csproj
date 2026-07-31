@@ -11,6 +11,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\Bifrost.Upstream\Bifrost.Upstream.csproj" />
+    <!-- Geteilt mit den Tests: Die Prozesssuche muss auf beiden Seiten dieselbe sein, sonst sucht
+         der Wirt anders, als der Test prüft — und der Unterschied fällt erst auf einer anderen
+         Plattform auf. -->
+    <Compile Include="..\Common\UpstreamProcessLookup.cs" Link="Common\UpstreamProcessLookup.cs" />
   </ItemGroup>
 
 </Project>

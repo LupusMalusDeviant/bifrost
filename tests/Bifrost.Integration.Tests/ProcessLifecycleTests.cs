@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
+
 using AwesomeAssertions;
+using Bifrost.TestServers.Common;
 using Xunit;
 
 namespace Bifrost.Integration.Tests;
@@ -78,13 +80,13 @@ public sealed class ProcessLifecycleTests
     public async Task The_suite_returns_to_its_process_baseline()
     {
         var ct = TestContext.Current.CancellationToken;
-        var baseline = Process.GetProcessesByName(UpstreamProcessName).Length;
+        var baseline = UpstreamProcessLookup.FindByExecutableName(UpstreamProcessName).Count;
 
         var host = StartHost(TestPaths.EchoServerExecutable);
         try
         {
             await ReadChildProcessIdAsync(host, ct);
-            Process.GetProcessesByName(UpstreamProcessName).Length
+            UpstreamProcessLookup.FindByExecutableName(UpstreamProcessName).Count
                 .Should().BeGreaterThan(baseline, "waehrend der Wirt laeuft, laeuft auch sein Upstream");
 
             host.Kill(entireProcessTree: false);
@@ -101,7 +103,7 @@ public sealed class ProcessLifecycleTests
         }
 
         await WaitUntilAsync(
-            () => Process.GetProcessesByName(UpstreamProcessName).Length <= baseline,
+            () => UpstreamProcessLookup.FindByExecutableName(UpstreamProcessName).Count <= baseline,
             timeoutMs: 20000,
             because: "nach dem Lauf muss die Zahl der Upstream-Prozesse wieder auf dem Ausgangswert sein");
     }
