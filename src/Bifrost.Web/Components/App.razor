@@ -77,7 +77,12 @@
         body {
             margin: 0;
             font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-            background: var(--void);
+            /* DURCHSICHTIG, nicht schwarz. Der Grund traegt html — denn die Polarlichtfelder und
+               das Korn haengen an body::before/::after mit negativem z-index, und die liegen HINTER
+               dem eigenen Hintergrund des body. Mit deckendem body sah die Seite am echten
+               Bildschirm aus wie schwarz gestrichen: Der ganze gebaute Hintergrund war da, nur
+               unsichtbar. */
+            background: transparent;
             color: var(--text);
             font-size: 14px;
             line-height: 1.55;
@@ -92,23 +97,29 @@
         body::before {
             content: ''; position: fixed; inset: 0; z-index: -2; pointer-events: none;
             background:
-                radial-gradient(120% 78% at 10% -12%, rgba(66, 156, 240, .17), transparent 62%),
-                radial-gradient(80% 55% at 102% 6%, rgba(70, 214, 200, .085), transparent 58%),
-                radial-gradient(150% 95% at 46% 118%, rgba(28, 70, 150, .22), transparent 68%);
+                radial-gradient(105% 70% at 8% -14%, rgba(72, 168, 255, .42), transparent 58%),
+                radial-gradient(70% 50% at 104% 4%, rgba(70, 224, 205, .2), transparent 55%),
+                radial-gradient(130% 85% at 52% 116%, rgba(40, 96, 200, .38), transparent 62%),
+                /* Vignette: zieht die Mitte zurueck, damit die Raender leuchten und die Flaechen
+                   davor Kontur bekommen. Ohne sie zerfaellt das Bild in "dunkelgrau ueberall". */
+                radial-gradient(90% 70% at 50% 45%, transparent 30%, rgba(2, 6, 14, .55) 100%);
         }
 
         /* Raster und Korn. Das Raster verloescht nach unten (Maske) — es soll Praezision andeuten,
            nicht Millimeterpapier sein. Das Korn liegt darueber und nimmt dem Blau das Banding. */
         body::after {
             content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+            /* Die Deckkraft des Korns steht IN der Grafik (opacity am rect), nicht auf der Ebene.
+               Zwei Anlaeufe am echten Bildschirm: erst war nichts zu sehen, dann lag ueber der
+               ganzen Seite Fernsehrauschen und zog sie ins Mittelgrau — beide Male, weil eine
+               Ebenendeckkraft gleichzeitig das Raster mitregelt. Getrennt geht beides. */
             background-image:
-                url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E"),
-                linear-gradient(to right, rgba(146, 203, 255, .032) 1px, transparent 1px),
-                linear-gradient(to bottom, rgba(146, 203, 255, .032) 1px, transparent 1px);
+                url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='.055'/%3E%3C/svg%3E"),
+                linear-gradient(to right, rgba(150, 205, 255, .04) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(150, 205, 255, .04) 1px, transparent 1px);
             background-size: 140px 140px, 58px 58px, 58px 58px;
-            opacity: .5;
-            -webkit-mask-image: radial-gradient(135% 105% at 50% -5%, #000 28%, transparent 88%);
-            mask-image: radial-gradient(135% 105% at 50% -5%, #000 28%, transparent 88%);
+            -webkit-mask-image: radial-gradient(150% 120% at 50% -10%, #000 40%, transparent 92%);
+            mask-image: radial-gradient(150% 120% at 50% -10%, #000 40%, transparent 92%);
         }
 
         a { color: var(--ice); text-decoration: none; }
@@ -146,10 +157,13 @@
             text-transform: uppercase; color: var(--dim);
         }
 
-        /* Erste von zwei Stellen fuers Farbband: die Bruecke unter der Marke. */
+        /* Erste von zwei Stellen fuers Farbband: die Bruecke unter der Marke.
+           KURZ, nicht kartenbreit. Der erste Versuch spannte es ueber die volle Breite — am echten
+           Bildschirm war das ein Regenbogenbalken und damit genau der Kitsch, gegen den Regel 2
+           geschrieben wurde. Als 72-px-Strich unter dem Schriftzug ist es eine Signatur. */
         .brand-rule {
-            height: 2px; margin: 0 .55rem 1rem; border-radius: 2px;
-            background: var(--bifrost); opacity: .72;
+            height: 2px; width: 72px; margin: 0 .55rem 1rem; border-radius: 2px;
+            background: var(--bifrost); opacity: .6;
         }
 
         /* ── Navigation ──────────────────────────────────────────────────────────────────── */
@@ -251,16 +265,23 @@
         label { display: block; font-size: .78rem; color: var(--muted); margin: .6rem 0 .22rem; letter-spacing: .01em; }
 
         /* ── Schaltflaechen ──────────────────────────────────────────────────────────────── */
-        /* Eis mit dunkler Schrift statt blauer Flaeche mit weisser: Der Kontrast ist hoeher, und
-           die Flaeche wirkt wie Licht auf Eis, nicht wie ein eingefaerbter Kasten. */
+        /* Eisglas statt gefuellter Flaeche. Der erste Versuch war ein volldeckendes Cyan mit
+           dunkler Schrift — am echten Bildschirm der mit Abstand hellste Punkt der Seite, und
+           ueber die volle Breite eines Formulars sah er aus wie ein Textmarker. Die drei Stufen
+           unterscheiden sich jetzt durch den FARBTON (Eis, neutral, Rose), nicht durch die
+           Leuchtkraft; getragen wird die Hierarchie vom Rand, nicht von der Fuellung. */
         button, .btn {
-            background: var(--ice); color: #04121e; border: 1px solid rgba(168, 230, 255, .5);
+            background: rgba(111, 211, 255, .16); color: #c8ecff;
+            border: 1px solid rgba(111, 211, 255, .45);
             border-radius: var(--radius-sm); padding: .44rem .95rem; font-size: .875rem;
             cursor: pointer; font-family: inherit; font-weight: 600; letter-spacing: .01em;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 2px 10px rgba(47, 143, 216, .22);
-            transition: filter .12s ease, transform .06s ease, box-shadow .12s ease;
+            box-shadow: inset 0 1px 0 rgba(198, 232, 255, .14), 0 3px 14px rgba(30, 110, 175, .16);
+            transition: background-color .12s ease, transform .06s ease, box-shadow .12s ease;
         }
-        button:hover, .btn:hover { filter: brightness(1.12); }
+        button:hover, .btn:hover {
+            background: rgba(111, 211, 255, .26); color: #e6f7ff;
+            box-shadow: inset 0 1px 0 rgba(198, 232, 255, .2), 0 4px 18px rgba(47, 143, 216, .26);
+        }
         button:active, .btn:active { transform: translateY(1px); }
         button:focus-visible, .btn:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
             outline: 2px solid var(--ice-soft); outline-offset: 2px;
@@ -271,12 +292,12 @@
             background: rgba(255, 107, 131, .14); color: #ffb3bf; border-color: rgba(255, 107, 131, .38);
             box-shadow: none;
         }
-        .btn-danger:hover { background: rgba(255, 107, 131, .22); filter: none; }
+        .btn-danger:hover { background: rgba(255, 107, 131, .24); color: #ffd0d8; box-shadow: none; }
         .btn-ghost {
             background: var(--glass-2); color: var(--text); border-color: var(--edge);
             box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
         }
-        .btn-ghost:hover { background: var(--glass-3); filter: none; }
+        .btn-ghost:hover { background: var(--glass-3); color: var(--text); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08); }
 
         /* ── Marken ──────────────────────────────────────────────────────────────────────── */
         /* Rand in derselben Farbe wie die Fuellung: Ein reiner Farbfleck franst aus, mit Kante
@@ -312,9 +333,17 @@
 
         /* ── Anmeldung ───────────────────────────────────────────────────────────────────── */
         .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 1rem; }
-        .login-card { width: 358px; padding: 1.6rem 1.7rem 1.7rem; }
+        /* Kraeftiger als eine gewoehnliche Karte: Auf einer sonst leeren Seite ist das die einzige
+           Flaeche, und eine zaghafte Scheibe wirkt dort verloren statt ruhig. */
+        .login-card {
+            width: 384px; padding: 1.75rem 1.85rem 1.9rem;
+            background: linear-gradient(180deg, rgba(140, 200, 250, .12), rgba(120, 175, 230, .05));
+            border-color: rgba(160, 215, 255, .2);
+            box-shadow: inset 0 1px 0 rgba(210, 240, 255, .22), 0 24px 60px rgba(1, 5, 12, .6);
+        }
         .login-card .brand { padding: 0 0 .7rem; }
-        .login-card .brand-rule { margin: 0 0 1.3rem; }
+        .login-card .brand-rule { margin: 0 0 .9rem; }
+        .brand-tagline { color: var(--muted); font-size: .84rem; margin: 0 0 1.4rem; }
 
         /* ── Bildlaufleisten ─────────────────────────────────────────────────────────────── */
         * { scrollbar-width: thin; scrollbar-color: rgba(111, 211, 255, .22) transparent; }

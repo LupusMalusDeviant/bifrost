@@ -25,7 +25,18 @@
     </div>
 </div>
 <div class="brand-rule"></div>
+@if (Tagline is { Length: > 0 })
+{
+    @* Der Satz steht UNTER der Signatur und in normaler Laufweite. Im gesperrten Mono-Kleinsatz
+       der Unterzeile las er sich am Bildschirm wie ein Barcode und lief ueber die Markenbreite
+       hinaus. *@
+    <p class="brand-tagline">@Tagline</p>
+}
 
 @code {
+    /// <summary>Die Zeile direkt unter dem Schriftzug — kurz, gesperrt, in Versalien.</summary>
     [Parameter] public string Subtitle { get; set; } = "MCP Gateway";
+
+    /// <summary>Optionaler Satz unter der Signatur; nur dort, wo Platz zum Atmen ist.</summary>
+    [Parameter] public string? Tagline { get; set; }
 }
