@@ -85,6 +85,55 @@ Beide Werte sofort sichern. Verloren? Siehe [Zugang zurücksetzen](#zugang-zurü
 | `MCPMCP_GUARD_ENABLED` | `1` | `0`/`false` schaltet die Secret-Guardrail global ab (Not-Aus) |
 | `MCPMCP_GUARD_MAX_SCAN_CHARS` | `262144` | Nutzlasten darüber werden nicht geprüft und **abgewiesen** |
 | `MCPMCP_GUARD_ALLOW_CUSTOM_PATTERNS` | *(aus)* | Erlaubt Admins eigene Regex in der UI (siehe [Guardrails](#guardrails)) |
+| `MCPMCP_MCP_STATELESS` | `1` | `0`/`false` schaltet auf den Sitzungsbetrieb der alten Protokollrevision zurück (siehe [Protokollstand](#protokollstand-sessionlos-oder-mit-sitzung)) |
+| `MCPMCP_MCP_LIST_TTL_SECONDS` | `60` | Wie lange ein Client die Werkzeug-, Resource- und Prompt-Listen für frisch halten darf. `0` = kein Hinweis |
+
+## Protokollstand: sessionlos oder mit Sitzung
+
+Der Gateway spricht die MCP-Spec-Revision **`2026-07-28`**. Sie hat den `initialize`-Handshake und
+`Mcp-Session-Id` gestrichen — jede Anfrage steht für sich. Das ist die Vorgabe, und für die meisten
+Installationen die richtige Einstellung ([ADR-0023](adr/0023-stateless-kern-und-mrtr.md)).
+
+**Ältere Clients laufen unverändert weiter.** Wer noch `2025-11-25` spricht, wird vom SDK bedient
+wie bisher; ein Umstieg auf der Client-Seite ist nicht nötig.
+
+Zwei Dinge setzen allerdings eine stehende Sitzung voraus und fehlen einem solchen Client deshalb
+im sessionlosen Betrieb:
+
+- **Die Freigabe-Rückfrage im laufenden Aufruf.** Ein Client auf `2026-07-28` bekommt sie über MRTR
+  (der Aufruf endet mit einer Frage, der Client wiederholt ihn mit der Antwort). Ein älterer Client
+  bekommt sie nicht — für ihn bleibt die Freigabe-Warteschlange in der Oberfläche.
+- **`tools/list_changed`.** An seine Stelle tritt die Cache-Frist auf den Listen
+  (`MCPMCP_MCP_LIST_TTL_SECONDS`): Der Client holt sich den Stand nach Ablauf selbst. Eine Änderung
+  am Katalog ist also nach höchstens einer Frist sichtbar, nicht sofort.
+
+**Wann `MCPMCP_MCP_STATELESS=0` sinnvoll ist:** wenn *alle* angeschlossenen Clients auf dem alten
+Stand sind und die Rückfrage im laufenden Aufruf gebraucht wird.
+
+> **Der Schalter gilt für den ganzen Gateway, nicht je Client.** Im Sitzungsbetrieb wird eine
+> Anfrage auf `2026-07-28` mit `-32022 UnsupportedProtocolVersion` abgewiesen; der Client handelt
+> daraufhin selbst den alten Stand aus. Er läuft also weiter — aber die ganze Installation spricht
+> dann die alte Revision, auch gegenüber Clients, die längst weiter sind.
+
+Was die Oberfläche zeigt, hängt davon ab: Im sessionlosen Betrieb gibt es keine offenen Sitzungen
+zu zählen, das Dashboard meldet dort **„Aktive Agenten"** (Identitäten mit Anfragen in den letzten
+fünf Minuten) statt **„Aktive Sessions"**.
+
+### Upstreams auf dem neuen Stand
+
+Dieselbe Änderung gilt in der Gegenrichtung: Ein **Upstream** auf `2026-07-28` meldet
+Katalogänderungen nicht mehr von sich aus. Der Gateway fragt solche Server deshalb turnusmäßig neu
+ab (Vorgabe: jede Minute) und meldet nur echte Änderungen weiter. Upstreams auf dem alten Stand
+melden sich unverändert selbst und werden nicht zusätzlich gefragt.
+
+Zwei Fehlerbilder, die dabei neu auftreten können:
+
+- *„Der Upstream lieferte eine Werkzeugliste, die sich nicht lesen lässt."* — Seit `2026-07-28` ist
+  `inputSchema` an jedem Werkzeug Pflicht. Ein Server, der es weglässt, kommt nicht mehr durch; ein
+  leeres `{}` genügt ihm.
+- *„Das Werkzeug verlangt eine Rückfrage beim Menschen (MRTR)."* — Rückfragen eines Upstreams werden
+  nicht durchgereicht ([ADR-0010](adr/0010-sampling-elicitation-nicht-durchreichen.md)); der Gateway
+  könnte nicht sagen, an welchen seiner vielen Aufrufer sie gehen sollen.
 
 ## Guardrails
 
@@ -150,10 +199,26 @@ Zweifel produktive Arbeit ab.
 Einzelne Tools lassen sich freigabepflichtig machen (FR-32,
 [ADR-0012](adr/0012-approval-flows-asynchron.md)): Ein solcher Aufruf wird **nicht** ausgeführt,
 sondern **sofort abgewiesen** (`ApprovalRequired`), und eine Anfrage landet in der Queue unter
-**Freigabe per Rückfrage.** Meldet der anfragende Client die MCP-Fähigkeit **Elicitation**, fragt
-der Gateway im Moment des Aufrufs nach, statt die Anfrage nur in die Warteschlange zu legen: ein
-Dialog beim Menschen, Zustimmung lässt genau diesen einen Aufruf durch. Kann der Client es nicht,
-bleibt alles wie bisher — die Warteschlange ist die Rückfallebene, kein Aufruf geht verloren.
+**Freigabe per Rückfrage.** Kann der anfragende Client gefragt werden, fragt der Gateway im Moment
+des Aufrufs nach, statt die Anfrage nur in die Warteschlange zu legen: ein Dialog beim Menschen,
+Zustimmung lässt genau diesen einen Aufruf durch. Kann er es nicht, bleibt alles wie bisher — die
+Warteschlange ist die Rückfallebene, kein Aufruf geht verloren.
+
+Welcher Weg das ist, hängt vom Protokollstand des Clients ab
+([ADR-0023](adr/0023-stateless-kern-und-mrtr.md)):
+
+- **`2026-07-28` und neuer:** über **MRTR**. Der Aufruf endet mit `input_required`, der Client zeigt
+  das Formular und wiederholt den Aufruf mit der Antwort. Das funktioniert auch ohne Sitzung und ist
+  im Normalbetrieb der einzige Weg.
+- **`2025-11-25` und älter:** über die klassische **Elicitation** — nur im Sitzungsbetrieb
+  (`MCPMCP_MCP_STATELESS=0`), weil der Gateway den Client dafür während des Aufrufs erreichen muss.
+
+> **Ein Client auf dem neuen Stand, der kein Formular anzeigen kann,** bekommt beim Aufruf eines
+> freigabepflichtigen Werkzeugs einen Fehler seines eigenen SDK (*„no ElicitationHandler is
+> registered"*) statt der Warteschlangen-Meldung. Der Grund: Seit `2026-07-28` meldet kein Client
+> mehr eine Elicitation-Fähigkeit, an der sich das vorher unterscheiden ließ. **Der Vorgang geht
+> dabei nicht verloren** — er steht in der Warteschlange und lässt sich unter *Freigaben*
+> entscheiden.
 
 Der Grund ist nicht Bequemlichkeit allein: Verlangt jede Freigabe einen Wechsel in Oberfläche oder
 CLI, schaltet jemand bei einem oft gebrauchten Werkzeug irgendwann die Freigabepflicht ab — und dann
@@ -164,8 +229,17 @@ Menschen davor; der Agent hält keinen Freigabe-Schlüssel und kann die Antwort 
 Dialog stehen dieselben **maskierten** Argumente wie in der Warteschlange — das Popup zeigt nie
 mehr als die Oberfläche.
 
-Welche Fähigkeiten ein verbundener Client mitbringt, steht beim ersten Aufruf im Log
-(`MCP-Client: … Elicitation: True/False …`).
+Welchen Stand ein verbundener Client spricht und ob er gefragt werden kann, steht beim ersten
+Aufruf im Log:
+
+```
+MCP-Client: <Name> <Version>, Protokoll 2026-07-28. Rueckfrage moeglich — MRTR: True, Elicitation: False.
+```
+
+Bleibt eine Rückfrage aus, steht der Grund ebenfalls im Log
+(`Keine Rueckfrage fuer <Tool> — <Grund>. Der Aufruf bleibt in der Warteschlange.`). Das ist
+Absicht: Ein Aufruf in der Warteschlange sieht von außen gleich aus, egal ob niemand gefragt wurde,
+die Frage scheiterte oder ein Mensch abgelehnt hat.
 
 **Freigaben** in der Web-UI. Ein Mensch (Operator/Admin) sieht dort die konkreten — maskierten —
 Argumente und entscheidet.

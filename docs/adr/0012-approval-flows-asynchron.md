@@ -1,7 +1,8 @@
 # ADR-0012: Approval-Flows asynchron statt blockierend
 
 - **Status:** Akzeptiert; technisch abgelöst am 2026-07-25 durch
-  [ADR-0019](0019-langlaufende-tasks-und-events.md)
+  [ADR-0019](0019-langlaufende-tasks-und-events.md); Weg zum Menschen ergänzt am 2026-07-31 durch
+  [ADR-0023](0023-stateless-kern-und-mrtr.md)
 - **Datum:** 2026-07-20
 - **Betrifft:** FR-32, FR-09 (Call-Timeout), ADR-0008 (Invocation-Kern)
 
@@ -16,6 +17,18 @@
 > Vorgangs-Tabelle. Der Index existierte bereits und ist mitgewandert. Die Einmaligkeit dieser ADR
 > hängt jetzt an einem Claim-Zeitpunkt, weil der Task-Zustandsautomat "freigegeben" und "eingelöst"
 > nicht unterscheidet.
+
+> **Ergänzung 2026-07-31 (ADR-0023).** Der Weg zum Menschen hat eine zweite Bauform bekommen: Die
+> Spec-Revision `2026-07-28` ersetzt die server-initiierte Rückfrage durch **MRTR** — der Aufruf
+> endet mit `input_required`, der Client zeigt das Formular und wiederholt den Aufruf mit der
+> Antwort. Für einen Client auf diesem Stand ist das der einzige Weg; die alte Rückfrage verweigert
+> das SDK ohne Sitzung ausdrücklich.
+>
+> **Die Regeln dieser ADR gelten unverändert für beide Bauformen:** sofort ablehnen statt
+> blockieren, Freigabe für genau einen Call, und nur ein ausdrückliches `accept` mit gesetztem
+> Häkchen ist eine Zustimmung. Neu ist einzig, dass der Zustand zwischen Frage und Antwort über den
+> Client läuft — er ist deshalb mit dem DataProtection-Key-Ring geschützt und an Identität und
+> Werkzeug gebunden.
 
 ## Kontext
 

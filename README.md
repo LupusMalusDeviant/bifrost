@@ -21,7 +21,7 @@ MCP-MCP is a reverse proxy for the Model Context Protocol: to your agents it is 
 | Feature | How |
 |---|---|
 | 🔌 **One endpoint per agent** | All upstream servers aggregated behind one Streamable-HTTP endpoint, tools namespaced `server__tool` |
-| 🔄 **Hot-swappable servers** | Add/remove/reconfigure upstreams at runtime; connected agents get `tools/list_changed`, no restarts |
+| 🔄 **Hot-swappable servers** | Add/remove/reconfigure upstreams at runtime; new tools are callable without a reconnect. Connected agents pick the change up via the list cache hint (`ttlMs`), or via `tools/list_changed` when running in session mode ([ADR-0023](docs/adr/0023-stateless-kern-und-mrtr.md)) |
 | 🪙 **Token saving** | Per-agent profiles: pin frequently used tools with full schemas, expose the long tail via `search_tools` / `describe_tool` / `invoke_tool` meta-tools (≥ 96 % schema-token reduction in the reference setup) |
 | 🌉 **Protocol bridges** | Every tool is also callable via REST (generated OpenAPI 3.1). Existing **REST APIs** (OpenAPI), **JSON-RPC services** (OpenRPC) and **CLI programs** can be imported and appear as MCP tools |
 | 📜 **Full audit log** | Who / what / when / result for every call — including denied ones — with secret redaction before persistence |

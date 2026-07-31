@@ -1,8 +1,19 @@
 # ADR-0009: HTTP+SSE nur upstream, nicht downstream
 
-- **Status:** Accepted
+- **Status:** Accepted, präzisiert am 2026-07-31 durch [ADR-0023](0023-stateless-kern-und-mrtr.md)
 - **Datum:** 2026-07-18
 - **Betrifft:** FR-02
+
+> **Nachtrag 2026-07-31 — die Frist ist eine andere geworden.** Die Revision `2026-07-28` ist final,
+> und HTTP+SSE bekommt darin die **reguläre Zwölf-Monats-Frist**, nicht die drei Monate aus dem
+> Draft-Stand von SEP-2596. Die Entscheidung selbst bleibt damit unverändert richtig — nur der
+> Zeitdruck war überschätzt. Der Review-Trigger unten liest sich entsprechend: ab 2026-07-28
+> zwölf Monate, nicht drei.
+>
+> Am Verhalten ändert sich nichts: Der Client fällt weiterhin nur bei ausdrücklichem
+> `AllowLegacySse` auf SSE zurück, und die Legacy-Endpunkte des Servers bleiben aus — im
+> sessionlosen Betrieb sind sie ohnehin nicht mehr zuschaltbar, weil SSE Sitzungszustand im
+> Speicher braucht.
 
 ## Kontext
 

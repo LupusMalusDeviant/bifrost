@@ -1,6 +1,7 @@
 # ADR-0010: Sampling und Elicitation werden nicht durchgereicht
 
-- **Status:** Accepted, ergänzt am 2026-07-25 durch [ADR-0019](0019-langlaufende-tasks-und-events.md)
+- **Status:** Accepted, ergänzt am 2026-07-25 durch [ADR-0019](0019-langlaufende-tasks-und-events.md),
+  präzisiert am 2026-07-31 durch [ADR-0023](0023-stateless-kern-und-mrtr.md)
 - **Datum:** 2026-07-18
 - **Betrifft:** FR-04 (Kann-Teil), ADR-0001 (Proxy-Architektur), ADR-0005 (Supervisor)
 
@@ -15,6 +16,21 @@
 >
 > **Sampling ist davon unberührt und bleibt verworfen.** Der Kosten-, Modellzugriffs- und
 > Prompt-Injection-Einwand unten gilt unverändert — er hängt nicht an der Korrelation.
+
+> **Nachtrag 2026-07-31 (ADR-0023).** Die Spec-Revision `2026-07-28` hat server-initiierte
+> Rückfragen durch **MRTR** ersetzt: Ein Upstream stellt sie nicht mehr über eine offene Verbindung,
+> sondern beendet den Aufruf mit `input_required`. **An dieser Entscheidung ändert das nichts** —
+> der Einwand war nie der Transport, sondern die fehlende Korrelation: Der Gateway steht zwischen
+> vielen Aufrufern und einem Upstream und kann nicht sagen, welcher Mensch gemeint ist. Neu ist
+> allein, dass ein solcher Aufruf jetzt mit einer klaren Aussage scheitert statt mit einer
+> SDK-Meldung über einen fehlenden Handler (`SdkUpstreamConnection.CallToolAsync`).
+>
+> **In der anderen Richtung** — Gateway fragt seinen eigenen Aufrufer — ist MRTR seit ADR-0023 der
+> Weg für die Freigabe-Rückfrage. Das ist kein Widerspruch: Dort ist die Korrelation trivial, weil
+> der Aufrufer selbst gefragt wird.
+>
+> **Sampling und Roots sind zusätzlich abgekündigt** (SEP-2577, Zwölf-Monats-Frist). Was hier aus
+> Entwurfsgründen nicht durchgereicht wurde, verschwindet damit ohnehin aus dem Protokoll.
 
 ## Kontext
 
