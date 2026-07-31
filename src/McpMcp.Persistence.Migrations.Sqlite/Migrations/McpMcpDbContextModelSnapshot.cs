@@ -52,6 +52,24 @@ namespace McpMcp.Persistence.Migrations.Sqlite.Migrations
                     b.ToTable("ApiKeys");
                 });
 
+            modelBuilder.Entity("McpMcp.Persistence.ApprovalPolicySettingsRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DefaultMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("Queue");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ApprovalPolicySettings");
+                });
+
             modelBuilder.Entity("McpMcp.Persistence.ApprovalRequestRow", b =>
                 {
                     b.Property<Guid>("Id")

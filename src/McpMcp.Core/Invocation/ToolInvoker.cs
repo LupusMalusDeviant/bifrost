@@ -357,8 +357,18 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     private async Task<(ApprovalOutcome? Outcome, Guid? ConsumedTask)> CheckApprovalAsync(
         CatalogEntry entry, ToolInvocationRequest request, CancellationToken ct)
     {
-        var requiredByPolicy = _approvalPolicy?.RequiresApproval(request.Tool) == true;
-        if (!entry.RequiresApproval && !requiredByPolicy)
+        // Zwei Quellen fuer „scharf" (Politik und Selbstauskunft des Katalogs) und zwei Wege
+        // (Warteschlange oder Client) — zusammengefuehrt in der Politik, damit es nicht an vier
+        // Stellen je anders passiert. Ohne Politik-Dienst bleibt es beim strengeren Verhalten:
+        // Was sich selbst als scharf meldet, wartet.
+        var enforcement = _approvalPolicy is { } policy
+            ? policy.EffectiveFor(request.Tool, entry.RequiresApproval)
+            : entry.RequiresApproval ? ApprovalEnforcement.Queue : null;
+
+        // Client-Modus heisst: Das Gateway haelt hier NICHTS mehr auf. Der Aufruf laeuft durch,
+        // die Rueckfrage passiert beim Client (ADR-0022) — erzwungen ueber den Aufrufweg
+        // invoke_sensitive_tool, den die Protokollschicht prueft, nicht diese.
+        if (enforcement is not ApprovalEnforcement.Queue)
         {
             return (null, null);
         }

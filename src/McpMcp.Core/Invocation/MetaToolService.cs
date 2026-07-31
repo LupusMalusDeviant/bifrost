@@ -301,8 +301,12 @@ public sealed class MetaToolService
     /// Mensch pflegt, und die Selbstauskunft eines Connector-Pakets.
     /// </summary>
     private bool IsSensitive(NamespacedToolName tool)
-        => _approvalPolicy?.IsSensitive(tool) == true
-        || _catalog.Find(tool)?.RequiresApproval == true;
+    {
+        var declaredByCatalog = _catalog.Find(tool)?.RequiresApproval == true;
+        return _approvalPolicy is { } policy
+            ? policy.EffectiveFor(tool, declaredByCatalog) is not null
+            : declaredByCatalog;
+    }
 
     /// <summary>
     /// Prüft, ob der gewählte Aufrufweg zum Werkzeug passt — und liefert sonst den Text, der sagt,

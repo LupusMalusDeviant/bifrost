@@ -124,8 +124,39 @@ public interface IApprovalPolicy
     /// </summary>
     bool IsSensitive(NamespacedToolName tool);
 
-    /// <summary>Der Durchsetzungsweg, oder <c>null</c>, wenn das Werkzeug nicht markiert ist.</summary>
+    /// <summary>Der ausdrücklich festgelegte Weg, oder <c>null</c>, wenn keiner hinterlegt ist.</summary>
     ApprovalEnforcement? EnforcementFor(NamespacedToolName tool);
+
+    /// <summary>
+    /// Der Weg für alles Scharfe <b>ohne</b> eigene Festlegung. Ausgeliefert wird
+    /// <see cref="ApprovalEnforcement.Queue"/>.
+    /// <para>
+    /// Das ist eine <em>Absicht</em>, kein Sicherheitsnetz — nicht zu verwechseln mit den
+    /// Rückfällen bei Unklarheit (kaputte Spalte, unbekannter Wert, Migration alter Zeilen). Die
+    /// bleiben auf <see cref="ApprovalEnforcement.Queue"/>, egal was hier steht: Ein Tippfehler
+    /// darf nicht dieselbe Wirkung haben wie eine Entscheidung.
+    /// </para>
+    /// </summary>
+    ApprovalEnforcement DefaultEnforcement { get; }
+
+    Task SetDefaultEnforcementAsync(ApprovalEnforcement enforcement, CancellationToken ct);
+
+    /// <summary>
+    /// Der Weg, der für diesen Aufruf tatsächlich gilt — <c>null</c> heißt: nicht scharf, keine
+    /// Freigabe nötig.
+    /// <para>
+    /// <paramref name="declaredByCatalog"/> ist die Selbstauskunft eines Connector-Pakets
+    /// (<c>ToolDescriptor.RequiresApproval</c>). Sie hatte bis dahin <b>keinen</b> Weg: Ein solches
+    /// Werkzeug landete immer in der Warteschlange, weil es keine Politik-Zeile gibt, an der ein
+    /// Mensch etwas anderes hätte hinterlegen können. Jetzt folgt es der Vorgabe.
+    /// </para>
+    /// <para>
+    /// Die Zusammenführung steht hier und nicht bei den Aufrufern: Es gibt zwei Quellen für
+    /// „scharf" und zwei für den Weg, und vier Stellen, die das je fuer sich kombinieren, driften
+    /// auseinander.
+    /// </para>
+    /// </summary>
+    ApprovalEnforcement? EffectiveFor(NamespacedToolName tool, bool declaredByCatalog);
 
     IReadOnlyCollection<NamespacedToolName> All { get; }
 

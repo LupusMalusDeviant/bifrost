@@ -42,6 +42,17 @@ public class SensitiveToolDoorTests
         public Task SetAsync(NamespacedToolName tool, ApprovalEnforcement? enforcement, CancellationToken ct)
             => Task.CompletedTask;
 
+        public ApprovalEnforcement DefaultEnforcement { get; set; } = ApprovalEnforcement.Queue;
+
+        public ApprovalEnforcement? EffectiveFor(NamespacedToolName tool, bool declaredByCatalog)
+            => EnforcementFor(tool) ?? (declaredByCatalog ? DefaultEnforcement : null);
+
+        public Task SetDefaultEnforcementAsync(ApprovalEnforcement enforcement, CancellationToken ct)
+        {
+            DefaultEnforcement = enforcement;
+            return Task.CompletedTask;
+        }
+
         public event EventHandler? Changed { add { } remove { } }
     }
 

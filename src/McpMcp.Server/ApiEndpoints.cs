@@ -414,11 +414,32 @@ internal static class ApiEndpoints
         });
 
         approvals.MapGet("/tools", (IApprovalPolicy policy) =>
-            Results.Ok(policy.All.Select(t => new
+            Results.Ok(new
             {
-                tool = t.Value,
-                mode = policy.EnforcementFor(t)?.ToString(),
-            })));
+                defaultMode = policy.DefaultEnforcement.ToString(),
+                tools = policy.All.Select(t => new
+                {
+                    tool = t.Value,
+                    mode = policy.EnforcementFor(t)?.ToString(),
+                }),
+            }));
+
+        approvals.MapPost("/default-mode", async (
+            ApprovalDefaultMode body, HttpContext ctx, IApprovalPolicy policy, IAuditSink audit,
+            TimeProvider time, CancellationToken ct) =>
+        {
+            if (!Enum.TryParse<ApprovalEnforcement>(body.Mode, ignoreCase: true, out var parsed))
+            {
+                return Results.BadRequest(
+                    $"Unbekannter Modus '{body.Mode}'. Erlaubt: "
+                    + string.Join(", ", Enum.GetNames<ApprovalEnforcement>()));
+            }
+
+            await policy.SetDefaultEnforcementAsync(parsed, ct);
+            AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null,
+                $"approval-default-mode:{parsed}");
+            return Results.NoContent();
+        });
 
         approvals.MapPost("/tools", async (
             ApprovalToolToggle body, HttpContext ctx, IApprovalPolicy policy, IAuditSink audit,
@@ -431,7 +452,7 @@ internal static class ApiEndpoints
             }
             else if (body.Mode is null)
             {
-                enforcement = ApprovalEnforcement.Queue;
+                enforcement = policy.DefaultEnforcement;
             }
             else if (Enum.TryParse<ApprovalEnforcement>(body.Mode, ignoreCase: true, out var parsed))
             {
@@ -732,12 +753,13 @@ internal static class ApiEndpoints
     }
 
     /// <summary>
-    /// <paramref name="Mode"/> ist optional und bleibt leer der alte Vertrag: <c>Required=true</c>
-    /// ohne Angabe heisst weiterhin Warteschlange. Ein Skript, das diesen Endpunkt vor ADR-0022
-    /// benutzt hat, bekommt damit unveraendert den strengeren Weg — der schwaechere muss
-    /// ausdruecklich verlangt werden.
+    /// <paramref name="Mode"/> ist optional; ohne Angabe gilt die eingestellte Vorgabe. Ausgeliefert
+    /// wird die als <c>Queue</c> — ein Skript, das diesen Endpunkt vor ADR-0022 benutzt hat,
+    /// verhaelt sich also unveraendert, bis jemand die Vorgabe bewusst umstellt.
     /// </summary>
     private sealed record ApprovalToolToggle(string Tool, bool Required, string? Mode = null);
+
+    private sealed record ApprovalDefaultMode(string Mode);
 
     /// <summary>
     /// Verwaltung der vertrauenswürdigen Publisher für WASI-Components (Plan 0003, WP4).

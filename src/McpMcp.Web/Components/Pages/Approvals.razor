@@ -71,6 +71,22 @@
                 Client, der nicht fragt, kommt ungebremst durch. Protokolliert wird weiterhin alles.
             </li>
         </ul>
+        <p>
+            <b>Vorgabe für alles Scharfe ohne eigene Festlegung:</b>
+            <select style="width:auto" @onchange="e => SetDefault((string?)e.Value)">
+                <option value="@nameof(ApprovalEnforcement.Queue)"
+                        selected="@(_default == ApprovalEnforcement.Queue)">Warteschlange</option>
+                <option value="@nameof(ApprovalEnforcement.Client)"
+                        selected="@(_default == ApprovalEnforcement.Client)">Client fragt</option>
+            </select>
+            <span class="muted">
+                Gilt für Werkzeuge, die sich über ihr Connector-Paket selbst als scharf melden —
+                die haben keine eigene Zeile, an der sich etwas hinterlegen ließe. Ändert
+                <b>nichts</b> an den unten ausdrücklich gesetzten Werkzeugen, und nichts an den
+                Rückfällen bei Unklarheit: Ein unbekannter Wert in der Datenbank landet immer auf
+                Warteschlange, egal was hier steht.
+            </span>
+        </p>
         <div class="table-wrap">
             <table>
                 <thead><tr><th>Tool</th><th>Durchsetzung</th></tr></thead>
@@ -105,6 +121,7 @@
     private IReadOnlyList<ApprovalRequest> _pending = [];
     private IReadOnlyList<NamespacedToolName> _allTools = [];
     private Dictionary<NamespacedToolName, ApprovalEnforcement> _marked = [];
+    private ApprovalEnforcement _default = ApprovalEnforcement.Queue;
     private string? _message;
 
     protected override async Task OnInitializedAsync() => await Reload();
@@ -118,6 +135,24 @@
             .Select(t => (Tool: t, Mode: Policy.EnforcementFor(t)))
             .Where(x => x.Mode is not null)
             .ToDictionary(x => x.Tool, x => x.Mode!.Value);
+        _default = Policy.DefaultEnforcement;
+    }
+
+    private async Task SetDefault(string? mode)
+    {
+        if (!Enum.TryParse<ApprovalEnforcement>(mode, ignoreCase: true, out var parsed))
+        {
+            return;
+        }
+
+        await Policy.SetDefaultEnforcementAsync(parsed, CancellationToken.None);
+        UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged,
+            $"approval-default-mode:{parsed}");
+        _message = parsed is ApprovalEnforcement.Client
+            ? "Vorgabe steht auf 'Client fragt'. Neue scharfe Werkzeuge werden vom Gateway nicht "
+              + "mehr aufgehalten — der Schutz haengt dann an der Konfiguration des jeweiligen Clients."
+            : null;
+        await Reload();
     }
 
     private async Task<string> UserAsync()

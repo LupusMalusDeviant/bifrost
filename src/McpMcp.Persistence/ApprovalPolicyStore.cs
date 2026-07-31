@@ -19,6 +19,12 @@ public sealed class ApprovalPolicyStore : IApprovalPolicy
     /// </summary>
     private readonly ConcurrentDictionary<NamespacedToolName, ApprovalEnforcement> _marked = new();
 
+    /// <summary>
+    /// Weg für alles Scharfe ohne eigene Festlegung. Startwert ist der strengere — eine Instanz,
+    /// die diese Einstellung nie gesehen hat, ist nicht schwächer als vorher.
+    /// </summary>
+    private volatile ApprovalEnforcement _default = ApprovalEnforcement.Queue;
+
     public ApprovalPolicyStore(IDbContextFactory<McpMcpDbContext> factory)
     {
         ArgumentNullException.ThrowIfNull(factory);
@@ -35,6 +41,21 @@ public sealed class ApprovalPolicyStore : IApprovalPolicy
     public ApprovalEnforcement? EnforcementFor(NamespacedToolName tool)
         => _marked.TryGetValue(tool, out var mode) ? mode : null;
 
+    public ApprovalEnforcement DefaultEnforcement => _default;
+
+    public ApprovalEnforcement? EffectiveFor(NamespacedToolName tool, bool declaredByCatalog)
+    {
+        if (_marked.TryGetValue(tool, out var explicitMode))
+        {
+            return explicitMode;
+        }
+
+        // Selbstauskunft eines Connector-Pakets: scharf, aber ohne Zeile, an der ein Mensch einen
+        // Weg haette hinterlegen koennen. Bis ADR-0022 landete so ein Werkzeug deshalb immer in der
+        // Warteschlange — es gab schlicht keinen anderen Weg dorthin.
+        return declaredByCatalog ? _default : null;
+    }
+
     public IReadOnlyCollection<NamespacedToolName> All => [.. _marked.Keys];
 
     public async Task LoadAsync(CancellationToken ct)
@@ -46,6 +67,34 @@ public sealed class ApprovalPolicyStore : IApprovalPolicy
         {
             _marked[new NamespacedToolName(row.Tool)] = Parse(row.Mode);
         }
+
+        var settings = await db.ApprovalPolicySettings.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == ApprovalPolicySettingsRow.SingletonId, ct)
+            .ConfigureAwait(false);
+        _default = Parse(settings?.DefaultMode);
+    }
+
+    public async Task SetDefaultEnforcementAsync(ApprovalEnforcement enforcement, CancellationToken ct)
+    {
+        await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var row = await db.ApprovalPolicySettings
+            .FindAsync([ApprovalPolicySettingsRow.SingletonId], ct).ConfigureAwait(false);
+        if (row is null)
+        {
+            db.ApprovalPolicySettings.Add(new ApprovalPolicySettingsRow
+            {
+                Id = ApprovalPolicySettingsRow.SingletonId,
+                DefaultMode = enforcement.ToString(),
+            });
+        }
+        else
+        {
+            row.DefaultMode = enforcement.ToString();
+        }
+
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        _default = enforcement;
+        Changed?.Invoke(this, EventArgs.Empty);
     }
 
     public Task SetAsync(NamespacedToolName tool, bool required, CancellationToken ct)

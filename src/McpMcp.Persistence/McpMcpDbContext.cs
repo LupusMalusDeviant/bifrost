@@ -42,6 +42,8 @@ public sealed class McpMcpDbContext : DbContext
 
     public DbSet<ApprovalToolRow> ApprovalTools => Set<ApprovalToolRow>();
 
+    public DbSet<ApprovalPolicySettingsRow> ApprovalPolicySettings => Set<ApprovalPolicySettingsRow>();
+
     public DbSet<WebhookRow> Webhooks => Set<WebhookRow>();
 
     public DbSet<PublisherKeyRow> PublisherKeys => Set<PublisherKeyRow>();
@@ -189,6 +191,14 @@ public sealed class McpMcpDbContext : DbContext
             e.HasKey(r => r.Tool);
             e.Property(r => r.Tool).HasMaxLength(300);
             e.Property(r => r.Mode).HasMaxLength(20)
+                .HasDefaultValue(nameof(ApprovalEnforcement.Queue));
+        });
+
+        modelBuilder.Entity<ApprovalPolicySettingsRow>(e =>
+        {
+            e.HasKey(r => r.Id);
+            e.Property(r => r.Id).HasMaxLength(20);
+            e.Property(r => r.DefaultMode).HasMaxLength(20)
                 .HasDefaultValue(nameof(ApprovalEnforcement.Queue));
         });
 
@@ -533,6 +543,21 @@ public sealed class ApprovalToolRow
     /// Angabe (alle bestehenden) nicht stillschweigend schwächer wird.
     /// </summary>
     public string Mode { get; set; } = nameof(ApprovalEnforcement.Queue);
+}
+
+/// <summary>
+/// Einstellungen der Freigabe-Politik, die an keinem einzelnen Werkzeug hängen (ADR-0022).
+/// Genau eine Zeile, fester Schlüssel — eine Tabelle mit einem Datensatz ist ehrlicher als ein
+/// Sonderwert in <see cref="ApprovalToolRow"/>, der in jeder Liste mitschwimmen würde.
+/// </summary>
+public sealed class ApprovalPolicySettingsRow
+{
+    public const string SingletonId = "default";
+
+    public string Id { get; set; } = SingletonId;
+
+    /// <summary>Weg für alles Scharfe ohne eigene Festlegung. Ausgeliefert wird <c>Queue</c>.</summary>
+    public string DefaultMode { get; set; } = nameof(ApprovalEnforcement.Queue);
 }
 
 /// <summary>Ein registrierter Webhook (FR-20, ADR-0013).</summary>
