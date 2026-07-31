@@ -203,7 +203,7 @@
             <div><label>Max. Parallelität</label><input type="number" min="1" max="64" @bind="_cliMaxConcurrency" /></div>
         </div>
         <label title="Nur für lokale Entwicklung; Produktion verlangt absolute Executables.">
-            <input type="checkbox" @bind="_cliAllowPathLookup" style="width:auto" />
+            <input type="checkbox" @bind="_cliAllowPathLookup" />
             Unsichere PATH-Auflösung erlauben (Development)
         </label>
         <label>Tools (JSON-Array aus CliToolSpec)</label>
@@ -230,7 +230,7 @@
         <label>Environment (KEY=VALUE pro Zeile; bestehende Werte bleiben verborgen)</label>
         <textarea class="mono" rows="3" @bind="_cliEnvironment"></textarea>
         <label>
-            <input type="checkbox" @bind="_clearCliEnvironment" style="width:auto" />
+            <input type="checkbox" @bind="_clearCliEnvironment" />
             Alle bestehenden CLI-Environment-Secrets explizit löschen
         </label>
     }
@@ -241,7 +241,7 @@
         <label>Header (KEY=VALUE pro Zeile)</label>
         <textarea class="mono" rows="2" @bind="_headers" placeholder="Authorization=Bearer ..."></textarea>
         <label title="HTTP+SSE ist im MCP-Standard durch Streamable HTTP abgelöst und wird künftig entfernt.">
-            <input type="checkbox" @bind="_allowLegacySse" style="width:auto" />
+            <input type="checkbox" @bind="_allowLegacySse" />
             Rückfall auf HTTP+SSE erlauben, wenn der Server kein Streamable HTTP spricht (FR-02)
         </label>
     }
@@ -268,7 +268,7 @@
             }
         </div>
         <label title="Ohne diese Freigabe werden Spec-Quelle und Ziel-API im internen Netz abgewiesen.">
-            <input type="checkbox" @bind="_allowPrivateTargets" style="width:auto" />
+            <input type="checkbox" @bind="_allowPrivateTargets" />
             Ziele im internen Netz erlauben (Loopback, privates Netz, Link-Local)
         </label>
     }

@@ -34,7 +34,7 @@
         <div><label>Name</label><input @bind="_roleName" /></div>
         <div><label>Rate-Limit (Calls/min, leer = unbegrenzt)</label><input type="number" @bind="_roleRate" /></div>
     </div>
-    <label><input type="checkbox" @bind="_roleGlobal" style="width:auto" /> Global-Grant (alle Tools/Aktionen — Admin-Agent)</label>
+    <label><input type="checkbox" @bind="_roleGlobal" /> Global-Grant (alle Tools/Aktionen — Admin-Agent)</label>
     @if (!_roleGlobal)
     {
         <div class="row">
@@ -63,9 +63,9 @@
         }
         <label>Erlaubte Aktionen</label>
         <div class="pill-list">
-            <label class="pill"><input type="checkbox" @bind="_actUseTool" style="width:auto" /> Tool aufrufen</label>
-            <label class="pill"><input type="checkbox" @bind="_actReadResource" style="width:auto" /> Resource lesen</label>
-            <label class="pill"><input type="checkbox" @bind="_actUsePrompt" style="width:auto" /> Prompt nutzen</label>
+            <label class="pill"><input type="checkbox" @bind="_actUseTool" /> Tool aufrufen</label>
+            <label class="pill"><input type="checkbox" @bind="_actReadResource" /> Resource lesen</label>
+            <label class="pill"><input type="checkbox" @bind="_actUsePrompt" /> Prompt nutzen</label>
         </div>
     }
     <div class="toolbar" style="margin-top:.75rem">
@@ -110,7 +110,7 @@
     <div class="pill-list">
         @foreach (var r in _roles)
         {
-            <label class="pill"><input type="checkbox" checked="@_idRoles.Contains(r.Id)" @onchange="e => ToggleRole(r.Id, (bool)e.Value!)" style="width:auto" /> @r.Name</label>
+            <label class="pill"><input type="checkbox" checked="@_idRoles.Contains(r.Id)" @onchange="e => ToggleRole(r.Id, (bool)e.Value!)" /> @r.Name</label>
         }
     </div>
     <div class="toolbar" style="margin-top:.75rem">

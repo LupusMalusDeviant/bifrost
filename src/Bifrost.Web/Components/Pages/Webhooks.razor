@@ -28,7 +28,7 @@
                         <td class="muted">@IdentityName(w.Caller)</td>
                         <td class="mono" style="font-size:.85em">@TriggerUrl(w.Id)</td>
                         <td>
-                            <input type="checkbox" checked="@w.Enabled" style="width:auto"
+                            <input type="checkbox" checked="@w.Enabled"
                                    @onchange="e => SetEnabled(w.Id, (bool)e.Value!)" />
                         </td>
                         <td><button class="btn-sm btn-danger" @onclick="() => Remove(w.Id)">Löschen</button></td>

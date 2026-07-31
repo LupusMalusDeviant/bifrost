@@ -46,7 +46,7 @@
                             </select>
                         </td>
                         <td>
-                            <input type="checkbox" checked="@rule.Enabled" style="width:auto"
+                            <input type="checkbox" checked="@rule.Enabled"
                                    @onchange="e => SetEnabled(rule, (bool)e.Value!)" />
                         </td>
                         <td class="muted">@(rule.IsCustom ? "eigene" : "mitgeliefert")</td>
@@ -121,7 +121,7 @@
         @if (Options.AllowCustomPatterns)
         {
             <label class="pill">
-                <input type="checkbox" @bind="_freeText" style="width:auto" /> Eigenes Regex-Muster schreiben
+                <input type="checkbox" @bind="_freeText" /> Eigenes Regex-Muster schreiben
             </label>
         }
     </div>
