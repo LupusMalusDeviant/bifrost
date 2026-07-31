@@ -266,13 +266,37 @@ public sealed class RestFacadeTests : IClassFixture<GatewayFixture>
             .Should().Be(HttpStatusCode.Forbidden, "ohne Global-Grant kein Management");
 
         using var admin = CreateApiClient(adminKey);
+
+        // Seit WP3.2 muss eine NEU angelegte native Konfiguration ihre Ausfuehrungsart nennen. Ohne
+        // Angabe ist die Absage die Antwort — und sie nennt das fehlende Feld.
+        var withoutIsolation = await admin.PostAsJsonAsync("/api/v1/servers", new
+        {
+            slug = "mgmt0",
+            displayName = "Ohne Isolationsangabe",
+            kind = "Stdio",
+            enabled = true,
+            stdio = new { command = TestPaths.Executable("EchoServer"), arguments = Array.Empty<string>() },
+        });
+        withoutIsolation.StatusCode.Should().Be(
+            HttpStatusCode.BadRequest,
+            "eine fehlende Isolationsangabe hiess frueher stillschweigend 'kein Schutz' (ADR-0025 E2/E5)");
+        (await withoutIsolation.Content.ReadAsStringAsync()).Should().Contain("Stdio.Isolation");
+
+        // Dieser Test prueft die Management-API und nicht die Isolation. Der Host-Modus steht hier
+        // deshalb AUSDRUECKLICH da — genau das ist der Punkt der Umstellung: Er wird gewaehlt,
+        // nicht geerbt. Ob er erlaubt ist, entscheidet danach die Policy aus WP3.1.
         var add = await admin.PostAsJsonAsync("/api/v1/servers", new
         {
             slug = "mgmt1",
             displayName = "Per API angelegt",
             kind = "Stdio",
             enabled = true,
-            stdio = new { command = TestPaths.Executable("EchoServer"), arguments = Array.Empty<string>() },
+            stdio = new
+            {
+                command = TestPaths.Executable("EchoServer"),
+                arguments = Array.Empty<string>(),
+                isolation = new { mode = "Host" },
+            },
         });
         add.StatusCode.Should().Be(HttpStatusCode.Created);
 
@@ -290,9 +314,58 @@ public sealed class RestFacadeTests : IClassFixture<GatewayFixture>
             displayName = "Doppelt",
             kind = "Stdio",
             enabled = true,
-            stdio = new { command = "egal", arguments = Array.Empty<string>() },
+            stdio = new
+            {
+                command = "egal",
+                arguments = Array.Empty<string>(),
+                isolation = new { mode = "Host" },
+            },
         });
         duplicate.StatusCode.Should().Be(HttpStatusCode.BadRequest, "Slug-Kollision → verständlicher 400");
+    }
+
+    /// <summary>
+    /// Die verschobene SSRF-Lücke, geschlossen für Neuanlagen (WP3.2 Punkt 7).
+    /// <para>
+    /// <c>HttpTransportOptions.AllowPrivateTargets</c> ist <c>bool?</c>, und <c>null</c> heisst
+    /// heute „nicht entschieden" — der Konnektor liest daraus <c>true</c> und ruft jede interne
+    /// Adresse ab, die jemand einträgt. Für Bestand ist das die bewusste Entscheidung aus
+    /// ADR-0025 E3. Für eine <b>neu</b> über die API angelegte Konfiguration ist es eine Lücke.
+    /// </para>
+    /// <para>
+    /// Belegt wird das an der <b>gespeicherten</b> Konfiguration und nicht an der Antwort: Was in
+    /// der Datenbank steht, ist das, was beim nächsten Start gilt.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_newly_created_http_upstream_no_longer_stores_an_undecided_ssrf_switch()
+    {
+        var (_, adminKey) = await _gw.SeedAdminAsync("ssrf-admin");
+        using var admin = CreateApiClient(adminKey);
+
+        var created = await admin.PostAsJsonAsync("/api/v1/servers", new
+        {
+            slug = "ssrfneu",
+            displayName = "Neu ueber die API",
+            kind = "StreamableHttp",
+            enabled = false,
+            // Ausdruecklich OHNE allowPrivateTargets — genau der Fall, der bisher `null` speicherte.
+            http = new { endpoint = "https://beispiel.test/mcp" },
+        });
+        created.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var id = new ServerId(
+            (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid());
+        var store = _gw.Services.GetRequiredService<IUpstreamConfigStore>();
+        var stored = (await store.GetHistoryAsync(id, TestContext.Current.CancellationToken))
+            .OrderByDescending(version => version.Version.Value)
+            .First().Config;
+
+        stored.Http!.AllowPrivateTargets.Should().BeFalse(
+            "eine neu angelegte Konfiguration traegt die Entscheidung ausdruecklich — 'nicht "
+            + "entschieden' heisst hier 'erlaubt', und das darf kein neu entstehender Zustand sein");
+        Bifrost.Core.Upstreams.SecureUpstreamDefaults.DecidesPrivateTargets(stored)
+            .Should().BeTrue();
     }
 
     [Fact]

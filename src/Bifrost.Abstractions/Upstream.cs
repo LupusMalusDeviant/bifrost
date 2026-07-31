@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 
 namespace Bifrost.Abstractions;
@@ -57,11 +58,30 @@ public enum CliPathAccess
     Write = 2,
 }
 
+/// <summary>
+/// Ein lokal über stdio gestarteter MCP-Server (ADR-0005).
+/// </summary>
+/// <param name="Isolation">
+/// Wie das Programm ausgeführt wird (ADR-0018, ADR-0025 E5) — <b>dasselbe</b> Modell wie beim
+/// CLI-Transport. Zwei Isolationsmodelle für dieselbe Frage wären zwei Wahrheiten, von denen eine
+/// veraltet.
+/// <para>
+/// Ohne Angabe gilt der bisherige <see cref="IsolationMode.Host"/>-Modus: Eine bestehende
+/// Konfiguration ändert ihr Verhalten nicht dadurch, dass es das Feld jetzt gibt. Neu angelegte
+/// Konfigurationen bekommen den Abschnitt ausdrücklich gesetzt (<c>SecureUpstreamDefaults</c>) —
+/// die Vorgabe wird beim Anlegen entschieden, nicht beim Lesen.
+/// </para>
+/// <para>
+/// Der Aufzählungswert steht bewusst am Ende der Parameterliste: Ein Altdokument ohne dieses Feld
+/// liest sich unverändert, weil der Wert seine Vorgabe behält.
+/// </para>
+/// </param>
 public sealed record StdioTransportOptions(
     string Command,
     IReadOnlyList<string> Arguments,
     IReadOnlyDictionary<string, string>? EnvironmentVariables = null,
-    string? WorkingDirectory = null);
+    string? WorkingDirectory = null,
+    IsolationOptions? Isolation = null);
 
 public sealed record HttpTransportOptions(
     Uri Endpoint,
@@ -93,9 +113,18 @@ public sealed record HttpTransportOptions(
     /// die Übernahme wird sichtbar gemacht, statt sie anzunehmen oder ihn stillzulegen.
     /// </para>
     /// <para>
-    /// Ausdrückliches <c>false</c> weist private Ziele ab. Neu angelegte Konfigurationen sollen den
-    /// Wert setzen — solange das nicht überall geschieht, bleibt eine Lücke, und sie steht als
-    /// solche im Fortschrittsprotokoll.
+    /// Ausdrückliches <c>false</c> weist private Ziele ab. <b>Neu angelegte Konfigurationen tragen
+    /// den Wert seit WP3.2 ausdrücklich</b>: Die beiden Wege, auf denen jemand eine Konfiguration
+    /// <em>erzeugt</em> — der API-POST und das Formular — setzen ihn über
+    /// <c>SecureUpstreamDefaults</c> auf <c>false</c>, bevor irgendetwas gespeichert wird.
+    /// </para>
+    /// <para>
+    /// Der Konfigurationsimport tut das <b>nicht</b>, und das ist Absicht: Er stellt eine
+    /// vorhandene Entscheidung wieder her, statt eine zu treffen. Ein Import, der <c>null</c> in
+    /// <c>false</c> umschriebe, klemmte einen Upstream ab, der vorher lief — dieselbe stille
+    /// Verhaltensänderung, die ADR-0025 E3 ablehnt. <c>null</c> ist damit nur noch, was
+    /// <em>vor</em> der Umstellung geschrieben wurde: ein Altbestand, kein neu entstehender
+    /// Zustand.
     /// </para>
     /// </summary>
     bool? AllowPrivateTargets = null);
@@ -179,13 +208,24 @@ public sealed record CliTransportOptions(
     string? ExecutableSha256 = null,
     /// <summary>
     /// Wie das Programm ausgeführt wird (ADR-0018). Ohne Angabe gilt der bisherige
-    /// <see cref="CliIsolationMode.Host"/>-Modus — bestehende Konfigurationen ändern ihr Verhalten
+    /// <see cref="IsolationMode.Host"/>-Modus — bestehende Konfigurationen ändern ihr Verhalten
     /// nicht dadurch, dass es die Option jetzt gibt.
     /// </summary>
-    CliIsolationOptions? Isolation = null);
+    IsolationOptions? Isolation = null);
 
-/// <summary>Ausführungsmodus eines CLI-Upstreams (ADR-0018).</summary>
-public enum CliIsolationMode
+/// <summary>
+/// Ausführungsmodus eines nativ startenden Upstreams (ADR-0018). Gilt für stdio <b>und</b> CLI
+/// (ADR-0025 E5, M3-Vertrag §4).
+/// <para>
+/// <b>Die Umbenennung von <c>CliIsolationMode</c> ändert den gespeicherten Namen nicht.</b> Der
+/// Typname steht in keinem JSON-Dokument: Serialisiert werden Eigenschaftsnamen, und dieses Enum
+/// wird als Zahl geschrieben. <c>Host</c> bleibt <c>0</c>, <c>Container</c> bleibt <c>1</c>. Eine
+/// bestehende Konfiguration, die nach einem Upgrade nicht mehr gelesen wird, wäre Datenverlust —
+/// dieselbe Fehlerklasse wie eine umbenannte DataProtection-Purpose. Dagegen steht ein
+/// Regressionstest mit einem wörtlich festgehaltenen Altdokument.
+/// </para>
+/// </summary>
+public enum IsolationMode
 {
     /// <summary>
     /// Direkt im Host-Prozessraum. Gehärtet (absolute Pfade, Root-Allowlist, minimale Umgebung,
@@ -201,16 +241,23 @@ public enum CliIsolationMode
 }
 
 /// <summary>
-/// Container-Ausführung eines CLI-Upstreams (ADR-0018).
+/// Container-Ausführung eines nativ startenden Upstreams (ADR-0018) — für stdio wie für CLI.
 /// <para>
 /// Die Mount-Allowlisten kommen aus <see cref="CliTransportOptions.AllowedReadRoots"/> und
 /// <see cref="CliTransportOptions.AllowedWriteRoots"/> — dieselben kanonischen Wurzeln, die der
 /// Host-Modus schon durchsetzt. Zwei getrennte Listen wären zwei Wahrheiten über dieselbe Frage.
+/// Ein stdio-Upstream hat diese Listen nicht und bekommt deshalb <b>gar keinen</b> Mount: Sein
+/// Programm liegt im Image.
 /// </para>
 /// <para>
-/// <b>Kein stiller Rückfall.</b> Ist der Modus <see cref="CliIsolationMode.Container"/> und keine
+/// <b>Kein stiller Rückfall.</b> Ist der Modus <see cref="IsolationMode.Container"/> und keine
 /// Container-Runtime erreichbar, kommt der Upstream nicht hoch. Ein Ausweichen auf den Host wäre
-/// eine stille Herabstufung der Isolation — genau das verbietet ADR-0018.
+/// eine stille Herabstufung der Isolation — genau das verbieten ADR-0018 und ADR-0025 E6.
+/// </para>
+/// <para>
+/// <b>JSON-Verträglichkeit.</b> Die Eigenschaftsnamen sind dieselben wie vor der Umbenennung von
+/// <c>CliIsolationOptions</c>; angehängt wurden nur Felder mit Vorgabewert. Ein Altdokument ohne
+/// diese Felder liest sich unverändert.
 /// </para>
 /// </summary>
 /// <param name="Image">Das Image, in dem das Programm läuft. Pflicht im Container-Modus.</param>
@@ -220,15 +267,28 @@ public enum CliIsolationMode
 /// <param name="CpuLimit">CPU-Anteil, z. B. <c>1.0</c> für einen Kern.</param>
 /// <param name="PidLimit">Obergrenze der Prozesse im Container — begrenzt Fork-Bomben.</param>
 /// <param name="NetworkAllow">
-/// Erlaubte Netzwerkziele. <b>Leer heißt: kein Netzwerk.</b> Nicht andersherum — ein vergessenes
-/// Feld darf keinen Netzzugang öffnen.
+/// Erlaubte Netzwerkziele. <b>Leer heißt: kein Netzwerk</b>, und das ist die Vorgabe. Nicht
+/// andersherum — ein vergessenes Feld darf keinen Netzzugang öffnen. Eine <em>nicht</em> leere
+/// Liste wird abgewiesen, solange die Durchsetzung fehlt: Ein offenes Bridge-Netz mit dem Etikett
+/// „Allowlist" wäre schlimmer als eine ehrliche Absage.
 /// </param>
 /// <param name="TmpfsSizeMb">
 /// Größe des beschreibbaren <c>/tmp</c>. Das Wurzeldateisystem ist read-only; ohne diesen Bereich
 /// scheitern Programme, die Temporärdateien anlegen — mit einer Meldung, die niemand versteht.
 /// </param>
-public sealed record CliIsolationOptions(
-    CliIsolationMode Mode = CliIsolationMode.Host,
+/// <param name="StopTimeoutSeconds">
+/// Gnadenfrist zwischen <c>stop</c> und <c>kill</c> beim Abräumen eines langlebigen Containers
+/// (stdio). Danach wird hart beendet und entfernt — ein Container, der beim Aufräumen hängen
+/// bleibt, überlebt sonst das Gateway.
+/// </param>
+/// <param name="RequireImageDigest">
+/// Verlangt eine Image-Angabe mit <c>@sha256:…</c>. Vorgabe <c>false</c>: Ein Tag ist der übliche
+/// Weg, und ihn beim Upgrade zu verbieten hieße, bestehende Konfigurationen stillzulegen. Ein
+/// beweglicher Tag — allen voran <c>latest</c> — wird stattdessen <b>sichtbar</b> gemeldet; wer den
+/// Pin erzwingen will, schaltet ihn hier ein.
+/// </param>
+public sealed record IsolationOptions(
+    IsolationMode Mode = IsolationMode.Host,
     string? Image = null,
     string Runtime = "docker",
     string User = "65532:65532",
@@ -236,7 +296,9 @@ public sealed record CliIsolationOptions(
     double CpuLimit = 1.0,
     int PidLimit = 128,
     IReadOnlyList<string>? NetworkAllow = null,
-    int TmpfsSizeMb = 64);
+    int TmpfsSizeMb = 64,
+    int StopTimeoutSeconds = 10,
+    bool RequireImageDigest = false);
 
 /// <summary>
 /// Ein benanntes CLI-Kommando = ein Tool. <see cref="FixedArguments"/> stehen fest; ist
@@ -615,4 +677,142 @@ public interface IActiveSessionSource
     /// Betrieb). <c>false</c> im stateless Betrieb: Dann sind beide Werte „wer war zuletzt da".
     /// </summary>
     bool CountsOpenSessions { get; }
+}
+
+/// <summary>Wie fest ein Image-Bezeichner zeigt (ADR-0018).</summary>
+public enum ImagePinKind
+{
+    /// <summary>
+    /// <c>repo@sha256:…</c> — der Inhalt ist festgenagelt. Nur diese Form sagt zu, dass morgen
+    /// dasselbe läuft wie heute.
+    /// </summary>
+    Digest = 0,
+
+    /// <summary>
+    /// Ein unbeweglich wirkender Tag (<c>alpine:3.20</c>). Er kann trotzdem umgehängt werden — ein
+    /// Tag ist ein Zeiger, keine Zusage.
+    /// </summary>
+    Tag = 1,
+
+    /// <summary>
+    /// <c>latest</c> oder gar kein Tag. Das ist derselbe Zustand: Die Runtime ergänzt
+    /// <c>:latest</c>, wenn nichts dasteht. Was heute läuft, ist morgen womöglich ein anderes
+    /// Programm.
+    /// </summary>
+    Floating = 2,
+}
+
+/// <summary>Das Ergebnis der Zerlegung eines Image-Bezeichners.</summary>
+/// <param name="Repository">Der Teil vor Tag und Digest, inklusive Registry und Pfad.</param>
+/// <param name="Tag">Der Tag, sofern einer dasteht; <c>latest</c> wird <b>nicht</b> ergänzt.</param>
+/// <param name="Digest">Der Digest inklusive Algorithmus (<c>sha256:…</c>), sofern vorhanden.</param>
+/// <param name="Pin">Wie fest der Bezeichner zeigt.</param>
+public sealed record ImageReferenceInfo(
+    string Repository,
+    string? Tag,
+    string? Digest,
+    ImagePinKind Pin);
+
+/// <summary>
+/// Zerlegt Image-Bezeichner und sagt, wie fest sie zeigen (ADR-0018, WP3.2 Punkt 4).
+/// <para>
+/// <b>Warum eine eigene Zerlegung und kein Einzeiler:</b> Ein Registry-Host darf einen Port tragen
+/// (<c>registry.local:5000/werkzeug</c>), und dieser Doppelpunkt sieht aus wie ein Tag. Wer naiv am
+/// letzten Doppelpunkt trennt, hält <c>5000/werkzeug</c> für einen Tag — und warnt dann über ein
+/// Image, das gar nicht gemeint war, oder schlimmer: gar nicht.
+/// </para>
+/// </summary>
+public static class ImageReference
+{
+    /// <summary>
+    /// Zerlegt einen Bezeichner. Wirft nicht bei Unverständlichem: Für diese Frage ist ein
+    /// unklarer Bezeichner ein <see cref="ImagePinKind.Floating"/> — die Runtime lehnt ihn ohnehin
+    /// ab, und bis dahin soll die vorsichtigere Aussage gelten.
+    /// </summary>
+    public static ImageReferenceInfo Parse(string image)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(image);
+        var value = image.Trim();
+
+        var digestIndex = value.IndexOf('@', StringComparison.Ordinal);
+        if (digestIndex > 0 && digestIndex < value.Length - 1)
+        {
+            // Ein Digest darf neben einem Tag stehen (repo:tag@sha256:…). Der Digest gewinnt — die
+            // Runtime zieht danach.
+            return new ImageReferenceInfo(
+                StripTag(value[..digestIndex], out var tagBesideDigest),
+                tagBesideDigest,
+                value[(digestIndex + 1)..],
+                ImagePinKind.Digest);
+        }
+
+        var repository = StripTag(value, out var tag);
+        return new ImageReferenceInfo(
+            repository,
+            tag,
+            null,
+            tag is null || tag.Equals("latest", StringComparison.Ordinal)
+                ? ImagePinKind.Floating
+                : ImagePinKind.Tag);
+    }
+
+    /// <summary>
+    /// Die sichtbare Warnung zu einem Bezeichner, oder <c>null</c>, wenn es nichts zu warnen gibt.
+    /// <para>
+    /// Sie ist bewusst ein Text und kein Fehler: Einen Tag abzulehnen hieße, den üblichen Weg zu
+    /// verbieten. Wer den Digest erzwingen will, setzt
+    /// <see cref="IsolationOptions.RequireImageDigest"/>.
+    /// </para>
+    /// </summary>
+    public static string? DescribeRisk(string image)
+    {
+        var info = Parse(image);
+        return info.Pin switch
+        {
+            ImagePinKind.Digest => null,
+            ImagePinKind.Floating => info.Tag is null
+                ? $"Image '{image}' hat keinen Tag; die Runtime ergaenzt ':latest'. Damit ist nicht "
+                    + "festgelegt, welches Programm laeuft — beim naechsten Start kann es ein anderes "
+                    + "sein. Empfohlen: Angabe per Digest (repo@sha256:…)."
+                : $"Image '{image}' zeigt auf 'latest'. Was heute laeuft, muss morgen nicht dasselbe "
+                    + "sein — empfohlen ist die Angabe per Digest (repo@sha256:…).",
+            _ => $"Image '{image}' ist per Tag angegeben. Ein Tag ist ein Zeiger und kann umgehaengt "
+                + "werden; nur ein Digest (repo@sha256:…) legt den Inhalt fest.",
+        };
+    }
+
+    /// <summary>
+    /// Prüft den Pin gegen die Konfiguration. Liefert <c>false</c> und eine Begründung, wenn ein
+    /// verlangter Digest fehlt.
+    /// </summary>
+    public static bool SatisfiesPin(
+        string image, bool requireDigest, [NotNullWhen(false)] out string? problem)
+    {
+        if (!requireDigest || Parse(image).Pin is ImagePinKind.Digest)
+        {
+            problem = null;
+            return true;
+        }
+
+        problem = $"Image '{image}' ist nicht per Digest festgelegt, die Konfiguration verlangt das "
+            + "aber (RequireImageDigest). Erwartet wird die Form repo@sha256:… — ein Tag kann "
+            + "umgehaengt werden, ohne dass hier etwas anders aussieht.";
+        return false;
+    }
+
+    private static string StripTag(string value, out string? tag)
+    {
+        var separator = value.LastIndexOf(':');
+
+        // Ein Doppelpunkt, hinter dem noch ein '/' kommt, gehoert zum Registry-Port, nicht zu einem
+        // Tag.
+        if (separator <= 0 || value.IndexOf('/', separator) >= 0)
+        {
+            tag = null;
+            return value;
+        }
+
+        tag = value[(separator + 1)..];
+        return value[..separator];
+    }
 }

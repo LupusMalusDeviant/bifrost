@@ -99,7 +99,7 @@ public sealed record DiagnosticContext
 
     /// <summary>
     /// Name der zu prüfenden Container-Runtime. Bewusst <b>keine</b> Umgebungsvariable: Die Runtime
-    /// steht je Upstream in der Konfiguration (<c>CliIsolationOptions.Runtime</c>, Vorgabe
+    /// steht je Upstream in der Konfiguration (<c>IsolationOptions.Runtime</c>, Vorgabe
     /// <c>docker</c>). Der Server reicht den tatsächlich verlangten Namen durch (WP2.7); ohne ihn
     /// wird die Vorgabe geprüft, damit hier keine Einstellung erfunden wird, die es nicht gibt.
     /// </summary>

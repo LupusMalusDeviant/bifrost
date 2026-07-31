@@ -189,8 +189,14 @@ internal static class ApiEndpoints
         {
             try
             {
-                var id = await supervisor.AddAsync(config, ct);
-                AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, id, $"server-added:{config.Slug}");
+                // Die sicheren Vorgaben gelten fuer NEU angelegte Konfigurationen (ADR-0025 E2/E5,
+                // WP3.2): Isolation muss entschieden sein, und AllowPrivateTargets wird gesetzt
+                // statt offengelassen. Bewusst hier und nicht im Supervisor — der stellt auch
+                // Bestand wieder her, und dort waere dieselbe Ergaenzung eine stille
+                // Verhaltensaenderung (ADR-0025 E3).
+                var secured = SecureUpstreamDefaults.ForNewUpstream(config);
+                var id = await supervisor.AddAsync(secured, ct);
+                AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, id, $"server-added:{secured.Slug}");
                 return Results.Created($"/api/v1/servers/{id.Value}", new { id = id.Value });
             }
             catch (ArgumentException ex)

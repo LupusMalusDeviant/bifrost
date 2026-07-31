@@ -212,9 +212,13 @@ public sealed class ServerDiagnosticContextFactory
             return (null, "docker");
         }
 
+        // Beide nativen Transporte, nicht nur CLI. Seit WP3.2 kann auch stdio im Container laufen;
+        // die Abfrage sah das nicht, und eine Instanz mit ausschließlich stdio-Container-Upstreams
+        // hätte „keine Runtime nötig" gemeldet — eine fehlende Runtime wäre dann eine Diagnose
+        // gewesen, die genau den Fall verschweigt, für den sie da ist.
         var isolated = latest.Values
-            .Select(version => version.Config.Cli?.Isolation)
-            .Where(isolation => isolation is { Mode: CliIsolationMode.Container })
+            .SelectMany(version => new[] { version.Config.Cli?.Isolation, version.Config.Stdio?.Isolation })
+            .Where(isolation => isolation is { Mode: IsolationMode.Container })
             .ToList();
 
         return isolated.Count == 0

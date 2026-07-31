@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using Bifrost.Abstractions;
+using Bifrost.Upstream.Isolation;
 
 namespace Bifrost.Upstream.Cli;
 
@@ -20,7 +21,7 @@ internal static class CliProcessPolicy
         // Host-Pfade zu prüfen wäre nicht nur sinnlos, sondern falsch: Die Pfad-Policy des
         // Host-Modus (absolute Wurzeln, Hash-Pin) ist gerade das, was der Container ersetzt — die
         // Isolation kommt hier vom Container, nicht vom Pfad.
-        if (options.Isolation is { Mode: CliIsolationMode.Container } container)
+        if (options.Isolation is { Mode: IsolationMode.Container } container)
         {
             if (string.IsNullOrWhiteSpace(container.Image))
             {
@@ -80,12 +81,24 @@ internal static class CliProcessPolicy
                 DecoderFallback.ReplacementFallback));
     }
 
+    /// <summary>
+    /// Baut den Start. Im Container-Modus gehört <paramref name="identity"/> dazu: Ohne Namen wäre
+    /// der Container später nicht wiederfindbar, und das Abräumen bei Zeitüberschreitung oder
+    /// Abbruch bliebe Raten.
+    /// </summary>
     public static ProcessStartInfo CreateStartInfo(
-        CliTransportOptions options, ResolvedCliProcess resolved)
+        CliTransportOptions options, ResolvedCliProcess resolved, ContainerIdentity? identity = null)
     {
-        var container = options.Isolation is { Mode: CliIsolationMode.Container } isolation
+        var container = options.Isolation is { Mode: IsolationMode.Container } isolation
             ? isolation
             : null;
+        if (container is not null && identity is null)
+        {
+            throw new ArgumentNullException(
+                nameof(identity),
+                "Ein Container ohne Namen liesse sich nicht abraeumen — 'docker run' ist ein Client, "
+                + "kein Elternprozess.");
+        }
 
         var startInfo = new ProcessStartInfo
         {
@@ -117,7 +130,18 @@ internal static class CliProcessPolicy
 
         if (container is not null)
         {
-            foreach (var argument in ContainerLaunchPolicy.BuildRunArguments(options, container))
+            // Ein Job je Aufruf: Der Container endet mit dem Kommando. Gebaut wird er von
+            // derselben Stelle wie die stehende stdio-Sitzung — was die beiden unterscheidet, ist
+            // die Lebensdauer, und die ist ein Parameter (ADR-0025 E5).
+            var request = new ContainerLaunchRequest(
+                container,
+                identity!,
+                ContainerLifetime.PerInvocation,
+                ReadOnlyRoots: options.AllowedReadRoots,
+                WritableRoots: options.AllowedWriteRoots,
+                WorkingDirectory: options.WorkingDirectory,
+                EnvironmentNames: [.. (options.EnvironmentVariables ?? new Dictionary<string, string>()).Keys]);
+            foreach (var argument in ContainerLaunchPolicy.BuildRunArguments(request))
             {
                 startInfo.ArgumentList.Add(argument);
             }

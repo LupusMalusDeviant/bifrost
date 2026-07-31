@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Bifrost.Abstractions;
+using Bifrost.Upstream.Isolation;
 
 namespace Bifrost.Upstream.Cli;
 
@@ -8,9 +9,26 @@ namespace Bifrost.Upstream.Cli;
 /// Shell-freie CLI-Brücke mit typisierten Manifesten, isoliertem Environment, kanonischer
 /// Pfadprüfung, Parallelitätsgrenzen und während des Lesens begrenzten Ausgabestreams.
 /// </summary>
-public sealed class CliUpstreamConnector : IUpstreamConnector
+/// <param name="gateway">
+/// Die Kennung dieser Gateway-Instanz. Sie landet als Etikett auf jedem gestarteten Container,
+/// damit ein Aufräumlauf die eigenen von fremden unterscheiden kann. Optional, damit die
+/// Registrierung in <c>Program.cs</c> unverändert bleibt; ohne sie gilt eine prozessweite
+/// Ersatzkennung.
+/// </param>
+public sealed class CliUpstreamConnector(GatewayIdentity? gateway = null)
+    : IUpstreamConnector, IAsyncDisposable
 {
+    private readonly string _instanceId = gateway?.InstanceId ?? ContainerIdentity.ProcessInstanceId;
+
     public UpstreamTransportKind Kind => UpstreamTransportKind.Cli;
+
+    /// <summary>
+    /// Aufräumen beim Herunterfahren — dieselbe Begründung wie beim stdio-Konnektor: Ein Container
+    /// je Aufruf endet zwar mit dem Kommando (<c>--rm</c>), aber ein abgebrochener Aufruf kann
+    /// einen Rest hinterlassen, und der trägt das Instanz-Etikett.
+    /// </summary>
+    public async ValueTask DisposeAsync()
+        => await ContainerLifecycle.SweepAllRuntimesAsync(_instanceId).ConfigureAwait(false);
 
     public async Task<IUpstreamConnection> ConnectAsync(
         ServerId id, UpstreamServerConfig config, CancellationToken ct)
@@ -21,18 +39,18 @@ public sealed class CliUpstreamConnector : IUpstreamConnector
             ?? throw new ArgumentException(
                 $"Config '{config.Slug}' hat keine Cli-Optionen.", nameof(config));
 
-        // Kein stiller Rückfall (ADR-0018): Wer Container verlangt und keine Runtime hat, bekommt
-        // hier eine Absage. Auf den Host auszuweichen hiesse, die Isolation abzuschalten, ohne dass
-        // es jemand merkt — der Upstream liefe weiter, nur ungeschützt.
-        if (options.Isolation is { Mode: CliIsolationMode.Container } isolation
-            && await ContainerLaunchPolicy.ProbeAsync(isolation, ct).ConfigureAwait(false) is { } problem)
+        // Kein stiller Rückfall (ADR-0018, ADR-0025 E6): Wer Container verlangt und keine Runtime
+        // hat, bekommt hier eine Absage. Auf den Host auszuweichen hiesse, die Isolation
+        // abzuschalten, ohne dass es jemand merkt — der Upstream liefe weiter, nur ungeschützt.
+        if (options.Isolation is { Mode: IsolationMode.Container } isolation
+            && await ContainerLaunchPolicy.ProbeAsync(isolation, ct).ConfigureAwait(false)
+                is { } problem)
         {
             throw new InvalidOperationException(
-                $"Upstream '{config.Slug}' verlangt Container-Isolation, aber {problem} "
-                + "Ein Rückfall auf den Host findet nicht statt (ADR-0018).");
+                ContainerLaunchPolicy.RefusalMessage(config.Slug, problem));
         }
 
-        return new CliUpstreamConnection(id, options);
+        return new CliUpstreamConnection(id, options, config.Slug, _instanceId);
     }
 }
 
@@ -47,11 +65,16 @@ internal sealed class CliUpstreamConnection : IUpstreamConnection
     private readonly Dictionary<string, SemaphoreSlim> _commandGates;
     private readonly SemaphoreSlim _upstreamGate;
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly string _slug;
+    private readonly string _instanceId;
 
-    public CliUpstreamConnection(ServerId id, CliTransportOptions options)
+    public CliUpstreamConnection(
+        ServerId id, CliTransportOptions options, string slug = "cli", string? instanceId = null)
     {
         Id = id;
         _options = options;
+        _slug = slug;
+        _instanceId = instanceId ?? ContainerIdentity.ProcessInstanceId;
         _resolvedProcess = CliProcessPolicy.Resolve(options);
         _tools = options.Tools.ToDictionary(tool => tool.Name, StringComparer.Ordinal);
         _upstreamGate = new SemaphoreSlim(options.MaxConcurrency, options.MaxConcurrency);
@@ -144,7 +167,15 @@ internal sealed class CliUpstreamConnection : IUpstreamConnection
         CancellationToken callerToken,
         CancellationToken executionToken)
     {
-        var startInfo = CliProcessPolicy.CreateStartInfo(_options, _resolvedProcess);
+        // Ein eigener Containername je Aufruf. Er ist der einzige Griff, mit dem sich der Container
+        // bei Zeitüberschreitung noch beenden lässt: Den Client zu töten liesse das Kommando im
+        // Container weiterlaufen, und die Zeitgrenze wäre eine Zusage, die niemand einhält.
+        var container = _options.Isolation is { Mode: IsolationMode.Container } isolation
+            ? (Isolation: isolation, Identity: ContainerIdentity.ForUpstream(_slug, _instanceId))
+            : default((IsolationOptions Isolation, ContainerIdentity Identity)?);
+
+        var startInfo = CliProcessPolicy.CreateStartInfo(
+            _options, _resolvedProcess, container?.Identity);
         foreach (var fixedArgument in spec.FixedArguments ?? [])
         {
             startInfo.ArgumentList.Add(fixedArgument);
@@ -188,6 +219,15 @@ internal sealed class CliUpstreamConnection : IUpstreamConnection
         {
             timedOut = timeoutCts.IsCancellationRequested && !callerToken.IsCancellationRequested;
             TryKill(process);
+
+            // Und der Container dazu. `docker run` ist ein Client: Ohne diesen Schritt liefe das
+            // Kommando nach dem Abbruch im Container weiter — sichtbar an nichts, nur teuer.
+            if (container is { } running)
+            {
+                await ContainerLifecycle
+                    .KillAsync(running.Isolation.Runtime, running.Identity.Name)
+                    .ConfigureAwait(false);
+            }
         }
 
         var (stdout, stderr) = await DrainOutputAsync(

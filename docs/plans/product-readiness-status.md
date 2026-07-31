@@ -178,7 +178,7 @@ Vorgabe für Neuanlagen fehlt. Das gehört zu WP3.2, wo die Erzeugungswege ohneh
 | WP | Status | Nachweis |
 |---|---|---|
 | 3.1 Host-Execution-Policy + Bestandsübernahme | `implementiert` | 607 Core-Tests, Architekturtest über Reflexion und IL |
-| 3.2 Container als Standard | **`abgebrochen`** | Teilarbeit auf Zweig `wip/wp3.2-isolation`, siehe unten |
+| 3.2 Container als Standard | `implementiert` | ein Startmodell für stdio und CLI, echte Container-Tests, +50 Tests |
 | 3.3 Key-Ring-Setup | `offen` | kam nicht über die Pflichtlektüre hinaus |
 | 3.4 Bootstrap statt Log-Credentials | `offen` | wartet ohnehin auf 3.3 (`Program.cs`) |
 | 3.5 Security- und Supply-Chain-Gates | `implementiert` | Negativnachweis je Gate außer Containerscan |
@@ -200,6 +200,25 @@ Pakets: Zwei Launchmodelle wären genau die zwei Wahrheiten, die der Auftrag ver
 `main` wurde auf `6e05a5d` zurückgesetzt und baut. Nichts von der Teilarbeit ist verloren, und
 nichts davon ist in einem Zustand, in dem man darauf aufbauen sollte, ohne den Rename zu Ende zu
 führen.
+
+**Nachtrag: neu geschnitten, nicht übernommen.** Der zweite Anlauf lief von `main` aus, mit der
+Auflage, in jederzeit bauenden Schritten zu arbeiten — der halbe Rename war die Lehre aus dem
+Abbruch, nicht nur sein Ergebnis. Vom Zweig übernommen wurden geprüfte Bausteine
+(`ImageReference`, `ContainerIdentity`, `ContainerMountPolicy`); vier Dinge wurden dabei korrigiert,
+darunter ein Pfad in beiden Mount-Listen, der zwei `--volume` auf dasselbe Ziel erzeugt hätte
+(von der Runtime abgelehnt), und ein fehlender Lebenszyklus — ohne ihn lief ein Kommando nach einer
+Zeitüberschreitung im Container weiter, denn den Client zu töten reicht nicht.
+
+Die Kernfrage ist entschieden: **ein** Startmodell. `Cli/ContainerLaunchPolicy.cs` ist gelöscht,
+stdio und CLI gehen durch dieselbe Mindestpolicy und unterscheiden sich nur in der Lebensdauer
+(`PerInvocation` gegen `Session`) und darin, ob stdin offen bleibt.
+
+### Der Blindfleck, den WP3.2 selbst gemeldet hat
+
+`ServerDiagnosticService` zählte für die Runtime-Bereitschaft nur `Config.Cli?.Isolation`. Eine
+Instanz mit ausschließlich stdio-Container-Upstreams hätte damit „keine Runtime nötig" gemeldet —
+eine Diagnose, die genau den Fall verschweigt, für den sie da ist. Nachgeprüft und behoben; beide
+nativen Transporte zählen jetzt.
 
 ### WP3.5 hat einen M1-Fehler gefunden, keinen M3-Fehler
 

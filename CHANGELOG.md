@@ -54,8 +54,24 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
 - Die Inhaltsbreite ist nicht mehr auf 1180 px festgenagelt; die Zeilenlänge hält jetzt der Absatz
   selbst (82 Zeichen), Tabellen dürfen die Breite nutzen.
 
+- **Native Programme laufen isoliert.** Neu angelegte stdio- und CLI-Upstreams führen ihr Programm
+  in einem Container aus: non-root, read-only Wurzeldateisystem, keine Capabilities, kein Netzwerk
+  ohne ausdrückliche Zielliste, Grenzen für Speicher, CPU, Prozesse, Ausgabe und Zeit. Bestehende
+  Upstreams ändern ihr Verhalten **nicht**.
+  Fehlt die Container-Runtime, kommt der Upstream nicht hoch — es gibt keinen Rückfall auf den
+  Host. Ein Ausweichen wäre eine stille Herabstufung genau der Eigenschaft, wegen der jemand den
+  Container gewählt hat.
+- **Hostausführung ist eine Entscheidung, kein Vorgabezustand.** Neue Instanzen verbieten sie;
+  bestehende laufen weiter, aber die Übernahme wird geschrieben, auditiert und im Diagnosebericht
+  namentlich ausgewiesen (ADR-0025).
+
 ### Behoben
 
+- **MCP über HTTP war der einzige Transport ohne Zielprüfung.** Der Endpunkt ging ungeprüft in den
+  Transport, während OpenAPI, OpenRPC und der OAuth-Issuer private Adressen abweisen. Ebenso sondete
+  der OAuth-Verbindungsendpunkt gegen die genannte Adresse, **bevor** irgendetwas sie geprüft hatte.
+  Neu angelegte Konfigurationen weisen private Ziele jetzt ab; bestehende bleiben unverändert, bis
+  jemand den Schalter setzt.
 - **Ein Archiv aus einer neueren Version wurde eingespielt, statt abgelehnt zu werden.** Das
   Rückwärts-Tor verglich eine Versionsangabe, die das Archiv über sich selbst macht und die für
   jedes Archiv gleich war. Geprüft wird jetzt der Migrationsstand: Kennt diese Installation ihn

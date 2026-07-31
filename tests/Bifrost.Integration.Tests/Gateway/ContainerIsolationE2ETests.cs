@@ -3,6 +3,7 @@ using System.Text.Json;
 using AwesomeAssertions;
 using Bifrost.Abstractions;
 using Bifrost.Upstream.Cli;
+using Bifrost.Upstream.Isolation;
 using Xunit;
 
 namespace Bifrost.Integration.Tests.Gateway;
@@ -24,7 +25,7 @@ public sealed class ContainerIsolationE2ETests
     {
         var required = Environment.GetEnvironmentVariable("BIFROST_REQUIRE_CONTAINER") is "1" or "true";
         var available = ContainerLaunchPolicy
-            .ProbeAsync(new CliIsolationOptions(CliIsolationMode.Container, Image: Image), CancellationToken.None)
+            .ProbeAsync(new IsolationOptions(IsolationMode.Container, Image: Image), CancellationToken.None)
             .GetAwaiter().GetResult() is null;
         if (!available)
         {
@@ -41,7 +42,7 @@ public sealed class ContainerIsolationE2ETests
             [new CliToolSpec("run", FixedArguments: fixedArguments)],
             EnvironmentVariables: environment,
             TimeoutSeconds: 60,
-            Isolation: new CliIsolationOptions(CliIsolationMode.Container, Image: Image));
+            Isolation: new IsolationOptions(IsolationMode.Container, Image: Image));
 
     private static async Task<(int ExitCode, string StdOut, string StdErr)> RunAsync(
         CliTransportOptions options)
@@ -149,9 +150,11 @@ public sealed class ContainerIsolationE2ETests
         stdout.Should().NotContain(secret, "der Wert selbst hat im Ergebnis nichts verloren");
 
         // Und er steht auch nicht in den Argumenten, mit denen die Runtime gestartet wird.
-        var arguments = ContainerLaunchPolicy.BuildRunArguments(
-            ContainerOptions("/bin/sh", [], environment),
-            new CliIsolationOptions(CliIsolationMode.Container, Image: Image));
+        var arguments = ContainerLaunchPolicy.BuildRunArguments(new ContainerLaunchRequest(
+            new IsolationOptions(IsolationMode.Container, Image: Image),
+            ContainerIdentity.ForUpstream("cli-container", "instanz-test"),
+            ContainerLifetime.PerInvocation,
+            EnvironmentNames: [.. environment.Keys]));
         arguments.Should().ContainInOrder("--env", "API_TOKEN");
         arguments.Should().NotContain(a => a.Contains(secret, StringComparison.Ordinal));
     }
@@ -167,8 +170,8 @@ public sealed class ContainerIsolationE2ETests
         var options = new CliTransportOptions(
             "/bin/echo",
             [new CliToolSpec("run", FixedArguments: ["egal"])],
-            Isolation: new CliIsolationOptions(
-                CliIsolationMode.Container, Image: Image, Runtime: "gibt-es-nicht-als-runtime"));
+            Isolation: new IsolationOptions(
+                IsolationMode.Container, Image: Image, Runtime: "gibt-es-nicht-als-runtime"));
         var connector = new CliUpstreamConnector();
 
         var act = async () => await connector.ConnectAsync(

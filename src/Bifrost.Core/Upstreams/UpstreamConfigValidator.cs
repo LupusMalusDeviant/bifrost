@@ -131,9 +131,20 @@ public static partial class UpstreamConfigValidator
             }
         }
 
-        if (config.Kind == UpstreamTransportKind.Stdio && string.IsNullOrWhiteSpace(config.Stdio!.Command))
+        if (config.Kind == UpstreamTransportKind.Stdio)
         {
-            throw new ArgumentException("Stdio.Command darf nicht leer sein.", nameof(config));
+            if (string.IsNullOrWhiteSpace(config.Stdio!.Command))
+            {
+                throw new ArgumentException("Stdio.Command darf nicht leer sein.", nameof(config));
+            }
+
+            // stdio hat seit WP3.2 dasselbe Isolationsmodell wie CLI (ADR-0025 E5) — und damit
+            // dieselbe Prüfung. Was hier durchfällt, würde sonst erst beim Start auffallen, mit
+            // einer Meldung der Container-Runtime statt einer, die sagt, welches Feld falsch ist.
+            if (config.Stdio.Isolation is { Mode: IsolationMode.Container } stdioIsolation)
+            {
+                ValidateIsolationLimits(stdioIsolation, "Stdio.Isolation", config);
+            }
         }
 
         if (config.Kind == UpstreamTransportKind.Wasi)
@@ -378,7 +389,7 @@ public static partial class UpstreamConfigValidator
 
         // Container-Modus zuerst: Dort gelten die Pfadregeln des Host-Modus nicht, weil das
         // Programm im Image liegt und die Isolation nicht vom Pfad kommt (ADR-0018).
-        if (cli.Isolation is { Mode: CliIsolationMode.Container } isolation)
+        if (cli.Isolation is { Mode: IsolationMode.Container } isolation)
         {
             ValidateContainerIsolation(isolation, cli, config);
         }
@@ -470,35 +481,9 @@ public static partial class UpstreamConfigValidator
     /// Container-Runtime statt einer, die sagt, welches Feld falsch ist.
     /// </summary>
     private static void ValidateContainerIsolation(
-        CliIsolationOptions isolation, CliTransportOptions cli, UpstreamServerConfig config)
+        IsolationOptions isolation, CliTransportOptions cli, UpstreamServerConfig config)
     {
-        if (string.IsNullOrWhiteSpace(isolation.Image))
-        {
-            throw new ArgumentException(
-                "Cli.Isolation.Image ist im Container-Modus Pflicht.", nameof(config));
-        }
-
-        if (string.IsNullOrWhiteSpace(isolation.Runtime))
-        {
-            throw new ArgumentException(
-                "Cli.Isolation.Runtime darf nicht leer sein (z. B. 'docker' oder 'podman').", nameof(config));
-        }
-
-        if (isolation.MemoryLimitMb <= 0 || isolation.PidLimit <= 0 || isolation.CpuLimit <= 0
-            || isolation.TmpfsSizeMb < 0)
-        {
-            throw new ArgumentException(
-                "Cli.Isolation-Limits müssen positiv sein — ein Limit von 0 wäre keine Grenze, sondern ein Stillstand.",
-                nameof(config));
-        }
-
-        if (isolation.NetworkAllow is { Count: > 0 })
-        {
-            throw new ArgumentException(
-                "Cli.Isolation.NetworkAllow ist noch nicht umgesetzt. Der Container läuft ohne Netzwerk; "
-                + "ein offenes Netz mit dem Etikett 'Allowlist' wäre schlimmer als eine ehrliche Absage.",
-                nameof(config));
-        }
+        ValidateIsolationLimits(isolation, "Cli.Isolation", config);
 
         if (cli.ExecutableSha256 is not null)
         {
@@ -517,6 +502,59 @@ public static partial class UpstreamConfigValidator
                 throw new ArgumentException(
                     $"Mount-Wurzel '{root}' muss absolut sein.", nameof(config));
             }
+        }
+    }
+
+    /// <summary>
+    /// Der Teil der Container-Prüfung, der für stdio und CLI gleich ist (ADR-0025 E5). Er steht an
+    /// einer Stelle, weil zwei Prüflisten für dieselbe Frage zwei Wahrheiten wären, von denen eine
+    /// veraltet.
+    /// </summary>
+    /// <param name="subject">
+    /// Der Feldpfad in der Konfiguration (<c>Cli.Isolation</c> oder <c>Stdio.Isolation</c>). Eine
+    /// Meldung, die das Feld nicht benennt, verlangt vom Betreiber die Sucharbeit, die der Gateway
+    /// schon getan hat.
+    /// </param>
+    private static void ValidateIsolationLimits(
+        IsolationOptions isolation, string subject, UpstreamServerConfig config)
+    {
+        if (string.IsNullOrWhiteSpace(isolation.Image))
+        {
+            throw new ArgumentException(
+                $"{subject}.Image ist im Container-Modus Pflicht.", nameof(config));
+        }
+
+        if (string.IsNullOrWhiteSpace(isolation.Runtime))
+        {
+            throw new ArgumentException(
+                $"{subject}.Runtime darf nicht leer sein (z. B. 'docker' oder 'podman').",
+                nameof(config));
+        }
+
+        if (isolation.MemoryLimitMb <= 0 || isolation.PidLimit <= 0 || isolation.CpuLimit <= 0
+            || isolation.TmpfsSizeMb < 0)
+        {
+            throw new ArgumentException(
+                $"{subject}-Limits müssen positiv sein — ein Limit von 0 wäre keine Grenze, "
+                + "sondern ein Stillstand.",
+                nameof(config));
+        }
+
+        if (isolation.StopTimeoutSeconds is < 0 or > 300)
+        {
+            throw new ArgumentException(
+                $"{subject}.StopTimeoutSeconds muss zwischen 0 und 300 liegen — eine Gnadenfrist, "
+                + "die länger dauert als ein Neustart, hält beim Herunterfahren alles auf.",
+                nameof(config));
+        }
+
+        if (isolation.NetworkAllow is { Count: > 0 })
+        {
+            throw new ArgumentException(
+                $"{subject}.NetworkAllow ist noch nicht durchsetzbar. Der Container läuft ohne "
+                + "Netzwerk; ein offenes Netz mit dem Etikett 'Allowlist' wäre schlimmer als eine "
+                + "ehrliche Absage.",
+                nameof(config));
         }
     }
 

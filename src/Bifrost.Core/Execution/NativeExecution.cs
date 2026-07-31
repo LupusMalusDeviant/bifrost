@@ -30,23 +30,27 @@ public static class NativeExecution
     public static bool RunsOnHost(UpstreamServerConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
-        return RunsOnHost(config.Kind, config.Cli);
+        return RunsOnHost(config.Kind, config.Cli, config.Stdio);
     }
 
     /// <summary>
     /// Dieselbe Frage für einen Fall, in dem noch keine vollständige Konfiguration existiert — etwa
     /// ein Paketmanifest, das nur seinen Transport nennt (ADR-0025 E4).
     /// </summary>
-    public static bool RunsOnHost(UpstreamTransportKind kind, CliTransportOptions? cli) => kind switch
+    public static bool RunsOnHost(
+        UpstreamTransportKind kind,
+        CliTransportOptions? cli,
+        StdioTransportOptions? stdio = null) => kind switch
     {
-        // stdio hat heute kein Isolationsmodell: Das Programm läuft mit den Rechten des Gateways,
-        // und das Gateway hält den Schlüsselring. Gehärtet ist keine Sandbox.
-        UpstreamTransportKind.Stdio => true,
+        // stdio hat seit WP3.2 dasselbe Isolationsmodell wie CLI (ADR-0025 E5). Fehlt die Angabe,
+        // gilt der bisherige Host-Modus: Das Programm läuft mit den Rechten des Gateways, und das
+        // Gateway hält den Schlüsselring. Gehärtet ist keine Sandbox.
+        UpstreamTransportKind.Stdio => stdio?.Isolation is not { Mode: IsolationMode.Container },
 
         // CLI kann seit ADR-0018 in den Container — die Vorgabe ist es nicht. Fehlt die Angabe,
         // gilt der bisherige Host-Modus; ein fehlendes Feld darf hier nichts erlauben, was ein
         // gesetztes verbieten würde.
-        UpstreamTransportKind.Cli => cli?.Isolation is not { Mode: CliIsolationMode.Container },
+        UpstreamTransportKind.Cli => cli?.Isolation is not { Mode: IsolationMode.Container },
 
         UpstreamTransportKind.StreamableHttp => false,
         UpstreamTransportKind.OpenApi => false,

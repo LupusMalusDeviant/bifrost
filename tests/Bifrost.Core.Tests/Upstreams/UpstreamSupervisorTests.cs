@@ -103,12 +103,17 @@ public sealed class UpstreamSupervisorTests : IAsyncDisposable
     {
         _connector.EnqueueConnectFailure("Upstream nicht erreichbar (Test)");
 
-        var id = await _supervisor.AddAsync(TestData.StdioConfig("kaputt"), TestContext.Current.CancellationToken);
-        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(id)?.State == UpstreamState.Failed);
+        _ = await _supervisor.AddAsync(TestData.StdioConfig("kaputt"), TestContext.Current.CancellationToken);
 
-        _audit.Events.Should().Contain(
-            e => e.Kind == AuditEventKind.ServerLifecycle && e.Detail!.Contains(nameof(UpstreamState.Failed)),
-            "der Fehlertext gehört zum Systemereignis dazu");
+        // Auf das Audit-Ereignis warten, nicht auf den Zustand — dieselbe Begründung wie in
+        // Lifecycle_transitions_are_audited_as_system_events: SetState macht den Zustand sichtbar,
+        // BEVOR es den Eintrag schreibt. Wer auf Failed wartet und dann das Audit liest, gewinnt
+        // das Rennen nur auf einer unbelasteten Maschine — unter der Parallellast eines
+        // vollständigen Laufs verliert er es gelegentlich.
+        await TestData.WaitUntilAsync(
+            () => _audit.Events.Any(e => e.Kind == AuditEventKind.ServerLifecycle
+                && e.Detail!.Contains(nameof(UpstreamState.Failed), StringComparison.Ordinal)),
+            because: "der Fehlertext gehört zum Systemereignis dazu");
     }
 
     [Fact]

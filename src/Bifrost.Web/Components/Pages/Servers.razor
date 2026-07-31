@@ -190,6 +190,7 @@
         </div>
         <label>Environment (KEY=VALUE pro Zeile)</label>
         <textarea class="mono" rows="3" @bind="_env" placeholder="GITHUB_TOKEN=ghp_..."></textarea>
+        @IsolationFields
     }
     else if (_kind == UpstreamTransportKind.Cli)
     {
@@ -233,6 +234,7 @@
             <input type="checkbox" @bind="_clearCliEnvironment" />
             Alle bestehenden CLI-Environment-Secrets explizit löschen
         </label>
+        @IsolationFields
     }
     else if (_kind == UpstreamTransportKind.StreamableHttp)
     {
@@ -244,6 +246,20 @@
             <input type="checkbox" @bind="_allowLegacySse" />
             Rückfall auf HTTP+SSE erlauben, wenn der Server kein Streamable HTTP spricht (FR-02)
         </label>
+        @* Ohne diesen Schalter ginge die Adresse ungeprueft in den Transport; das Formular
+           entscheidet die Frage jetzt ausdruecklich, statt sie offenzulassen. *@
+        <label title="Ohne diese Freigabe wird ein Endpunkt im internen Netz abgewiesen (SSRF).">
+            <input type="checkbox" @bind="_allowPrivateTargets" />
+            Ziele im internen Netz erlauben (Loopback, privates Netz, Link-Local)
+        </label>
+        @if (_httpPrivateTargetsWasUndecided)
+        {
+            <p class="msg-err">
+                Diese Konfiguration hat die Frage bisher nie beantwortet — und „nicht entschieden"
+                heißt heute „erlaubt". Das Häkchen zeigt deshalb den geltenden Zustand. Beim
+                Speichern wird daraus ein sichtbarer Wert, den Sie hier auch abwählen können.
+            </p>
+        }
     }
     else
     {
@@ -309,6 +325,21 @@
     private OpenApiAuthKind _openApiAuth = OpenApiAuthKind.None;
     // Vorgabe fail-closed wie im Konnektor: Wer ein internes Ziel einbindet, hakt es bewusst an.
     private bool _allowPrivateTargets;
+
+    // Isolation (ADR-0018, ADR-0025 E5). Die Vorgabe ist der Container — deshalb steht sie hier
+    // auf true. Ein neu angelegter nativer Upstream startet nicht mehr ungeschuetzt, nur weil
+    // niemand an das Haekchen gedacht hat.
+    private bool _isolationContainer = true;
+    private string _isolationImage = "", _isolationRuntime = "docker";
+    private bool _requireImageDigest;
+
+    /// <summary>
+    /// Hat die geladene Konfiguration die Frage nach privaten Zielen nie beantwortet? Dann wird
+    /// beim Speichern aus der unsichtbaren Vorgabe ein sichtbarer Wert — und das sagt das Formular,
+    /// statt es zu tun.
+    /// </summary>
+    private bool _httpPrivateTargetsWasUndecided;
+
     private bool _busy, _ok;
     private string? _message;
     private static readonly JsonSerializerOptions CliManifestJson = CreateCliManifestJson();
@@ -325,6 +356,62 @@
     private IReadOnlyList<UpstreamConfigVersion> _history = [];
     private string? _historyMessage;
     private bool _historyOk;
+
+    /// <summary>
+    /// Der Isolationsabschnitt — derselbe für stdio und CLI, weil es dasselbe Modell ist
+    /// (ADR-0025 E5). Zwei Formularblöcke für dieselbe Frage wären zwei Wahrheiten, von denen eine
+    /// veraltet.
+    /// </summary>
+    private RenderFragment IsolationFields => @<div>
+        <label title="Ohne Container läuft das Programm mit den Rechten des Gateways — und das Gateway hält den Schlüsselring.">
+            <input type="checkbox" @bind="_isolationContainer" />
+            In einem Container ausführen (Vorgabe; ADR-0018)
+        </label>
+        @if (_isolationContainer)
+        {
+            <div class="row">
+                <div style="flex:3">
+                    <label>Image (empfohlen mit Digest: repo@@sha256:…)</label>
+                    <input @bind="_isolationImage" placeholder="ghcr.io/beispiel/server:1.2" />
+                </div>
+                <div><label>Runtime</label><input @bind="_isolationRuntime" placeholder="docker" /></div>
+            </div>
+            <label title="Ein Tag ist ein Zeiger und kann umgehängt werden; nur ein Digest legt fest, was läuft.">
+                <input type="checkbox" @bind="_requireImageDigest" />
+                Digest erzwingen (Start verweigern, wenn nur ein Tag dasteht)
+            </label>
+            @if (ImageWarning() is { } warning)
+            {
+                <p class="msg-err">@warning</p>
+            }
+        }
+        else
+        {
+            <p class="msg-err">
+                Ohne Container läuft dieses Programm mit den Rechten des Gateways — es kann alles
+                lesen, was diesem Benutzer offensteht, einschließlich des Schlüsselrings. Ob diese
+                Instanz das überhaupt zulässt, entscheidet die Ausführungs-Policy (ADR-0025).
+            </p>
+        }
+    </div>;
+
+    /// <summary>
+    /// Der sichtbare Hinweis zu einem beweglichen Image-Bezeichner. Bewusst ein Hinweis und keine
+    /// Sperre: Einen Tag zu verbieten hieße, den üblichen Weg zu verbieten.
+    /// </summary>
+    private string? ImageWarning()
+        => string.IsNullOrWhiteSpace(_isolationImage)
+            ? null
+            : ImageReference.DescribeRisk(_isolationImage.Trim());
+
+    /// <summary>Der Isolationsabschnitt, wie er in die Konfiguration geht.</summary>
+    private IsolationOptions BuildIsolation() => _isolationContainer
+        ? new IsolationOptions(
+            IsolationMode.Container,
+            Image: string.IsNullOrWhiteSpace(_isolationImage) ? null : _isolationImage.Trim(),
+            Runtime: string.IsNullOrWhiteSpace(_isolationRuntime) ? "docker" : _isolationRuntime.Trim(),
+            RequireImageDigest: _requireImageDigest)
+        : new IsolationOptions(IsolationMode.Host);
 
     protected override void OnInitialized() => Reload();
 
@@ -354,11 +441,19 @@
                     Stdio: new StdioTransportOptions(
                         _command.Trim(),
                         _args.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
-                        ParseKeyValues(_env))),
+                        ParseKeyValues(_env),
+                        WorkingDirectory: null,
+                        Isolation: BuildIsolation())),
                 UpstreamTransportKind.StreamableHttp => new UpstreamServerConfig(
                     _slug.Trim(), Display(), _kind, true,
                     Http: new HttpTransportOptions(
-                        new Uri(_httpUrl.Trim()), ParseKeyValues(_headers), _allowLegacySse)),
+                        new Uri(_httpUrl.Trim()),
+                        ParseKeyValues(_headers),
+                        _allowLegacySse,
+                        // Ausdruecklich gesetzt, nicht offengelassen: `null` hiesse "nicht
+                        // entschieden" und damit erlaubt — richtig fuer Bestand, falsch fuer eine
+                        // Neuanlage (ADR-0025 E3, WP3.2).
+                        AllowPrivateTargets: _allowPrivateTargets)),
                 UpstreamTransportKind.Cli => new UpstreamServerConfig(
                     _slug.Trim(), Display(), _kind, true,
                     Cli: new CliTransportOptions(
@@ -379,7 +474,8 @@
                         ParseLines(_cliWorkingRoots),
                         ParseLines(_cliReadRoots),
                         ParseLines(_cliWriteRoots),
-                        _cliMaxConcurrency)),
+                        _cliMaxConcurrency,
+                        Isolation: BuildIsolation())),
                 UpstreamTransportKind.OpenApi => new UpstreamServerConfig(
                     _slug.Trim(), Display(), _kind, true,
                     OpenApi: new OpenApiTransportOptions(
@@ -460,6 +556,10 @@
 
         try
         {
+            // Derselbe Schritt wie im API-Schreibpfad: Die sicheren Vorgaben gelten fuer NEU
+            // angelegte Konfigurationen. Sie hier zu wiederholen ist kein zweiter Weg, sondern
+            // derselbe Aufruf — die Regel steht in SecureUpstreamDefaults und nur dort.
+            config = Bifrost.Core.Upstreams.SecureUpstreamDefaults.ForNewUpstream(config);
             var id = await Supervisor.AddAsync(config, CancellationToken.None);
             UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged, $"server-added:{config.Slug}", id);
             _ok = true; _message = $"'{config.Slug}' angeschlossen.";
@@ -516,7 +616,24 @@
         _baseUrl = current.OpenApi?.BaseAddress?.ToString() ?? "";
         _openApiAuth = current.OpenApi?.AuthKind ?? OpenApiAuthKind.None;
         _apiKeyHeader = current.OpenApi?.ApiKeyHeaderName ?? "X-Api-Key";
-        _allowPrivateTargets = current.OpenApi?.AllowPrivateTargets ?? false;
+
+        // Ein bestehender HTTP-Upstream mit `null` hat "nicht entschieden" gespeichert — und das
+        // heisst heute ERLAUBT. Das Haekchen zeigt deshalb den geltenden Zustand und nicht die
+        // Vorgabe fuer Neuanlagen: Sonst machte ein Speichern aus einem laufenden Upstream einen
+        // abgeklemmten, ohne dass jemand etwas geaendert haette (ADR-0025 E3).
+        _httpPrivateTargetsWasUndecided = current.Http is { AllowPrivateTargets: null };
+        _allowPrivateTargets = current.Kind is UpstreamTransportKind.StreamableHttp
+            ? current.Http?.AllowPrivateTargets ?? true
+            : current.OpenApi?.AllowPrivateTargets ?? false;
+
+        // Dasselbe fuer die Isolation: uebernommen wird, was dasteht. Eine bestehende Konfiguration
+        // ohne Abschnitt laeuft im Host-Modus — das Formular zeigt genau das an, statt sie beim
+        // naechsten Speichern still in einen Container zu heben.
+        var storedIsolation = current.Stdio?.Isolation ?? current.Cli?.Isolation;
+        _isolationContainer = storedIsolation is { Mode: IsolationMode.Container };
+        _isolationImage = storedIsolation?.Image ?? "";
+        _isolationRuntime = storedIsolation?.Runtime ?? "docker";
+        _requireImageDigest = storedIsolation?.RequireImageDigest ?? false;
         _credential = "";
     }
 
@@ -562,6 +679,15 @@
         _cliToolsJson = "[]";
         _clearCliEnvironment = false;
         _allowPrivateTargets = false;
+        _httpPrivateTargetsWasUndecided = false;
+
+        // Zurueck auf die sichere Vorgabe, nicht auf den zuletzt eingestellten Wert: Ein Formular,
+        // das den Host-Modus des vorigen Eintrags behaelt, legt den naechsten Upstream ungeschuetzt
+        // an, ohne dass jemand es waehlt.
+        _isolationContainer = true;
+        _isolationImage = "";
+        _isolationRuntime = "docker";
+        _requireImageDigest = false;
     }
 
     private static string JoinLines(IReadOnlyList<string>? values)

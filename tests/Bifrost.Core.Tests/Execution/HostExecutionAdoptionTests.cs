@@ -216,7 +216,7 @@ public sealed class HostExecutionAdoptionTests
                 "/usr/bin/tool",
                 [new CliToolSpec("lauf")],
                 Isolation: container
-                    ? new CliIsolationOptions(CliIsolationMode.Container, Image: "beispiel:1")
+                    ? new IsolationOptions(IsolationMode.Container, Image: "beispiel:1")
                     : null));
 }
 
