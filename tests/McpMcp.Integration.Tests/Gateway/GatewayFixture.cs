@@ -1,10 +1,15 @@
 using McpMcp.Abstractions;
 using McpMcp.Core.Upstreams;
 using McpMcp.Persistence;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using Xunit;
+
+// 'Role' gibt es in beiden Welten (RBAC und Protokoll) — hier ist die RBAC-Rolle gemeint.
+using Role = McpMcp.Abstractions.Role;
 
 namespace McpMcp.Integration.Tests.Gateway;
 
@@ -12,9 +17,22 @@ namespace McpMcp.Integration.Tests.Gateway;
 /// Startet den echten Gateway-Host (Program.cs-Komposition) in-memory und stellt
 /// SDK-Clients mit API-Key-AuthN bereit — die Grundlage aller WP4-DoD-Tests.
 /// </summary>
-public sealed class GatewayFixture : WebApplicationFactory<Program>
+public class GatewayFixture : WebApplicationFactory<Program>
 {
     private readonly string _dataDir = Path.Combine(Path.GetTempPath(), $"mcpmcp-e2e-{Guid.NewGuid():N}");
+
+    /// <summary>
+    /// Was der Gateway mitgeschrieben hat. Ohne das ist ein „die Rueckfrage kam nicht zustande"
+    /// nicht von einem „der Client hat Nein gesagt" zu unterscheiden — und genau diese Verwechslung
+    /// hat den Freigabe-Pfad zweimal falsch dastehen lassen.
+    /// </summary>
+    public CapturedLog Log { get; } = new();
+
+    /// <summary>
+    /// Zusaetzliche Konfiguration je Fixture — damit sich derselbe Host einmal mit und einmal ohne
+    /// Sessions starten laesst, ohne die Komposition aus <c>Program.cs</c> nachzubauen.
+    /// </summary>
+    protected virtual IEnumerable<KeyValuePair<string, string>> ExtraSettings => [];
 
     protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
     {
@@ -22,6 +40,12 @@ public sealed class GatewayFixture : WebApplicationFactory<Program>
         builder.UseSetting("environment", "Development"); // Cookie SecurePolicy=SameAsRequest → Tests laufen über HTTP
         builder.UseSetting("MCPMCP_DATA_DIR", _dataDir);
         builder.UseSetting("MCPMCP_DB_CONNECTION", $"Data Source={Path.Combine(_dataDir, "e2e.db")}");
+        foreach (var (key, value) in ExtraSettings)
+        {
+            builder.UseSetting(key, value);
+        }
+
+        builder.ConfigureLogging(logging => logging.AddProvider(Log));
     }
 
     public UpstreamSupervisor Supervisor => Services.GetRequiredService<UpstreamSupervisor>();
@@ -85,12 +109,9 @@ public sealed class GatewayFixture : WebApplicationFactory<Program>
             [new Grant(new PermissionScope(null, null), [ToolAction.UseTool, ToolAction.ReadResource, ToolAction.UsePrompt])],
             profile);
 
-    /// <summary>Verbindet einen SDK-Client über den In-Memory-Host mit Bearer-AuthN.</summary>
-    public async Task<McpClient> ConnectClientAsync(string apiKey)
-        => await ConnectClientAsync(apiKey, elicitationHandler: null);
-
     /// <summary>
-    /// Verbindet einen Testclient, wahlweise mit eigener Antwort auf Elicitation-Rueckfragen.
+    /// Verbindet einen Testclient, wahlweise mit eigener Antwort auf Elicitation-Rueckfragen und
+    /// mit eigenen Client-Optionen (etwa einer festgenagelten Protokollrevision).
     /// <para>
     /// <b>Diese Luecke hat drei Fehler durchgelassen.</b> Ohne Handler meldet der Client die
     /// Faehigkeit gar nicht erst an, und der Server nimmt jedes Mal den Warteschlangen-Pfad — die
@@ -101,7 +122,8 @@ public sealed class GatewayFixture : WebApplicationFactory<Program>
     public async Task<McpClient> ConnectClientAsync(
         string apiKey,
         Func<ModelContextProtocol.Protocol.ElicitRequestParams?, CancellationToken,
-            ValueTask<ModelContextProtocol.Protocol.ElicitResult>>? elicitationHandler)
+            ValueTask<ModelContextProtocol.Protocol.ElicitResult>>? elicitationHandler = null,
+        McpClientOptions? options = null)
     {
         var httpClient = CreateDefaultClient();
         httpClient.DefaultRequestHeaders.Authorization = new("Bearer", apiKey);
@@ -113,14 +135,34 @@ public sealed class GatewayFixture : WebApplicationFactory<Program>
             },
             httpClient);
 
-        var options = elicitationHandler is null
-            ? null
-            : new McpClientOptions
-            {
-                Handlers = new McpClientHandlers { ElicitationHandler = elicitationHandler },
-            };
+        if (elicitationHandler is not null)
+        {
+            options ??= new McpClientOptions();
+            options.Handlers = new McpClientHandlers { ElicitationHandler = elicitationHandler };
+
+            // Die Faehigkeit AUSDRUECKLICH anmelden, nicht nur den Handler setzen: Seit SDK 2.0
+            // leitet der Client sie nicht mehr aus dem Handler ab, und der Server sieht sonst
+            // "Elicitation: False" — genau der Zustand, in dem ein echter Client vor der Frage
+            // steht, ob er gefragt werden darf.
+            options.Capabilities ??= new ModelContextProtocol.Protocol.ClientCapabilities();
+            options.Capabilities.Elicitation = new ModelContextProtocol.Protocol.ElicitationCapability();
+        }
+
         return await McpClient.CreateAsync(transport, options);
     }
+
+    /// <summary>
+    /// Ein Client auf dem <b>vorigen</b> Stand (<c>2025-11-25</c>) ohne Formular-Handler — also
+    /// einer, der nicht gefragt werden kann.
+    /// <para>
+    /// Den braucht es seit der Revision 2026-07-28 ausdruecklich: Dort meldet <em>kein</em> Client
+    /// mehr eine Elicitation-Faehigkeit (sie ist in MRTR aufgegangen), und der Gateway fragt jeden,
+    /// der MRTR spricht. „Kann nicht gefragt werden" gibt es nur noch auf dem alten Stand — und
+    /// genau dort muss der Warteschlangen-Weg weiter stimmen.
+    /// </para>
+    /// </summary>
+    public Task<McpClient> ConnectLegacyClientAsync(string apiKey)
+        => ConnectClientAsync(apiKey, options: new McpClientOptions { ProtocolVersion = "2025-11-25" });
 
     public async Task<ServerId> AddEchoUpstreamAsync(string slug)
     {

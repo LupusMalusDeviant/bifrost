@@ -44,8 +44,8 @@ public sealed class GatewayE2ETests : IClassFixture<GatewayFixture>
         // zugesagte: Sie stand fünf Monate lang auf 2025-06-18, während das SDK längst 2025-11-25
         // aushandelte. Eine Untergrenze weit unter dem Ist prüft nichts — ein Rückschritt des SDK
         // wäre glatt durchgegangen. Steigt die Version, schlägt dieser Test an und will bewusst
-        // nachgezogen werden; das ist der Zweck.
-        const string RequiredRevision = "2025-11-25";
+        // nachgezogen werden; das ist der Zweck — zuletzt am 2026-07-31 beim Umstieg auf SDK 2.0.
+        const string RequiredRevision = "2026-07-28";
 
         var (_, apiKey) = await _gw.SeedAdminAsync("protocol");
 
@@ -86,34 +86,34 @@ public sealed class GatewayE2ETests : IClassFixture<GatewayFixture>
         invoke.Content.OfType<TextContentBlock>().Single().Text.Should().Be("Echo: lazy!");
     }
 
+    /// <summary>
+    /// PRD-Abnahmekriterium 3: Ein Server, der während einer laufenden Verbindung dazukommt, ist
+    /// ohne Neuverbinden nutzbar — und einer, der verschwindet, liefert einen sauberen Fehler statt
+    /// eines Protokollbruchs.
+    /// <para>
+    /// <b>Die Benachrichtigung steht nicht mehr hier drin.</b> Sie ist seit der Revision 2026-07-28
+    /// keine Eigenschaft dieses Aufrufs mehr, sondern eine des Betriebsmodus: Ohne Sitzung gibt es
+    /// keine unaufgeforderte Server-zu-Client-Nachricht, an ihre Stelle tritt die Cache-Frist auf
+    /// der Werkzeugliste. Geprüft wird sie weiterhin — in
+    /// <see cref="StatefulSessionTests"/> dort, wo es sie noch gibt, und als Cache-Hinweis in
+    /// <see cref="StatelessProtocolTests"/>. Was dieser Test zusagt, ist die <em>Funktion</em>, und
+    /// die gilt in beiden Betriebsarten unverändert.
+    /// </para>
+    /// </summary>
     [Fact]
-    public async Task Hot_swap_notifies_session_and_new_tool_is_callable_without_reconnect()
+    public async Task Hot_swap_makes_a_new_tool_callable_without_reconnect()
     {
         var (_, apiKey) = await _gw.SeedAdminAsync("hotswapper");
         await using var client = await _gw.ConnectClientAsync(apiKey);
-        var notifications = 0;
-        await using var registration = client.RegisterNotificationHandler(
-            NotificationMethods.ToolListChangedNotification,
-            (_, _) =>
-            {
-                Interlocked.Increment(ref notifications);
-                return default;
-            });
 
-        // PRD-Abnahmekriterium 3, Teil 1: Server während aktiver Session hinzufügen
         var id = await _gw.AddEchoUpstreamAsync("swap1");
-        await IntegrationSupport.WaitUntilAsync(
-            () => Volatile.Read(ref notifications) > 0,
-            because: "tools/list_changed muss die laufende Session erreichen (FR-07)");
 
         var result = await client.CallToolAsync(
             "swap1__echo", new Dictionary<string, object?> { ["message"] = "ohne Reconnect" });
         result.IsError.Should().NotBe(true, "das neue Tool ist ohne Reconnect nutzbar (WP4-DoD)");
 
         // Teil 2: Server entfernen → sauberer Fehler, Gateway bleibt stabil
-        var before = Volatile.Read(ref notifications);
         await _gw.Supervisor.RemoveAsync(id, DrainPolicy.Immediate, TestContext.Current.CancellationToken);
-        await IntegrationSupport.WaitUntilAsync(() => Volatile.Read(ref notifications) > before);
 
         var afterRemove = await client.CallToolAsync(
             "swap1__echo", new Dictionary<string, object?> { ["message"] = "weg?" });

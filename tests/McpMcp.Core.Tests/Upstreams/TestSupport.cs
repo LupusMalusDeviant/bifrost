@@ -119,7 +119,21 @@ internal sealed class FakeUpstreamConnection : IUpstreamConnection
 
     public event EventHandler<UpstreamNotificationEventArgs>? NotificationReceived;
 
-    public Task<UpstreamInventory> DiscoverAsync(CancellationToken ct) => Task.FromResult(Inventory);
+    /// <summary>
+    /// Meldet dieser Upstream seine Änderungen selbst? Auf <c>false</c> gesetzt, verhält er sich wie
+    /// ein Server auf der Spec-Revision 2026-07-28 — und muss gefragt werden.
+    /// </summary>
+    public bool PushesCatalogChanges { get; set; } = true;
+
+    public int DiscoverCalls => Volatile.Read(ref _discoverCalls);
+
+    private int _discoverCalls;
+
+    public Task<UpstreamInventory> DiscoverAsync(CancellationToken ct)
+    {
+        Interlocked.Increment(ref _discoverCalls);
+        return Task.FromResult(Inventory);
+    }
 
     /// <summary>Wenn gesetzt, wirft CallToolAsync diese Exception.</summary>
     public Exception? CallException { get; set; }

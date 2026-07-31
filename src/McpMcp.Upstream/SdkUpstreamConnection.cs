@@ -44,11 +44,37 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection
 
     public ServerId Id { get; }
 
+    /// <summary>
+    /// Auf der Revision 2026-07-28 gibt es keine unaufgeforderten Nachrichten mehr — die
+    /// registrierten Handler oben bleiben dann stumm, und der Supervisor muss turnusmäßig
+    /// nachfragen. Auf älteren Ständen ist alles wie bisher.
+    /// </summary>
+    public bool PushesCatalogChanges => !SpeaksJuly2026OrLater(_client.NegotiatedProtocolVersion);
+
     public event EventHandler<UpstreamNotificationEventArgs>? NotificationReceived;
 
     public async Task<UpstreamInventory> DiscoverAsync(CancellationToken ct)
     {
-        var tools = await _client.ListToolsAsync(cancellationToken: ct).ConfigureAwait(false);
+        IList<McpClientTool> tools;
+        try
+        {
+            tools = await _client.ListToolsAsync(cancellationToken: ct).ConfigureAwait(false);
+        }
+        catch (JsonException exception)
+        {
+            // Seit SDK 2.0 ist 'inputSchema' beim Werkzeug PFLICHT — fehlt es, bricht schon die
+            // Deserialisierung. Vorher lief ein solcher Server durch. Die nackte JsonException
+            // ("The JSON value could not be converted…") stuende dann als Ausfallgrund in der
+            // Oberflaeche, und niemand kaeme von dort auf den eigentlichen Fehler: Der Upstream
+            // haelt sich nicht ans Protokoll. Ein leeres '{}' genuegt ihm.
+            throw new InvalidOperationException(
+                "Der Upstream lieferte eine Werkzeugliste, die sich nicht lesen laesst. Haeufigste "
+                + "Ursache seit der Spec-Revision 2026-07-28: Ein Werkzeug ohne 'inputSchema' — das "
+                + "Feld ist inzwischen Pflicht, ein leeres Schema '{}' reicht aus. "
+                + $"Urspruengliche Meldung: {exception.Message}",
+                exception);
+        }
+
         var toolDescriptors = tools
             .Select(t => new ToolDescriptor(t.Name, t.Description, t.JsonSchema.Clone()))
             .ToList();
@@ -73,9 +99,31 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection
 
     public async Task<JsonElement> CallToolAsync(string toolName, JsonElement args, CancellationToken ct)
     {
-        var result = await _client
-            .CallToolAsync(toolName, JsonArguments.ToDictionary(args), cancellationToken: ct)
-            .ConfigureAwait(false);
+        CallToolResult result;
+        try
+        {
+            result = await _client
+                .CallToolAsync(toolName, JsonArguments.ToDictionary(args), cancellationToken: ct)
+                .ConfigureAwait(false);
+        }
+        catch (InvalidOperationException exception)
+            when (exception.Message.Contains("ElicitationHandler", StringComparison.Ordinal))
+        {
+            // Der Upstream will mitten im Aufruf etwas vom Menschen wissen (MRTR, 'input_required').
+            // Wir beantworten das nicht — ADR-0010: Sampling und Elicitation werden NICHT
+            // durchgereicht. Der Grund hat sich mit der neuen Revision nicht geaendert: Das
+            // Protokoll traegt keine Korrelation, die sagt, WELCHER Mensch hier gemeint ist; der
+            // Gateway steht zwischen vielen Aufrufern und einem Upstream.
+            //
+            // Der Aufruf scheitert also — aber mit einer Aussage. Ohne diesen Zweig stuende dort
+            // "no ElicitationHandler is registered", was nach einem Fehler in der Zusammenstellung
+            // des GATEWAYS klingt und nicht nach einer bewussten Grenze.
+            throw new NotSupportedException(
+                $"Das Werkzeug '{toolName}' verlangt eine Rueckfrage beim Menschen (MRTR). Der "
+                + "Gateway reicht Rueckfragen eines Upstreams nicht durch (ADR-0010) — er koennte "
+                + "nicht sagen, an welchen der vielen Aufrufer sie gehen soll.",
+                exception);
+        }
 
         return JsonSerializer.SerializeToElement(result, McpJsonUtilities.DefaultOptions);
     }
@@ -94,8 +142,41 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection
         return JsonSerializer.SerializeToElement(result, McpJsonUtilities.DefaultOptions);
     }
 
+    /// <summary>
+    /// Lebenszeichen des Upstreams — die Grundlage der Gesundheitsanzeige und des Neustarts.
+    /// <para>
+    /// <b><c>ping</c> gibt es ab der Spec-Revision 2026-07-28 nicht mehr</b> („The method 'ping' is
+    /// not available on protocol version '2026-07-28'"). Der Ersatz ist <c>server/discover</c>: die
+    /// Anfrage, mit der ein Client auf dieser Revision ohnehin beginnt — leichtgewichtig, ohne
+    /// Nebenwirkung und beim Server unvermeidlich implementiert.
+    /// </para>
+    /// <para>
+    /// Die Weiche steht hier und nicht in der Konfiguration: Welche Revision gilt, hat die
+    /// Gegenstelle ausgehandelt, nicht der Betreiber. Ein Schalter dafuer waere eine Einladung,
+    /// ihn falsch zu stellen.
+    /// </para>
+    /// </summary>
     public async Task PingAsync(CancellationToken ct)
-        => await _client.PingAsync(cancellationToken: ct).ConfigureAwait(false);
+    {
+        if (!SpeaksJuly2026OrLater(_client.NegotiatedProtocolVersion))
+        {
+            await _client.PingAsync(cancellationToken: ct).ConfigureAwait(false);
+            return;
+        }
+
+        await _client.SendRequestAsync<DiscoverRequestParams, DiscoverResult>(
+            RequestMethods.ServerDiscover,
+            new DiscoverRequestParams(),
+            McpJsonUtilities.DefaultOptions,
+            cancellationToken: ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Die Revisionen sind datumssortiert benannt — ein Stringvergleich reicht und bleibt richtig,
+    /// wenn eine weitere dazukommt.
+    /// </summary>
+    internal static bool SpeaksJuly2026OrLater(string? negotiated)
+        => negotiated is not null && string.CompareOrdinal(negotiated, "2026-07-28") >= 0;
 
     public async ValueTask DisposeAsync()
     {

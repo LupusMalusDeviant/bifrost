@@ -13,7 +13,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\McpMcp.Abstractions\McpMcp.Abstractions.csproj" />
-    <PackageReference Include="ModelContextProtocol" />
+    <!-- Nur die Client-Seite: .Core statt des Hauptpakets. Das Hauptpaket bringt zusaetzlich
+         Hosting/DI und Attribut-Discovery fuer SERVER mit — beides braucht hier niemand, und was
+         nicht referenziert ist, kann auch nicht versehentlich benutzt werden. -->
+    <PackageReference Include="ModelContextProtocol.Core" />
   </ItemGroup>
 
 </Project>

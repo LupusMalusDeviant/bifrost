@@ -334,6 +334,15 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
                 attempts = 0;
                 var healthySince = _time.GetUtcNow();
                 var pingFailures = 0;
+
+                // Ein Upstream, der seine Änderungen nicht mehr von selbst meldet (Spec-Revision
+                // 2026-07-28), wird turnusmäßig gefragt. Der Zeitpunkt steht auf „jetzt + Intervall",
+                // nicht auf „jetzt": Die Erstabfrage ist gerade gelaufen, gleich noch einmal zu
+                // fragen wäre reine Last.
+                var nextCatalogPoll = guarded.PushesCatalogChanges
+                    ? DateTimeOffset.MaxValue
+                    : _time.GetUtcNow() + _options.CatalogPollInterval;
+
                 using var timer = new PeriodicTimer(_options.HealthCheckInterval, _time);
                 while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
                 {
@@ -370,6 +379,27 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
                     lock (entry.Gate)
                     {
                         entry.LastHealthyAt = now;
+                    }
+
+                    if (now >= nextCatalogPoll)
+                    {
+                        nextCatalogPoll = now + _options.CatalogPollInterval;
+                        try
+                        {
+                            await RefreshInventoryAsync(entry, guarded, ct).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            // Eine misslungene Katalogabfrage ist kein toter Upstream: Die Aufrufe
+                            // laufen weiter, nur der Stand ist alt. Sie zum Verbindungsabriss zu
+                            // erklaeren waere eine Verschlimmbesserung — die naechste Runde
+                            // versucht es erneut.
+                            Log.UpstreamCatalogPollFailed(_logger, ex, entry.Config.Slug);
+                        }
                     }
 
                     if (now - healthySince >= _options.HealthyResetWindow)
@@ -470,17 +500,52 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             return;
         }
 
+        await RefreshInventoryAsync(entry, connection, ct, raiseAlways: true).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Holt den Katalog eines laufenden Upstreams neu und legt ihn ab.
+    /// <para>
+    /// <paramref name="raiseAlways"/> trennt die beiden Anlässe: Die <b>ausdrückliche</b> Abfrage
+    /// (Oberfläche, Annahme einer geänderten Definition) meldet immer eine Änderung — der Aufrufer
+    /// will sehen, dass etwas passiert ist. Die <b>turnusmäßige</b> Abfrage meldet nur, wenn sich
+    /// wirklich etwas geändert hat; sonst liefe jede Minute ein Katalog-Ereignis durch das ganze
+    /// System, samt <c>tools/list_changed</c> an jede Sitzung.
+    /// </para>
+    /// </summary>
+    private async Task RefreshInventoryAsync(
+        Entry entry, GuardedUpstreamConnection connection, CancellationToken ct, bool raiseAlways = false)
+    {
         var inventory = await connection.DiscoverAsync(ct).ConfigureAwait(false);
         var (screened, quarantined) = await ScreenInventoryAsync(entry, inventory, ct).ConfigureAwait(false);
+
+        bool changed;
         lock (entry.Gate)
         {
+            changed = entry.Inventory is null || Signature(entry.Inventory) != Signature(screened);
             entry.Inventory = screened;
             entry.QuarantinedTools = quarantined;
             entry.ToolCount = screened.Tools.Count;
         }
 
-        Raise(entry, UpstreamChangeKind.InventoryChanged);
+        if (raiseAlways || changed)
+        {
+            Raise(entry, UpstreamChangeKind.InventoryChanged);
+        }
     }
+
+    /// <summary>
+    /// Was ein Inventar ausmacht, in einer Zeichenkette. Absichtlich über den
+    /// Definitions-Fingerabdruck der Werkzeuge und nicht über deren Anzahl: Ein Upstream, der ein
+    /// Werkzeug austauscht statt hinzufügt, käme sonst als „unverändert" durch — und genau das ist
+    /// der Fall, den der Rug-Pull-Schutz sehen will.
+    /// </summary>
+    private static string Signature(UpstreamInventory inventory)
+        => string.Join('\n',
+            inventory.Tools.Select(t => ToolDefinitionHash.Compute(t))
+                .Concat(inventory.Resources.Select(r => r.Uri.ToString()))
+                .Concat(inventory.Prompts.Select(p => p.Name))
+                .Order(StringComparer.Ordinal));
 
     private async Task<(UpstreamInventory Inventory, IReadOnlyList<string> Quarantined)>
         ScreenInventoryAsync(Entry entry, UpstreamInventory inventory, CancellationToken ct)
@@ -650,6 +715,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         [LoggerMessage(Level = LogLevel.Warning,
             Message = "Upstream {Slug}: Definition von Tool {Tool} weicht vom angenommenen Stand ab — zurueckgehalten.")]
         public static partial void ToolDefinitionChanged(ILogger logger, string slug, string tool);
+
+        [LoggerMessage(Level = LogLevel.Warning,
+            Message = "Upstream {Slug}: turnusmaessige Katalogabfrage fehlgeschlagen — der Stand bleibt vorerst alt.")]
+        public static partial void UpstreamCatalogPollFailed(ILogger logger, Exception exception, string slug);
 
         [LoggerMessage(Level = LogLevel.Warning,
             Message = "Upstream {Slug}: Verbindung verloren, Restart-Versuch {Attempt}/{MaxRetries} in {Delay}.")]

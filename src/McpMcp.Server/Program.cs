@@ -298,7 +298,35 @@ builder.Services.AddSingleton(sp => new MetaToolService(
 
 // ── MCP-Endpoint (WP4.2) + REST-Fassade (WP5) ────────────────────────────────
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddSingleton<McpSessionRegistry>();
+
+// ── Sessionlos oder mit Sitzung? (Spec-Revision 2026-07-28, SEP-2567) ────────
+// Die Revision hat den Initialize-Handshake und 'Mcp-Session-Id' ersatzlos gestrichen: Jede Anfrage
+// steht fuer sich. Das SDK laesst beides zu, aber NICHT gleichzeitig, und die Wahl ist folgenreich:
+//
+//   Stateless (Vorgabe): Wir sprechen 2026-07-28 wirklich. Aeltere Clients laufen weiter — das SDK
+//       bedient ihren Initialize-Handshake unveraendert. Sie verlieren allerdings zwei Dinge, die
+//       eine stehende Sitzung voraussetzen: die Rueckfrage im laufenden Aufruf (fuer sie bleibt die
+//       Freigabe-Warteschlange) und den 'tools/list_changed'-Anstoss (dafuer traegt jede Liste jetzt
+//       eine Cache-Frist).
+//   Stateful: Alles bleibt wie bisher — aber ein Client mit 2026-07-28 wird vom SDK mit
+//       '-32022 UnsupportedProtocolVersion' abgewiesen und handelt daraufhin 2025-11-25 aus. Wir
+//       liefen dann auf dem neuen SDK und sprächen weiter die alte Revision.
+//
+// Der Schalter ist da, weil ein Betreiber mit ausschliesslich alten Clients die zweite Wahl treffen
+// koennen muss, ohne auf ein SDK von gestern zurueckzugehen.
+var statelessMcp = builder.Configuration["MCPMCP_MCP_STATELESS"] is not ("0" or "false");
+
+// Cache-Frist der Listen (SEP-2549). Im stateless Betrieb ist sie der einzige Weg, auf dem ein
+// angeschlossener Agent ueberhaupt von einem neuen Werkzeug erfaehrt.
+var listTtlSeconds = int.TryParse(
+    builder.Configuration["MCPMCP_MCP_LIST_TTL_SECONDS"],
+    NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedTtl) && parsedTtl >= 0
+    ? parsedTtl
+    : (int)McpCacheOptions.Default.ListTimeToLive.TotalSeconds;
+builder.Services.AddSingleton(new McpCacheOptions(TimeSpan.FromSeconds(listTtlSeconds)));
+
+builder.Services.AddSingleton(sp => new McpSessionRegistry(
+    sp.GetRequiredService<TimeProvider>(), statelessMcp));
 builder.Services.AddSingleton<IActiveSessionSource>(sp => sp.GetRequiredService<McpSessionRegistry>());
 builder.Services.AddSingleton<OpenApiDocumentGenerator>();
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -321,9 +349,15 @@ builder.Services.AddMcpServer(options =>
     })
     .WithHttpTransport(options =>
     {
+        // Ausdruecklich gesetzt, nicht dem Default ueberlassen: Der Default hat sich mit SDK 2.0
+        // von 'false' auf 'true' gedreht. Eine so folgenreiche Umstellung darf nicht daran haengen,
+        // welche Paketversion gerade aufgeloest wurde.
+        options.Stateless = statelessMcp;
+
         // MCPEXP002: RunSessionHandler ist als experimentell markiert, aber der einzige
         // dokumentierte Hook für Session-Lifecycle (Registry für tools/list_changed, FR-07).
-        // SDK ist per CPM auf 1.4.1 gepinnt — API-Drift trifft uns nur bei bewusstem Upgrade.
+        // Im stateless Betrieb ruft das SDK ihn JE ANFRAGE auf — die Registry weiss das und zaehlt
+        // dann Lebenszeichen statt Sitzungen.
 #pragma warning disable MCPEXP002
         options.RunSessionHandler = async (httpContext, server, ct) =>
         {

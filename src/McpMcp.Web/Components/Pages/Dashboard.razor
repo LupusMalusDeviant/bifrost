@@ -20,10 +20,22 @@
         <div class="stat">@_toolCount</div>
         <div class="muted">im Katalog</div>
     </div>
+    @* Seit der Spec-Revision 2026-07-28 gibt es im Normalbetrieb keine Sitzungen mehr — jede
+       Anfrage steht für sich. „Aktive Sessions" wäre dort eine erfundene Zahl; gezählt wird dann,
+       wer zuletzt da war. Die Beschriftung sagt, was gemeint ist. *@
     <div class="card">
-        <div class="stat-label">Aktive Sessions</div>
-        <div class="stat">@_sessions</div>
-        <div class="muted">@_agents Agenten verbunden</div>
+        <div class="stat-label">@(Sessions.CountsOpenSessions ? "Aktive Sessions" : "Aktive Agenten")</div>
+        <div class="stat">@(Sessions.CountsOpenSessions ? _sessions : _agents)</div>
+        <div class="muted">
+            @if (Sessions.CountsOpenSessions)
+            {
+                @($"{_agents} Agenten verbunden")
+            }
+            else
+            {
+                @("mit Anfragen in den letzten 5 Minuten")
+            }
+        </div>
     </div>
     <div class="card">
         <div class="stat-label">Calls (letzte 24 h)</div>

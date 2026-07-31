@@ -511,11 +511,27 @@ public interface IUpstreamConnection : IAsyncDisposable
     /// <summary>Holt einen Prompt des Upstreams (FR-04); Ergebnis ist das serialisierte GetPromptResult.</summary>
     Task<JsonElement> GetPromptAsync(string promptName, JsonElement? args, CancellationToken ct);
 
-    /// <summary>Health-Probe (MCP ping). Wirft bei totem Upstream.</summary>
+    /// <summary>Health-Probe (MCP ping bzw. server/discover ab Revision 2026-07-28). Wirft bei totem Upstream.</summary>
     Task PingAsync(CancellationToken ct);
 
     /// <summary>Notifications von unten (u. a. tools/list_changed des Upstreams selbst).</summary>
     event EventHandler<UpstreamNotificationEventArgs>? NotificationReceived;
+
+    /// <summary>
+    /// Meldet dieser Upstream Katalogänderungen von sich aus — oder muss man ihn fragen?
+    /// <para>
+    /// Bis zur Spec-Revision <c>2025-11-25</c> war die Antwort immer „ja": Ein Server schickte
+    /// <c>tools/list_changed</c> über die stehende Sitzung. Die Revision <c>2026-07-28</c> hat
+    /// unaufgeforderte Server-zu-Client-Nachrichten gestrichen — bei einem solchen Upstream bleibt
+    /// ein neu hinzugekommenes Werkzeug unsichtbar, bis jemand nachfragt. Der Supervisor holt den
+    /// Katalog dann von sich aus turnusmäßig nach.
+    /// </para>
+    /// <para>
+    /// Standardmäßig <c>true</c>: Wer diesen Vertrag ohne Protokollbezug erfüllt (OpenAPI, CLI,
+    /// WASI), meldet seine Änderungen selbst oder hat keine.
+    /// </para>
+    /// </summary>
+    bool PushesCatalogChanges => true;
 }
 
 /// <summary>
@@ -551,12 +567,31 @@ public interface IUpstreamSupervisor
 /// <summary>
 /// Zählstand der aktiven MCP-Sessions fürs Dashboard (FR-33). Eigener Vertrag, weil die
 /// Session-Verwaltung im Server-Host liegt, die UI aber nur nach unten auf Abstractions zeigt (ADR-0004).
+/// <para>
+/// <b>Seit der Spec-Revision 2026-07-28 gibt es zwei Betriebsarten</b>, und nur eine davon hat
+/// überhaupt Sessions: Der stateless Kern kennt keine <c>Mcp-Session-Id</c> mehr, jede Anfrage steht
+/// für sich. Ein Zählstand „offene Sessions" wäre dort eine erfundene Zahl. Deshalb sagt
+/// <see cref="CountsOpenSessions"/>, was die Werte bedeuten — die Oberfläche beschriftet danach.
+/// </para>
 /// </summary>
 public interface IActiveSessionSource
 {
-    /// <summary>Anzahl offener MCP-Sessions (eine Agenten-Instanz kann mehrere halten).</summary>
+    /// <summary>
+    /// Anzahl offener MCP-Sessions (eine Agenten-Instanz kann mehrere halten). Im stateless Betrieb
+    /// gibt es keine offenen Sessions; dann steht hier derselbe Wert wie in
+    /// <see cref="ActiveAgents"/>.
+    /// </summary>
     int ActiveSessions { get; }
 
-    /// <summary>Anzahl verschiedener Identitäten mit mindestens einer offenen Session.</summary>
+    /// <summary>
+    /// Anzahl verschiedener Identitäten mit mindestens einer offenen Session — im stateless Betrieb:
+    /// mit mindestens einer Anfrage im jüngsten Zeitfenster.
+    /// </summary>
     int ActiveAgents { get; }
+
+    /// <summary>
+    /// <c>true</c>, wenn <see cref="ActiveSessions"/> wirklich offene Sessions zählt (stateful
+    /// Betrieb). <c>false</c> im stateless Betrieb: Dann sind beide Werte „wer war zuletzt da".
+    /// </summary>
+    bool CountsOpenSessions { get; }
 }

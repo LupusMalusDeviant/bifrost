@@ -108,8 +108,11 @@ public sealed class SensitiveDoorOverMcpTests : IClassFixture<GatewayFixture>
         await Policy.SetAsync(tool, ApprovalEnforcement.Queue, ct);
         try
         {
+            // Client auf dem vorigen Stand ohne Formular-Handler: Geprueft wird der
+            // WARTESCHLANGEN-Modus. Ein Client, der gefragt werden kann, bekaeme die Rueckfrage —
+            // richtig so, aber dann pruefte dieser Test die Tuer nicht mehr gegen die Warteschlange.
             var (_, apiKey) = await _gw.SeedAdminAsync($"sd-queue-{Guid.NewGuid():N}");
-            await using var client = await _gw.ConnectClientAsync(apiKey);
+            await using var client = await _gw.ConnectLegacyClientAsync(apiKey);
 
             var result = await client.CallToolAsync(
                 "invoke_sensitive_tool",

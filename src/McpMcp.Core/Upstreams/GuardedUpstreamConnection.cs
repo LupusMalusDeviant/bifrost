@@ -38,6 +38,13 @@ public sealed class GuardedUpstreamConnection
     public string PublisherKeyId =>
         _inner is ISignedUpstreamConnection signed ? signed.PublisherKeyId : string.Empty;
 
+    /// <summary>
+    /// Ebenfalls durchgereicht, aus demselben Grund: Verschluckte der Decorator das Merkmal, hielte
+    /// der Supervisor jeden Upstream für einen, der sich von selbst meldet — und ein Server auf der
+    /// Revision 2026-07-28 bekäme nie wieder eine Katalogabfrage.
+    /// </summary>
+    public bool PushesCatalogChanges => _inner.PushesCatalogChanges;
+
     public event EventHandler<UpstreamNotificationEventArgs>? NotificationReceived
     {
         add => _inner.NotificationReceived += value;

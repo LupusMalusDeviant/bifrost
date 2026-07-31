@@ -18,7 +18,7 @@ internal static class GatewayMcpHandlers
         RequestContext<ListToolsRequestParams> ctx, CancellationToken ct)
     {
         var identity = RequireIdentity(ctx.Services!);
-        LogClientCapabilitiesOnce(ctx.Services!, ctx.Server);
+        LogClientCapabilitiesOnce(ctx.Services!, ctx.Server, identity);
         var catalog = ctx.Services!.GetRequiredService<IToolCatalog>();
         var view = catalog.GetViewFor(identity);
 
@@ -37,7 +37,30 @@ internal static class GatewayMcpHandlers
             }));
         }
 
-        return ValueTask.FromResult(new ListToolsResult { Tools = tools });
+        var result = new ListToolsResult { Tools = tools };
+        ApplyCacheHint(ctx.Services!, result);
+        return ValueTask.FromResult(result);
+    }
+
+    /// <summary>
+    /// Setzt den Cache-Hinweis der Revision 2026-07-28 (SEP-2549) auf ein Listenergebnis.
+    /// <para>
+    /// <b><c>Private</c> ist hier kein Detail, sondern die Sicherheitsaussage.</b> Jede unserer
+    /// Listen ist durch RBAC gefiltert — zwei Identitäten am selben Gateway sehen verschiedene
+    /// Werkzeuge. Ohne diesen Wert gilt laut Spec <c>Public</c>, und ein gemeinsamer Zwischenspeicher
+    /// (Proxy, Client-Fleet, ein weiterer Gateway davor) dürfte die Antwort der einen Identität an
+    /// die nächste ausliefern. Das wäre eine Rechteweitergabe durch einen Cache.
+    /// </para>
+    /// <para>
+    /// Die Frist ersetzt im stateless Betrieb die <c>tools/list_changed</c>-Benachrichtigung, die es
+    /// dort nicht mehr gibt (siehe <see cref="McpSessionRegistry.NotifyToolListChangedAsync"/>).
+    /// </para>
+    /// </summary>
+    private static void ApplyCacheHint(IServiceProvider services, ICacheableResult result)
+    {
+        var options = services.GetService<McpCacheOptions>() ?? McpCacheOptions.Default;
+        result.CacheScope = CacheScope.Private;
+        result.TimeToLive = options.ListTimeToLive > TimeSpan.Zero ? options.ListTimeToLive : null;
     }
 
     public static async ValueTask<CallToolResult> CallToolAsync(
@@ -47,9 +70,20 @@ internal static class GatewayMcpHandlers
         // Auch hier, nicht nur bei tools/list: Ein Client, der seine Werkzeugliste aus dem
         // Zwischenspeicher nimmt, ruft nach dem Neuverbinden direkt tools/call — dann bliebe die
         // Zeile aus, obwohl eine Session steht.
-        LogClientCapabilitiesOnce(ctx.Services!, ctx.Server);
+        LogClientCapabilitiesOnce(ctx.Services!, ctx.Server, identity);
         var name = ctx.Params?.Name ?? throw new McpException("tools/call ohne Tool-Namen.");
         var args = ToJsonElement(ctx.Params.Arguments);
+
+        // Zweite Runde einer MRTR-Rueckfrage: Der Client hat unser Formular beantwortet und den
+        // Aufruf mit der Antwort wiederholt. Bei ausdruecklicher Zustimmung liegt die Freigabe
+        // danach im Store — der Aufruf unten findet sie und laeuft durch. Ohne Zustimmung passiert
+        // hier nichts, und der Aufruf endet wie jeder andere ohne Freigabe: in der Warteschlange.
+        if (ctx.Params.RequestState is { } requestState)
+        {
+            await ApprovalElicitation.TryAcceptAnswerAsync(
+                ctx.Services!, identity, new NamespacedToolName(name), requestState,
+                ctx.Params.InputResponses, ct).ConfigureAwait(false);
+        }
 
         ToolInvocationResult result;
         if (MetaToolService.IsMetaTool(name))
@@ -74,8 +108,45 @@ internal static class GatewayMcpHandlers
         // Werkzeug und Argument-Fingerabdruck gebunden, ein zweiter Aufruf fragt wieder.
         if (result.Status is InvocationStatus.ApprovalRequired && result.TaskId is { } approvalId)
         {
-            result = await RetryAfterElicitedApprovalAsync(
-                ctx, identity, name, args, approvalId, result, ct).ConfigureAwait(false);
+            // Zwei Bauformen derselben Rueckfrage — welche geht, sagt der Client.
+            //
+            // MRTR (ab 2026-07-28) beendet den Aufruf mit 'input_required' und laesst den Client
+            // wiederholen. Das ist der einzige Weg ohne Sitzung: Das SDK verweigert die alte
+            // Rueckfrage im stateless Betrieb ausdruecklich, und still in die Warteschlange zu
+            // fallen sah im Betrieb aus wie "der Client kann nicht fragen" — er konnte, nur anders.
+            //
+            // 'RequestState is null' ist die Schleifenbremse: Es wird HOECHSTENS EINMAL gefragt.
+            // Kam die Wiederholung schon und steht die Freigabe immer noch aus, war die Antwort ein
+            // Nein (oder der Vorgang ist abgelaufen). Ein zweites Formular waere eine Endlosfrage an
+            // einen Menschen, der gerade abgelehnt hat.
+            //
+            // Zusaetzlich ClientCapabilities.Elicitation abzufragen liegt nahe — waere hier aber
+            // eine Abfrage auf etwas, das es auf diesem Stand nicht mehr gibt. Nachgemessen, in
+            // dieser Reihenfolge: (1) Testclient mit Elicitation-Handler → 'Elicitation: False';
+            // (2) derselbe Client mit ausdruecklich gesetzter Capability → weiterhin 'False';
+            // (3) roher JSON-RPC-Aufruf mit '"clientCapabilities":{"elicitation":{}}' am Draht →
+            // ebenfalls 'False'. Die Faehigkeit ist in MRTR aufgegangen, und das SDK reicht sie auf
+            // 2026-07-28 nicht mehr durch. Wer sie trotzdem abfragte, wuerde auf dem neuen Stand
+            // NIE fragen — und die Rueckfrage waere still verschwunden, statt sichtbar zu fehlen.
+            //
+            // Der Preis steht fest und ist bekannt: Ein Client, der MRTR spricht, aber kein
+            // Formular anzeigen kann, laeuft im SDK in ein "no ElicitationHandler is registered" —
+            // eine Ausnahme statt der Warteschlangen-Meldung. Der Vorgang selbst ist da; er steht
+            // in der Warteschlange und laesst sich in der Oberflaeche entscheiden.
+            if (ctx.Params.RequestState is null && ctx.Server?.IsMrtrSupported == true)
+            {
+                if (await ApprovalElicitation.TryBuildInputRequiredAsync(
+                        ctx.Services!, identity, approvalId, new NamespacedToolName(name), ct)
+                    .ConfigureAwait(false) is { } askTheHuman)
+                {
+                    throw askTheHuman;
+                }
+            }
+            else
+            {
+                result = await RetryAfterElicitedApprovalAsync(
+                    ctx, identity, name, args, approvalId, result, ct).ConfigureAwait(false);
+            }
         }
 
         // invoke_tool ist zwar ein Meta-Tool, reicht aber das Ergebnis eines Upstreams durch —
@@ -129,7 +200,9 @@ internal static class GatewayMcpHandlers
             });
         }
 
-        return new ListResourcesResult { Resources = resources };
+        var result = new ListResourcesResult { Resources = resources };
+        ApplyCacheHint(ctx.Services!, result);
+        return result;
     }
 
     public static async ValueTask<ReadResourceResult> ReadResourceAsync(
@@ -198,7 +271,9 @@ internal static class GatewayMcpHandlers
                 Description = a.Description ?? $"Zentral verwaltetes Asset (v{a.LatestVersion.Value}).",
             }));
 
-        return new ListPromptsResult { Prompts = prompts };
+        var result = new ListPromptsResult { Prompts = prompts };
+        ApplyCacheHint(ctx.Services!, result);
+        return result;
     }
 
     public static async ValueTask<GetPromptResult> GetPromptAsync(
@@ -297,16 +372,25 @@ internal static class GatewayMcpHandlers
     /// laeuft der Initialize-Handshake noch, und <c>ClientCapabilities</c> ist null — der erste
     /// Versuch meldete deshalb fuer jeden Client „kann nichts".
     /// <para>
-    /// Der Wert ist nicht nur Neugier: Nur ein Client, der <b>Elicitation</b> anmeldet, kann eine
-    /// Freigabe im Moment des Aufrufs beim Menschen einholen, statt sie in die Warteschlange zu
-    /// legen.
+    /// Der Wert ist nicht nur Neugier: Nur ein Client, den man <b>fragen</b> kann, bekommt die
+    /// Freigabe im Moment des Aufrufs statt in der Warteschlange. Seit der Spec-Revision
+    /// 2026-07-28 gibt es dafuer zwei Wege, und sie schliessen einander nicht aus:
+    /// <b>MRTR</b> (der Aufruf endet mit <c>input_required</c>, der Client wiederholt ihn mit der
+    /// Antwort) und die alte, server-initiierte <b>Elicitation</b> (nur in stateful-Sitzungen).
+    /// Beides wird protokolliert, weil ein fehlender Dialog sonst nicht von einem fehlenden
+    /// Client-Feature zu unterscheiden ist.
+    /// </para>
+    /// <para>
+    /// <b>Sampling und Roots stehen hier nicht mehr:</b> Beide sind seit 2026-07-28 deprecated
+    /// (SEP-2577) und im SDK als veraltet markiert. Wir reichen sie ohnehin nicht durch
+    /// (ADR-0010) — sie zu protokollieren war Neugier, und die ist den Compiler-Fehler nicht wert.
     /// </para>
     /// </summary>
-    private static void LogClientCapabilitiesOnce(IServiceProvider services, McpServer? server)
+    private static void LogClientCapabilitiesOnce(IServiceProvider services, McpServer? server, IdentityId identity)
     {
         if (server is null
             || services.GetService<McpSessionRegistry>() is not { } registry
-            || !registry.ShouldLogCapabilities(server))
+            || !registry.ShouldLogCapabilities(server, identity))
         {
             return;
         }
@@ -317,13 +401,13 @@ internal static class GatewayMcpHandlers
             return;
         }
 
-        var caps = server.ClientCapabilities;
 #pragma warning disable CA1848 // Einmal je Session; der Codegen braechte hier nichts.
         log.LogInformation(
-            "MCP-Client: {Client} {Version}. Faehigkeiten — Elicitation: {Elicitation}, "
-            + "Sampling: {Sampling}, Roots: {Roots}.",
+            "MCP-Client: {Client} {Version}, Protokoll {Protocol}. Rueckfrage moeglich — "
+            + "MRTR: {Mrtr}, Elicitation: {Elicitation}.",
             server.ClientInfo?.Name ?? "?", server.ClientInfo?.Version ?? "?",
-            caps?.Elicitation is not null, caps?.Sampling is not null, caps?.Roots is not null);
+            server.NegotiatedProtocolVersion ?? "?",
+            server.IsMrtrSupported, server.ClientCapabilities?.Elicitation is not null);
 #pragma warning restore CA1848
     }
 

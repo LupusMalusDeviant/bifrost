@@ -41,6 +41,12 @@ public sealed class ApprovalElicitationTests : IClassFixture<GatewayFixture>
     /// <summary>
     /// Ein Client ohne die Fähigkeit darf nichts verlieren: Der Aufruf landet wie bisher in der
     /// Warteschlange, und die Meldung nennt die Id.
+    /// <para>
+    /// <b>Der Client ist hier bewusst auf <c>2025-11-25</c> festgenagelt.</b> „Kann nicht gefragt
+    /// werden" gibt es seit der Revision 2026-07-28 nicht mehr als Zustand: Dort meldet kein Client
+    /// eine Elicitation-Faehigkeit, MRTR ist das einzige Signal, und der Gateway fragt jeden, der es
+    /// spricht. Auf dem alten Stand gibt es den Fall weiter — und dort muss dieser Weg stimmen.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task Without_the_capability_the_call_still_goes_to_the_queue()
@@ -51,7 +57,7 @@ public sealed class ApprovalElicitationTests : IClassFixture<GatewayFixture>
         try
         {
             var (_, apiKey) = await _gw.SeedAdminAsync($"elic-ohne-{Guid.NewGuid():N}");
-            await using var client = await _gw.ConnectClientAsync(apiKey);
+            await using var client = await _gw.ConnectLegacyClientAsync(apiKey);
 
             var result = await client.CallToolAsync(
                 tool.Value, new Dictionary<string, object?> { ["message"] = "hi" },
@@ -81,8 +87,11 @@ public sealed class ApprovalElicitationTests : IClassFixture<GatewayFixture>
         await Policy.SetAsync(tool, true, ct);
         try
         {
+            // Alter Stand ohne Formular-Handler: Dieser Test handelt von der Warteschlange und vom
+            // Verbrauch der Freigabe, nicht von der Rueckfrage. Ein Client, der gefragt werden
+            // kann, wuerde hier gefragt — und der Test pruefte etwas anderes als er behauptet.
             var (_, apiKey) = await _gw.SeedAdminAsync($"elic-einmal-{Guid.NewGuid():N}");
-            await using var client = await _gw.ConnectClientAsync(apiKey);
+            await using var client = await _gw.ConnectLegacyClientAsync(apiKey);
             var args = new Dictionary<string, object?> { ["message"] = "einmal" };
 
             var first = await client.CallToolAsync(tool.Value, args, cancellationToken: ct);
@@ -120,8 +129,10 @@ public sealed class ApprovalElicitationTests : IClassFixture<GatewayFixture>
         await Policy.SetAsync(tool, true, ct);
         try
         {
+            // Alter Stand ohne Formular-Handler — siehe oben: Hier geht es um die Wirkung einer
+            // Ablehnung im Store, nicht um den Weg zum Menschen.
             var (_, apiKey) = await _gw.SeedAdminAsync($"elic-nein-{Guid.NewGuid():N}");
-            await using var client = await _gw.ConnectClientAsync(apiKey);
+            await using var client = await _gw.ConnectLegacyClientAsync(apiKey);
             var args = new Dictionary<string, object?> { ["message"] = "nein" };
 
             await client.CallToolAsync(tool.Value, args, cancellationToken: ct);
