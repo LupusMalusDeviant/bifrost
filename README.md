@@ -59,17 +59,27 @@ Built on the [official C# MCP SDK](https://github.com/modelcontextprotocol/cshar
 docker compose up -d
 ```
 
+The first start issues a short-lived **setup token** and writes it to a file readable only by the
+service account. It is **never** printed to the log — a credential in the log is a credential in
+every support ticket, every log aggregator and every backup of the log directory, and it is the one
+place nobody ever rotates.
+
 ```bash
-docker compose logs bifrost
+docker compose exec bifrost cat /data/config/bootstrap-token.txt
 ```
 
-The first start prints an agent **API key** (`mcpk_…`) and a **UI password** for user `admin`, once. Then:
+Open `http://localhost:8080/setup`, paste the token, and choose your own admin username and
+password. The token is single-use and expires; redeeming it deletes the file.
+
+Create the agent API key afterwards from **RBAC → Keys** in the web UI — it is shown once, together
+with a ready-made client configuration:
 
 ```bash
 claude mcp add --transport http bifrost http://localhost:8080/mcp --header "Authorization: Bearer <API-KEY>"
 ```
 
-The web UI is at `http://localhost:8080`. Add upstream servers, roles and profiles from there or via the REST API — no config files. Always run behind a TLS reverse proxy in production; see [docs/operations.md](docs/operations.md).
+Add upstream servers, roles and profiles from the web UI or the REST API — no config files. Always
+run behind a TLS reverse proxy in production; see [docs/operations.md](docs/operations.md).
 
 ## Building from source
 

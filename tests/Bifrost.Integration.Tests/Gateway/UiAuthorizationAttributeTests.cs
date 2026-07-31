@@ -50,8 +50,15 @@ public class UiAuthorizationAttributeTests
         authorize!.Policy.Should().Be(expectedPolicy);
     }
 
-    /// <summary>Seiten, die absichtlich ohne Anmeldung erreichbar sind — sonst käme niemand hinein.</summary>
-    private static readonly string[] PublicByDesign = ["Login"];
+    /// <summary>
+    /// Seiten, die absichtlich ohne Anmeldung erreichbar sind — sonst käme niemand hinein.
+    /// <para>
+    /// <c>Setup</c> ist der Erstzugang (WP3.4). Sie ist eine reine Eingabemaske: Sie verrät nicht,
+    /// ob gerade ein Token aussteht, und sie kann nichts anlegen. Die Entscheidung fällt im Server,
+    /// gegen den gespeicherten Hash — eine Anmeldung davorzuhängen wäre ein Henne-Ei.
+    /// </para>
+    /// </summary>
+    private static readonly string[] PublicByDesign = ["Login", "Setup"];
 
     [Fact]
     public void No_routable_page_is_left_unauthorized()

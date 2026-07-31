@@ -1,0 +1,63 @@
+@page "/setup"
+@layout EmptyLayout
+@attribute [AllowAnonymous]
+
+@*
+    Erstzugang (WP3.4). Bewusst genauso gebaut wie die Anmeldung: nativer Form-POST an
+    /auth/setup, weil am Ende ein Cookie gesetzt wird und ein Blazor-Circuit das nicht kann.
+
+    Die Seite weiss NICHT, ob gerade ein Token aussteht — sie ist eine reine Eingabemaske. Das ist
+    Absicht: Eine Seite, die "hier ist gerade ein Erstzugang offen" verraet, ist ein Hinweis fuer
+    jeden, der die Adresse aufruft. Die Entscheidung faellt beim Einloesen, im Server, gegen den
+    gespeicherten Hash.
+*@
+<div class="login-wrap">
+    <div class="card login-card">
+        <BrandMark Tagline="Die Brücke zu deinen Werkzeugen." />
+        <h3 style="margin-top:0">Erstzugang einrichten</h3>
+        <p class="muted" style="margin-top:0">
+            Beim ersten Start legt der Gateway ein Setup-Token an und schreibt es in
+            <code>&lt;datadir&gt;/config/bootstrap-token.txt</code> — nicht ins Log. Im Container:
+            <code>docker compose exec bifrost cat /data/config/bootstrap-token.txt</code>.
+            Das Token gilt einmal und nur für kurze Zeit.
+        </p>
+        <form action="/auth/setup" method="post">
+            <AntiforgeryToken />
+            <label for="token">Setup-Token</label>
+            <input id="token" name="token" autocomplete="off" autofocus />
+            <label for="username">Benutzername</label>
+            <input id="username" name="username" autocomplete="username" />
+            <label for="password">Passwort</label>
+            <input id="password" name="password" type="password" autocomplete="new-password" />
+            <button type="submit" style="width:100%; margin-top:1rem">Zugang anlegen</button>
+        </form>
+        @if (Failed is not null)
+        {
+            <p class="msg-err" style="margin-bottom:0">@Reason(Failed)</p>
+        }
+        <p class="muted" style="margin-bottom:0">
+            Zugang bereits eingerichtet? <a href="/login">Zur Anmeldung</a>.
+        </p>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "failed")]
+    public string? Failed { get; set; }
+
+    // Der Grund kommt als Code aus der Adresszeile; angezeigt wird ausschliesslich ein Text aus
+    // dieser Liste. Fremde Inhalte erreichen die Seite so gar nicht erst.
+    private static string Reason(string code) => code switch
+    {
+        "NotPending" => "Es steht kein Erstzugang aus — entweder ist er schon eingelöst, oder diese "
+            + "Installation hatte bereits Zugänge. Ein neues Token gibt es nur lokal auf dem Rechner "
+            + "des Gateways.",
+        "Expired" => "Die Frist des Setup-Tokens ist verstrichen; es ist entwertet. Ein neues stellt "
+            + "der nächste Start aus, solange noch niemand eingerichtet ist.",
+        "InvalidToken" => "Das Setup-Token passt nicht.",
+        "UsernameTaken" => "Dieser Benutzername ist vergeben.",
+        "PasswordTooShort" => "Das Passwort ist zu kurz — mindestens 12 Zeichen.",
+        "CredentialsMissing" => "Benutzername und Passwort sind Pflicht.",
+        _ => "Der Erstzugang konnte nicht eingerichtet werden.",
+    };
+}

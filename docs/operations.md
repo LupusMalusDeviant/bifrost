@@ -54,7 +54,13 @@ docker compose up -d           # SQLite-Default, ein Volume
 curl -fsS http://localhost:8080/healthz
 ```
 
-Danach die Bootstrap-Zugangsdaten abholen: `docker compose logs bifrost`.
+Danach den Erstzugang einrichten — das Setup-Token liegt in einer Datei, **nicht** im Log:
+
+```bash
+docker compose exec bifrost cat /data/config/bootstrap-token.txt
+```
+
+Details unter [Erstzugang](#erstzugang).
 
 ### Es gibt kein `latest`
 
@@ -191,17 +197,57 @@ Zwei Dinge nimmt der Gateway einem dabei ab, und zwar ohne Zutun:
 Der DataProtection-Anwendungsname bleibt aus demselben Grund `MCPMCP` — er geht in die
 Schlüsselableitung ein, und ihn zu ändern machte jeden gespeicherten Geheimtext unlesbar.
 
-Beim **Erststart** legt der Gateway zwei Zugänge an und loggt sie **genau einmal** (Henne-Ei — danach nie wieder):
+<a id="erstzugang"></a>
+
+### Erstzugang
+
+Beim **Erststart** legt der Gateway **keinen** Zugang an. Er stellt ein einmaliges, kurzlebiges
+**Setup-Token** aus und schreibt es in eine Datei mit restriktiven Rechten:
 
 ```
-ERSTSTART: Bootstrap-Admin (Agent) angelegt. API-Key (wird NIE wieder angezeigt): mcpk_...
-ERSTSTART: UI-Admin 'admin' angelegt. Passwort (wird NIE wieder angezeigt): ...
+<datadir>/config/bootstrap-token.txt      # Unix 0600, Windows ACL ohne Vererbung
 ```
 
-- **API-Key** → für Agenten (Claude Code, MCP Inspector) und die REST-Fassade.
-- **UI-Passwort** → Login der Web-UI (`http://localhost:8080`, Benutzer `admin`).
+Im Container:
 
-Beide Werte sofort sichern. Verloren? Siehe [Zugang zurücksetzen](#zugang-zurücksetzen).
+```bash
+docker compose exec bifrost cat /data/config/bootstrap-token.txt
+```
+
+Damit dann `http://localhost:8080/setup` aufrufen und **Benutzername und Passwort selbst wählen**.
+Nach dem Einlösen ist das Token tot und die Datei gelöscht; die Anmeldung ist sofort aktiv.
+
+Einen **API-Key** für Agenten (Claude Code, MCP Inspector, REST-Fassade) erzeugt der angemeldete
+Administrator in der Oberfläche unter **RBAC → Keys**. Er wird dort einmal angezeigt, mitsamt
+fertiger Client-Konfiguration.
+
+> **Warum nicht mehr über das Log.** Bis v0.11 standen Adminpasswort und API-Key als Klartext im
+> Anwendungslog. Das ist ein Geheimnis an genau dem Ort, den man weitergibt, wenn etwas nicht
+> funktioniert: Supportanfrage, Ticketanhang, Logaggregation, Sicherung des Logverzeichnisses. Und
+> es ist der Ort, den niemand rotiert. `docker compose logs bifrost` nennt jetzt nur noch den
+> **Pfad** der Übergabedatei und die Frist — nicht das Token.
+
+Das Token gilt **eine Stunde** (`BIFROST_BOOTSTRAP_TTL_MINUTES`) und genau **einmal**. Verstreicht
+die Frist, ohne dass jemand eingerichtet ist, stellt der nächste Start ein neues aus — eine
+Installation, in die niemand hineinkommt, ist kein Sicherheitsgewinn. Ist der Zugang dagegen
+einmal eingerichtet, gibt es **kein zweites Token über das Netz**: siehe
+[Zugang zurücksetzen](#zugang-zurücksetzen).
+
+**Bestehende Installationen** sind davon nicht betroffen. Wer bereits einen UI-Zugang hat, bekommt
+beim ersten Start nach dem Upgrade nur einen Vermerk in `config/bootstrap.json` und meldet sich
+unverändert an. Es wird kein Passwort zurückgesetzt und kein Token ausgestellt.
+
+**Restrisiko, ausdrücklich:** Die Übergabedatei liegt im Datenverzeichnis. Eine Sicherung, die
+*innerhalb* der Frist entsteht, trägt das Token im Klartext mit. Danach nicht mehr — die Datei wird
+beim Einlösen und beim Ablauf gelöscht. Das ist der bewusste Tausch gegen den Logeintrag: ein
+Fenster von einer Stunde in einer Datei mit `0600` statt eines dauerhaften Eintrags in einem
+Archiv, das ohnehin herumgereicht wird.
+
+`config/bootstrap.json` gehört zum Datenverzeichnis und wird mitgesichert. Darin steht **nur der
+Hash** des Tokens, nie das Token selbst. Ist die Datei vorhanden, aber unlesbar, **bricht der Start
+ab** statt sie als „frische Installation" zu deuten — sonst würde ausgerechnet ein Lesefehler ein
+neues Setup-Token auf einer produktiven Installation erzeugen. Die Datei dann prüfen oder aus der
+Sicherung zurückholen.
 
 ## Konfiguration (Env-Vars)
 
@@ -211,6 +257,7 @@ Beide Werte sofort sichern. Verloren? Siehe [Zugang zurücksetzen](#zugang-zurü
 | `BIFROST_DB_PROVIDER` | `sqlite` | `sqlite` oder `postgres` |
 | `BIFROST_DB_CONNECTION` | `Data Source=<datadir>/bifrost.db` | Connection-String (bei Postgres Pflicht) |
 | `BIFROST_AUDIT_MODE` | `best-effort` | `best-effort` verwirft bei Überlast gezählt; `compliance` meldet Überlast explizit und retryt DB-Fehler mit Backpressure |
+| `BIFROST_BOOTSTRAP_TTL_MINUTES` | `60` | Gültigkeitsdauer des Setup-Tokens beim [Erstzugang](#erstzugang). Ungültige Angabe fällt auf den Default zurück |
 | `ASPNETCORE_URLS` | `http://+:8080` (Container) | Bind-Adresse/Port |
 | `BIFROST_KEYRING_PROTECTION` | *(nicht gesetzt)* | Ausdrückliche Betriebsart: `certificate`, `file-secret` oder `none` (siehe [Key-Ring schützen](#key-ring-schützen)). Nicht gesetzt = **keine Wahl getroffen**, der Start warnt |
 | `BIFROST_KEYRING_CERT_PATH` | *(nicht gesetzt)* | PFX-Zertifikat zum Verschlüsseln des Key-Rings |
@@ -1499,7 +1546,8 @@ Was dann zu tun ist:
    (ADR-0024 E3: Datenbank und Key-Ring gehören in dieselbe Sicherung, weil sie sich nur gemeinsam
    benutzen lassen).
 
-Die Recovery-Kommandos (`--reset-ui-admin`, `--issue-bootstrap-key`, `--db-unblock`) laufen **vor**
+Die Recovery-Kommandos (`--bootstrap-init`, `--reset-ui-admin`, `--issue-bootstrap-key`,
+`--db-unblock`) laufen **vor**
 dieser Prüfung und bleiben deshalb erreichbar, wenn der Key-Ring gerade das zweite Problem ist.
 
 Ein **vollständig ausgetauschter** Ring (kein einziger der zuletzt gesehenen Schlüssel ist noch da)
@@ -1525,9 +1573,15 @@ nirgends, in keiner Form.
 
 ## Zugang zurücksetzen
 
-Bootstrap-Zugänge werden nur bei **leerer** DB erzeugt. Für verlorene Zugänge gibt es zwei Kommandos, die gegen die konfigurierte Datenbank laufen, den Zugang **einmalig** ausgeben und sich beenden, ohne den Gateway zu starten:
+Ein Setup-Token entsteht von selbst **nur**, solange die Installation noch keinen Zugang hat (siehe
+[Erstzugang](#erstzugang)). Danach gibt es über das Netz keinen Weg mehr zu einem zweiten — das ist
+der Punkt. Für verlorene Zugänge gibt es Kommandos, die gegen die konfigurierte Datenbank laufen,
+den Zugang **einmalig auf der Konsole** ausgeben und sich beenden, ohne den Gateway zu starten:
 
 ```bash
+# Neues Setup-Token ausstellen (auch auf einer Installation mit bestehenden Zugängen):
+docker compose run --rm bifrost dotnet Bifrost.Server.dll --bootstrap-init
+
 # UI-Passwort zurücksetzen (Default-Benutzer "admin"; Rolle bleibt unverändert,
 # ein fehlender Nutzer wird als Admin angelegt):
 docker compose run --rm bifrost dotnet Bifrost.Server.dll --reset-ui-admin
@@ -1545,6 +1599,22 @@ docker compose run --rm bifrost dotnet Bifrost.Server.dll --db-unblock
 Ohne Container analog mit `dotnet run --project src/Bifrost.Server -- --reset-ui-admin`. Den Notfall-Zugang nach Gebrauch wieder entfernen, falls er nur der Wiederherstellung diente.
 
 - **UI-Passwort vergessen, aber anderer Admin existiert** → einfacher über die UI (Seite „UI-Nutzer") neu setzen.
+
+### Der lokale Recovery-Nachweis
+
+`--bootstrap-init` stellt auf einer Installation mit bestehenden Zugängen nur dann ein Token aus,
+wenn es **Schreibzugriff auf das Datenverzeichnis** nachweisen kann. Geprüft wird das durch Tun: Es
+wird eine Probedatei angelegt, zurückgelesen und wieder entfernt.
+
+Das ist keine erfundene Hürde, sondern die Benennung der richtigen. Wer in das Datenverzeichnis
+schreiben kann, kann die Datenbank austauschen und den Dienst mit leerem Volume neu starten — er
+bekäme ohnehin einen frischen Erstzugang. Was der Nachweis zuverlässig ausschließt, ist der Weg,
+um den es geht: **über das Netz**. Am HTTP-Endpunkt gibt es keinen Weg, ein Token *anzufordern*;
+dort lässt sich nur eines *einlösen*, das bereits ausgestellt ist.
+
+Alle drei Wege — Ausstellen, Zurücksetzen, Notfall-Key — schreiben einen Audit-Eintrag
+(`Kind=Authentication`, `Origin=System`, `Tool=recovery`). Er steht in der Datenbank, nicht nur im
+Log des beendeten Prozesses.
 
 ## Audit-Betriebsmodi
 

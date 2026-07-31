@@ -187,7 +187,7 @@ Vorgabe für Neuanlagen fehlt. Das gehört zu WP3.2, wo die Erzeugungswege ohneh
 | 3.1 Host-Execution-Policy + Bestandsübernahme | `implementiert` | 607 Core-Tests, Architekturtest über Reflexion und IL |
 | 3.2 Container als Standard | `implementiert` | ein Startmodell für stdio und CLI, echte Container-Tests, +50 Tests |
 | 3.3 Key-Ring-Setup | `implementiert` | drei Betriebsmodi, Verlusterkennung mit zwei Zeugen, FR-P048 erledigt |
-| 3.4 Bootstrap statt Log-Credentials | `offen` | wartet ohnehin auf 3.3 (`Program.cs`) |
+| 3.4 Bootstrap statt Log-Credentials | `implementiert` | Log-Mithörer belegt: kein Secret im Log; bestehende Admins bleiben |
 | 3.5 Security- und Supply-Chain-Gates | `implementiert` | Negativnachweis je Gate außer Containerscan |
 | 3.6 Sicherheitsinvarianten | `implementiert` | 62 Tests, zwei echte SSRF-Funde |
 
@@ -219,6 +219,28 @@ Zeitüberschreitung im Container weiter, denn den Client zu töten reicht nicht.
 Die Kernfrage ist entschieden: **ein** Startmodell. `Cli/ContainerLaunchPolicy.cs` ist gelöscht,
 stdio und CLI gehen durch dieselbe Mindestpolicy und unterscheiden sich nur in der Lebensdauer
 (`PerInvocation` gegen `Session`) und darin, ob stdin offen bleibt.
+
+### WP3.4: Ein Widerspruch in der Aufgabenkarte, offengelegt statt aufgelöst
+
+Die Karte verlangte in Auftrag 3 die Ausgabe „an eine interaktive CLI oder in eine restriktive
+Bootstrapdatei" und verbot in der Stop-Bedingung „ein Token im Klartext in irgendeiner Ablage, auch
+nicht kurz". Beides zusammen geht nicht. Der Agent hat den Widerspruch benannt, seine Lesart
+begründet (dauerhafte Ablage trägt nur den Hash, die Übergabedatei ist kein Speicher) und die Stelle
+markiert, die zurückzudrehen wäre — statt sich still für eine Seite zu entscheiden.
+
+Bestätigt: Die Bootstrapdatei stammt aus dem Pflichtenheft, die Stop-Bedingung meinte die dauerhafte
+Ablage. Das Restrisiko — eine Sicherung *innerhalb* der Frist trägt die Datei mit — steht in
+`docs/operations.md`.
+
+**Der Nachweis zum DoD ist der wertvollste Teil.** Er holt das *tatsächlich ausgestellte* Token aus
+der Übergabedatei und prüft, dass weder es noch eines seiner Acht-Zeichen-Bruchstücke in irgendeinem
+Logkanal auftaucht — nicht ein erfundenes Token gegen einen erfundenen Pfad. Davor steht der
+Nachweis, dass überhaupt mitgeschrieben wurde und überhaupt ein Token existierte; ohne den wäre der
+Vergleich auch dann grün, wenn nichts passiert ist.
+
+**Nachtrag des Lead:** Der `README`-Abschnitt zum Erstzugang schickte Betreiber weiterhin ins Log
+nach einem Passwort, das dort bewusst nicht mehr steht — die schlimmste Sorte veralteter Doku, weil
+sie wie ein Fehler im Produkt aussieht. Nachgezogen.
 
 ### WP3.3: Der Verlust wird jetzt erkannt, statt überschrieben
 

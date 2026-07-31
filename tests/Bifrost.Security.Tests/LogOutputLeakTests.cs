@@ -4,6 +4,7 @@ using System.Text.Json;
 using AwesomeAssertions;
 using Bifrost.Abstractions;
 using Bifrost.Security.Tests.Infrastructure;
+using Bifrost.Server.Bootstrap;
 using Microsoft.Extensions.Logging;
 using Xunit;
 
@@ -126,6 +127,71 @@ public class LogOutputLeakTests : IClassFixture<SecurityGatewayFixture>, IDispos
             + "Betrieb einsammelt — und dort laenger als in der Datenbank");
         SecretCorpus.FirstLeakIn(_trace.Text).Should().BeNull(
             "System.Diagnostics.Trace ist der Kanal, den die Logkonfiguration nicht erfasst");
+    }
+
+    /// <summary>
+    /// <b>Der Abnahmetest zu WP3.4.</b> Der normale erste Start schreibt weder ein Adminpasswort
+    /// noch einen API-Key noch das Setup-Token in irgendeinen Logkanal.
+    /// <para>
+    /// <b>Warum der Wert hier zur Laufzeit geholt wird und nicht aus dem Korpus kommt:</b> Das
+    /// Setup-Token entsteht beim Start. Ein fest verdrahteter Wert koennte hoechstens pruefen, dass
+    /// <em>irgendein</em> Wert nicht auftaucht — nicht, dass genau der auftaucht, den diese Instanz
+    /// gerade ausgestellt hat. Geprueft wird deshalb gegen den Klartext aus der Uebergabedatei,
+    /// also gegen den Wert, den ein Angreifer im Logarchiv suchen wuerde. Zusaetzlich laeuft der
+    /// Korpuswert <see cref="SecretCorpus.BootstrapToken"/> durch den Einloesepfad: Er deckt die
+    /// andere Haelfte ab — ein <em>vorgelegtes</em> Geheimnis, das in einer Fehlerzeile mitreist.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task The_first_start_writes_no_bootstrap_secret_to_any_log_channel()
+    {
+        var ct = TestContext.Current.CancellationToken;
+
+        // Zuerst den Host wirklich starten: Die Fabrik baut ihn erst beim ersten Zugriff, und ohne
+        // Start gaebe es den Erstzugangs-Pfad nicht, den dieser Test pruefen soll.
+        using var anonymous = _gateway.CreateApiClient(null);
+
+        // Dann der Nachweis, dass dieser Lauf ueberhaupt ein Erstzugangs-Token erzeugt hat. Ohne
+        // ihn waere der Test gruen, weil nichts passiert ist.
+        var handoverPath = BootstrapLayout.HandoverPathFor(_gateway.DataDirectory);
+        File.Exists(handoverPath).Should().BeTrue(
+            "der erste Start einer leeren Instanz stellt ein Setup-Token aus — sonst prueft das "
+            + "Folgende einen Pfad, den es nicht gab");
+
+        var token = (await File.ReadAllTextAsync(handoverPath, ct))
+            .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Single(line => line.StartsWith(BootstrapToken.Prefix, StringComparison.Ordinal));
+
+        // Ein abgelehnter Einloeseversuch mit einem Korpuswert — der unauthentifizierte
+        // Schreibweg, auf dem ein vorgelegtes Geheimnis in die Ausnahmebehandlung geraet.
+        using var rejected = await anonymous.PostAsync(
+            "/auth/setup",
+            new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["token"] = SecretCorpus.BootstrapToken,
+                ["username"] = "leck-probe",
+                ["password"] = "ein-langes-passwort",
+            }),
+            ct);
+        (await rejected.Content.ReadAsStringAsync(ct)).Should().NotContainAny(SecretCorpus.All);
+
+        _gateway.Log.Count.Should().BeGreaterThan(0, "sonst prueft der folgende Vergleich einen leeren Text");
+
+        _gateway.Log.Text.Should().NotContain(token,
+            "das Setup-Token im Anwendungslog waere genau der Fehler, den dieses Paket abschafft — "
+            + "ein Geheimnis an dem Ort, den man weitergibt, wenn etwas nicht funktioniert");
+        _trace.Text.Should().NotContain(token);
+
+        // Und die Bruchstuecke: Ein truncierender Formatierer macht aus einem Geheimnis kein
+        // halbes. Acht Zeichen genuegen, um es in einem Logarchiv wiederzufinden.
+        foreach (var fragment in SecretCorpus.Fragments(token[BootstrapToken.Prefix.Length..]))
+        {
+            _gateway.Log.Text.Should().NotContain(fragment);
+            _trace.Text.Should().NotContain(fragment);
+        }
+
+        SecretCorpus.FirstLeakIn(_gateway.Log.Text).Should().BeNull();
+        SecretCorpus.FirstLeakIn(_trace.Text).Should().BeNull();
     }
 
     /// <summary>

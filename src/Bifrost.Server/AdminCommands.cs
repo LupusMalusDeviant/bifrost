@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Bifrost.Abstractions;
 using Bifrost.Persistence;
 using Bifrost.Persistence.Startup;
+using Bifrost.Server.Bootstrap;
 using Microsoft.EntityFrameworkCore;
 
 namespace Bifrost.Server;
@@ -15,6 +16,21 @@ internal static class AdminCommands
 {
     public const string ResetUiAdmin = "--reset-ui-admin";
     public const string IssueBootstrapKey = "--issue-bootstrap-key";
+
+    /// <summary>
+    /// Stellt ein neues Setup-Token aus und gibt es <b>auf der Konsole</b> aus (WP3.4).
+    /// <para>
+    /// Der Weg für eine Installation, deren Übergabedatei jemand weggeworfen hat, und der einzige,
+    /// der auf einer Installation mit bestehenden Zugängen überhaupt noch ein Token liefert — dort
+    /// aber nur gegen den lokalen Recovery-Nachweis (<see cref="IBootstrapRecoveryProof"/>).
+    /// </para>
+    /// <para>
+    /// Er läuft im Serverprozess und nicht in der CLI, aus demselben Grund wie die
+    /// Key-Ring-Kommandos: Hier entsteht ein Geheimnis, und es soll den Rechner nicht verlassen.
+    /// Im Container: <c>docker compose run --rm bifrost dotnet Bifrost.Server.dll --bootstrap-init</c>.
+    /// </para>
+    /// </summary>
+    public const string BootstrapInit = "--bootstrap-init";
 
     /// <summary>
     /// Der Ausweg aus <c>BFR-DB-0101</c> <b>ohne laufenden Gateway</b> (M2, WP2.7).
@@ -34,6 +50,7 @@ internal static class AdminCommands
     public static bool IsAdminCommand(string[] args)
         => args.Contains(ResetUiAdmin)
             || args.Contains(IssueBootstrapKey)
+            || args.Contains(BootstrapInit)
             || args.Contains(UnblockDatabase);
 
     public static async Task<int> RunAsync(WebApplication app, string[] args, CancellationToken ct = default)
@@ -66,6 +83,12 @@ internal static class AdminCommands
                     ? $"UI-Nutzer '{username}' zurückgesetzt (Rolle unverändert: {result.Role})."
                     : $"UI-Admin '{username}' neu angelegt.");
                 Console.WriteLine($"Passwort (wird NICHT gespeichert und nie wieder angezeigt): {result.Password}");
+                await AuditAsync(
+                    app,
+                    result.WasExisting
+                        ? $"Recovery: Passwort des UI-Nutzers '{username}' ueber {ResetUiAdmin} zurueckgesetzt."
+                        : $"Recovery: UI-Admin '{username}' ueber {ResetUiAdmin} neu angelegt.",
+                    ct);
             }
 
             if (args.Contains(IssueBootstrapKey))
@@ -77,6 +100,16 @@ internal static class AdminCommands
                 Console.WriteLine($"Notfall-Identität '{result.IdentityName}' mit Global-Grant angelegt.");
                 Console.WriteLine($"API-Key (wird NICHT gespeichert und nie wieder angezeigt): {result.ApiKey}");
                 Console.WriteLine("Nach Gebrauch entfernen, falls nur zur Wiederherstellung gedacht.");
+                await AuditAsync(
+                    app,
+                    $"Recovery: Notfall-Identitaet '{result.IdentityName}' mit Global-Grant ueber "
+                    + $"{IssueBootstrapKey} angelegt.",
+                    ct);
+            }
+
+            if (args.Contains(BootstrapInit))
+            {
+                return await RunBootstrapInitAsync(app, ct);
             }
 
             return 0;
@@ -85,6 +118,86 @@ internal static class AdminCommands
         {
             Console.Error.WriteLine($"Kommando fehlgeschlagen: {ex.Message}");
             return 1;
+        }
+    }
+
+    /// <summary>
+    /// Stellt ein Setup-Token aus und gibt es auf der <b>Konsole</b> aus — nicht ins Log.
+    /// <para>
+    /// Der Unterschied ist die halbe Miete dieses Pakets: Die Standardausgabe eines
+    /// <c>docker compose run</c> gehört dem Menschen, der davorsitzt. Das Anwendungslog gehört der
+    /// Logaggregation, dem Ticketanhang und der Sicherung des Logverzeichnisses.
+    /// </para>
+    /// </summary>
+    private static async Task<int> RunBootstrapInitAsync(WebApplication app, CancellationToken ct)
+    {
+        var bootstrap = app.Services.GetRequiredService<IBootstrapService>();
+
+        // Erst sagen, was gilt. Ein Betreiber, der dieses Kommando aufruft, weiss meistens nicht
+        // mehr, in welchem Zustand die Installation ist — und das neue Token entwertet ein
+        // eventuell noch ausstehendes.
+        var before = await bootstrap.GetStatusAsync(ct);
+        Console.WriteLine($"Bisheriger Zustand: {before.Phase}"
+            + (before.IsPending ? $" (ein Token stand noch aus, gueltig bis {before.ExpiresAt:u} — es gilt ab jetzt nicht mehr)" : string.Empty));
+
+        var result = await bootstrap.IssueAsync(BootstrapOrigin.LocalRecovery, ct);
+
+        if (result.Outcome is not BootstrapOutcome.Issued)
+        {
+            Console.Error.WriteLine($"Kein Setup-Token ausgestellt: {result.Description}");
+            return 1;
+        }
+
+        Console.WriteLine("Setup-Token ausgestellt. Es gilt EINMAL und nur bis:");
+        Console.WriteLine($"  {result.ExpiresAt:u}");
+        Console.WriteLine();
+        Console.WriteLine($"  {result.Token}");
+        Console.WriteLine();
+        Console.WriteLine($"Es steht auch in {result.HandoverPath}");
+        Console.WriteLine($"  Rechte: {result.HandoverPermissions?.Description ?? "unbekannt"}");
+        Console.WriteLine("Einloesen in der Web-UI unter /setup. Im Anwendungslog steht es nicht.");
+
+        await AuditAsync(
+            app,
+            "Recovery: Setup-Token nach lokalem Nachweis ueber --bootstrap-init ausgestellt.",
+            ct);
+        return 0;
+    }
+
+    /// <summary>
+    /// Schreibt einen Auditeintrag <b>direkt</b> in die Datenbank.
+    /// <para>
+    /// Der übliche Weg über <c>IAuditSink</c> läuft hier ins Leere: Diese Kommandos starten den
+    /// Gateway nicht, und ohne ihn läuft auch der Batch-Writer nicht, der den Channel leert. Ein
+    /// Eintrag, der nur im Arbeitsspeicher eines gleich beendeten Prozesses stand, ist kein Audit.
+    /// </para>
+    /// <para>
+    /// Fehlschläge werden geschluckt: Ein Kommando, das den Zugang gerade wiederhergestellt hat,
+    /// darf nicht daran scheitern, dass die Auditzeile nicht geschrieben werden konnte — der
+    /// Betreiber hätte dann weder Zugang noch Eintrag.
+    /// </para>
+    /// </summary>
+    private static async Task AuditAsync(WebApplication app, string detail, CancellationToken ct)
+    {
+        try
+        {
+            var factory = app.Services.GetRequiredService<IDbContextFactory<BifrostDbContext>>();
+            await using var db = await factory.CreateDbContextAsync(ct);
+            db.AuditEvents.Add(new AuditEventRow
+            {
+                Timestamp = DateTimeOffset.UtcNow,
+                Origin = (int)CallOrigin.System,
+                Kind = (int)AuditEventKind.Authentication,
+                Tool = "recovery",
+                Status = (int)InvocationStatus.Success,
+                Detail = detail,
+            });
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            Console.Error.WriteLine(
+                $"Hinweis: Der Auditeintrag zu diesem Kommando konnte nicht geschrieben werden ({exception.Message}).");
         }
     }
 

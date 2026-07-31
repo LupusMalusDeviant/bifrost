@@ -4,20 +4,19 @@ using Bifrost.Core.Packaging;
 using Bifrost.Core.Upstreams;
 using Bifrost.Persistence;
 using Bifrost.Persistence.Audit;
-using Microsoft.EntityFrameworkCore;
+using Bifrost.Server.Bootstrap;
 
 namespace Bifrost.Server;
 
 /// <summary>
 /// Startreihenfolge des Gateways (WP4.2): Schema sicherstellen → RBAC hydratisieren →
-/// Bootstrap-Admin (nur bei leerer DB) → persistierte Upstreams wiederherstellen.
+/// Erstzugang klären (WP3.4) → persistierte Upstreams wiederherstellen.
 /// Beim Stop werden die Upstreams gedraint (ADR-0005).
 /// </summary>
 public sealed partial class GatewayStartupService : IHostedService
 {
     private const string UiInternalIdentityName = "ui-internal";
 
-    private readonly IDbContextFactory<BifrostDbContext> _factory;
     private readonly DatabaseInitializer _databaseInitializer;
     private readonly PersistentRbacStore _rbacStore;
     private readonly ToolDescriptionOverrideStore _descriptionOverrides;
@@ -28,8 +27,7 @@ public sealed partial class GatewayStartupService : IHostedService
     private readonly ConnectorPackageResolver _packages;
     private readonly ToolDefinitionPinStore _toolPins;
     private readonly IAuditSink _audit;
-    private readonly IApiKeyService _apiKeys;
-    private readonly IUiUserService _uiUsers;
+    private readonly IBootstrapService _bootstrap;
     private readonly Bifrost.Web.UiInternalIdentity _uiInternal;
     private readonly IUpstreamConfigStore _configStore;
     private readonly UpstreamSupervisor _supervisor;
@@ -38,7 +36,6 @@ public sealed partial class GatewayStartupService : IHostedService
     private readonly ILogger<GatewayStartupService> _logger;
 
     public GatewayStartupService(
-        IDbContextFactory<BifrostDbContext> factory,
         DatabaseInitializer databaseInitializer,
         PersistentRbacStore rbacStore,
         ToolDescriptionOverrideStore descriptionOverrides,
@@ -49,8 +46,7 @@ public sealed partial class GatewayStartupService : IHostedService
         ConnectorPackageResolver packages,
         ToolDefinitionPinStore toolPins,
         IAuditSink audit,
-        IApiKeyService apiKeys,
-        IUiUserService uiUsers,
+        IBootstrapService bootstrap,
         Bifrost.Web.UiInternalIdentity uiInternal,
         IUpstreamConfigStore configStore,
         UpstreamSupervisor supervisor,
@@ -59,7 +55,6 @@ public sealed partial class GatewayStartupService : IHostedService
         ILogger<GatewayStartupService> logger)
     {
         _hostExecution = hostExecution;
-        _factory = factory;
         _databaseInitializer = databaseInitializer;
         _rbacStore = rbacStore;
         _descriptionOverrides = descriptionOverrides;
@@ -70,8 +65,7 @@ public sealed partial class GatewayStartupService : IHostedService
         _packages = packages;
         _toolPins = toolPins;
         _audit = audit;
-        _apiKeys = apiKeys;
-        _uiUsers = uiUsers;
+        _bootstrap = bootstrap;
         _uiInternal = uiInternal;
         _configStore = configStore;
         _supervisor = supervisor;
@@ -113,9 +107,11 @@ public sealed partial class GatewayStartupService : IHostedService
         // alles installiert ist.
         await _packages.RefreshAsync(cancellationToken);
 
-        await BootstrapAdminIfEmptyAsync(cancellationToken);
+        // WP3.4: Der Erstzugang entsteht als einmaliges, kurzlebiges Setup-Token — nicht mehr als
+        // Adminpasswort und API-Key im Log. Eine bestehende Installation bekommt hier nur einen
+        // Vermerk; ihre Administratoren bleiben unangetastet.
+        await _bootstrap.EnsureFirstAccessAsync(cancellationToken);
         await EnsureUiInternalIdentityAsync(cancellationToken);
-        await BootstrapUiAdminIfEmptyAsync(cancellationToken);
 
         var persisted = await _configStore.GetAllLatestAsync(cancellationToken);
 
@@ -219,26 +215,6 @@ public sealed partial class GatewayStartupService : IHostedService
             }
         });
 
-    private async Task BootstrapAdminIfEmptyAsync(CancellationToken ct)
-    {
-        await using var db = await _factory.CreateDbContextAsync(ct);
-        if (await db.Identities.AnyAsync(ct))
-        {
-            return;
-        }
-
-        var role = new Role(RoleId.New(), "bootstrap-admin",
-            [new Grant(new PermissionScope(null, null), [ToolAction.UseTool, ToolAction.ReadResource, ToolAction.UsePrompt])]);
-        var identity = new Identity(IdentityId.New(), "bootstrap-admin", IdentityKind.Agent, [role.Id]);
-        await _rbacStore.UpsertRoleAsync(role, ct);
-        await _rbacStore.UpsertIdentityAsync(identity, ct);
-        var key = await _apiKeys.IssueAsync(identity.Id, "bootstrap", expiresAt: null, ct);
-
-        // Bewusste Ausnahme von DON'T Nr. 2: ohne diesen einmaligen Klartext-Key wäre eine
-        // frische Instanz unbenutzbar (Henne-Ei). Der Key erscheint nur bei leerer DB, genau einmal.
-        Log.BootstrapKey(_logger, key.PlaintextKey);
-    }
-
     /// <summary>Sorgt für die Agenten-Identität, unter der UI-Test-Aufrufe laufen (Global-Grant), und cacht ihre Id.</summary>
     private async Task EnsureUiInternalIdentityAsync(CancellationToken ct)
     {
@@ -258,21 +234,6 @@ public sealed partial class GatewayStartupService : IHostedService
         _uiInternal.Value = identity.Id;
     }
 
-    private async Task BootstrapUiAdminIfEmptyAsync(CancellationToken ct)
-    {
-        if (await _uiUsers.AnyExistAsync(ct))
-        {
-            return;
-        }
-
-        var password = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(18))
-            .Replace('+', 'A').Replace('/', 'B').Replace('=', 'C');
-        await _uiUsers.CreateAsync("admin", password, UiRole.Admin, ct);
-
-        // Wie beim Bootstrap-API-Key: ohne diese einmalige Klartext-Ausgabe käme niemand in die UI.
-        Log.BootstrapUiPassword(_logger, password);
-    }
-
     private static partial class Log
     {
         [LoggerMessage(Level = LogLevel.Information,
@@ -286,14 +247,6 @@ public sealed partial class GatewayStartupService : IHostedService
         [LoggerMessage(Level = LogLevel.Information,
             Message = "{Count} Freigabe-Anfragen in das Task-Modell übernommen (ADR-0019).")]
         public static partial void ApprovalsMigrated(ILogger logger, int count);
-
-        [LoggerMessage(Level = LogLevel.Warning,
-            Message = "ERSTSTART: Bootstrap-Admin (Agent) angelegt. API-Key (wird NIE wieder angezeigt): {Key}")]
-        public static partial void BootstrapKey(ILogger logger, string key);
-
-        [LoggerMessage(Level = LogLevel.Warning,
-            Message = "ERSTSTART: UI-Admin 'admin' angelegt. Passwort (wird NIE wieder angezeigt): {Password}")]
-        public static partial void BootstrapUiPassword(ILogger logger, string password);
 
         [LoggerMessage(Level = LogLevel.Information,
             Message = "Publisher-Schlüssel {KeyId} aus der Upstream-Konfiguration übernommen ({Label}).")]

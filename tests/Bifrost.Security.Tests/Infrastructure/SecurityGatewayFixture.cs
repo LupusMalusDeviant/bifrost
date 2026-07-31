@@ -27,6 +27,13 @@ public class SecurityGatewayFixture : WebApplicationFactory<Program>
     /// <summary>Alles, was der Dienst waehrend des Tests geschrieben hat.</summary>
     public CapturingLogProvider Log { get; } = new();
 
+    /// <summary>
+    /// Das Wegwerf-Datenverzeichnis dieses Laufs. Der Erstzugang legt darin seine Uebergabedatei
+    /// ab — und genau die braucht der Leck-Scan, um den ECHTEN Wert zu kennen, nach dem er im Log
+    /// sucht. Ein fest verdrahteter Korpuswert koennte das nicht: Das Token entsteht zur Laufzeit.
+    /// </summary>
+    public string DataDirectory => _dataDir;
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);

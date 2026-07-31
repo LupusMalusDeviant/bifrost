@@ -61,6 +61,16 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
   Fehlt die Container-Runtime, kommt der Upstream nicht hoch — es gibt keinen Rückfall auf den
   Host. Ein Ausweichen wäre eine stille Herabstufung genau der Eigenschaft, wegen der jemand den
   Container gewählt hat.
+- **Erstzugang über ein kurzlebiges Setup-Token statt über das Log.** Der erste Start schreibt kein
+  Adminpasswort und keinen API-Key mehr ins Anwendungslog, sondern stellt ein einmalig
+  einlösbares Token in eine Datei aus, die nur das Dienstkonto lesen darf. Benutzername und
+  Passwort wählt der Betreiber selbst unter `/setup`.
+  **Breaking für die Einrichtung:** `docker compose logs bifrost` zeigt keine Zugangsdaten mehr —
+  der Weg steht im README. Bestehende Installationen sind nicht betroffen und behalten ihre Admins.
+- **Der Key-Ring lässt sich schützen, und sein Verlust wird erkannt.** Zertifikat oder Datei-Secret
+  einrichtbar, Passwort über `…_FILE` zuführbar (nicht mehr nur über die Umgebung). Fehlt
+  Schlüsselmaterial, das vorhanden sein müsste, bricht der Start ab, statt einen leeren Ring
+  anzulegen und sich als bereit zu melden.
 - **Hostausführung ist eine Entscheidung, kein Vorgabezustand.** Neue Instanzen verbieten sie;
   bestehende laufen weiter, aber die Übernahme wird geschrieben, auditiert und im Diagnosebericht
   namentlich ausgewiesen (ADR-0025).

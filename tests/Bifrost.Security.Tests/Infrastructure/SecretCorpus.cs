@@ -34,13 +34,20 @@ public static class SecretCorpus
     public const string OAuthToken = "KORPUS-oauth-NmQaZwSxEdCrFvTg";
 
     /// <summary>
+    /// Ein vorgelegtes Setup-Token (WP3.4). Der Einloesepfad ist der einzige unauthentifizierte
+    /// Schreibweg des Dienstes; ein abgelehnter Versuch ist genau die Stelle, an der ein
+    /// praesentiertes Geheimnis in einer Fehlerzeile mitreisen wuerde.
+    /// </summary>
+    public const string BootstrapToken = "KORPUS-bootstrap-HjLqWmZaEsRdTfYg";
+
+    /// <summary>
     /// Alle Werte. Wer einen neuen Wert ergaenzt, ergaenzt ihn <b>hier</b> — die Tests laufen
     /// ausnahmslos ueber diese Liste, nie ueber einzelne Konstanten.
     /// </summary>
     public static IReadOnlyList<string> All { get; } =
     [
         StdioEnv, HttpHeader, OpenApiCredential, CliEnv, WasiSecret, OpenRpcCredential,
-        ToolArgument, WebhookSecret, ApiKeyPlaintext, ConnectionString, OAuthToken,
+        ToolArgument, WebhookSecret, ApiKeyPlaintext, ConnectionString, OAuthToken, BootstrapToken,
     ];
 
     /// <summary>

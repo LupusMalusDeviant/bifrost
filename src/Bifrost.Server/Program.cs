@@ -13,6 +13,7 @@ using Bifrost.Core.Packaging;
 using Bifrost.Persistence;
 using Bifrost.Persistence.Audit;
 using Bifrost.Server;
+using Bifrost.Server.Bootstrap;
 using Bifrost.Server.Execution;
 using Bifrost.Server.KeyRing;
 using Bifrost.Server.Operations;
@@ -154,6 +155,9 @@ builder.Services.AddSingleton<ApiKeyService>();
 builder.Services.AddSingleton<IApiKeyService>(sp => sp.GetRequiredService<ApiKeyService>());
 builder.Services.AddSingleton<IApiKeyValidator>(sp => sp.GetRequiredService<ApiKeyService>());
 builder.Services.AddSingleton<IUiUserService, UiUserService>();
+// WP3.4: Der Erstzugang entsteht als einmaliges, kurzlebiges Setup-Token. Muss VOR dem
+// GatewayStartupService stehen, weil dessen Startpfad ihn anfordert.
+builder.Services.AddBifrostBootstrap(builder.Configuration, dataDir);
 builder.Services.AddSingleton<IAssetStore, EfAssetStore>();
 // Prueft deklarierte Skill-Verweise gegen den Bestand und die vorausgesetzten Tools gegen den
 // Katalog — Letzteres kann nur der Gateway, weil nur er den Katalog kennt.
@@ -586,6 +590,9 @@ app.UseMiddleware<ApiKeyAuthMiddleware>();
 app.MapMcp("/mcp");
 app.MapGatewayApi();
 app.MapAuthEndpoints();
+// WP3.4: Der Einlösepfad des Erstzugangs. Anonym erreichbar wie die Anmeldung — und wie sie tut er
+// nur etwas, wenn ein gültiges Geheimnis vorliegt.
+app.MapBootstrapEndpoints();
 app.MapUpstreamOAuth();
 
 // Protected Resource Metadata (RFC 9728). Bewusst anonym: Sie ist der Weg, auf dem ein Client

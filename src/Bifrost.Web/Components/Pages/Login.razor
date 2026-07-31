@@ -18,8 +18,13 @@
         </form>
         @if (Failed)
         {
-            <p class="msg-err" style="margin-bottom:0">Benutzername oder Passwort falsch.</p>
+            <p class="msg-err">Benutzername oder Passwort falsch.</p>
         }
+        @* WP3.4: Eine frische Installation hat hier noch keinen Benutzer — der Weg dorthin muss
+           sichtbar sein, sonst sucht ein Betreiber das Passwort im Log, wo es bewusst nicht steht. *@
+        <p class="muted" style="margin-bottom:0">
+            Neue Installation? <a href="/setup">Erstzugang einrichten</a>.
+        </p>
     </div>
 </div>
 
