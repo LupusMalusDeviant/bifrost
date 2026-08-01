@@ -1,0 +1,9 @@
+// Negativfall (konstruiert): "servers" als Liste statt als Objekt — eine Verwechslung mit
+// "inputs", das wirklich eine Liste ist.
+// Erwartung: kein Kandidat, ein Fehler, keine Vermutung.
+{
+  "inputs": [],
+  "servers": [
+    { "name": "werkstatt", "command": "/usr/bin/server" }
+  ]
+}

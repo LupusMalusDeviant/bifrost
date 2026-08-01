@@ -1,0 +1,14 @@
+// Negativfall (konstruiert): derselbe Servername zweimal, dazu ein Eintrag, der gar kein Objekt
+// ist. Erwartung: beides wird gemeldet, keins davon stillschweigend entschieden.
+{
+  "mcpServers": {
+    "werkzeuge": {
+      "command": "/usr/bin/erster",
+      "env": { "A": "${env:A}" }
+    },
+    "werkzeuge": {
+      "command": "/usr/bin/zweiter"
+    },
+    "kaputt": "/usr/bin/dritter"
+  }
+}

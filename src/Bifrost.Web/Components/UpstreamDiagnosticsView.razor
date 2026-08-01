@@ -1,0 +1,88 @@
+@using Bifrost.Core.Diagnostics.Upstreams
+
+@*
+    Die Zeitlinie eines Verbindungsversuchs (WP4.6).
+
+    Diese Komponente ENTSCHEIDET nichts. Sie stellt dar, was der Diagnosedienst geliefert hat —
+    Reihenfolge, Ausgang und Abhilfe stehen im Bericht. Eine Kernregel in der Oberflaeche waere eine
+    zweite Wahrheit neben der im Kern, und sie waere die, die niemand testet.
+*@
+
+@if (Report is { } report)
+{
+<div class="card" style="margin-top:.75rem">
+    <div class="toolbar" style="margin-top:0">
+        <h3 style="margin:0">Verbindungsdiagnose</h3>
+        <span class="badge @(report.Succeeded ? "badge-ok" : "badge-err")">
+            @(report.Succeeded ? "durchgelaufen" : "gestoppt")
+        </span>
+        <span class="mono muted" title="Unter dieser Kennung steht der Lauf im Serverlog.">
+            @report.RequestId
+        </span>
+    </div>
+
+    @if (report.FirstFailure is { } failure)
+    {
+        <p style="margin:.5rem 0 0">
+            <strong>Erste Ursache:</strong>
+            <span class="mono">@failure.Code</span>
+            (@UpstreamStages.Label(failure.Stage)) — @failure.Check.Summary
+        </p>
+        <p class="muted" style="margin:.25rem 0 0">
+            Die folgenden Stufen sind <em>nicht erreicht</em>, nicht fehlerhaft: Über sie ist nichts
+            bekannt, solange diese Ursache besteht.
+        </p>
+    }
+
+    <div class="table-wrap" style="margin-top:.75rem">
+        <table>
+            <thead>
+                <tr><th>#</th><th>Stufe</th><th>Code</th><th>Ausgang</th><th>Befund</th><th>Nächste Handlung</th></tr>
+            </thead>
+            <tbody>
+                @for (var index = 0; index < report.Stages.Count; index++)
+                {
+                    var stage = report.Stages[index];
+                    <tr>
+                        <td class="mono">@(index + 1)</td>
+                        <td title="@UpstreamStages.Question(stage.Stage)">@UpstreamStages.Label(stage.Stage)</td>
+                        <td class="mono">@stage.Code</td>
+                        <td><span class="badge @Css(stage.Outcome)">@UpstreamStages.Label(stage.Outcome)</span></td>
+                        <td>@stage.Check.Summary</td>
+                        <td class="muted">@stage.Check.Remediation</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (report.Negotiation is { } negotiation)
+    {
+        <p style="margin:.75rem 0 0">
+            <strong>Gegenstelle:</strong>
+            Transport <span class="mono">@negotiation.Transport</span>,
+            Protokoll <span class="mono">@(negotiation.ProtocolVersion ?? "nicht ermittelt")</span>,
+            Fähigkeiten
+            <span class="mono">@(negotiation.Capabilities.Count > 0 ? string.Join(", ", negotiation.Capabilities) : "—")</span>,
+            @negotiation.ToolCount Werkzeug(e).
+        </p>
+        @if (negotiation.Note is { Length: > 0 } note)
+        {
+            <p class="muted" style="margin:.25rem 0 0">@note</p>
+        }
+    }
+</div>
+}
+
+@code {
+    /// <summary>Der Bericht; <c>null</c> heisst: es lief noch kein Test.</summary>
+    [Parameter] public UpstreamDiagnosticReport? Report { get; set; }
+
+    private static string Css(UpstreamStageOutcome outcome) => outcome switch
+    {
+        UpstreamStageOutcome.Passed => "badge-ok",
+        UpstreamStageOutcome.Failed => "badge-err",
+        UpstreamStageOutcome.NotReached => "badge-warn",
+        _ => "badge-muted",
+    };
+}

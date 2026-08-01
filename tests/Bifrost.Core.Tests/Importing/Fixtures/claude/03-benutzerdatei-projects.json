@@ -1,0 +1,38 @@
+// Herkunft: Claude Code, ~/.claude.json (Benutzerebene).
+// BELEGT: die Einstellungsschluessel "enableAllProjectMcpServers", "enabledMcpjsonServers" und
+// "disabledMcpjsonServers" (Claude-Code-Einstellungen); die Karte "projects" mit je einem
+// "mcpServers" darunter.
+// NACHGEBILDET: die uebrigen Felder unter einem Projekt (allowedTools, history) — dass es sie
+// gibt, ist belegt; die konkreten Inhalte sind erfunden, weil eine echte Datei Verlauf und Pfade
+// eines Menschen traegt.
+{
+  "enableAllProjectMcpServers": false,
+  "enabledMcpjsonServers": ["notizen"],
+  "disabledMcpjsonServers": ["alt-sse"],
+  "theme": "dark",
+  "projects": {
+    "/home/anna/werkstatt": {
+      "allowedTools": [],
+      "history": [],
+      "mcpServers": {
+        "notizen": {
+          "command": "/usr/local/bin/notizen-mcp",
+          "args": ["--modus", "lesen"],
+          "env": {
+            "NOTIZEN_PFAD": "/home/anna/notizen"
+          }
+        },
+        "alt-sse": {
+          "type": "sse",
+          "url": "https://sse.example.test/v1/sse",
+          "headers": {
+            "X-Api-Key": "beispielwert-ohne-echten-schluessel"
+          }
+        }
+      }
+    },
+    "/home/anna/spielwiese": {
+      "allowedTools": []
+    }
+  }
+}

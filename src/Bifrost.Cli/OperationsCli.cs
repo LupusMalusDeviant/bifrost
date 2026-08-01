@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -142,7 +142,7 @@ public sealed class OperationsCli
 
     private async Task<int> BackupCreateAsync(IReadOnlyList<string> options, CancellationToken ct)
     {
-        var parsed = new Options(options);
+        var parsed = new CliOptions(options);
         var target = parsed.Value("--out")
             ?? throw new ArgumentException("backup create verlangt --out <pfad>.");
         var sections = parsed.Value("--sections");
@@ -176,7 +176,7 @@ public sealed class OperationsCli
     private async Task<int> BackupVerifyAsync(
         string archive, IReadOnlyList<string> options, CancellationToken ct)
     {
-        var parsed = new Options(options);
+        var parsed = new CliOptions(options);
         var passphrase = await ReadPassphraseAsync(parsed, ct);
         parsed.EnsureNoRest();
 
@@ -199,7 +199,7 @@ public sealed class OperationsCli
     private async Task<int> RestoreAsync(
         string archive, IReadOnlyList<string> options, CancellationToken ct)
     {
-        var parsed = new Options(options);
+        var parsed = new CliOptions(options);
         var replace = parsed.Flag("--replace");
         var confirmed = parsed.Flag("--yes");
         var passphrase = await ReadPassphraseAsync(parsed, ct);
@@ -262,7 +262,7 @@ public sealed class OperationsCli
 
     private async Task<int> DoctorAsync(IReadOnlyList<string> options, CancellationToken ct)
     {
-        var parsed = new Options(options);
+        var parsed = new CliOptions(options);
         var scope = parsed.Value("--scope");
         parsed.EnsureNoRest();
 
@@ -289,7 +289,7 @@ public sealed class OperationsCli
 
     private async Task<int> ConfigExportAsync(IReadOnlyList<string> options, CancellationToken ct)
     {
-        var parsed = new Options(options);
+        var parsed = new CliOptions(options);
         var includeSecrets = parsed.Flag("--include-secrets");
         var outPath = parsed.Value("--out");
         var passphrase = await ReadPassphraseAsync(parsed, ct);
@@ -323,7 +323,7 @@ public sealed class OperationsCli
     private async Task<int> ConfigImportAsync(
         string file, IReadOnlyList<string> options, CancellationToken ct)
     {
-        var parsed = new Options(options);
+        var parsed = new CliOptions(options);
         var dryRun = parsed.Flag("--dry-run");
         var passphrase = await ReadPassphraseAsync(parsed, ct);
         parsed.EnsureNoRest();
@@ -542,7 +542,7 @@ public sealed class OperationsCli
     /// <b>nie</b> aus einem Argument: Argumente stehen in der Prozessliste (<c>ps</c>) und in der
     /// Shell-Historie, und beides ueberlebt den Befehl.
     /// </summary>
-    private async Task<string?> ReadPassphraseAsync(Options options, CancellationToken ct)
+    private async Task<string?> ReadPassphraseAsync(CliOptions options, CancellationToken ct)
     {
         if (options.Value("--passphrase") is not null)
         {
@@ -596,59 +596,4 @@ public sealed class OperationsCli
         }
     }
 
-    /// <summary>
-    /// Sehr kleiner Optionsparser. Er kennt nur Schalter und <c>--name wert</c> — und er meldet, was
-    /// er nicht kennt: Ein stillschweigend verschlucktes <c>--replace</c> waere die schlimmste
-    /// Sorte Tippfehler.
-    /// </summary>
-    private sealed class Options
-    {
-        private readonly List<string> _rest;
-        private readonly HashSet<string> _consumed = new(StringComparer.Ordinal);
-
-        public Options(IReadOnlyList<string> arguments)
-        {
-            _rest = [.. arguments];
-        }
-
-        public string? Value(string name)
-        {
-            var index = _rest.IndexOf(name);
-            if (index < 0)
-            {
-                return null;
-            }
-
-            if (index + 1 >= _rest.Count)
-            {
-                throw new ArgumentException($"{name} verlangt einen Wert.");
-            }
-
-            var value = _rest[index + 1];
-            _rest.RemoveRange(index, 2);
-            _consumed.Add(name);
-            return value;
-        }
-
-        public bool Flag(string name)
-        {
-            var index = _rest.IndexOf(name);
-            if (index < 0)
-            {
-                return false;
-            }
-
-            _rest.RemoveAt(index);
-            _consumed.Add(name);
-            return true;
-        }
-
-        public void EnsureNoRest()
-        {
-            if (_rest.Count > 0)
-            {
-                throw new ArgumentException($"Unbekannte Option(en): {string.Join(", ", _rest)}.");
-            }
-        }
-    }
 }

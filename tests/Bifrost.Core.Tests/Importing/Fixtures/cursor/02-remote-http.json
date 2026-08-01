@@ -1,0 +1,20 @@
+// Herkunft: Cursor, entfernter Server.
+// BELEGT: Cursor leitet den Transport aus "url" ab; "headers" traegt die Autorisierung und
+// unterstuetzt dieselben Ersetzungen.
+// Der zweite Eintrag zeigt den Fall ohne Ersetzung: eine Kopfzeile im Klartext.
+{
+  "mcpServers": {
+    "entfernt": {
+      "url": "https://mcp.example.test/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:WERKSTATT_TOKEN}"
+      }
+    },
+    "klartext": {
+      "url": "https://andere.example.test/mcp",
+      "headers": {
+        "X-Api-Key": "beispielwert-ohne-echten-schluessel"
+      }
+    }
+  }
+}

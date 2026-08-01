@@ -84,6 +84,13 @@ public sealed class OpenApiDocumentGenerator : IDisposable
             };
         }
 
+        // WP4.3: Die Importendpunkte gehoeren ins Dokument — aber nur fuer einen Schluessel, der
+        // sie auch bedienen darf. Was drinsteht, entscheidet ImportOpenApi; hier steht nur, WANN.
+        if (_authorization.Evaluate(identity, new PermissionScope(null, null), ToolAction.UseTool).Allowed)
+        {
+            Importing.ImportOpenApi.AddPaths(paths);
+        }
+
         var document = new JsonObject
         {
             ["openapi"] = "3.1.0",

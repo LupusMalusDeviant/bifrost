@@ -71,6 +71,12 @@ public class ToolExecutionOnlyViaInvokerTests
         ["src/Bifrost.Server/HostedServices.cs"] =
             "prueft beim Widerruf eines Herausgeberschluessels die Signaturkette einer laufenden "
             + "Verbindung; liest nur",
+        ["src/Bifrost.Server/Diagnostics/UpstreamNegotiationProbe.cs"] =
+            "Diagnosesonde der Upstream-Zeitlinie (WP4.6): liest genau eine Eigenschaft der "
+            + "bestehenden Verbindung (PushesCatalogChanges), um die Protokollfamilie anzuzeigen. "
+            + "Sie ruft weder ein Tool noch eine Resource ab und haelt die Verbindung nicht — die "
+            + "lokale Variable endet mit der Methode. Sie oeffnet auch keine eigene: Angezeigt wird "
+            + "nur, was der Supervisor ohnehin fuehrt",
         ["src/Bifrost.Server/WasiPackageProbe.cs"] =
             "Quarantaeneprobe eines Connector-Pakets: verbindet und ruft DiscoverAsync, nie ein "
             + "Tool. Traegt bereits [HostExecutionChecked]",

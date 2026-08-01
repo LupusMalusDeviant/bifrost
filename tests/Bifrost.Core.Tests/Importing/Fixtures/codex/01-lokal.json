@@ -1,0 +1,23 @@
+// Herkunft: Codex-CLI, ~/.codex/config.toml — KONSTRUIERT als JSON-Umschrift.
+// BELEGT (learn.chatgpt.com/docs/config-file/config-reference, Stand 08/2026): Codex schreibt
+// TOML; der Abschnitt heisst [mcp_servers.<id>] mit den Feldern command, args, env, cwd,
+// startup_timeout_sec, tool_timeout_sec und enabled.
+// KONSTRUIERT ist ausschliesslich die Schreibweise: Der Importweg dieses Gateways nimmt JSON
+// entgegen, deshalb steht hier die JSON-Umschrift desselben Aufbaus. Das Original saehe so aus:
+//
+//   [mcp_servers.notizen]
+//   command = "/usr/local/bin/notizen-mcp"
+//   args = ["--modus", "lesen"]
+//   env = { NOTIZEN_PFAD = "/home/anna/notizen" }
+{
+  "mcp_servers": {
+    "notizen": {
+      "command": "/usr/local/bin/notizen-mcp",
+      "args": ["--modus", "lesen"],
+      "env": {
+        "NOTIZEN_PFAD": "/home/anna/notizen"
+      },
+      "cwd": "/srv/notizen"
+    }
+  }
+}

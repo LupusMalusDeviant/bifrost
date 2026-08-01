@@ -1,0 +1,10 @@
+// Negativfall: eine Datei, die beim Bearbeiten von Hand entzweigegangen ist — die haeufigste
+// Form einer kaputten Clientkonfiguration.
+{
+  "mcpServers": {
+    "werkzeuge": {
+      "command": "python",
+      "args": ["server.py"
+    }
+  }
+}

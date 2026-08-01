@@ -46,6 +46,32 @@ public class DiagnosticCodeTests
         DiagnosticCodes.All.Should().OnlyHaveUniqueItems();
     }
 
+    /// <summary>
+    /// Jeder Code gehört zu genau einer der beiden Mengen: dem Instanzbericht oder der Zeitlinie
+    /// eines Verbindungsversuchs. Ein neuer Code, den niemand einordnet, fällt hier auf — sonst
+    /// stünde er in keiner Übersicht und würde von den Vollständigkeitstests beider Berichte
+    /// stillschweigend übergangen.
+    /// </summary>
+    [Fact]
+    public void Every_code_belongs_to_exactly_one_report()
+    {
+        DiagnosticCodes.InstanceReport.Should().NotIntersectWith(DiagnosticCodes.UpstreamTimeline);
+        DiagnosticCodes.InstanceReport
+            .Concat(DiagnosticCodes.UpstreamTimeline)
+            .Should().BeEquivalentTo(DiagnosticCodes.All);
+    }
+
+    /// <summary>
+    /// Die Zeitlinie ist eine Kette, keine Menge: Die Reihenfolge der Codes ist die Reihenfolge der
+    /// Stufen. Wer BFR-UP-0013 im Log findet, soll ohne Nachschlagen wissen, dass 0010 bis 0012
+    /// vorher durchgelaufen sind.
+    /// </summary>
+    [Fact]
+    public void The_upstream_timeline_codes_are_ordered_like_the_stages()
+    {
+        DiagnosticCodes.UpstreamTimeline.Should().BeInAscendingOrder(StringComparer.Ordinal);
+    }
+
     [Fact]
     public void Every_shipped_check_uses_a_registered_code()
     {

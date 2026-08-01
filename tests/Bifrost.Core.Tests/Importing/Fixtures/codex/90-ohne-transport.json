@@ -1,0 +1,10 @@
+// Negativfall (konstruiert): ein Eintrag, der nur Zeitlimits traegt — weder Kommando noch
+// Adresse. Erwartung: kein Kandidat, ein Fehler mit Ort.
+{
+  "mcp_servers": {
+    "leer": {
+      "startup_timeout_sec": 10,
+      "tool_timeout_sec": "sechzig"
+    }
+  }
+}

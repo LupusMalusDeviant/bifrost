@@ -90,11 +90,27 @@ public sealed class ConfigurationImporter : IConfigurationImporter
     }
 
     /// <summary>
-    /// Der Importer mit den fest eingebauten Parsern. Heute ist das genau der generische
-    /// MCP-Parser; die Parser je Client kommen in WP4.2 dazu.
+    /// Der Importer mit den fest eingebauten Parsern: der generische (WP4.1) und die vier
+    /// Clientparser (WP4.2).
+    /// <para>
+    /// <b>Die Reihenfolge sagt nichts.</b> Entschieden wird über die Sicherheit, die jeder Parser
+    /// selbst meldet — die Clientparser melden sich nur, wenn im Dokument etwas steht, das
+    /// <em>nur</em> ihr Client schreibt, und überstimmen den generischen dann deutlich. Findet sich
+    /// nichts Client-Eigenes, bleibt es beim generischen Parser: Das ist der richtige Ausgang und
+    /// kein Versäumnis, denn eine schlichte <c>.mcp.json</c> ist bei Claude und Cursor
+    /// zeichengleich.
+    /// </para>
     /// </summary>
     public static ConfigurationImporter CreateDefault(IHostExecutionPolicy? hostExecution)
-        => new([new GenericMcpImportProvider()], hostExecution);
+        => new(
+            [
+                new GenericMcpImportProvider(),
+                new ClaudeImportProvider(),
+                new CursorImportProvider(),
+                new VsCodeImportProvider(),
+                new CodexImportProvider(),
+            ],
+            hostExecution);
 
     /// <summary>Die registrierten Formate, in Registrierungsreihenfolge.</summary>
     public IReadOnlyList<IImportProvider> Providers => _providers;

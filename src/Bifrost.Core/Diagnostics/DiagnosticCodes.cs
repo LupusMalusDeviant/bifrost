@@ -87,6 +87,37 @@ public static class DiagnosticCodes
     /// <summary>Zustände der konfigurierten Upstreams.</summary>
     public const string UpstreamStates = "BFR-UP-0001";
 
+    // ── BFR-UP-0010…0019: die Zeitlinie EINES Verbindungsversuchs (WP4.6) ───────────────────────
+    //
+    // BFR-UP-0001 beschreibt den Bestand („welche Upstreams sind bereit?"). Die Codes hier
+    // beschreiben etwas anderes: den Verlauf eines einzelnen Versuchs, sich mit EINER Konfiguration
+    // zu verbinden. Deshalb ein eigener Zehnerblock statt der nächsten freien Nummer — ein Code
+    // darf nie zwei Bedeutungen haben, auch nicht zwei verwandte (siehe BFR-POL oben).
+    //
+    // Die Reihenfolge der Nummern IST die Reihenfolge der Stufen. Wer BFR-UP-0013 im Log findet,
+    // weiss damit ohne Nachschlagen, dass 0010 bis 0012 vorher durchgelaufen sind.
+
+    /// <summary>Stufe 1 — Aufbau der Konfiguration (Slug, Transport, Pflichtfelder).</summary>
+    public const string UpstreamValidation = "BFR-UP-0010";
+
+    /// <summary>Stufe 2 — darf diese Konfiguration auf dieser Instanz überhaupt starten (ADR-0025)?</summary>
+    public const string UpstreamPolicy = "BFR-UP-0011";
+
+    /// <summary>Stufe 3 — ist das Nötige da: Programm, Container-Runtime, WASI-Host, Namensauflösung.</summary>
+    public const string UpstreamRuntime = "BFR-UP-0012";
+
+    /// <summary>Stufe 4 — Zielschutz: zeigt die Adresse nach innen, ohne dass das erlaubt wäre (SSRF)?</summary>
+    public const string UpstreamTargetGuard = "BFR-UP-0013";
+
+    /// <summary>Stufe 5 — Anmeldung: sind Zugangsdaten vollständig, und hat das Ziel sie angenommen?</summary>
+    public const string UpstreamAuth = "BFR-UP-0014";
+
+    /// <summary>Stufe 6 — Protokoll-Handshake: Transport steht, Gegenstelle spricht das Protokoll.</summary>
+    public const string UpstreamHandshake = "BFR-UP-0015";
+
+    /// <summary>Stufe 7 — Discovery: der Katalog kam an und war lesbar.</summary>
+    public const string UpstreamDiscovery = "BFR-UP-0016";
+
     // ── BFR-POL: Ausführungs-Policy (ADR-0025, M3-Vertrag §2) ───────────────────────────────────
     //
     // Reserviert ist BFR-POL-0001…0099. Die Nummern 0001…0005 sind bereits als *Reason-Codes*
@@ -126,7 +157,38 @@ public static class DiagnosticCodes
         ContainerRuntime,
         WasiHost,
         UpstreamStates,
+        UpstreamValidation,
+        UpstreamPolicy,
+        UpstreamRuntime,
+        UpstreamTargetGuard,
+        UpstreamAuth,
+        UpstreamHandshake,
+        UpstreamDiscovery,
         HostExecutionPolicy,
         HostExecutionAdoption,
     ];
+
+    /// <summary>
+    /// Die Codes der Upstream-Zeitlinie (WP4.6). Sie beschreiben <b>einen</b> Verbindungsversuch mit
+    /// <b>einer</b> Konfiguration und stehen deshalb nicht im Instanzbericht: Dort gäbe es nichts,
+    /// worauf sie sich beziehen — kein Versuch, kein Verlauf. Sie entstehen, wenn jemand testet oder
+    /// anschliesst.
+    /// </summary>
+    public static IReadOnlyList<string> UpstreamTimeline { get; } =
+    [
+        UpstreamValidation,
+        UpstreamPolicy,
+        UpstreamRuntime,
+        UpstreamTargetGuard,
+        UpstreamAuth,
+        UpstreamHandshake,
+        UpstreamDiscovery,
+    ];
+
+    /// <summary>
+    /// Die Codes, die ein <b>Instanzbericht</b> führt — alles ausser der Zeitlinie. Ein neuer Code
+    /// gehört in genau eine der beiden Mengen; der Test darüber wird rot, wenn er in keiner steht.
+    /// </summary>
+    public static IReadOnlyList<string> InstanceReport { get; } =
+        [.. All.Where(code => !UpstreamTimeline.Contains(code, StringComparer.Ordinal))];
 }

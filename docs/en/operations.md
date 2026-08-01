@@ -622,6 +622,93 @@ same threshold as RBAC administration and package installation. Every writing op
 
 ---
 
+## Importing a foreign MCP configuration
+
+If you already have a `claude_desktop_config.json`, an `mcp.json` or a Cursor configuration, you
+should not have to retype it. The import reads such a file, **judges it**, and only then creates
+anything — the order is the whole point.
+
+```bash
+# Look only. Creates nothing, changes nothing:
+bifrost import preview ~/.config/claude/claude_desktop_config.json
+
+# Take over. Shows the same preview first, then commits:
+bifrost import apply mcp.json --isolation container --image ghcr.io/own/mcp-runner:1
+
+# Selected servers only, with a connection test first:
+bifrost import apply mcp.json --only github,filesystem --probe --isolation host --confirm-risks
+
+# Show what would happen, write nothing:
+bifrost import apply mcp.json --dry-run
+```
+
+**The CLI reads the file, not the gateway.** The content travels in the request body. `--origin
+<path>` exists so a finding can name its location (`mcpServers/github/args[2]` in `~/.config/…`);
+the gateway **never** opens that path. An endpoint that opens a file server-side because a client
+named its path is a tool for reading foreign files, whatever it is called.
+
+### What the preview shows — and what it does not
+
+Visible are the **structural facts**: slug, display name, transport kind, the program that would
+start, the target address without query and user info, the container image.
+
+Not visible are the **values**: arguments, environment values, header values, credentials, WASI
+secrets. From those fields only **names and counts** travel, never contents. Whether a place carries
+a credential, and how that was recognised, appears as a finding — the value does not.
+
+This is a positive list, not masking: a field reaches the preview only because someone wrote it in
+there deliberately. A new field on the configuration does *not* show up by itself. The reason is
+concrete — the most common shape of a credential in such files is `"args": ["--api-key", "ghp_…"]`,
+and a masking list only knows the fields where somebody already noticed.
+
+The values are not lost: they stay with the service behind a **handle** that is valid for 30
+minutes, usable exactly **once**, and owned by the identity that requested it — the same pattern as
+the restore plan. An unknown, expired, spent or foreign handle is refused, not guessed.
+
+### Confirm, isolate, roll back
+
+- A **Risk** finding does not block but requires `--confirm-risks`. `npx -y` is a legitimate
+  configuration and at the same time one that pulls arbitrary code at startup; that difference gets
+  made visible rather than decided away.
+- A server that starts a foreign program needs an **explicit isolation decision**
+  (`--isolation container --image …` or `--isolation host`, ADR-0025 E2/E5). The import is a
+  creation path; it does not guess.
+- The commit is **atomic**. A slug colliding with the existing stock changes nothing at all; if a
+  server fails midway, the ones already created are removed again.
+- All three steps are audited — with slug and outcome, **without** values.
+
+### Endpoints
+
+| Method | Route | Permission | Limits |
+|---|---|---|---|
+| `POST` | `/api/v1/import/preview` | global grant | 1 MiB, `application/json` or `text/plain`, 12/min |
+| `POST` | `/api/v1/import/probe` | global grant | 12/min; does not spend the handle |
+| `POST` | `/api/v1/import/commit` | global grant | 12/min; handle is single-use |
+| `POST` | `/setup/import/preview` | setup token **and** loopback | 1 MiB, 12/min; only while first access is pending |
+
+The counter applies unconditionally, even to an identity that RBAC would leave unlimited: an import
+is expensive regardless of what a role says.
+
+`/setup/import/preview` exists **only** while a setup token is outstanding. It requires all three:
+the pending first access, a request from the gateway machine itself, and the setup token in the
+`X-Bifrost-Setup-Token` header. It only shows; creating happens after redemption over the
+authenticated path. Once first access is redeemed it answers `404` — locally too, token or not.
+
+### Exit codes of the import commands
+
+These follow the table of the other `bifrost` commands, not the operations table above:
+
+| Code | Meaning |
+|---:|---|
+| `0` | imported, or the plan is applicable |
+| `2` | usage error — unknown option, wrong content type, document too large |
+| `3` | not authorised |
+| `5` | plan not applicable, handle unknown/spent, slug conflict, probe failed |
+| `6` | confirmation missing (`--confirm-risks`) or isolation decision missing |
+| `10` | gateway unreachable |
+
+---
+
 ## Observability
 
 Every tool call is measured (FR-26) under the meter `Bifrost.Gateway`:

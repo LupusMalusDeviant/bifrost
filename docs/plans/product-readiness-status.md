@@ -167,6 +167,41 @@ Zwei Punkte gehen als Entscheidung an den Lead bzw. weiter:
    zwei Quellen desselben Secrets wäre eine Regel, die man im Zweifel falsch erinnert.
    `docker-compose.yml` führt den zweiten Secret-Block jetzt.
 
+## Laufender Meilenstein: M4 — Onboarding und Bedienbarkeit
+
+Vertrag eingefroren in `src/Bifrost.Abstractions/Importing.cs`.
+
+| WP | Status |
+|---|---|
+| 4.1 Providerneutrales Importmodell | `implementiert` |
+| 4.2 Parser (Claude, Cursor, VS Code, Codex) | `implementiert` |
+| 4.3 Setup- und Import-API | `implementiert` |
+| 4.5 Basic/Advanced-Informationsarchitektur | `implementiert` |
+| 4.6 Einheitliche Upstream-Diagnose | `implementiert` |
+| 4.7 Dokumentation, i18n, Contributor-Basis | `implementiert` |
+| 4.4 Geführter Setup-Wizard | `offen` — setzt auf 4.3 auf |
+
+### Drei Wächter für dieselbe Regel — und drei Pakete, die je einen übersahen
+
+Der Architekturtest aus ADR-0025 E4 („jeder Weg, der eine `UpstreamServerConfig` baut, ist
+eingeordnet") existiert **dreifach**, weil er drei Assemblies prüft:
+
+| Test | Assembly |
+|---|---|
+| `HostExecutionArchitectureTests` | `Bifrost.Core.Tests` |
+| `HostExecutionPolicyContractTests` | `Bifrost.Security.Tests` |
+| `HostExecutionServerArchitectureTests` | `Bifrost.Integration.Tests` |
+
+WP4.1 prüfte nur Core und riss den in Security. WP4.3 prüfte Core und Security — und riss den in
+Integration. Beide Male hat der Wächter getan, was er soll; beide Male fiel es erst im Gesamtlauf
+auf.
+
+**Der Fehler liegt in den Aufgabenkarten, nicht bei den Paketen.** Sie zählten Testprojekte auf,
+und eine Aufzählung ist genau das, was diese Tests selbst vermeiden. Ab sofort lautet die
+Pflichtprüfung in jeder Karte `./build.sh verify-dotnet` — der Gesamtlauf — statt einer Liste von
+Projekten. Der Preis sind sieben Minuten je Paket; der Preis der Liste war zweimal ein roter
+Gesamtlauf und eine Nachbesserung durch den Lead.
+
 ## Abgeschlossener Meilenstein: M3 — Sichere Vorgaben
 
 **Alle sechs Pakete implementiert**, 1271 Tests grün. Die drei Rückstände sind abgeräumt:

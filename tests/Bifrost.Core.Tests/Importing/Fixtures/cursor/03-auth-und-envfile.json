@@ -1,0 +1,23 @@
+// Herkunft: Cursor, die beiden clientexklusiven Bloecke.
+// BELEGT: "auth" mit CLIENT_ID (Pflicht), CLIENT_SECRET und scopes an einem entfernten Server;
+// "envFile" als Verweis auf eine Datei mit Umgebungsvariablen an einem lokalen Server;
+// "disabled" als Ein-/Ausschalter (Cursor-FAQ).
+// Erwartung: Alle drei ueberleben als Befund. CLIENT_SECRET wird als Zugangsdatum eingeordnet,
+// obwohl dieses Gateway das Feld gar nicht uebernimmt — sonst saehe es niemand mehr.
+{
+  "mcpServers": {
+    "mit-oauth": {
+      "url": "https://oauth.example.test/mcp",
+      "auth": {
+        "CLIENT_ID": "werkstatt-client",
+        "CLIENT_SECRET": "beispielwert-ohne-echten-schluessel",
+        "scopes": ["read", "write"]
+      }
+    },
+    "mit-envfile": {
+      "command": "/usr/local/bin/werkzeug-mcp",
+      "envFile": "/home/anna/.werkzeug/.env",
+      "disabled": true
+    }
+  }
+}

@@ -15,6 +15,7 @@ using Bifrost.Persistence.Audit;
 using Bifrost.Server;
 using Bifrost.Server.Bootstrap;
 using Bifrost.Server.Execution;
+using Bifrost.Server.Importing;
 using Bifrost.Server.KeyRing;
 using Bifrost.Server.Operations;
 using Bifrost.Upstream;
@@ -493,6 +494,11 @@ builder.Services.AddAuthorizationBuilder()
 // automatisch eine Sicherung, ohne die nicht migriert wird.
 builder.Services.AddBifrostOperations(dataDir, dbProvider, connectionString);
 
+// ── Konfigurationsimport (M4, WP4.3) ─────────────────────────────────────────
+// Der Importer aus WP4.1 und die Ablage der vorgemerkten Plaene. Erst diese Zeile macht ihn
+// erreichbar — bis hierher war er gebaut und von keinem Aufrufweg aus zu erreichen.
+builder.Services.AddBifrostImporting();
+
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 builder.Services.AddHostedService<GatewayStartupService>();
 builder.Services.AddHostedService<AuditWriterService>();
@@ -593,6 +599,10 @@ app.MapAuthEndpoints();
 // WP3.4: Der Einlösepfad des Erstzugangs. Anonym erreichbar wie die Anmeldung — und wie sie tut er
 // nur etwas, wenn ein gültiges Geheimnis vorliegt.
 app.MapBootstrapEndpoints();
+// WP4.3: Vorschau, Probe und Uebernahme einer fremden Konfiguration. Der lokale Setup-Weg darin
+// verschwindet, sobald der Erstzugang eingeloest ist — deshalb steht die Zeile hinter
+// MapBootstrapEndpoints und nicht davor.
+app.MapImportEndpoints();
 app.MapUpstreamOAuth();
 
 // Protected Resource Metadata (RFC 9728). Bewusst anonym: Sie ist der Weg, auf dem ein Client

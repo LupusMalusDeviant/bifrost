@@ -1,0 +1,17 @@
+// Negativfall. Herkunft: das Beispiel aus der Claude-Code-Dokumentation zur Ersetzung von
+// Umgebungsvariablen — eine Adresse, die erst nach der Ersetzung eine Adresse ist.
+// BELEGT: ${VAR:-vorgabe} ist auch in "url" zulaessig.
+// Erwartung: Dieses Gateway ersetzt nichts. Aus "${API_BASE_URL:-https://api.example.com}/mcp"
+// wird deshalb keine Adresse — der Eintrag wird abgewiesen und der Grund benannt, statt eine
+// halbe Adresse anzulegen.
+{
+  "mcpServers": {
+    "api-server": {
+      "type": "http",
+      "url": "${API_BASE_URL:-https://api.example.test}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${API_KEY}"
+      }
+    }
+  }
+}

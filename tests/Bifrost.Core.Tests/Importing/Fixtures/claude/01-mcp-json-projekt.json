@@ -1,0 +1,23 @@
+// Herkunft: Claude Code, .mcp.json auf Projektebene.
+// BELEGT (code.claude.com/docs/en/mcp, Stand 08/2026): Sammelname "mcpServers"; Serverarten
+// "stdio" (Vorgabe), "http" und "sse"; Ersetzung ${VAR} und ${VAR:-vorgabe} in command, args,
+// env, url und headers.
+// Die Servernamen und Werte sind ausgetauscht; der Aufbau ist der dokumentierte.
+{
+  "mcpServers": {
+    "airtable": {
+      "command": "npx",
+      "args": ["-y", "airtable-mcp-server"],
+      "env": {
+        "AIRTABLE_API_KEY": "${AIRTABLE_API_KEY}"
+      }
+    },
+    "werkstatt-api": {
+      "type": "http",
+      "url": "https://api.example.test/mcp",
+      "headers": {
+        "Authorization": "Bearer ${WERKSTATT_TOKEN:-kein-token}"
+      }
+    }
+  }
+}

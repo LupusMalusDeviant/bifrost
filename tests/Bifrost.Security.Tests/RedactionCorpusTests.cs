@@ -268,6 +268,38 @@ public class RedactionCorpusTests
             "ein Export mit Klartext-Zugangsdaten landet im Zweifel in einem Git-Repository");
     }
 
+    // ───────────────────────── Importpfad (WP4.3) ─────────────────────────
+
+    /// <summary>
+    /// Der Verbindungstest des Konfigurationsimports. Er ist der eine Ausgabeweg dieses Pakets, der
+    /// <b>nicht</b> selbst gebaut wird: Die Meldung stammt aus einem fremden Prozess oder Dienst,
+    /// und ein Prozess, der nicht startet, schreibt gern seine Kommandozeile hinein.
+    /// <para>
+    /// Der Scrubber raet nicht, was ein Geheimnis sein koennte — er kennt die Werte genau der
+    /// Konfiguration, die gerade getestet wurde, und entfernt diese.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void The_import_probe_path_removes_the_values_of_the_tested_configuration()
+    {
+        var config = FullyLoadedConfig();
+        var fremdmeldung = "Verbindungstest fehlgeschlagen. Uebergebene Umgebung: "
+            + string.Join(' ', Placed())
+            + " — Aufruf abgebrochen.";
+
+        foreach (var secret in Placed())
+        {
+            fremdmeldung.Should().Contain(secret, "sonst prueft der Test nichts");
+        }
+
+        var scrubbed = Bifrost.Server.Importing.ImportValueScrubber.Scrub(fremdmeldung, config);
+
+        SecretCorpus.FirstLeakIn(scrubbed).Should().BeNull(
+            "die Fehlermeldung eines Verbindungstests geht unveraendert an Oberflaeche und CLI");
+        scrubbed.Should().Contain("Verbindungstest fehlgeschlagen",
+            "die Meldung soll lesbar bleiben — sonst hilft sie niemandem bei der Fehlersuche");
+    }
+
     /// <summary>
     /// <b>Der Waechter ueber die Redigierer selbst.</b> Jede Stelle, die etwas maskiert, ist ein
     /// Ausgabeweg — und jeder Ausgabeweg muss gegen den Korpus laufen. Kommt ein Redigierer dazu,
@@ -288,6 +320,12 @@ public class RedactionCorpusTests
             // RedactionService anwendet. Ihre Wirkung wird oben ueber den Argumentpfad geprueft.
             "Bifrost.Persistence.RedactionRuleRow",
             "Bifrost.Persistence.RedactionRuleStore",
+            // WP4.3: Der Konfigurationsimport. Er hat zwei Ausgabewege, und nur einer davon ist ein
+            // Redigierer — das Vorschaumodell ist eine Positivliste und maskiert nichts (der
+            // Nachweis dafuer steht in ImportSecretSeparationTests). Der Scrubber hier raeumt die
+            // eine Ausgabe auf, die NICHT dort entsteht: die Fehlermeldung eines fremden Prozesses
+            // oder Dienstes beim Verbindungstest. Sein Korpustest steht unten.
+            "Bifrost.Server.Importing.ImportValueScrubber",
         };
 
         var redactors = BifrostAssemblies.AllTypes()

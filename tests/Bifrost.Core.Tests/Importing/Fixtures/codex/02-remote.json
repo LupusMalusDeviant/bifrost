@@ -1,0 +1,17 @@
+// Herkunft: Codex-CLI, entfernter Server — KONSTRUIERT als JSON-Umschrift der dokumentierten
+// TOML-Form.
+// BELEGT: die Felder url, bearer_token_env_var (der NAME einer Umgebungsvariablen, nicht ihr
+// Wert) und http_headers.
+// Erwartung: Das Token wird als Zugangsdatum OHNE Wert gemeldet — die Quelle traegt ihn nicht,
+// und er wird nicht erraten.
+{
+  "mcp_servers": {
+    "werkstatt": {
+      "url": "https://mcp.example.test/mcp",
+      "bearer_token_env_var": "WERKSTATT_TOKEN",
+      "http_headers": {
+        "X-Werkstatt-Version": "3"
+      }
+    }
+  }
+}

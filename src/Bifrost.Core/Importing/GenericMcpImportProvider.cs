@@ -451,10 +451,17 @@ public sealed class GenericMcpImportProvider : IImportProvider
         if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var endpoint)
             || endpoint.Scheme is not ("http" or "https"))
         {
+            // Die Adresse selbst steht NICHT im Text. Eine ungueltige URL traegt haeufig genau das,
+            // was sie ungueltig macht — und oft auch ein '?token=...'. Der Pfad unten sagt, WO der
+            // Wert steht; wer ihn sehen will, sieht in seine eigene Datei.
+            //
+            // Gefunden von WP4.3 beim Bau der API: Dieser Befund gehoert zum Plan und nicht zu
+            // einem Kandidaten, der Scrubber der API-Vorschau kommt also nicht heran. Ein
+            // Befundtext ist eine Ausgabe wie jede andere.
             findings.Add(new ImportFinding(
                 ImportReason.UnknownField,
                 ImportSeverity.Error,
-                $"'{url}' ist keine absolute http- oder https-Adresse.",
+                "Die Adresse ist keine absolute http- oder https-Adresse.",
                 $"{path}/url",
                 "Die vollstaendige Adresse einschliesslich Schema eintragen."));
             return null;

@@ -21,6 +21,12 @@
          anderen Plattform auf. -->
     <Compile Include="..\Bifrost.TestServers\Common\UpstreamProcessLookup.cs"
              Link="Common\UpstreamProcessLookup.cs" />
+    <!-- Der Negativkorpus, verlinkt statt kopiert (WP4.3). Er ist die Liste der Werte, die in
+         KEINER Ausgabe dieses Dienstes auftauchen duerfen; eine zweite Fassung waere eine zweite
+         Liste, und die eine bekaeme irgendwann einen Eintrag, den die andere nicht kennt. Dieselbe
+         Begruendung wie oben bei UpstreamProcessLookup. -->
+    <Compile Include="..\Bifrost.Security.Tests\Infrastructure\SecretCorpus.cs"
+             Link="Importing\SecretCorpus.cs" />
     <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Testcontainers.PostgreSql" />

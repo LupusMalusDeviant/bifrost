@@ -1,0 +1,24 @@
+// Herkunft: VS Code, settings.json — dieselbe Konfiguration eine Ebene tiefer unter "mcp".
+// BELEGT: der Block "mcp" in den Einstellungen mit "servers" darunter; "envFile" und "dev"
+// (watch/debug) als Serverfelder; Kommentare und nachlaufende Kommata, weil settings.json jsonc
+// ist.
+// NACHGEBILDET: die uebrigen Editoreinstellungen daneben — sie belegen nur, dass der Block nicht
+// allein in der Datei steht.
+{
+  "editor.fontSize": 13,
+  "chat.mcp.autostart": "newAndOutdated",
+  "mcp": {
+    "servers": {
+      "werkstatt": {
+        "type": "stdio",
+        "command": "node",
+        "args": ["./werkstatt/server.js"],
+        "envFile": "${workspaceFolder}/.env",
+        "dev": {
+          "watch": "werkstatt/**/*.js",
+          "debug": { "type": "node" }
+        },
+      },
+    },
+  },
+}

@@ -78,6 +78,11 @@ public sealed class GatewayCli
                 ["approvals", "deny", var id]
                     => await DecideApprovalAsync(id, approved: false, ct),
                 ["audit", "tail"] => await GetAsync("api/v1/audit?pageSize=100", "items", ct),
+                // Der Import laeuft INNERHALB dieses try: Seine Exit-Codes sind die dieser Klasse
+                // (anders als bei den Betriebsbefehlen, die eine eigene Tabelle haben), und die
+                // Transportfehler sollen dieselben Meldungen bekommen wie ueberall sonst.
+                ["import", .. var importArguments] => await new ImportCli(
+                    _client, _input, _output, _error, _jsonOutput).RunAsync(importArguments, ct),
                 _ => await UsageAsync(),
             };
         }
@@ -304,6 +309,13 @@ public sealed class GatewayCli
           bifrost [Optionen] audit tail
           bifrost --version
           bifrost --help
+
+        Konfigurationsimport (M4):
+
+        """
+        + ImportCli.UsageText
+        + """
+
 
         Authentifizierung: BIFROST_TOKEN, Token-Datei in --config oder --token-stdin.
 

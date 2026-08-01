@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 
 using Bifrost.Abstractions.Operations;
 using Bifrost.Core.Diagnostics;
@@ -202,7 +202,7 @@ public class DiagnosticReportLeakTests
         var report = await DiagnosticService.CreateDefault(PoisonedWorld())
             .RunAsync(DiagnosticScope.All, TestContext.Current.CancellationToken);
 
-        report.Checks.Select(c => c.Code).Should().BeEquivalentTo(DiagnosticCodes.All);
+        report.Checks.Select(c => c.Code).Should().BeEquivalentTo(DiagnosticCodes.InstanceReport);
         report.Checks.Single(c => c.Code == DiagnosticCodes.DatabaseReachable)
             .Status.Should().Be(CheckStatus.Fail);
         report.Checks.Single(c => c.Code == DiagnosticCodes.LegacyEnvironmentVariables)

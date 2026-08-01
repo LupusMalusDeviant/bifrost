@@ -1,0 +1,16 @@
+// Herkunft: Cursor, ~/.cursor/mcp.json beziehungsweise .cursor/mcp.json.
+// BELEGT (cursor.com/docs/mcp, Stand 08/2026): Sammelname "mcpServers"; Felder command, args,
+// env; Ersetzungen ${env:NAME}, ${userHome}, ${workspaceFolder}, ${workspaceFolderBasename},
+// ${pathSeparator} und ${/} in command, args, env, url und headers.
+{
+  "mcpServers": {
+    "werkzeuge": {
+      "command": "python",
+      "args": ["${workspaceFolder}/werkzeuge/mcp_server.py"],
+      "env": {
+        "API_KEY": "${env:API_KEY}",
+        "HEIMAT": "${userHome}"
+      }
+    }
+  }
+}

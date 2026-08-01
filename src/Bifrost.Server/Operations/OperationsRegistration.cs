@@ -1,6 +1,9 @@
+using Bifrost.Abstractions;
+using Bifrost.Abstractions.Execution;
 using Bifrost.Abstractions.Operations;
 using Bifrost.Core.Configuration;
 using Bifrost.Core.Diagnostics;
+using Bifrost.Core.Diagnostics.Upstreams;
 using Bifrost.Persistence;
 using Bifrost.Persistence.Backup;
 using Bifrost.Persistence.Startup;
@@ -74,6 +77,18 @@ public static class OperationsRegistration
         services.AddSingleton<IUpstreamDiagnosticProbe, SupervisorUpstreamDiagnosticProbe>();
         services.AddSingleton<ServerDiagnosticContextFactory>();
         services.AddSingleton<IDiagnosticService, ServerDiagnosticService>();
+
+        // ── Upstream-Zeitlinie (WP4.6) ─────────────────────────────────────────────────────────
+        // Der Verbindungstest bekommt Stufen mit eigenen Codes. Er baut nichts nach: Stufe 1 und 2
+        // sind Validator und Torposten, die Stufen 5-7 laufen ueber den vorhandenen
+        // IUpstreamConnectionTester — also ueber genau den Weg, den auch AddAsync geht.
+        services.AddSingleton<IUpstreamNegotiationProbe, SupervisorNegotiationProbe>();
+        services.AddSingleton<IUpstreamConnectionDiagnostics>(sp => new UpstreamConnectionDiagnostics(
+            sp.GetRequiredService<IUpstreamConnectionTester>(),
+            sp.GetRequiredService<IHostExecutionPolicy>(),
+            negotiation: sp.GetRequiredService<IUpstreamNegotiationProbe>(),
+            timeProvider: sp.GetRequiredService<TimeProvider>(),
+            logger: sp.GetRequiredService<ILogger<UpstreamConnectionDiagnostics>>()));
 
         // ── Konfigurationsexport (WP2.5) ───────────────────────────────────────────────────────
         services.AddSingleton<ServerConfigurationPorts>();

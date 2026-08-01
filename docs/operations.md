@@ -1443,6 +1443,107 @@ Alle Betriebs-Endpunkte (`/api/v1/operations/*`) verlangen eine Identität mit *
 dieselbe Schwelle wie RBAC-Verwaltung und Paketinstallation. In der Oberfläche liegt die Seite
 **Betrieb** hinter der Admin-Rolle. Jeder schreibende Vorgang steht im Audit-Log.
 
+## Fremde MCP-Konfigurationen übernehmen
+
+Wer schon eine `claude_desktop_config.json`, eine `mcp.json` oder eine Cursor-Konfiguration hat,
+soll sie nicht abtippen müssen. Der Import liest eine solche Datei, **beurteilt sie** und legt erst
+danach an — die Reihenfolge ist der ganze Punkt.
+
+```bash
+# Ansehen. Legt nichts an, aendert nichts:
+bifrost import preview ~/.config/claude/claude_desktop_config.json
+
+# Uebernehmen. Zeigt zuerst dieselbe Vorschau, dann wird uebernommen:
+bifrost import apply mcp.json --isolation container --image ghcr.io/eigenes/mcp-runner:1
+
+# Nur einzelne Server, mit vorherigem Verbindungstest:
+bifrost import apply mcp.json --only github,filesystem --probe --isolation host --confirm-risks
+
+# Nur zeigen, was passieren wuerde:
+bifrost import apply mcp.json --dry-run
+```
+
+**Die Datei wird von der CLI gelesen, nicht vom Gateway.** Der Inhalt reist im Rumpf der Anfrage.
+`--origin <pfad>` gibt es, damit ein Befund seine Fundstelle nennen kann („`mcpServers/github/args[2]`
+aus `~/.config/…`") — der Gateway öffnet diesen Pfad **nie**. Ein Endpunkt, der eine Datei
+serverseitig öffnet, weil ein Client ihren Pfad genannt hat, ist ein Werkzeug zum Auslesen fremder
+Dateien, egal wie er heißt.
+
+### Was die Vorschau zeigt — und was nicht
+
+Sichtbar sind die **Strukturangaben**: Slug, Anzeigename, Transportart, das Programm, das starten
+würde, die Zieladresse ohne Query und Benutzerteil, das Container-Image.
+
+Nicht sichtbar sind die **Werte**: Argumente, Umgebungswerte, Headerwerte, Credentials,
+WASI-Secrets. Von diesen Feldern reisen **Namen und Anzahlen**, nie Inhalte. Ob an einer Stelle ein
+Zugangsdatum steht und woran das erkannt wurde, steht als Befund dabei — der Wert nicht.
+
+Das ist keine Maskierung, sondern eine Positivliste: Ein Feld erscheint in der Vorschau nur, wenn
+jemand es ausdrücklich hineingeschrieben hat. Ein neues Feld in der Konfiguration erscheint von
+selbst *nicht*. Der Grund ist handfest — die verbreitetste Form eines Zugangsdatums in solchen
+Dateien ist `"args": ["--api-key", "ghp_…"]`, und eine Maskierungsliste kennt genau die Felder, bei
+denen es schon einmal jemand gemerkt hat.
+
+Die Werte bleiben dabei nicht auf der Strecke: Sie liegen beim Dienst hinter einem **Handle**, das
+30 Minuten gilt, genau **einmal** verwendbar ist und der Identität gehört, die es angefordert hat.
+Dasselbe Muster wie beim Restore-Plan. Ein unbekanntes, abgelaufenes, verbrauchtes oder fremdes
+Handle wird abgewiesen, nicht geraten.
+
+### Bestätigen, isolieren, zurückrollen
+
+- Ein Befund der Stufe **Risk** blockiert nicht, verlangt aber `--confirm-risks`. `npx -y` ist eine
+  legitime Konfiguration und zugleich eine, die beim Start beliebigen Code nachlädt — der
+  Unterschied gehört sichtbar gemacht, nicht wegentschieden.
+- Ein Server, der ein fremdes Programm startet, braucht eine **ausdrückliche Isolationsangabe**
+  (`--isolation container --image …` oder `--isolation host`, ADR-0025 E2/E5). Der Import ist ein
+  Erzeugungsweg; er rät die Entscheidung nicht.
+- Die Übernahme ist **atomar**. Kollidiert ein Slug mit dem Bestand, passiert gar nichts; scheitert
+  ein Server mittendrin, werden die bereits angelegten wieder entfernt. Ein halb übernommener
+  Import sieht aus wie ein gelungener, bis jemand die Liste zählt.
+- Alle drei Schritte stehen im Audit-Log — mit Slug und Ergebnis, **ohne** Werte.
+
+### Endpunkte
+
+| Methode | Route | Berechtigung | Grenzen |
+|---|---|---|---|
+| `POST` | `/api/v1/import/preview` | Global-Grant | 1 MiB, `application/json` oder `text/plain`, 12/min |
+| `POST` | `/api/v1/import/probe` | Global-Grant | 12/min; verbraucht das Handle nicht |
+| `POST` | `/api/v1/import/commit` | Global-Grant | 12/min; Handle gilt einmal |
+| `POST` | `/setup/import/preview` | Erstzugangs-Token **und** lokal | 1 MiB, 12/min; nur solange der Erstzugang aussteht |
+
+Der Zähler greift bedingungslos — auch für eine Identität, die nach RBAC unbegrenzt wäre: Ein Import
+ist teuer, unabhängig davon, was in einer Rolle steht.
+
+### Während der Ersteinrichtung
+
+`/setup/import/preview` gibt es **nur**, solange ein Setup-Token aussteht. Er verlangt drei Dinge
+zugleich: den ausstehenden Erstzugang, eine Anfrage vom Rechner des Gateways selbst und das
+Erstzugangs-Token im Kopf `X-Bifrost-Setup-Token` (dasselbe Token wie auf `/setup`, siehe
+[Erstzugang](#erstzugang)). Er **zeigt nur an** — angelegt wird nach dem Einlösen über den
+authentifizierten Weg. Sobald der Erstzugang eingelöst ist, antwortet er mit `404`; auch lokal, auch
+mit Token.
+
+```bash
+# Auf dem Rechner des Gateways, waehrend der Erstzugang aussteht:
+curl -s -X POST http://localhost:8080/setup/import/preview \
+     -H "X-Bifrost-Setup-Token: $(grep -o 'bfsetup_[A-Za-z0-9_-]*' /data/config/bootstrap-token.txt)" \
+     -H 'Content-Type: application/json' \
+     --data-binary @mcp.json
+```
+
+### Exit-Codes der Importbefehle
+
+Sie folgen der Tabelle der übrigen `bifrost`-Befehle (nicht der Betriebstabelle oben):
+
+| Code | Bedeutung |
+|---:|---|
+| `0` | übernommen bzw. Plan ist anwendbar |
+| `2` | Bedienfehler — unbekannte Option, falscher Inhaltstyp, Dokument zu groß |
+| `3` | nicht berechtigt |
+| `5` | Plan nicht anwendbar, Handle unbekannt/verbraucht, Slug-Konflikt, Probe fehlgeschlagen |
+| `6` | Bestätigung fehlt (`--confirm-risks`) oder Isolationsangabe fehlt |
+| `10` | Gateway nicht erreichbar |
+
 ## Audit-Retention
 
 Das Audit-Log wächst mit jedem Call. Default-Aufbewahrung: 30 Tage, stündlicher Bereinigungs-Job (FR-25). Bei SQLite ist Retention **Betriebspflicht** (ADR-0007) — sehr große Logs (> ~10 GB) sind ein Grund, auf PostgreSQL zu wechseln.

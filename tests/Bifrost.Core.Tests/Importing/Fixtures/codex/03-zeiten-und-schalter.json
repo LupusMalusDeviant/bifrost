@@ -1,0 +1,19 @@
+// Herkunft: Codex-CLI mit Zeitlimits und Schalter — KONSTRUIERT als JSON-Umschrift der
+// dokumentierten TOML-Form.
+// BELEGT: startup_timeout_sec (Vorgabe 10 s), tool_timeout_sec (Vorgabe 60 s) und enabled.
+// Daneben steht eine Einstellung der CLI selbst (model), damit sichtbar wird, dass der Parser
+// alles ausserhalb von mcp_servers als clientexklusiv meldet statt es zu uebergehen.
+{
+  "model": "gpt-5.1-codex",
+  "mcp_servers": {
+    "langsam": {
+      "command": "/usr/local/bin/langsam-mcp",
+      "startup_timeout_sec": 30,
+      "tool_timeout_sec": 120
+    },
+    "abgeschaltet": {
+      "command": "/usr/local/bin/alt-mcp",
+      "enabled": false
+    }
+  }
+}

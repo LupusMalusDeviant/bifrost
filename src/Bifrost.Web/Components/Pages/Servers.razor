@@ -6,7 +6,7 @@
 @inject Bifrost.Core.Upstreams.UpstreamSupervisor ConcreteSupervisor
 @inject IToolDefinitionPinStore ToolPins
 @inject IUpstreamConfigStore ConfigStore
-@inject IUpstreamConnectionTester Tester
+@inject Bifrost.Core.Diagnostics.Upstreams.IUpstreamConnectionDiagnostics ConnectionDiagnostics
 @inject IAuditSink Audit
 @inject TimeProvider Time
 @inject AuthenticationStateProvider AuthState
@@ -374,6 +374,9 @@
             <span class="@(_ok ? "msg-ok" : "msg-err")">@_message</span>
         }
     </div>
+
+    @* Die Stufen des letzten Verbindungstests. Sie ersetzen die eine Zeile "Fehlgeschlagen: …". *@
+    <UpstreamDiagnosticsView Report="_diagnosis" />
 </div>
 
 @code {
@@ -417,6 +420,9 @@
 
     private bool _busy, _ok;
     private string? _message;
+
+    /// <summary>Der letzte Verbindungstest als Zeitlinie (WP4.6); null = es lief noch keiner.</summary>
+    private Bifrost.Core.Diagnostics.Upstreams.UpstreamDiagnosticReport? _diagnosis;
     private static readonly JsonSerializerOptions CliManifestJson = CreateCliManifestJson();
 
     private ServerId? _editServer;
@@ -635,15 +641,19 @@
 
     private async Task Test()
     {
-        _busy = true; _message = null;
+        _busy = true; _message = null; _diagnosis = null;
         var config = BuildConfig(out var err);
         if (config is null) { _ok = false; _message = err; _busy = false; return; }
 
-        var result = await Tester.TestAsync(config, CancellationToken.None);
-        _ok = result.Success;
-        _message = result.Success
-            ? $"Verbindung ok — {result.ToolCount} Tool(s) entdeckt."
-            : $"Fehlgeschlagen: {result.Error}";
+        // Derselbe Weg wie beim Anschliessen: Die Diagnose ruft Validator, Torposten und den
+        // vorhandenen Verbindungstest — sie baut nichts nach. Zwei Wege waeren zwei Wahrheiten
+        // darueber, ob eine Konfiguration funktioniert, und der Test waere irgendwann gruen, wo
+        // 'Anschliessen' scheitert.
+        _diagnosis = await ConnectionDiagnostics.DiagnoseAsync(config, CancellationToken.None);
+        _ok = _diagnosis.Succeeded;
+        _message = _diagnosis.Succeeded
+            ? $"Verbindung ok — {_diagnosis.Negotiation?.ToolCount ?? 0} Tool(s) entdeckt."
+            : $"{_diagnosis.FirstFailure!.Code}: {_diagnosis.FirstFailure.Check.Summary}";
         _busy = false;
     }
 

@@ -1,0 +1,39 @@
+// Herkunft: VS Code, .vscode/mcp.json mit einem HTTP-Server und Sandbox-Regeln.
+// BELEGT: Servertyp "http" mit url und headers (Beispiel der Dokumentation:
+// https://api.githubcopilot.com/mcp); der Block "sandbox" mit filesystem.allowWrite,
+// filesystem.denyRead, network.allowedDomains; "sandboxEnabled" je Server (macOS/Linux).
+// Erwartung: Die Sandbox reist NICHT mit. Das ist ein Risikobefund, kein Nebensatz.
+{
+  "servers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.example.test/mcp",
+      "headers": {
+        "Authorization": "Bearer ${input:github-token}"
+      }
+    },
+    "eingehegt": {
+      "type": "stdio",
+      "command": "/usr/local/bin/werkzeug-mcp",
+      "cwd": "/srv/werkstatt",
+      "sandboxEnabled": true
+    }
+  },
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "github-token",
+      "description": "GitHub Token",
+      "password": true
+    }
+  ],
+  "sandbox": {
+    "filesystem": {
+      "allowWrite": ["/srv/werkstatt"],
+      "denyRead": ["/home/anna/.ssh"]
+    },
+    "network": {
+      "allowedDomains": ["*.example.test"]
+    }
+  }
+}

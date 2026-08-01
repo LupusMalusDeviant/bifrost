@@ -1366,7 +1366,10 @@ internal static class ApiEndpoints
         // entscheidet, ob er den Skill nimmt.
         string? Description = null);
 
-    private static IdentityId Identity(HttpContext ctx) => (IdentityId)ctx.Items[ApiKeyAuthMiddleware.IdentityItemKey]!;
+    // 'internal' statt 'private': Die Importendpunkte (WP4.3) liegen in einer eigenen Datei, haengen
+    // aber an derselben Regel. Sie zu kopieren hiesse, "Management verlangt einen Global-Grant"
+    // zweimal zu behaupten und einmal zu pruefen.
+    internal static IdentityId Identity(HttpContext ctx) => (IdentityId)ctx.Items[ApiKeyAuthMiddleware.IdentityItemKey]!;
 
     private static bool IsAdmin(IAuthorizationService auth, IdentityId caller)
         => auth.Evaluate(caller, new PermissionScope(null, null), ToolAction.UseTool).Allowed;
@@ -1378,7 +1381,7 @@ internal static class ApiEndpoints
         => task.Owner == caller || IsAdmin(auth, caller);
 
     /// <summary>Bis WP6 echte UI-Rollen bringt: Management verlangt einen Global-Grant (Plan-Änderungslog WP5).</summary>
-    private static async ValueTask<object?> RequireAdminAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+    internal static async ValueTask<object?> RequireAdminAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {
         var auth = context.HttpContext.RequestServices.GetRequiredService<IAuthorizationService>();
         var decision = auth.Evaluate(Identity(context.HttpContext), new PermissionScope(null, null), ToolAction.UseTool);
@@ -1403,7 +1406,7 @@ internal static class ApiEndpoints
     private static IResult Error(int statusCode, ToolInvocationResult result)
         => Results.Json(new { status = result.Status.ToString(), error = result.ErrorMessage }, statusCode: statusCode);
 
-    private static void AuditManagement(
+    internal static void AuditManagement(
         IAuditSink audit, TimeProvider time, HttpContext ctx, AuditEventKind kind, ServerId? server, string subject)
         => audit.Record(new AuditEvent(
             time.GetUtcNow(), Identity(ctx), CallOrigin.Rest, kind, server, subject, null, null, null, null, null));

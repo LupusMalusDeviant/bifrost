@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 
 using AwesomeAssertions;
 
@@ -127,7 +127,7 @@ public class DiagnosticServiceTests
 
         var report = await service.RunAsync(DiagnosticScope.All, TestContext.Current.CancellationToken);
 
-        report.Checks.Select(c => c.Code).Should().BeEquivalentTo(DiagnosticCodes.All);
+        report.Checks.Select(c => c.Code).Should().BeEquivalentTo(DiagnosticCodes.InstanceReport);
         report.Checks.Where(c => c.Status is CheckStatus.Skipped)
             .Should().OnlyContain(c => !string.IsNullOrWhiteSpace(c.Summary), "Skipped ohne Grund ist stilles Bestehen");
         report.Duration.Should().BeGreaterThanOrEqualTo(TimeSpan.Zero);

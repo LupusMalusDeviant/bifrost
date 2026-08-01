@@ -1,0 +1,24 @@
+// Herkunft: VS Code, .vscode/mcp.json.
+// BELEGT (code.visualstudio.com/docs/agents/reference/mcp-configuration, Stand 08/2026): der
+// Block "inputs" mit type/id/description/password und der Verweis ${input:id} in "env". Das
+// Beispiel ist das aus der Dokumentation, mit deutschem Beschreibungstext.
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "perplexity-key",
+      "description": "Perplexity API Key",
+      "password": true
+    }
+  ],
+  "servers": {
+    "perplexity": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "server-perplexity-ask"],
+      "env": {
+        "PERPLEXITY_API_KEY": "${input:perplexity-key}"
+      }
+    }
+  }
+}

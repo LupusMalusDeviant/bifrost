@@ -1,0 +1,18 @@
+// Negativfall (konstruiert, aber aus dem Alltag: von Hand zusammengefuegte Dateien).
+// Erwartung: Ein Eintrag mit "command" UND "url" wird nicht aufgeloest, ein Typ ohne das
+// zugehoerige Feld ebenfalls nicht. Geraten wird hier nicht.
+{
+  "enabledMcpjsonServers": ["zwitter"],
+  "mcpServers": {
+    "zwitter": {
+      "command": "/usr/bin/server",
+      "url": "https://example.test/mcp"
+    },
+    "halb": {
+      "type": "http"
+    },
+    "leer": {
+      "env": {}
+    }
+  }
+}
