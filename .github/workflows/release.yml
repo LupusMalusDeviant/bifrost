@@ -625,6 +625,17 @@ jobs:
     # Das Artefakt `cli-artefakte` entsteht erst dort — mit `cli` waere der Download ein Rennen,
     # das meistens gewonnen und irgendwann verloren wird.
     needs: [verify, image, cli-checksums]
+
+    # Nur wenn tatsaechlich veroeffentlicht wurde — dieselbe Bedingung wie beim `release`-Job.
+    #
+    # Ohne sie scheiterte der Trockenlauf hier IMMER: Er pusht bewusst nichts nach GHCR, also gibt
+    # es keinen Digest, und der Digest-Torposten weiter unten bricht hart ab. Das ist an dieser
+    # Stelle richtig — was er bewacht, ist die Zusage, dass eine Signatur an einem unveraenderlichen
+    # Inhalt haengt und nicht an einem Tag. Falsch war nur, ihn in einem Lauf zu erwarten, in dem es
+    # nichts zu signieren gibt.
+    #
+    # Gefunden im ersten Releaselauf ueberhaupt: Der Trockenlauf-Modus war selbst nie gelaufen.
+    if: needs.verify.outputs.publish == 'true'
     runs-on: ubuntu-latest
 
     permissions:
