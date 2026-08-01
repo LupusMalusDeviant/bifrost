@@ -1158,7 +1158,7 @@ jobs:
 
       - name: Artefakte auflisten
         shell: bash
-        run: ls -la dist
+        run: find dist -type f | sort
 
       # Idempotent: Laeuft der Workflow fuer dasselbe Tag erneut, wird das vorhandene Release
       # aktualisiert statt ein zweites anzulegen. `gh release create --clobber` gibt es nicht,
@@ -1176,12 +1176,34 @@ jobs:
           # Workflow NIE — weder als Image-Tag noch als Release-Markierung.
           if [ "$PRERELEASE" = "true" ]; then FLAGS+=(--prerelease); fi
 
+          # Die Anhaenge werden GESUCHT, nicht geglobt. `dist/*` erfasste auch die
+          # Unterverzeichnisse, die beim Entpacken des supply-chain-Artefakts entstehen
+          # (`sbom/`, `dist/`) — und `gh` bricht an einem Verzeichnis ab. Im ersten
+          # Releaselauf ueberhaupt ist genau das passiert: Das Release wurde angelegt, die
+          # Anhaenge fehlten. Ein Release ohne seine Artefakte ist schlimmer als keins.
+          mapfile -t ASSETS < <(find dist -type f | sort)
+
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "::error::Keine Artefakte unter dist/ — es gibt nichts anzuhaengen."
+            exit 1
+          fi
+
+          # `gh` haengt die Dateien unter ihrem BASISNAMEN an. Zwei gleichnamige Dateien aus
+          # verschiedenen Verzeichnissen wuerden einander ueberschreiben, und zwar lautlos.
+          DUPLIKATE="$(printf '%s\n' "${ASSETS[@]}" | xargs -n1 basename | sort | uniq -d)"
+          if [ -n "$DUPLIKATE" ]; then
+            echo "::error::Mehrfach vergebene Dateinamen unter dist/: ${DUPLIKATE//$'\n'/, }"
+            exit 1
+          fi
+
+          printf 'Anhang: %s\n' "${ASSETS[@]}"
+
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG existiert — wird aktualisiert."
             gh release edit "$TAG" "${FLAGS[@]}"
-            gh release upload "$TAG" dist/* --clobber
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
-            gh release create "$TAG" "${FLAGS[@]}" dist/*
+            gh release create "$TAG" "${FLAGS[@]}" "${ASSETS[@]}"
           fi
 
       - name: Zusammenfassung
