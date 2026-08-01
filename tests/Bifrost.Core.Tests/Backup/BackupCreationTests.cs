@@ -28,7 +28,14 @@ public sealed class BackupCreationTests
         instance.WriteInstanceConfig("instanz-1");
 
         // Nebenläufige Leser: Die Online-Backup-API muss neben ihnen laufen können.
+        //
+        // Der erste Lesevorgang ist eine VORBEDINGUNG, kein Nebeneffekt. Ohne ihn hing der
+        // Nachweis am Planer: Auf einer schnellen Maschine war die Sicherung nach 359 ms fertig,
+        // bevor der Hintergrundleser überhaupt lief — der Test meldete dann „es wurde nicht
+        // gelesen" und sah aus wie ein Produktfehler. Gefunden im ersten Releaselauf, auf einem
+        // CI-Runner, nachdem derselbe Test lokal und im Lauf davor grün war.
         using var readers = new CancellationTokenSource();
+        var firstRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var reading = Task.Run(() =>
         {
             var seen = 0;
@@ -36,10 +43,13 @@ public sealed class BackupCreationTests
             {
                 _ = InstanceDirectory.CountRows(instance.DatabaseFile);
                 seen++;
+                firstRead.TrySetResult();
             }
 
             return seen;
         });
+
+        await firstRead.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
 
         var service = new BackupService(instance.Options());
         var result = await service.CreateAsync(
