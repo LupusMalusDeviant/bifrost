@@ -92,6 +92,94 @@ public class ImportCliTests : IDisposable
         error.ToString().Should().Contain("--gibts-nicht");
     }
 
+    /// <summary>
+    /// Eine Vorschau mit einem gesperrten Eintrag. Der Dienst hat entschieden; die CLI beurteilt
+    /// nichts nach, sie liest <c>canApply</c> je Kandidat.
+    /// </summary>
+    private const string VorschauTeilweise =
+        """
+        {"source":{"provider":"mcp","schemaVersion":null,"confidence":0.6,"originPath":null},
+         "candidates":[
+           {"sourceName":"github","slug":"github","displayName":"GitHub",
+            "kind":"Stdio","enabled":false,
+            "transport":{"kind":"Stdio","program":"npx","argumentCount":2},
+            "findings":[],"secrets":[],"canApply":true,"sourcePath":"mcpServers/github"},
+           {"sourceName":"kaputt","slug":"kaputt","displayName":"kaputt",
+            "kind":"Stdio","enabled":false,
+            "transport":{"kind":"Stdio","program":"nix"},
+            "findings":[{"code":"BFR-IMP-0003","severity":"Error","summary":"Kein Transport.",
+              "path":"mcpServers/kaputt","remediation":null,"scope":"Entry"}],
+            "secrets":[],"canApply":false,"sourcePath":"mcpServers/kaputt"}],
+         "findings":[],"canApply":true,"requiresConfirmation":[],"blockingFindings":[],
+         "token":"handle-2","expiresAt":"2026-08-01T12:00:00+00:00"}
+        """;
+
+    /// <summary>
+    /// Der Teilimport in der Ausgabe: Der gesperrte Eintrag ist gekennzeichnet, und die Zusammen-
+    /// fassung nennt die Anzahl. Ein Betreiber, der nur „Anwendbar." liest, zählt die angelegten
+    /// Server nicht nach.
+    /// </summary>
+    [Fact]
+    public async Task The_preview_marks_the_entries_that_will_not_be_created()
+    {
+        var handler = new RecordingHandler(_ => Json(HttpStatusCode.OK, VorschauTeilweise));
+        var output = new StringWriter();
+
+        var exit = await RunAsync(handler, ["import", "preview", _datei], output: output);
+
+        exit.Should().Be(GatewayCli.Success);
+        var text = output.ToString();
+        text.Should().Contain("NICHT ANWENDBAR").And.Contain("Teilweise anwendbar: 1 von 2");
+    }
+
+    /// <summary>
+    /// Ohne <c>--only</c> hat niemand den gesperrten Server benannt — die CLI schickt ihn deshalb
+    /// gar nicht erst mit. Täte sie es, käme die Absage des Dienstes für einen Server, den der
+    /// Betreiber nie ausgewählt hat.
+    /// </summary>
+    [Fact]
+    public async Task Without_only_the_blocked_entry_is_not_even_requested()
+    {
+        var handler = new RecordingHandler(request =>
+            request.RequestUri!.AbsolutePath.EndsWith("/preview", StringComparison.Ordinal)
+                ? Json(HttpStatusCode.OK, VorschauTeilweise)
+                : Json(HttpStatusCode.OK, """
+                    {"imported":[{"id":"srv-1","slug":"github"}],"count":1,
+                     "skipped":[{"sourceName":"kaputt","path":"mcpServers/kaputt",
+                       "reasons":["BFR-IMP-0003"]}]}
+                    """));
+        var output = new StringWriter();
+
+        var exit = await RunAsync(handler, ["import", "apply", _datei], output: output);
+
+        exit.Should().Be(GatewayCli.Success);
+        var commit = handler.Bodies.Last();
+        commit.Should().Contain("github").And.NotContain("kaputt");
+
+        // Und was der Dienst uebergangen hat, steht am Ende trotzdem da.
+        output.ToString().Should().Contain("Uebergangen").And.Contain("BFR-IMP-0003");
+    }
+
+    /// <summary>
+    /// Mit <c>--only</c> bleibt der benannte Server drin, auch wenn er gesperrt ist: Dann soll die
+    /// Absage des Dienstes kommen, statt dass die CLI ihn stillschweigend übergeht.
+    /// </summary>
+    [Fact]
+    public async Task With_only_a_blocked_entry_is_still_sent_so_the_service_can_refuse()
+    {
+        var handler = new RecordingHandler(request =>
+            request.RequestUri!.AbsolutePath.EndsWith("/preview", StringComparison.Ordinal)
+                ? Json(HttpStatusCode.OK, VorschauTeilweise)
+                : Json(
+                    HttpStatusCode.BadRequest,
+                    """{"error":{"code":"document-invalid","message":"'kaputt' ist nicht anwendbar."}}"""));
+
+        var exit = await RunAsync(handler, ["import", "apply", _datei, "--only", "kaputt"]);
+
+        exit.Should().Be(GatewayCli.GatewayError);
+        handler.Bodies.Last().Should().Contain("kaputt");
+    }
+
     /// <summary>Ein nicht anwendbarer Plan endet vor der Übernahme — und ohne zweite Anfrage.</summary>
     [Fact]
     public async Task An_unusable_plan_stops_before_the_commit()

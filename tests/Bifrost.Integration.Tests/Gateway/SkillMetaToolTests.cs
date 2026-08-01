@@ -104,8 +104,8 @@ public sealed class SkillMetaToolTests : IClassFixture<GatewayFixture>
             caller, CallOrigin.Mcp, MetaToolService.ListSkillsName, Args("{}"), ct);
 
         await IntegrationSupport.WaitUntilAsync(
-            () => _gw.AuditQuery.QueryAsync(new AuditFilter(Caller: caller), ct)
-                .GetAwaiter().GetResult().Items.Any(e => e.Tool == MetaToolService.ListSkillsName),
+            async () => (await _gw.AuditQuery.QueryAsync(new AuditFilter(Caller: caller), ct))
+                .Items.Any(e => e.Tool == MetaToolService.ListSkillsName),
             because: "auch der Blick in den Skill-Bestand gehoert ins Audit");
     }
 }

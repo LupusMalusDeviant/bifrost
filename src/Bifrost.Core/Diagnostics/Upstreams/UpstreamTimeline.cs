@@ -94,17 +94,45 @@ public sealed record UpstreamStageResult(
 /// <param name="Transport">Der verwendete Transport — die einzige Angabe, die immer feststeht.</param>
 /// <param name="ProtocolVersion">Ausgehandelte Protokollfassung; <c>null</c> = nicht ermittelt.</param>
 /// <param name="Capabilities">
-/// Beobachtete Fähigkeiten (<c>tools</c>, <c>resources</c>, <c>prompts</c>, <c>list_changed</c>).
-/// Beobachtet heisst: aus dem, was tatsächlich ankam — nicht aus dem, was die Konfiguration erwartet.
+/// Beobachtete Fähigkeiten (<c>tools</c>, <c>resources.subscribe</c>, <c>prompts.listChanged</c>,
+/// <c>experimental:…</c>). Beobachtet heisst: aus dem, was tatsächlich ankam — nicht aus dem, was
+/// die Konfiguration erwartet. <b>Nur Namen, nie Werte</b>: Ein Capability-Objekt kann Felder
+/// tragen, die niemand vorhergesehen hat.
 /// </param>
 /// <param name="ToolCount">Zahl der entdeckten Werkzeuge.</param>
 /// <param name="Note">Warum eine Angabe fehlt, falls eine fehlt.</param>
+/// <param name="Availability">
+/// Wie die fehlende Fassung zu lesen ist. <b>Die Unterscheidung ist der Punkt:</b> Bei einem
+/// OpenAPI- oder CLI-Upstream gibt es keine Fassung zu ermitteln
+/// (<see cref="UpstreamProtocolAvailability.NotApplicable"/>) — bei einem MCP-Upstream ohne Fassung
+/// dagegen wäre etwas zu holen gewesen, und es kam nichts
+/// (<see cref="UpstreamProtocolAvailability.Unknown"/>). Beides gleich zu melden wäre eine
+/// Auskunft, die man nicht benutzen kann.
+/// <para>
+/// Der Parameter steht am Ende und trägt eine Vorgabe: Ein Aufrufer, der ihn nicht setzt, behauptet
+/// damit nichts.
+/// </para>
+/// </param>
 public sealed record UpstreamNegotiation(
     string Transport,
     string? ProtocolVersion,
     IReadOnlyList<string> Capabilities,
     int ToolCount,
-    string? Note = null);
+    string? Note = null,
+    UpstreamProtocolAvailability Availability = UpstreamProtocolAvailability.Unknown)
+{
+    /// <summary>
+    /// Was in der Zeile „Protokoll" steht. An <b>einer</b> Stelle, weil es an dreien gebraucht wird
+    /// — Oberfläche, REST-Antwort und Test. Drei Formulierungen desselben Zustands wären drei
+    /// Wahrheiten, von denen zwei veralten.
+    /// </summary>
+    public string ProtocolLabel => Availability switch
+    {
+        UpstreamProtocolAvailability.Negotiated when ProtocolVersion is { Length: > 0 } version => version,
+        UpstreamProtocolAvailability.NotApplicable => "kein MCP — nicht zutreffend",
+        _ => "nicht ermittelt",
+    };
+}
 
 /// <summary>
 /// Der Bericht eines Verbindungsversuchs: die Zeitlinie, die erste scheiternde Stufe und die

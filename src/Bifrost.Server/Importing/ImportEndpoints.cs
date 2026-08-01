@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 
 using Bifrost.Abstractions;
 using Bifrost.Abstractions.Importing;
@@ -291,24 +291,30 @@ public static class ImportEndpoints
     /// Die Gründe, aus denen gar nicht erst angelegt wird. Sie werden <b>alle vor der ersten
     /// Änderung</b> geprüft — das ist die billigste Form von Atomizität und die einzige, die auch
     /// dann noch stimmt, wenn das Zurückrollen selbst scheitert.
+    ///
+    /// <para>
+    /// <b>Teilimport, und die Stelle, an der er nicht gilt.</b> Ein einzelner kaputter Eintrag hält
+    /// die übrigen nicht mehr auf — aber ein <em>planweiter</em> Fehler tut es weiterhin, und zwar
+    /// für alle: Wer nicht weiß, welches Format er vor sich hat, weiß auch nicht, was der einzelne
+    /// Eintrag bedeutet. Und wer einen gesperrten Server <em>ausdrücklich</em> anfordert, bekommt
+    /// eine Absage statt eines stillen Auslassens; ein Import, der genau das übergeht, was jemand
+    /// benannt hat, ist die unangenehmste Sorte Überraschung.
+    /// </para>
     /// </summary>
     private static IResult? Refuse(ImportPlan plan, ImportCommitRequest body)
     {
-        if (!plan.CanApply)
+        var blocking = plan.BlockingFindings;
+        if (blocking.Count > 0)
         {
             return ImportErrors.Result(
                 StatusCodes.Status400BadRequest,
                 ImportErrors.DocumentInvalid,
-                "Der Plan ist nicht anwendbar: "
-                + string.Join(
-                    " | ",
-                    plan.Findings.Concat(plan.Candidates.SelectMany(c => c.Findings))
-                        .Where(f => f.Severity is ImportSeverity.Error)
-                        .Select(f => $"[{f.Code}] {f.Summary}")));
+                "Der Plan ist nicht anwendbar — diese Befunde betreffen das ganze Dokument: "
+                + Describe(blocking));
         }
 
-        var selected = Select(plan, body).ToList();
-        if (selected.Count == 0)
+        var named = Named(plan, body);
+        if (named.Count == 0)
         {
             return ImportErrors.Result(
                 StatusCodes.Status400BadRequest,
@@ -316,19 +322,59 @@ public static class ImportEndpoints
                 "Die Auswahl trifft keinen der Server aus dem vorgemerkten Plan.");
         }
 
-        var risks = plan.RequiresConfirmation;
+        var blocked = named.Where(candidate => !plan.IsApplicable(candidate)).ToList();
+        if (blocked.Count > 0 && body.Servers is { Count: > 0 })
+        {
+            return ImportErrors.Result(
+                StatusCodes.Status400BadRequest,
+                ImportErrors.DocumentInvalid,
+                "Diese ausdruecklich gewaehlten Server sind nicht anwendbar und werden nicht "
+                + "stillschweigend uebergangen: "
+                + string.Join(
+                    " | ",
+                    blocked.Select(candidate => Why(plan, candidate))));
+        }
+
+        var selected = named.Where(plan.IsApplicable).ToList();
+        if (selected.Count == 0)
+        {
+            return ImportErrors.Result(
+                StatusCodes.Status400BadRequest,
+                ImportErrors.DocumentInvalid,
+                "Kein Server dieses Plans ist anwendbar: "
+                + string.Join(
+                    " | ",
+                    named.Select(candidate => Why(plan, candidate))));
+        }
+
+        // Bestaetigt wird, was angelegt wird. Die Risiken der Server, die gerade NICHT uebernommen
+        // werden, gehoeren nicht in diese Frage — eine Bestaetigung, die pauschal fuer alles gilt,
+        // wird zur Formalie.
+        var risks = plan.ConfirmationsFor(selected);
         if (risks.Count > 0 && !body.ConfirmRisks)
         {
             return ImportErrors.Result(
                 StatusCodes.Status409Conflict,
                 ImportErrors.ConfirmationRequired,
                 "Dieser Import traegt Befunde, die eine ausdrueckliche Bestaetigung verlangen "
-                + "(confirmRisks): "
-                + string.Join(" | ", risks.Select(f => $"[{f.Code}] {f.Summary}")));
+                + "(confirmRisks): " + Describe(risks));
         }
 
         return null;
     }
+
+    private static string Describe(IEnumerable<ImportFinding> findings)
+        => string.Join(" | ", findings.Select(f => $"[{f.Code}] {f.Summary}"));
+
+    /// <summary>
+    /// Warum dieser Eintrag nicht angelegt wird. Der Text geht durch den Wert-Entferner: Befunde
+    /// nennen heute nur Strukturangaben, aber sie sind Fliesstext aus dem Kern und damit der Teil
+    /// dieser Antwort, den keine Positivliste abdeckt. Der Entferner kennt die Werte GENAU DIESER
+    /// Konfiguration und braucht dafuer nichts zu raten.
+    /// </summary>
+    private static string Why(ImportPlan plan, ImportCandidate candidate)
+        => $"'{candidate.SourceName}': "
+            + ImportValueScrubber.Scrub(Describe(plan.BlockersFor(candidate)), candidate.Config);
 
     private static async Task<IResult> ApplyAsync(
         ImportPlan plan,
@@ -339,7 +385,7 @@ public static class ImportEndpoints
         TimeProvider time,
         CancellationToken ct)
     {
-        var selected = Select(plan, body).ToList();
+        var selected = Select(plan, body);
 
         // ── Vorbereiten, ohne etwas anzufassen ──────────────────────────────
         var prepared = new List<(ImportCandidate Candidate, UpstreamServerConfig Config)>();
@@ -428,6 +474,16 @@ public static class ImportEndpoints
         {
             imported = created.Select(item => new { id = item.Id.Value, slug = item.Slug }),
             count = created.Count,
+            // Was uebergangen wurde, steht in der Antwort. Ein Teilimport, der die Differenz
+            // verschweigt, sieht aus wie ein vollstaendiger — bis jemand die Liste zaehlt.
+            skipped = Named(plan, body)
+                .Where(candidate => !plan.IsApplicable(candidate))
+                .Select(candidate => new
+                {
+                    sourceName = candidate.SourceName,
+                    path = candidate.SourcePath,
+                    reasons = plan.BlockersFor(candidate).Select(f => f.Code),
+                }),
         });
     }
 
@@ -490,16 +546,32 @@ public static class ImportEndpoints
         };
     }
 
-    private static IEnumerable<ImportCandidate> Select(ImportPlan plan, ImportCommitRequest body)
+    /// <summary>
+    /// Die Server, die der Aufrufer meint — <b>ungefiltert</b>. Ohne Angabe gilt der ganze Plan.
+    /// Ob sie anwendbar sind, entscheidet <see cref="Refuse"/>; hier steht nur die Auswahl.
+    /// </summary>
+    private static List<ImportCandidate> Named(ImportPlan plan, ImportCommitRequest body)
     {
         if (body.Servers is not { Count: > 0 } wanted)
         {
-            return plan.Candidates;
+            return [.. plan.Candidates];
         }
 
         var names = wanted.Select(item => item.SourceName).ToHashSet(StringComparer.Ordinal);
-        return plan.Candidates.Where(candidate => names.Contains(candidate.SourceName));
+        return [.. plan.Candidates.Where(candidate => names.Contains(candidate.SourceName))];
     }
+
+    /// <summary>
+    /// Die Server, die tatsächlich angelegt werden: die gewählten, soweit sie anwendbar sind.
+    /// <para>
+    /// <b>Es fällt hier nichts unbemerkt heraus.</b> Wer ausdrücklich auswählt, ist zu diesem Zeitpunkt
+    /// bereits an <see cref="Refuse"/> gescheitert, falls ein gewählter Server gesperrt war. Wer
+    /// nichts auswählt, bekommt die übergangenen Einträge in der Antwort genannt (<c>skipped</c>) —
+    /// und in der Vorschau standen sie ohnehin schon als „nicht anwendbar".
+    /// </para>
+    /// </summary>
+    private static List<ImportCandidate> Select(ImportPlan plan, ImportCommitRequest body)
+        => [.. Named(plan, body).Where(plan.IsApplicable)];
 
     // ── Gemeinsames ─────────────────────────────────────────────────────────────────────────────
 

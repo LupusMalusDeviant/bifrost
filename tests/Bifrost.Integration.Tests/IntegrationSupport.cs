@@ -59,10 +59,36 @@ internal static class IntegrationSupport
     /// fangen, der gar nicht hochkommt; genau dafür ist sie da.
     /// </para>
     /// </summary>
-    public static async Task WaitUntilAsync(Func<bool> condition, int timeoutMs = 30000, string? because = null)
+    public static Task WaitUntilAsync(Func<bool> condition, int timeoutMs = 30000, string? because = null)
     {
+        ArgumentNullException.ThrowIfNull(condition);
+        return WaitUntilAsync(() => Task.FromResult(condition()), timeoutMs, because);
+    }
+
+    /// <summary>
+    /// Dieselbe Wartefunktion für eine Bedingung, die selbst asynchron ist — etwa eine
+    /// Datenbankabfrage.
+    /// <para>
+    /// <b>Warum es diese Überladung gibt.</b> Ohne sie schrieben Aufrufer eine asynchrone Abfrage
+    /// synchron aus (<c>GetAwaiter</c>, <c>GetResult</c>) in die <c>Func&lt;bool&gt;</c>-Bedingung.
+    /// Das blockiert alle 25 ms einen Threadpool-Thread auf einer asynchronen Abfrage — das
+    /// klassische Muster für Threadpool-Aushungerung. Es schlägt genau dann zu, wenn die Maschine ausgelastet ist,
+    /// also im Gesamtlauf und nie beim Einzeltest.
+    /// </para>
+    /// <para>
+    /// Genau so ist <c>WebUiTests.Login_succeeds_sets_cookie_and_is_audited</c> mehrfach umgefallen
+    /// und einzeln jedes Mal grün gewesen. Der erste Verdacht galt dem Audit-Schreiber; der leert
+    /// jede Sekunde und die Schranke stand auf dreißig — er passte nicht. Die Ursache war die
+    /// Wartefunktion selbst.
+    /// </para>
+    /// </summary>
+    public static async Task WaitUntilAsync(
+        Func<Task<bool>> condition, int timeoutMs = 30000, string? because = null)
+    {
+        ArgumentNullException.ThrowIfNull(condition);
+
         var sw = Stopwatch.StartNew();
-        while (!condition())
+        while (!await condition().ConfigureAwait(false))
         {
             if (sw.ElapsedMilliseconds > timeoutMs)
             {
@@ -71,7 +97,7 @@ internal static class IntegrationSupport
                     + $"{(because is null ? string.Empty : $": {because}")}.");
             }
 
-            await Task.Delay(25);
+            await Task.Delay(25).ConfigureAwait(false);
         }
     }
 }

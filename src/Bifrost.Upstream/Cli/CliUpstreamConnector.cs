@@ -88,6 +88,14 @@ internal sealed class CliUpstreamConnection : IUpstreamConnection
 
     public ServerId Id { get; }
 
+    /// <summary>
+    /// Ausdrücklich „nicht zutreffend", nicht „unbekannt": Am anderen Ende steht ein Programm mit
+    /// Argumenten und Ausgabe, kein Protokollpartner. Es gibt nichts auszuhandeln.
+    /// </summary>
+    public UpstreamProtocolInfo Protocol { get; } = UpstreamProtocolInfo.NotApplicable(
+        "Ein CLI-Upstream spricht kein MCP: Jedes Werkzeug ist ein Programmaufruf (ADR-0014). Es "
+        + "wird keine Protokollfassung ausgehandelt.");
+
     public event EventHandler<UpstreamNotificationEventArgs>? NotificationReceived
     {
         add { }

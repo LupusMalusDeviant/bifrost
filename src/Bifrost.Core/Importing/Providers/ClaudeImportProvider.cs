@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -465,7 +465,8 @@ public sealed partial class ClaudeImportProvider : IImportProvider
                 : $"Der Typ '{declared}' passt nicht zu den vorhandenen Feldern. Claude kennt 'stdio', "
                     + "'http' und 'sse'.",
             $"{path}/type",
-            "Den Eintrag in der Quelldatei vervollstaendigen oder den Typ korrigieren."));
+            "Den Eintrag in der Quelldatei vervollstaendigen oder den Typ korrigieren.",
+            ImportFindingScope.Entry));
         return null;
     }
 
@@ -503,7 +504,7 @@ public sealed partial class ClaudeImportProvider : IImportProvider
                 arguments,
                 environment.Count > 0 ? environment : null));
 
-        return new ImportCandidate(name, config, findings, []);
+        return new ImportCandidate(name, config, findings, [], path);
     }
 
     private static ImportCandidate? Http(
@@ -535,7 +536,8 @@ public sealed partial class ClaudeImportProvider : IImportProvider
                 + "${VAR:-vorgabe}) und ist deshalb keine Adresse. Dieses Gateway ersetzt nichts — "
                 + "aufgeloest wird sie hier also nie.",
                 $"{path}/url",
-                "Die Adresse ausgeschrieben eintragen."));
+                "Die Adresse ausgeschrieben eintragen.",
+                ImportFindingScope.Entry));
             return null;
         }
 
@@ -566,7 +568,7 @@ public sealed partial class ClaudeImportProvider : IImportProvider
                 headers.Count > 0 ? headers : null,
                 AllowLegacySse: legacySse));
 
-        return new ImportCandidate(name, config, findings, []);
+        return new ImportCandidate(name, config, findings, [], path);
     }
 
     /// <summary>Merkt sich eine Fundstelle mit Ersetzung, ohne sie aufzulösen.</summary>

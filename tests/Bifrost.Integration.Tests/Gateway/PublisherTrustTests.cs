@@ -110,8 +110,8 @@ public sealed class PublisherTrustTests : IClassFixture<GatewayFixture>, IAsyncL
             () => _gw.Supervisor.GetStatus(id) is null,
             because: "ein Entzug, der erst beim nächsten Neustart greift, ist kein Entzug");
         await IntegrationSupport.WaitUntilAsync(
-            () => _gw.AuditQuery.QueryAsync(new AuditFilter(Kind: AuditEventKind.ServerLifecycle), ct)
-                .GetAwaiter().GetResult().Items.Any(e => e.Detail?.Contains(pinned.KeyId, StringComparison.Ordinal) == true),
+            async () => (await _gw.AuditQuery.QueryAsync(new AuditFilter(Kind: AuditEventKind.ServerLifecycle), ct))
+                .Items.Any(e => e.Detail?.Contains(pinned.KeyId, StringComparison.Ordinal) == true),
             because: "der Stopp gehört ins Audit");
 
         await Trust.ReinstateAsync(pinned.KeyId, ct);

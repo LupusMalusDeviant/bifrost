@@ -145,6 +145,14 @@ internal sealed class OpenRpcUpstreamConnection : IUpstreamConnection
 
     public ServerId Id { get; }
 
+    /// <summary>
+    /// Ausdrücklich „nicht zutreffend", nicht „unbekannt": JSON-RPC 2.0 ist die Transportgrammatik,
+    /// nicht MCP. Es gibt keinen Handshake, in dem eine Fassung ausgehandelt würde.
+    /// </summary>
+    public UpstreamProtocolInfo Protocol { get; } = UpstreamProtocolInfo.NotApplicable(
+        "Ein OpenRPC-Upstream spricht kein MCP, sondern nacktes JSON-RPC. Es wird keine "
+        + "Protokollfassung ausgehandelt.");
+
     // JSON-RPC kennt server-initiierte Notifications, aber der Gateway abonniert nichts: Ein
     // HTTP-Aufruf hat genau eine Antwort. Das Event bleibt bewusst leer verdrahtet.
     public event EventHandler<UpstreamNotificationEventArgs>? NotificationReceived

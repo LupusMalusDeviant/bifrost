@@ -93,6 +93,51 @@ public sealed class ImportSecretTests
         plan.AllCodes().Should().Contain(ImportReason.PlaintextSecret);
     }
 
+    /// <summary>
+    /// <b>Das Falschpositiv aus WP4.3.</b> Die Verweisform machte bis dahin nur dann einen
+    /// maskierten Wert aus, wenn sie den <em>ganzen</em> Wert ausmachte — und
+    /// <c>Bearer ${env:TOKEN}</c>, also die Form, in der ein Autorisierungsheader tatsächlich
+    /// geschrieben wird, galt deshalb als Klartextgeheimnis. Der Irrtum ging in die sichere
+    /// Richtung, war aber ein Falschpositiv: Falschpositive in einer Liste, die ein Mensch
+    /// durchgehen soll, kosten genau die Aufmerksamkeit, die die echten Funde bräuchten.
+    /// </summary>
+    [Theory]
+    [InlineData("Bearer ${env:TOKEN}")]
+    [InlineData("Bearer ${GITHUB_TOKEN}")]
+    [InlineData("Basic %CREDENTIALS%")]
+    [InlineData("Token $API_TOKEN")]
+    public void Eine_verweisform_im_header_ist_keine_klartextmeldung(string wert)
+    {
+        var plan = ImportWorld.Permissive().Plan(ImportWorld.Http(
+            "s", "https://api.example.com/mcp", $"\"headers\": {{\"Authorization\": \"{wert}\"}}"));
+
+        plan.Candidates.Single().Secrets.Should().ContainSingle()
+            .Which.ValuePresent.Should().BeFalse("die Quelle traegt keinen benutzbaren Wert");
+
+        plan.AllCodes().Should().Contain(ImportReason.MaskedValue);
+        plan.AllCodes().Should().NotContain(
+            ImportReason.PlaintextSecret,
+            "hier steht ein Verweis auf ein Zugangsdatum, nicht das Zugangsdatum");
+    }
+
+    /// <summary>
+    /// Die Grenze in die andere Richtung — und sie ist die wichtigere. Steht neben der Verweisform
+    /// noch etwas, das ein Wert sein könnte, bleibt es ein Klartextfund. Ein halbes Geheimnis als
+    /// „maskiert" abzustempeln wäre der Irrtum in die teure Richtung.
+    /// </summary>
+    [Theory]
+    [InlineData("Bearer ghp_hV9zQ2mKp7Rt4Xw1Nb8Ls3Ye6Ud0${SUFFIX}")]
+    [InlineData("${PREFIX}hV9zQ2mKp7Rt4Xw1Nb8Ls3Ye6Ud0Ac5Zi2q")]
+    public void Ein_halbes_geheimnis_bleibt_ein_klartextfund(string wert)
+    {
+        var plan = ImportWorld.Permissive().Plan(ImportWorld.Http(
+            "s", "https://api.example.com/mcp", $"\"headers\": {{\"Authorization\": \"{wert}\"}}"));
+
+        plan.Candidates.Single().Secrets.Should().ContainSingle()
+            .Which.ValuePresent.Should().BeTrue();
+        plan.AllCodes().Should().Contain(ImportReason.PlaintextSecret);
+    }
+
     [Fact]
     public void Ein_gewoehnlicher_header_wird_nicht_markiert()
         => ImportWorld.Permissive().Plan(ImportWorld.Http(

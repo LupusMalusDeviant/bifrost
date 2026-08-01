@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
@@ -523,7 +523,7 @@ public sealed partial class VsCodeImportProvider : IImportProvider
                 environment.Count > 0 ? environment : null,
                 workingDirectory));
 
-        return new ImportCandidate(name, config, findings, []);
+        return new ImportCandidate(name, config, findings, [], path);
     }
 
     private static ImportCandidate? Http(
@@ -570,7 +570,7 @@ public sealed partial class VsCodeImportProvider : IImportProvider
                 headers.Count > 0 ? headers : null,
                 AllowLegacySse: legacySse));
 
-        return new ImportCandidate(name, config, findings, []);
+        return new ImportCandidate(name, config, findings, [], path);
     }
 
     /// <summary>

@@ -45,6 +45,15 @@ namespace Bifrost.Server.Importing;
 /// Setup-Weg: Der legt nichts an und merkt deshalb auch nichts vor.
 /// </param>
 /// <param name="ExpiresAt">Bis wann das Handle gilt. <c>null</c>, wenn es keines gibt.</param>
+/// <param name="CanApply">
+/// Ob <b>etwas</b> angelegt werden kann. Seit dem Teilimport heißt das nicht mehr „alles geht":
+/// Welche Einträge gemeint sind, sagt <see cref="ImportCandidateView.CanApply"/> je Kandidat.
+/// </param>
+/// <param name="BlockingFindings">
+/// Die Befunde, die das <b>ganze</b> Dokument anhalten — kaputtes JSON, unbekanntes Format. Sie
+/// stehen zusätzlich einzeln, damit ein Betreiber den Unterschied sieht, um den es hier geht: Diese
+/// hier lassen sich nicht durch eine Auswahl umgehen, die Befunde eines einzelnen Eintrags schon.
+/// </param>
 public sealed record ImportPreviewView(
     ImportSourceView Source,
     IReadOnlyList<ImportCandidateView> Candidates,
@@ -52,7 +61,8 @@ public sealed record ImportPreviewView(
     bool CanApply,
     IReadOnlyList<ImportFinding> RequiresConfirmation,
     string? Token = null,
-    DateTimeOffset? ExpiresAt = null);
+    DateTimeOffset? ExpiresAt = null,
+    IReadOnlyList<ImportFinding>? BlockingFindings = null);
 
 /// <param name="OriginPath">
 /// Die Herkunftsangabe, die der Aufrufer mitgeschickt hat — <b>eine Beschriftung, kein Leseauftrag</b>.
@@ -65,6 +75,14 @@ public sealed record ImportSourceView(
     double Confidence,
     string? OriginPath);
 
+/// <param name="CanApply">
+/// Ob genau dieser Eintrag angelegt werden kann. <c>false</c> heißt: Er trägt einen eigenen Fehler
+/// und fällt aus dem Import — die übrigen Einträge derselben Datei sind davon unberührt.
+/// </param>
+/// <param name="SourcePath">
+/// Wo dieser Eintrag in der Quelldatei steht. <b>Struktur, kein Wert</b>: Der Pfad besteht aus
+/// Feldnamen und dem Servernamen, die in der Vorschau ohnehin schon stehen.
+/// </param>
 public sealed record ImportCandidateView(
     string SourceName,
     string Slug,
@@ -73,7 +91,9 @@ public sealed record ImportCandidateView(
     bool Enabled,
     ImportTransportView Transport,
     IReadOnlyList<ImportFinding> Findings,
-    IReadOnlyList<ImportSecret> Secrets);
+    IReadOnlyList<ImportSecret> Secrets,
+    bool CanApply = true,
+    string? SourcePath = null);
 
 /// <summary>
 /// Die Transportangaben, die ein Mensch braucht, um <em>Ja</em> oder <em>Nein</em> zu sagen — und
@@ -145,15 +165,19 @@ public static class ImportPreviewProjection
                 plan.Source.SchemaVersion,
                 plan.Source.Confidence,
                 plan.Source.OriginPath),
-            [.. plan.Candidates.Select(Candidate)],
+            // Ein planweiter Fehler haelt auch den stimmigen Eintrag an. Waere hier nur
+            // candidate.CanApply zu sehen, zeigte die Vorschau bei kaputtem JSON dreissig
+            // anwendbare Server und darueber die Absage — die unangenehmste Sorte Widerspruch.
+            [.. plan.Candidates.Select(candidate => Candidate(candidate, plan.IsApplicable(candidate)))],
             plan.Findings,
             plan.CanApply,
             plan.RequiresConfirmation,
             token,
-            expiresAt);
+            expiresAt,
+            plan.BlockingFindings);
     }
 
-    private static ImportCandidateView Candidate(ImportCandidate candidate) => new(
+    private static ImportCandidateView Candidate(ImportCandidate candidate, bool canApply) => new(
         candidate.SourceName,
         candidate.Config.Slug,
         candidate.Config.DisplayName,
@@ -173,7 +197,11 @@ public static class ImportPreviewProjection
         // Die Secretbefunde tragen laut Vertrag Ort und Begründung, nie den Wert
         // (ImportSecret.Location/Looked). Sie gehen deshalb unverändert hinaus — genau dafür gibt
         // es sie.
-        candidate.Secrets);
+        candidate.Secrets,
+        canApply,
+        // Der Ort besteht aus Feldnamen und dem Servernamen; beides steht in dieser Ausgabe ohnehin.
+        // Der Durchlauf durch den Wert-Entferner kostet nichts und haelt die Regel geschlossen.
+        ImportValueScrubber.Scrub(candidate.SourcePath, candidate.Config));
 
     private static ImportTransportView Transport(UpstreamServerConfig config)
     {

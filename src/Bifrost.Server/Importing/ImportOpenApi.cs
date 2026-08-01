@@ -89,9 +89,15 @@ public static class ImportOpenApi
                 "importCommit",
                 "Uebernimmt die ausgewaehlten Server aus dem vorgemerkten Plan. Atomar: Scheitert "
                 + "einer, werden die bereits angelegten wieder entfernt. Das Handle gilt genau "
-                + "einmal. Befunde der Stufe 'Risk' verlangen confirmRisks=true; ein Server, der "
-                + "ein fremdes Programm startet, verlangt eine ausdrueckliche Isolationsangabe "
-                + "(ADR-0025 E2/E5).",
+                + "einmal. Befunde der Stufe 'Risk' verlangen confirmRisks=true (gefragt wird nach "
+                + "den Risiken der AUSGEWAEHLTEN Server und den planweiten); ein Server, der ein "
+                + "fremdes Programm startet, verlangt eine ausdrueckliche Isolationsangabe "
+                + "(ADR-0025 E2/E5). "
+                + "Teilimport: Ein Eintrag mit einem eigenen Fehler (candidates[].canApply=false) "
+                + "haelt die uebrigen nicht auf — ohne 'servers' werden die anwendbaren uebernommen "
+                + "und die uebrigen in der Antwort unter 'skipped' genannt. Wird ein gesperrter "
+                + "Server ausdruecklich in 'servers' benannt, gibt es 400 statt eines stillen "
+                + "Auslassens. Ein planweiter Fehler (preview.blockingFindings) haelt alles an.",
                 JsonBody(new JsonObject
                 {
                     ["type"] = "object",
@@ -110,7 +116,8 @@ public static class ImportOpenApi
                         ["servers"] = new JsonObject
                         {
                             ["type"] = "array",
-                            ["description"] = "Auswahl. Ohne Angabe gilt der ganze Plan.",
+                            ["description"] = "Auswahl. Ohne Angabe gilt der ganze Plan, soweit er "
+                                + "anwendbar ist.",
                             ["items"] = new JsonObject
                             {
                                 ["type"] = "object",
@@ -131,8 +138,12 @@ public static class ImportOpenApi
                 }),
                 new JsonObject
                 {
-                    ["200"] = Response("Uebernommen; Liste der angelegten Server"),
-                    ["400"] = Response("Plan nicht anwendbar oder Auswahl leer"),
+                    ["200"] = Response(
+                        "Uebernommen; Liste der angelegten Server ('imported') und der uebergangenen "
+                        + "('skipped', je mit Ort und Befundcodes)"),
+                    ["400"] = Response(
+                        "Planweiter Fehler, kein anwendbarer Server, leere Auswahl oder ein "
+                        + "ausdruecklich gewaehlter Server, der nicht anwendbar ist"),
                     ["403"] = Response("Kein Global-Grant"),
                     ["409"] = Response(
                         "Handle unbekannt/verbraucht, Bestaetigung fehlt, Isolationsangabe fehlt "

@@ -113,6 +113,15 @@ internal sealed class OpenApiUpstreamConnection : IUpstreamConnection
 
     public ServerId Id { get; }
 
+    /// <summary>
+    /// Ausdrücklich „nicht zutreffend", nicht „unbekannt": Hier wird HTTP gegen eine REST-API
+    /// gesprochen, kein MCP. Es gibt keine Fassung, die jemand ermitteln könnte — und wer das
+    /// wüsste, hörte auf zu suchen.
+    /// </summary>
+    public UpstreamProtocolInfo Protocol { get; } = UpstreamProtocolInfo.NotApplicable(
+        "Ein OpenAPI-Upstream spricht kein MCP: Der Gateway ruft die beschriebene REST-API direkt "
+        + "auf. Es wird keine Protokollfassung ausgehandelt.");
+
     public event EventHandler<UpstreamNotificationEventArgs>? NotificationReceived
     {
         add { }

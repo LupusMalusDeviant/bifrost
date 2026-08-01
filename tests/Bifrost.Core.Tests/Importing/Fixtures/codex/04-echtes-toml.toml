@@ -1,0 +1,22 @@
+# Herkunft: Codex-CLI, ~/.codex/config.toml — das ECHTE Format, absichtlich als .toml und nicht
+# als .json. Diese Datei ist der Beleg dafuer, was ein Codex-Betreiber wirklich vorliegen hat,
+# wenn er sie in den Import wirft: kein JSON, sondern TOML.
+#
+# BELEGT (learn.chatgpt.com/docs/config-file/config-reference, Stand 08/2026): der Abschnitt
+# [mcp_servers.<id>] mit command, args, env, startup_timeout_sec, tool_timeout_sec, enabled.
+# KONSTRUIERT: Servername, Pfade und Werte. Kein echtes Zugangsdatum.
+#
+# Sie traegt die Endung .toml, damit die Sammeltests ueber die Beispielkonfigurationen sie NICHT
+# aufgreifen — die lesen ausschliesslich *.json, und dieses Dokument soll gerade nicht durch die
+# Parser laufen.
+
+model = "gpt-5-codex"
+
+[mcp_servers.notizen]
+command = "/usr/local/bin/notizen-mcp"
+args = ["--modus", "lesen"]
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+
+[mcp_servers.notizen.env]
+NOTIZEN_PFAD = "/home/anna/notizen"

@@ -1,6 +1,6 @@
 # Importmatrix — was je Client übernommen wird, und was nicht
 
-Stand: WP4.2 (M4). Gegenstand sind die vier Clientparser unter
+Stand: WP4.3 (M4). Gegenstand sind die vier Clientparser unter
 `src/Bifrost.Core/Importing/Providers/` und der generische Parser aus WP4.1.
 
 Diese Matrix nennt **auch die Felder, die nicht unterstützt werden**. Eine Matrix, die nur die
@@ -18,6 +18,74 @@ unterstützten Felder aufzählt, beantwortet die einzige Frage nicht, die vor ei
 Kein Feld wird **still** verworfen. Wo „nicht" steht, steht im Plan ein Befund mit Ort und
 Handlungsanweisung. Das ist der Kern dieses Pakets: Ein Import, der etwas wegwirft, ohne es zu
 sagen, erzeugt eine Konfiguration, die anders ist als die Quelle — und niemand weiß, worin.
+
+---
+
+## 0. Wo ein Befund hinzeigt
+
+Jeder Befund nennt seinen Ort im **Quelldokument**, nicht in einem gedachten Normalformat. Der
+Sammelname ist je Client ein anderer, und das steht auch so im Pfad:
+
+| Format | Datei | Ort eines Servers |
+| --- | --- | --- |
+| `mcp` (generisch) | `.mcp.json` | `mcpServers/<name>` beziehungsweise `servers/<name>` |
+| `claude` (Projekt, Desktop) | `.mcp.json`, `claude_desktop_config.json` | `mcpServers/<name>` |
+| `claude` (Benutzerdatei) | `~/.claude.json` | `projects/<projektpfad>/mcpServers/<name>` |
+| `cursor` | `.cursor/mcp.json` | `mcpServers/<name>` |
+| `vscode` (eigene Datei) | `.vscode/mcp.json` | `servers/<name>` |
+| `vscode` (Editoreinstellungen) | `settings.json` | `mcp/servers/<name>` |
+| `codex` | `config.toml` (als JSON) | `mcp_servers/<name>` |
+
+Bis WP4.3 setzte die zentrale Nachbearbeitung den Ort **aller** von ihr erzeugten Befunde fest auf
+`mcpServers/<name>` — und das sind die meisten Befunde überhaupt: Risiko, Zugangsdaten,
+Normalisierung entstehen alle dort. Bei drei der sieben Zeilen oben zeigte das auf eine Stelle, die
+es in der Quelldatei nicht gibt. **Ein Ort, der nicht stimmt, ist schlechter als keiner:** Er
+schickt jemanden an die falsche Zeile, und wer dort nichts findet, glaubt eher, den Befund
+missverstanden zu haben. Der Ort kommt jetzt vom Parser
+(`ImportCandidate.SourcePath`); `ImportFindingLocationTests` prüft ihn über alle
+Beispielkonfigurationen.
+
+### Zwei Sorten Befund — und warum der Unterschied im Vertrag steht
+
+`ImportFinding.Scope` sagt, **wen** ein Befund betrifft:
+
+| Bereich | Was das heißt | Beispiele |
+| --- | --- | --- |
+| `Document` (Vorgabe) | Betrifft die ganze Datei. Ein Fehler dieser Sorte hält den **ganzen** Plan an. | kaputtes JSON (`BFR-IMP-0001`), TOML statt JSON (`BFR-IMP-0006`), unbekanntes oder mehrdeutiges Format (`BFR-IMP-0002`), VS Codes `sandbox` auf oberster Ebene (Risiko) |
+| `Entry` | Betrifft genau den Eintrag unter `Path`. Ein Fehler dieser Sorte nimmt **diesen einen** Kandidaten heraus. | fehlender Transport, `command` und `url` zugleich, unbrauchbare Adresse, doppelter Servername (`BFR-IMP-0004`), Slug-Kollision (`BFR-IMP-0005`) |
+
+**Die Vorgabe ist `Document`, und das ist Absicht.** Ohne diese Angabe müsste ein planweiter Befund
+an seinem fehlenden Pfad erkannt werden — und ein neuer Befund, der versehentlich einen Pfad trägt,
+wäre stillschweigend zu einem Einzelbefund verharmlost. So herum blockiert ein vergessener Bereich
+zu viel statt zu wenig.
+
+### Teilimport: ein kaputter Eintrag hält die übrigen nicht auf
+
+Bis WP4.3 galt `ImportPlan.CanApply` planweit: Ein einziger kaputter Eintrag machte eine Datei mit
+dreißig Servern unanwendbar. Jetzt gilt:
+
+- `ImportPlan.IsApplicable(kandidat)` — die maßgebliche Auskunft je Eintrag: kein planweiter Fehler,
+  kein eigener Fehler, kein Planbefund, der über seinen Pfad diesen Eintrag meint.
+- `ImportPlan.ApplicableCandidates` / `BlockedCandidates` — was geht und was nicht.
+- `ImportPlan.CanApply` heißt jetzt „**etwas** geht", nicht mehr „alles geht". Wer weiterhin
+  „alles oder nichts" braucht, vergleicht die beiden Anzahlen.
+- `ImportPlan.ConfirmationsFor(auswahl)` — bestätigt wird, was angelegt wird. Wer drei von dreißig
+  Servern übernimmt, bestätigt die Risiken dieser drei und die planweiten; nicht die der
+  siebenundzwanzig, die er gerade nicht anlegt.
+
+**Woran ein Betreiber den Unterschied sieht:**
+
+| Weg | Anzeige |
+| --- | --- |
+| API-Vorschau | `candidates[].canApply` je Eintrag, `blockingFindings` für die planweiten Fehler |
+| API-Übernahme | `imported` (angelegt) **und** `skipped` (übergangen, je mit Ort und Befundcodes) |
+| CLI `import preview` | `— NICHT ANWENDBAR` hinter dem Eintrag, Zusammenfassung „Teilweise anwendbar: 1 von 2 Servern" |
+| CLI `import apply` | zusätzlich der Block „Uebergangen (nicht anwendbar)" nach der Übernahme |
+
+**Die Ausnahme, an der der Teilimport aufhört:** Wer einen gesperrten Server **ausdrücklich** in
+`servers` (beziehungsweise `--only`) benennt, bekommt eine Absage (400) statt eines stillen
+Auslassens. Ein Import, der genau das übergeht, was jemand benannt hat, ist die unangenehmste Sorte
+Überraschung.
 
 ---
 
@@ -147,10 +215,16 @@ Parser: `VsCodeImportProvider`.
 Datei: `~/.codex/config.toml`, `.codex/config.toml`. Parser: `CodexImportProvider`.
 
 > **Die wichtigste Zeile dieser Matrix:** Codex schreibt **TOML**. Der Importweg dieses Gateways
-> nimmt **JSON** entgegen — `ConfigurationImporter` weist alles andere mit `BFR-IMP-0001` ab, bevor
-> überhaupt ein Parser gefragt wird. Eine echte `config.toml` kommt hier also **nicht** an. Gelesen
-> wird die **JSON-Umschrift** desselben Aufbaus, und **jeder Plan sagt das** (`BFR-IMP-0002`,
-> Warnung). Siehe Abschnitt 8.
+> nimmt **JSON** entgegen. Eine echte `config.toml` kommt hier **nicht** an — sie wird abgewiesen,
+> bevor überhaupt ein Parser gefragt wird. Gelesen wird die **JSON-Umschrift** desselben Aufbaus,
+> und **jeder Plan sagt das** (`BFR-IMP-0002`, Warnung).
+>
+> Seit WP4.3 sagt die Absage auch **warum**: Ein Dokument, das kein JSON ist, aber die Form von TOML
+> hat (Abschnittsüberschriften in eckigen Klammern, Zuweisungen mit `=`), bekommt
+> `BFR-IMP-0006 UnsupportedSourceFormat` statt `BFR-IMP-0001 NotJson` — samt der nächsten Handlung:
+> `[mcp_servers.<name>]` wird zu `{ "mcp_servers": { "<name>": { … } } }`. Das ist **keine**
+> TOML-Unterstützung; es ist die Meldung, die einen Codex-Betreiber davon abhält, in einer heilen
+> Datei nach einem Syntaxfehler zu suchen, den es nicht gibt. Siehe Abschnitt 8.
 
 | Feld | Status | Was passiert |
 | --- | --- | --- |
@@ -202,7 +276,7 @@ Aufbau stammt und was daran nachgebildet ist.
 | Claude | Sammelname `mcpServers`, Typen `stdio`/`http`/`sse`, Ersetzung `${VAR}` und `${VAR:-vorgabe}` in `command`, `args`, `env`, `url`, `headers`; Einstellungsschlüssel `enabledMcpjsonServers`, `disabledMcpjsonServers`, `enableAllProjectMcpServers`; `projects`-Karte; `globalShortcut` (Desktop) | Servernamen, Pfade und Werte; die übrigen Felder unter einem Projekt (`allowedTools`, `history`) |
 | Cursor | Sammelname `mcpServers`; `command`, `args`, `env`, `url`, `headers`, `type`, `envFile`, `disabled`, `auth` mit `CLIENT_ID`/`CLIENT_SECRET`/`scopes`; die sechs Ersetzungsformen | Servernamen, Pfade und Werte |
 | VS Code | `servers`, `inputs` (mit `type`/`id`/`description`/`password`), `sandbox` mit `filesystem`/`network`, Serverfelder `type`, `command`, `args`, `cwd`, `env`, `envFile`, `dev`, `sandboxEnabled`, `url`, `headers`, `oauth`; Block `mcp` in `settings.json`; das `inputs`-Beispiel stammt aus der Dokumentation | Servernamen, Pfade, die Editoreinstellungen daneben |
-| Codex | Abschnitt `[mcp_servers.<id>]` mit `command`, `args`, `env`, `cwd`, `startup_timeout_sec`, `tool_timeout_sec`, `enabled`, `url`, `bearer_token_env_var`, `http_headers` | **die Schreibweise selbst**: Alle Codex-Beispiele sind JSON-Umschriften der dokumentierten TOML-Form. Das Original steht als Kommentar in `codex/01-lokal.json`. |
+| Codex | Abschnitt `[mcp_servers.<id>]` mit `command`, `args`, `env`, `cwd`, `startup_timeout_sec`, `tool_timeout_sec`, `enabled`, `url`, `bearer_token_env_var`, `http_headers` | **die Schreibweise selbst**: Alle Codex-`*.json`-Beispiele sind JSON-Umschriften der dokumentierten TOML-Form. `codex/04-echtes-toml.toml` ist die Ausnahme — echtes TOML, absichtlich mit dieser Endung, damit die Sammeltests (`*.json`) sie nicht aufgreifen. |
 
 Keine Datei enthält ein echtes Zugangsdatum. Wo ein Klartextgeheimnis gezeigt wird, steht dort ein
 sprechender Beispielwert — echt aussehende Tokenformen (`ghp_…`, `sk-…`) stehen bewusst **nicht** in
@@ -212,10 +286,29 @@ den Fixtures, damit die Geheimnissuche der Lieferkette nicht auf einen Testwert 
 
 ## 8. Was nicht geht — und was das für den Import-Endpunkt heißt
 
-1. **Codex' echtes Format (TOML) erreicht diesen Weg nicht.** `IConfigurationImporter.Plan` nimmt ein
-   JSON-Dokument; `ConfigurationImporter` weist alles andere vorher ab. Wer `codex` wirklich
-   unterstützen will, braucht eine Vertragsänderung (ein Format-Argument oder eine TOML-Vorstufe) —
-   das ist gemeldet und **nicht umgangen**.
+1. **Codex' echtes Format (TOML) erreicht diesen Weg nicht — und das bleibt so.**
+   `IConfigurationImporter.Plan` nimmt ein JSON-Dokument; `ConfigurationImporter` weist alles andere
+   vorher ab.
+
+   **Die Entscheidung und ihre Begründung.** Zur Wahl stand, den Importer die Parser *vor* der
+   JSON-Prüfung fragen zu lassen, ob einer das Dokument beansprucht — dann könnte ein Parser ein
+   eigenes Format lesen. **Das ändert an dieser Zeile nichts:** Ohne TOML-Leser könnte kein Parser
+   eine `config.toml` beanspruchen, und ein TOML-Leser ist hier nicht vorhanden. Ihn zu schreiben
+   hieße, einen Parser für ein Format mit Datumsliteralen, mehrzeiligen Zeichenketten und
+   Punkt-Schlüsseln in genau den Weg zu setzen, über den fremde Dateien hereinkommen; ihn zu ziehen
+   hieße, eine neue Abhängigkeit an derselben Stelle. Gekostet hätte die Umstellung dagegen etwas
+   Reales: Die Meldung „kaputtes JSON" entstünde erst, wenn sich niemand zuständig fühlt, und wäre
+   damit unschärfer als heute.
+
+   **Also: TOML bleibt draußen, und die Absage wird deutlicher.** `BFR-IMP-0006` sagt „das ist TOML,
+   dieser Weg liest JSON, so schreibst du es um" statt „Syntaxfehler in Zeile 1". Belegt durch
+   `ConfigurationImporterTests.Eine_echte_config_toml_wird_als_toml_abgewiesen_und_nicht_als_kaputtes_json`
+   gegen die Beispieldatei `codex/04-echtes-toml.toml` — die einzige Fixture des Repos, die
+   absichtlich kein JSON ist.
+
+   Wer `codex` wirklich unterstützen will, braucht **beides**: einen TOML-Leser (neue Abhängigkeit
+   oder eigener Parser — beides ist eine Entscheidung, die nicht in diesem Paket fällt) und die
+   Umstellung der Formaterkennung. Das ist gemeldet und **nicht umgangen**.
 2. **Der Quellpfad ist eine Angabe über die Herkunft, kein Leseauftrag.** Kein Parser öffnet ihn;
    `originPath` landet unverändert in `ImportSource.OriginPath`. Ein `envFile` wird ebenfalls nicht
    gelesen. Ein Gateway, das den in einer fremden Konfiguration genannten Pfad selbst ausliest, wäre
@@ -227,3 +320,15 @@ den Fixtures, damit die Geheimnissuche der Lieferkette nicht auf einen Testwert 
    ausschließlich die Stellen, die der zentrale Weg **nicht sehen kann**, weil sie gar nicht
    übernommen werden: Cursors `auth.CLIENT_SECRET`, Codex' `bearer_token_env_var`, VS Codes
    `${input:…}` mit `password: true` und jedes `envFile`.
+5. **Eine Verweisform gilt auch dann als Verweis, wenn sie nicht der ganze Wert ist.** Bis WP4.3
+   erkannte `ImportSecretDetection.LooksMasked` `${…}`, `$FOO` und `%FOO%` nur als *vollständigen*
+   Wert — `"Authorization": "Bearer ${env:TOKEN}"`, also die Form, in der ein Autorisierungsheader
+   tatsächlich geschrieben wird, galt damit als Klartextgeheimnis. Der Irrtum ging in die sichere
+   Richtung, war aber ein Falschpositiv, und Falschpositive in einer Liste, die ein Mensch
+   durchgehen soll, kosten genau die Aufmerksamkeit, die die echten Funde bräuchten.
+
+   Die Grenze steht dort, wo es teuer würde: Als maskiert gilt nur, was nach dem Entfernen aller
+   Verweisformen **nichts Wertartiges** übrig lässt. `Bearer ${env:TOKEN}` hinterlässt das
+   Schemawort `Bearer` und damit nichts; `sk-abc${SUFFIX}` hinterlässt `sk-abc` und bleibt ein
+   Klartextfund — ein halbes Geheimnis als „maskiert" abzustempeln wäre der Irrtum in die andere,
+   teurere Richtung.

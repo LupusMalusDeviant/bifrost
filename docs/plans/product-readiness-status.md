@@ -169,7 +169,8 @@ Zwei Punkte gehen als Entscheidung an den Lead bzw. weiter:
 
 ## Laufender Meilenstein: M4 — Onboarding und Bedienbarkeit
 
-Vertrag eingefroren in `src/Bifrost.Abstractions/Importing.cs`.
+Vertrag in `src/Bifrost.Abstractions/Importing.cs`. Die Einfrierung der ersten Welle ist
+**aufgehoben**; Änderungen werden im Vertrag selbst begründet.
 
 | WP | Status |
 |---|---|
@@ -180,6 +181,71 @@ Vertrag eingefroren in `src/Bifrost.Abstractions/Importing.cs`.
 | 4.6 Einheitliche Upstream-Diagnose | `implementiert` |
 | 4.7 Dokumentation, i18n, Contributor-Basis | `implementiert` |
 | 4.4 Geführter Setup-Wizard | `offen` — setzt auf 4.3 auf |
+
+### Vier Befunde aus der Abnahme von 4.1–4.3 — behoben
+
+Ein Audit gegen den Code (nicht gegen die Häkchen) hat vier Sachen gefunden. Alle vier sind
+behoben; die ersten beiden verlangten eine Vertragsänderung in `Importing.cs`.
+
+**1. Teilimport.** `ImportPlan.CanApply` galt planweit: Ein einziger kaputter Eintrag machte eine
+Datei mit dreißig Servern unanwendbar. Für den geführten Erstaufbau (WP4.4) war das die
+Einschränkung, an der die Sache scheitert — wer dreißig Server mitbringt, hat mit ziemlicher
+Sicherheit einen darunter, der nicht mehr stimmt.
+
+`ImportFinding` trägt jetzt einen `Scope` (`Document` oder `Entry`), **Vorgabe `Document`**: Ein
+Befund gilt für alles, bis jemand ausdrücklich hinschreibt, dass er nur eine Stelle betrifft. So
+herum blockiert ein vergessener Bereich zu viel statt zu wenig — die Verharmlosung eines planweiten
+Fehlers zu einem Einzelbefund wäre der teure Irrtum. `ImportPlan.IsApplicable(kandidat)` fasst die
+drei Bedingungen zusammen; `CanApply` heißt jetzt „etwas geht", nicht mehr „alles geht".
+
+Bestätigungen gelten seitdem der **Auswahl** (`ConfirmationsFor`): Wer drei von dreißig Servern
+übernimmt, bestätigt die Risiken dieser drei und die planweiten. Eine Bestätigung, die pauschal für
+alles gilt, wird zur Formalie.
+
+**Die Stelle, an der der Teilimport aufhört:** Wer einen gesperrten Server ausdrücklich in `servers`
+(beziehungsweise `--only`) benennt, bekommt eine Absage statt eines stillen Auslassens. Ohne
+Auswahl werden die anwendbaren übernommen und die übrigen in der Antwort unter `skipped` genannt —
+ein Teilimport, der die Differenz verschweigt, sieht aus wie ein vollständiger.
+
+**2. Der Ort in den zentralen Befunden war falsch.** Die zentrale Nachbearbeitung setzte den Pfad
+aller von ihr erzeugten Befunde fest auf `mcpServers/<name>` — und das sind die meisten Befunde
+überhaupt: Risiko, Zugangsdaten und Normalisierung entstehen alle dort. Bei Claudes
+`projects`-Karte, bei VS Code (`servers/…`, `mcp/servers/…`) und bei Codex (`mcp_servers/…`) zeigte
+das auf eine Stelle, die es in der Quelldatei nicht gibt. Ein Ort, der nicht stimmt, ist schlechter
+als keiner: Er schickt jemanden an die falsche Zeile, und wer dort nichts findet, glaubt eher, den
+Befund missverstanden zu haben. `ImportCandidate.SourcePath` kommt jetzt vom Parser;
+`ImportFindingLocationTests` prüft das über alle Beispielkonfigurationen.
+
+**3. TOML: die Entscheidung ist, es draußen zu lassen.** Zur Wahl stand, die Parser *vor* der
+JSON-Prüfung nach Zuständigkeit zu fragen. Das hätte an der Sache nichts geändert — ohne TOML-Leser
+beansprucht kein Parser eine `config.toml`, und ein TOML-Leser ist weder vorhanden noch ohne
+Rückfrage zu ziehen. Gekostet hätte es die Schärfe der Meldung „kaputtes JSON". Stattdessen ist die
+**Absage** deutlicher: `BFR-IMP-0006` sagt „das ist TOML, dieser Weg liest JSON, so schreibst du es
+um" statt „Syntaxfehler in Zeile 1". Wer Codex wirklich unterstützen will, braucht einen TOML-Leser
+— das ist gemeldet, nicht umgangen.
+
+**4. Falschpositiv in der Maskenerkennung.** `LooksMasked` erkannte eine Verweisform nur als
+*ganzen* Wert; `"Authorization": "Bearer ${env:TOKEN}"` galt deshalb als Klartextgeheimnis. Jetzt
+zählt eine Verweisform auch mitten im Wert — aber nur, wenn nach ihrem Entfernen nichts Wertartiges
+übrig bleibt. `Bearer ${env:TOKEN}` hinterlässt ein Schemawort und ist maskiert; `sk-abc${SUFFIX}`
+hinterlässt ein halbes Geheimnis und bleibt ein Klartextfund.
+
+### Entscheidung: Der Setup-Endpunkt bleibt auf Loopback beschränkt
+
+WP4.3 hat `/setup/import/preview` auf Loopback begrenzt und dazu angemerkt, dass ein Betreiber, der
+die Einrichtung vom Laptop aus öffnet, darüber nicht durchkommt.
+
+**Entschieden: Die Beschränkung bleibt.** Der Endpunkt ist der einzige, der ohne Anmeldung
+erreichbar ist — er hängt allein am Erstzugangs-Token, und dieses Token liegt in einer Datei auf dem
+Server. Ihn übers Netz zu öffnen hieße, den Erstzugang zu einem Ratespiel für jeden zu machen, der
+den Port erreicht. Loopback ist hier kein Komfortverlust, sondern die zweite Hälfte der Absicherung.
+
+Die Setup-Oberfläche braucht ihn nicht: Sie ist Blazor Interactive Server und läuft **im**
+Serverprozess. Sie ruft `IConfigurationImporter` und die Vorschauprojektion direkt auf, ohne den
+Umweg über HTTP. Der HTTP-Weg bleibt für lokale Werkzeuge — genau dafür ist er gebaut.
+
+Das ist eine Auflage für WP4.4, keine Einschränkung: Wer den Wizard über HTTP gegen den
+Setup-Endpunkt baut, hat ihn falsch gebaut.
 
 ### Drei Wächter für dieselbe Regel — und drei Pakete, die je einen übersahen
 

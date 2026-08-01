@@ -33,11 +33,11 @@ public sealed class StdioContainerLifecycleE2ETests
     private static readonly IsolationOptions Isolation =
         new(IsolationMode.Container, Image: Image, StopTimeoutSeconds: 2);
 
-    private static void RequireRuntime()
+    private static async Task RequireRuntimeAsync()
     {
         var required = Environment.GetEnvironmentVariable("BIFROST_REQUIRE_CONTAINER") is "1" or "true";
-        var available = ContainerLaunchPolicy.ProbeAsync(Isolation, CancellationToken.None)
-            .GetAwaiter().GetResult() is null;
+        var available = (await ContainerLaunchPolicy.ProbeAsync(Isolation, CancellationToken.None))
+            is null;
         if (!available)
         {
             Assert.SkipUnless(required,
@@ -84,7 +84,7 @@ public sealed class StdioContainerLifecycleE2ETests
     [Fact]
     public async Task A_session_container_keeps_stdin_open_and_pipes_both_ways()
     {
-        RequireRuntime();
+        await RequireRuntimeAsync();
         var ct = TestContext.Current.CancellationToken;
         var identity = ContainerIdentity.ForUpstream("stdio-pipe", Guid.NewGuid().ToString("N"));
 
@@ -116,7 +116,7 @@ public sealed class StdioContainerLifecycleE2ETests
     [Fact]
     public async Task The_minimum_policy_actually_holds_inside_the_container()
     {
-        RequireRuntime();
+        await RequireRuntimeAsync();
         var ct = TestContext.Current.CancellationToken;
         var identity = ContainerIdentity.ForUpstream("stdio-policy", Guid.NewGuid().ToString("N"));
 
@@ -164,7 +164,7 @@ public sealed class StdioContainerLifecycleE2ETests
     [Fact]
     public async Task A_hard_killed_client_leaves_no_container_behind()
     {
-        RequireRuntime();
+        await RequireRuntimeAsync();
         var ct = TestContext.Current.CancellationToken;
         var identity = ContainerIdentity.ForUpstream("stdio-abbruch", Guid.NewGuid().ToString("N"));
 
@@ -201,7 +201,7 @@ public sealed class StdioContainerLifecycleE2ETests
     [Fact]
     public async Task The_sweep_removes_only_this_instances_containers()
     {
-        RequireRuntime();
+        await RequireRuntimeAsync();
         var ct = TestContext.Current.CancellationToken;
         var eigene = Guid.NewGuid().ToString("N");
         var fremde = Guid.NewGuid().ToString("N");
@@ -241,7 +241,7 @@ public sealed class StdioContainerLifecycleE2ETests
     [Fact]
     public async Task Stopping_a_session_removes_the_container()
     {
-        RequireRuntime();
+        await RequireRuntimeAsync();
         var ct = TestContext.Current.CancellationToken;
         var identity = ContainerIdentity.ForUpstream("stdio-stop", Guid.NewGuid().ToString("N"));
 
@@ -266,7 +266,7 @@ public sealed class StdioContainerLifecycleE2ETests
     [Fact]
     public async Task Disposing_the_connector_reclaims_this_instances_containers()
     {
-        RequireRuntime();
+        await RequireRuntimeAsync();
         var ct = TestContext.Current.CancellationToken;
         var gateway = new GatewayIdentity();
         var connector = new Bifrost.Upstream.StdioUpstreamConnector(gateway);

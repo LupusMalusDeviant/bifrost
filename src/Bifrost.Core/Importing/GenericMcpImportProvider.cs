@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 
 using Bifrost.Abstractions;
@@ -252,7 +252,8 @@ public sealed class GenericMcpImportProvider : IImportProvider
                     $"Der Server '{server.Name}' steht mehrfach in der Quelle. Welcher Eintrag gilt, "
                     + "haengt vom JSON-Leser ab — das wird hier nicht entschieden.",
                     path,
-                    "Den doppelten Eintrag in der Quelldatei entfernen und erneut importieren."));
+                    "Den doppelten Eintrag in der Quelldatei entfernen und erneut importieren.",
+                    ImportFindingScope.Entry));
                 continue;
             }
 
@@ -263,7 +264,9 @@ public sealed class GenericMcpImportProvider : IImportProvider
                     ImportSeverity.Error,
                     $"Der Eintrag '{server.Name}' ist {Describe(server.Value.ValueKind)} statt eines "
                     + "Serverobjekts.",
-                    path));
+                    path,
+                    null,
+                    ImportFindingScope.Entry));
                 continue;
             }
 
@@ -351,7 +354,8 @@ public sealed class GenericMcpImportProvider : IImportProvider
                 "Der Eintrag traegt 'command' und 'url' zugleich. Ob ein lokales Programm oder ein "
                 + "entfernter Dienst gemeint ist, sagt die Quelle damit nicht.",
                 path,
-                "Das ueberfluessige Feld in der Quelldatei entfernen."));
+                "Das ueberfluessige Feld in der Quelldatei entfernen.",
+                ImportFindingScope.Entry));
             return null;
         }
 
@@ -405,7 +409,8 @@ public sealed class GenericMcpImportProvider : IImportProvider
             "Der Eintrag traegt weder 'command' noch 'url' — es ist nicht erkennbar, was gestartet "
             + "oder aufgerufen werden soll.",
             path,
-            "Den Eintrag in der Quelldatei vervollstaendigen."));
+            "Den Eintrag in der Quelldatei vervollstaendigen.",
+            ImportFindingScope.Entry));
         return null;
     }
 
@@ -415,7 +420,8 @@ public sealed class GenericMcpImportProvider : IImportProvider
             ImportSeverity.Error,
             $"Der Typ '{declaredType}' verlangt das Feld '{field}', das hier fehlt.",
             path,
-            $"'{field}' in der Quelldatei ergaenzen.");
+            $"'{field}' in der Quelldatei ergaenzen.",
+            ImportFindingScope.Entry);
 
     private static ImportCandidate Stdio(
         string name, JsonElement server, string command, string path, List<ImportFinding> findings)
@@ -437,7 +443,7 @@ public sealed class GenericMcpImportProvider : IImportProvider
                 environment.Count > 0 ? environment : null,
                 workingDirectory));
 
-        return new ImportCandidate(name, config, findings, []);
+        return new ImportCandidate(name, config, findings, [], path);
     }
 
     private static ImportCandidate? Http(
@@ -463,7 +469,8 @@ public sealed class GenericMcpImportProvider : IImportProvider
                 ImportSeverity.Error,
                 "Die Adresse ist keine absolute http- oder https-Adresse.",
                 $"{path}/url",
-                "Die vollstaendige Adresse einschliesslich Schema eintragen."));
+                "Die vollstaendige Adresse einschliesslich Schema eintragen.",
+                ImportFindingScope.Entry));
             return null;
         }
 
@@ -491,7 +498,7 @@ public sealed class GenericMcpImportProvider : IImportProvider
                 headers.Count > 0 ? headers : null,
                 AllowLegacySse: legacySse));
 
-        return new ImportCandidate(name, config, findings, []);
+        return new ImportCandidate(name, config, findings, [], path);
     }
 
     private static List<string> ReadArguments(

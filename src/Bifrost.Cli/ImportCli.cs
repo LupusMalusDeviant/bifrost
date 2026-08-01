@@ -136,8 +136,9 @@ public sealed class ImportCli
         var selected = Selection(preview, only, isolation, image);
         if (selected.Count == 0)
         {
-            await _error.WriteLineAsync(
-                $"--only '{only}' trifft keinen Server aus dieser Quelle.");
+            await _error.WriteLineAsync(only is null
+                ? "Kein Server dieser Quelle ist anwendbar. Es wurde nichts angelegt."
+                : $"--only '{only}' trifft keinen Server aus dieser Quelle.");
             return GatewayCli.UsageError;
         }
 
@@ -179,7 +180,8 @@ public sealed class ImportCli
             + string.Join(
                 Environment.NewLine,
                 result.GetProperty("imported").EnumerateArray()
-                    .Select(item => $"  - {item.GetProperty("slug").GetString()} ({item.GetProperty("id").GetString()})")));
+                    .Select(item => $"  - {item.GetProperty("slug").GetString()} ({item.GetProperty("id").GetString()})"))
+            + Skipped(result));
         return GatewayCli.Success;
     }
 
@@ -235,11 +237,19 @@ public sealed class ImportCli
             {
                 SourceName = candidate.GetProperty("sourceName").GetString()!,
                 Slug = candidate.GetProperty("slug").GetString()!,
+                CanApply = Applicable(candidate),
             })
             // --only nimmt beides an: den Namen aus der Quelle und den Slug, unter dem der Server
             // hier heissen wird. Wer eine Vorschau vor sich hat, liest den einen oder den anderen —
             // ihn zu zwingen, den richtigen zu erraten, waere Schikane.
-            .Where(entry => wanted is null || wanted.Contains(entry.SourceName) || wanted.Contains(entry.Slug))
+            //
+            // Ohne --only werden die gesperrten Eintraege hier bereits ausgelassen: Der Dienst
+            // wuerde eine AUSDRUECKLICHE Wahl eines gesperrten Servers abweisen, und diese Wahl hat
+            // hier niemand getroffen. Mit --only bleiben sie drin — dann soll die Absage kommen,
+            // statt dass die CLI den benannten Server stillschweigend uebergeht.
+            .Where(entry => wanted is null
+                ? entry.CanApply
+                : wanted.Contains(entry.SourceName) || wanted.Contains(entry.Slug))
             .Select(entry => new SelectedServer(entry.SourceName, Normalize(isolation), image))];
     }
 
@@ -274,7 +284,10 @@ public sealed class ImportCli
             text.Append(Environment.NewLine)
                 .Append("  ").Append(candidate.GetProperty("sourceName").GetString())
                 .Append("  ->  ").Append(candidate.GetProperty("slug").GetString())
-                .Append("  [").Append(transport.GetProperty("kind").GetString()).AppendLine("]");
+                .Append("  [").Append(transport.GetProperty("kind").GetString()).Append(']')
+                // Die Zeile, an der ein Betreiber den Teilimport sieht: Was hier gesperrt ist, wird
+                // nicht angelegt; die uebrigen Eintraege derselben Datei schon.
+                .AppendLine(Applicable(candidate) ? string.Empty : "  — NICHT ANWENDBAR");
 
             foreach (var (property, label) in ((string, string)[])
                      [("program", "Programm"), ("endpoint", "Ziel"), ("specLocation", "Spezifikation"),
@@ -311,9 +324,16 @@ public sealed class ImportCli
 
         AppendFindings(text, preview, "findings", "  ");
 
+        var candidates = preview.GetProperty("candidates").EnumerateArray().ToList();
+        var applicable = candidates.Count(Applicable);
+
         text.Append(Environment.NewLine)
             .AppendLine(preview.GetProperty("canApply").GetBoolean()
-                ? "Anwendbar."
+                ? applicable == candidates.Count
+                    ? $"Anwendbar: alle {candidates.Count} Server."
+                    : $"Teilweise anwendbar: {applicable} von {candidates.Count} Servern. Die "
+                        + "uebrigen sind oben als NICHT ANWENDBAR gekennzeichnet und werden "
+                        + "uebergangen."
                 : "NICHT anwendbar — siehe die Befunde der Stufe Error.");
 
         var confirmations = preview.GetProperty("requiresConfirmation");
@@ -365,6 +385,40 @@ public sealed class ImportCli
                 .AppendLine(secret.GetProperty("valuePresent").GetBoolean() ? "ja" : "nein");
         }
     }
+
+    /// <summary>
+    /// Was der Dienst übergangen hat, samt Grund. <b>Wird immer ausgegeben, wenn es etwas gibt:</b>
+    /// Ein Teilimport, dessen Differenz nur in der Vorschau stand, sieht am Ende aus wie ein
+    /// vollständiger.
+    /// </summary>
+    private static string Skipped(JsonElement result)
+    {
+        if (!result.TryGetProperty("skipped", out var skipped)
+            || skipped.ValueKind is not JsonValueKind.Array
+            || skipped.GetArrayLength() == 0)
+        {
+            return string.Empty;
+        }
+
+        return Environment.NewLine
+            + "Uebergangen (nicht anwendbar):"
+            + Environment.NewLine
+            + string.Join(
+                Environment.NewLine,
+                skipped.EnumerateArray().Select(item =>
+                    $"  ! {item.GetProperty("sourceName").GetString()}  "
+                    + string.Join(
+                        ", ",
+                        item.GetProperty("reasons").EnumerateArray().Select(r => r.GetString()))));
+    }
+
+    /// <summary>
+    /// Ob dieser Kandidat angelegt würde. Fehlt die Angabe, gilt „ja" — ein älterer Dienst kennt sie
+    /// nicht, und die CLI erfindet dafür keine Sperre.
+    /// </summary>
+    private static bool Applicable(JsonElement candidate)
+        => !candidate.TryGetProperty("canApply", out var value)
+            || value.ValueKind is not JsonValueKind.False;
 
     private static string? Text(JsonElement parent, string property)
         => parent.TryGetProperty(property, out var value) && value.ValueKind is JsonValueKind.String

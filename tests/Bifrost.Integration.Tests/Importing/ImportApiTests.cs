@@ -27,11 +27,12 @@ public class ImportApiTests : IClassFixture<ImportGatewayFixture>
     public ImportApiTests(ImportGatewayFixture gateway) => _gateway = gateway;
 
     /// <summary>Die Audit-Eintraege dieses Pakets, aus dem laufenden Dienst.</summary>
-    private IReadOnlyList<AuditEvent> Eintraege(CancellationToken ct)
-        => [.. _gateway.AuditQuery
-            .QueryAsync(new AuditFilter(ToolPrefix: "import-", PageSize: 200), ct)
-            .GetAwaiter().GetResult().Items
-            .Where(item => item.Tool is not null)];
+    private async Task<IReadOnlyList<AuditEvent>> EintraegeAsync(CancellationToken ct)
+    {
+        var seite = await _gateway.AuditQuery
+            .QueryAsync(new AuditFilter(ToolPrefix: "import-", PageSize: 200), ct);
+        return [.. seite.Items.Where(item => item.Tool is not null)];
+    }
 
     // ── Vorschau ────────────────────────────────────────────────────────────────────────────────
 
@@ -412,10 +413,10 @@ public class ImportApiTests : IClassFixture<ImportGatewayFixture>
         // Der Audit-Pfad schreibt gepuffert. Gewartet wird auf den Eintrag, nicht auf eine Uhr.
         var ct = TestContext.Current.CancellationToken;
         await IntegrationSupport.WaitUntilAsync(
-            () => Eintraege(ct).Any(item => item.Tool!.StartsWith("import-added", StringComparison.Ordinal)),
+            async () => (await EintraegeAsync(ct)).Any(item => item.Tool!.StartsWith("import-added", StringComparison.Ordinal)),
             because: "ein Import ohne Spur im Audit ist ein Import, den niemand nachvollziehen kann");
 
-        var eintraege = Eintraege(ct);
+        var eintraege = await EintraegeAsync(ct);
         eintraege.Select(item => item.Tool).Should().Contain(t => t!.Contains("import-preview", StringComparison.Ordinal));
         eintraege.Select(item => item.Tool).Should().Contain(t => t!.Contains("import-added", StringComparison.Ordinal));
 

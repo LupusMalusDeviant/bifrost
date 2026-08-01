@@ -46,10 +46,10 @@ public sealed class WebUiTests : IClassFixture<GatewayFixture>
         response.StatusCode.Should().Be(HttpStatusCode.Redirect);
         response.Headers.Location!.OriginalString.Should().Contain("failed=true");
 
-        await IntegrationSupport.WaitUntilAsync(() =>
-            _gw.AuditQuery.QueryAsync(
-                new AuditFilter(Kind: AuditEventKind.Authentication, Status: InvocationStatus.Denied), TestContext.Current.CancellationToken)
-                .GetAwaiter().GetResult().TotalCount >= 1,
+        await IntegrationSupport.WaitUntilAsync(async () =>
+            (await _gw.AuditQuery.QueryAsync(
+                new AuditFilter(Kind: AuditEventKind.Authentication, Status: InvocationStatus.Denied), TestContext.Current.CancellationToken))
+                .TotalCount >= 1,
             because: "fehlgeschlagene Logins werden auditiert (FR-22)");
     }
 
@@ -63,9 +63,9 @@ public sealed class WebUiTests : IClassFixture<GatewayFixture>
         var dashboard = await client.GetAsync("/");
         dashboard.StatusCode.Should().Be(HttpStatusCode.OK, "mit Cookie ist das Dashboard erreichbar");
 
-        await IntegrationSupport.WaitUntilAsync(() =>
-            _gw.AuditQuery.QueryAsync(new AuditFilter(ToolPrefix: $"ui-login:{name}", Kind: AuditEventKind.Authentication), TestContext.Current.CancellationToken)
-                .GetAwaiter().GetResult().TotalCount >= 1,
+        await IntegrationSupport.WaitUntilAsync(async () =>
+            (await _gw.AuditQuery.QueryAsync(new AuditFilter(ToolPrefix: $"ui-login:{name}", Kind: AuditEventKind.Authentication), TestContext.Current.CancellationToken))
+                .TotalCount >= 1,
             because: "erfolgreiche UI-Logins werden auditiert");
     }
 
@@ -128,9 +128,9 @@ public sealed class WebUiTests : IClassFixture<GatewayFixture>
         result.Status.Should().Be(InvocationStatus.Success);
 
         // 4. Im Log sichtbar (Logs.razor → IAuditQuery), mit Origin=Ui
-        await IntegrationSupport.WaitUntilAsync(() =>
-            _gw.AuditQuery.QueryAsync(new AuditFilter(ToolPrefix: "ui-ref__echo"), TestContext.Current.CancellationToken)
-                .GetAwaiter().GetResult().Items.Any(e => e.Origin == CallOrigin.Ui && e.Status == InvocationStatus.Success),
+        await IntegrationSupport.WaitUntilAsync(async () =>
+            (await _gw.AuditQuery.QueryAsync(new AuditFilter(ToolPrefix: "ui-ref__echo"), TestContext.Current.CancellationToken))
+                .Items.Any(e => e.Origin == CallOrigin.Ui && e.Status == InvocationStatus.Success),
             because: "WP6-DoD: der UI-Testaufruf erscheint mit Origin=Ui im Audit-Log");
 
         await _gw.Supervisor.RemoveAsync(serverId, DrainPolicy.Immediate, TestContext.Current.CancellationToken);

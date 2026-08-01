@@ -177,6 +177,14 @@ internal sealed class ContainerBackedUpstreamConnection(
 
     public bool PushesCatalogChanges => inner.PushesCatalogChanges;
 
+    /// <summary>
+    /// Durchgereicht, aus demselben Grund wie <see cref="PushesCatalogChanges"/>: Der Container
+    /// ändert nichts an dem, was die Gegenstelle im Handshake gesagt hat. Verschluckte diese Hülle
+    /// die Angabe, stünde bei jedem containerisierten stdio-Upstream „nicht ermittelt" — und die
+    /// Ursache wäre die Hülle, nicht der Upstream.
+    /// </summary>
+    public UpstreamProtocolInfo Protocol => inner.Protocol;
+
     /// <summary>Der Name des Containers — die Grundlage jedes Aufräumens.</summary>
     public string ContainerName => identity.Name;
 

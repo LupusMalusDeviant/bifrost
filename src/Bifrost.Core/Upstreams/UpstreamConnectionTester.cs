@@ -48,7 +48,11 @@ public sealed class UpstreamConnectionTester : IUpstreamConnectionTester
         {
             await using var connection = await connector.ConnectAsync(ServerId.New(), config, linked.Token).ConfigureAwait(false);
             var inventory = await connection.DiscoverAsync(linked.Token).ConfigureAwait(false);
-            return new UpstreamTestResult(true, inventory.Tools.Count, null);
+
+            // Abgelesen, SOLANGE die Verbindung noch steht. Danach ist die Angabe weg — der Test
+            // raeumt seine Verbindung ab, und genau daran scheiterte die Auskunft bisher. Es wird
+            // nichts nachgefragt: Die Werte stehen seit dem Handshake im Client.
+            return new UpstreamTestResult(true, inventory.Tools.Count, null, connection.Protocol);
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
         {

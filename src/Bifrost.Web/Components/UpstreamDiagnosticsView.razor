@@ -1,3 +1,4 @@
+@using Bifrost.Abstractions
 @using Bifrost.Core.Diagnostics.Upstreams
 
 @*
@@ -61,7 +62,10 @@
         <p style="margin:.75rem 0 0">
             <strong>Gegenstelle:</strong>
             Transport <span class="mono">@negotiation.Transport</span>,
-            Protokoll <span class="mono">@(negotiation.ProtocolVersion ?? "nicht ermittelt")</span>,
+            @* Die Beschriftung entscheidet der Kern (UpstreamNegotiation.ProtocolLabel): "nicht
+               ermittelt" und "nicht zutreffend" sind zwei verschiedene Aussagen, und welche gilt,
+               ist keine Frage der Darstellung. *@
+            Protokoll <span class="mono" title="@ProtocolHint(negotiation)">@negotiation.ProtocolLabel</span>,
             Fähigkeiten
             <span class="mono">@(negotiation.Capabilities.Count > 0 ? string.Join(", ", negotiation.Capabilities) : "—")</span>,
             @negotiation.ToolCount Werkzeug(e).
@@ -77,6 +81,20 @@
 @code {
     /// <summary>Der Bericht; <c>null</c> heisst: es lief noch kein Test.</summary>
     [Parameter] public UpstreamDiagnosticReport? Report { get; set; }
+
+    /// <summary>
+    /// Der Erklärtext am Mauszeiger. Er sagt, was der angezeigte Zustand bedeutet — die Begründung
+    /// im Einzelfall steht darunter als Anmerkung und kommt aus dem Bericht.
+    /// </summary>
+    private static string ProtocolHint(UpstreamNegotiation negotiation) => negotiation.Availability switch
+    {
+        UpstreamProtocolAvailability.Negotiated =>
+            "Die Fassung, auf die sich beide Seiten beim Verbindungsaufbau geeinigt haben.",
+        UpstreamProtocolAvailability.NotApplicable =>
+            "Dieser Transport spricht kein MCP — es gibt keine Fassung, die auszuhandeln wäre.",
+        _ => "MCP wird gesprochen, die ausgehandelte Fassung war aber nicht abzulesen. Der Grund "
+            + "steht in der Anmerkung.",
+    };
 
     private static string Css(UpstreamStageOutcome outcome) => outcome switch
     {

@@ -262,8 +262,37 @@ public sealed class ConfigurationImporterTests
 
         var plan = ImportWorld.Permissive().Plan(document);
 
-        plan.Findings.Should().Contain(f => f.Code == ImportReason.NameCollision);
+        // Der Befund steht an BEIDEN Beteiligten, nicht am Plan: Eine Kollision zwischen zwei
+        // Eintraegen ist keine Aussage ueber die uebrigen Server der Datei.
+        plan.Candidates.Should().OnlyContain(c =>
+            c.Findings.Any(f => f.Code == ImportReason.NameCollision));
+        plan.ApplicableCandidates.Should().BeEmpty();
         plan.CanApply.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Der Gegenbeweis zur Kollision: Sie nimmt die beiden Beteiligten heraus und laesst den Rest
+    /// stehen. Ohne diesen Test waere „Kollision blockiert alles" durch den Test darueber gedeckt.
+    /// </summary>
+    [Fact]
+    public void Eine_kollision_nimmt_nur_die_beiden_beteiligten_heraus()
+    {
+        var document = """
+        {
+          "mcpServers": {
+            "My Server": { "command": "/usr/bin/a" },
+            "my.server": { "command": "/usr/bin/b" },
+            "unbeteiligt": { "command": "/usr/bin/c" }
+          }
+        }
+        """;
+
+        var plan = ImportWorld.Permissive().Plan(document);
+
+        plan.CanApply.Should().BeTrue();
+        plan.ApplicableCandidates.Select(c => c.SourceName).Should().Equal("unbeteiligt");
+        plan.BlockedCandidates.Select(c => c.SourceName).Should().BeEquivalentTo(
+            ["My Server", "my.server"]);
     }
 
     [Fact]
@@ -362,6 +391,46 @@ public sealed class ConfigurationImporterTests
         plan.Candidates.Single().Findings.Should().OnlyContain(f =>
             f.Path != null && f.Path.StartsWith("mcpServers/github", StringComparison.Ordinal));
     }
+
+    // ── TOML: was nicht geht, sagt warum ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Codex' <b>echte</b> <c>config.toml</c> kommt hier nicht an — das ist die Entscheidung, und
+    /// sie bleibt. Aber sie bekommt eine eigene Begründung statt „kaputtes JSON": Wer eine heile
+    /// Datei vorlegt und „Syntaxfehler" liest, sucht in seiner Datei nach einem Fehler, den es
+    /// nicht gibt.
+    /// </summary>
+    [Fact]
+    public void Eine_echte_config_toml_wird_als_toml_abgewiesen_und_nicht_als_kaputtes_json()
+    {
+        var plan = ImportWorld.Permissive().Plan(
+            File.ReadAllText(Path.Combine(
+                Providers.ProviderWorld.Directory, "codex", "04-echtes-toml.toml")),
+            "~/.codex/config.toml");
+
+        plan.CanApply.Should().BeFalse();
+        plan.Candidates.Should().BeEmpty("es wurde nichts gelesen und nichts geraten");
+
+        var finding = plan.Findings.Should().ContainSingle().Subject;
+        finding.Code.Should().Be(ImportReason.UnsupportedSourceFormat);
+        finding.Severity.Should().Be(ImportSeverity.Error);
+        finding.Scope.Should().Be(
+            ImportFindingScope.Document, "es geht um die ganze Datei, nicht um einen Eintrag");
+        finding.Remediation.Should().Contain("mcp_servers", "die naechste Handlung steht dabei");
+    }
+
+    /// <summary>
+    /// Der Gegenbeweis: Ein Dokument, das JSON sein wollte und es nicht ist, bleibt ein
+    /// <c>BFR-IMP-0001</c>. Ohne diesen Test wäre die TOML-Erkennung ein Weg, jede kaputte Datei zu
+    /// einer TOML-Datei zu erklären.
+    /// </summary>
+    [Theory]
+    [InlineData("{\"mcpServers\": {\"a\": {\"command\": \"/usr/bin/a\"}")]
+    [InlineData("das ist ueberhaupt keine konfiguration")]
+    [InlineData("")]
+    public void Ein_kaputtes_json_bleibt_ein_kaputtes_json(string document)
+        => ImportWorld.Permissive().Plan(document).Findings
+            .Should().ContainSingle().Which.Code.Should().Be(ImportReason.NotJson);
 
     /// <summary>Ein Parser, der sich verrechnet, darf den Plan nicht kippen.</summary>
     [Theory]

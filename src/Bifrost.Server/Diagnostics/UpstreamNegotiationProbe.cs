@@ -9,20 +9,17 @@ namespace Bifrost.Server.Diagnostics;
 /// <para>
 /// <b>Warum das nur für einen bereits angeschlossenen Upstream geht:</b> Die ausgehandelte
 /// Protokollfassung und die Fähigkeiten der Gegenstelle leben in der <i>stehenden</i> Verbindung.
-/// Der Verbindungstest ist absichtlich transient — er räumt seine Verbindung wieder ab, bevor
-/// irgendetwas persistiert wird. Für einen noch nicht angeschlossenen Server liefert diese Sonde
-/// deshalb <c>null</c>, und die Anzeige sagt „nicht ermittelt" statt einen Wert zu erfinden, der
-/// aus der Konfiguration stammt und dann wie eine Messung aussieht.
+/// Für einen Server, der hier nicht geführt wird, liefert diese Sonde deshalb <c>null</c>, und die
+/// Diagnose fällt auf das zurück, was ihr eigener transienter Versuch gesehen hat — nicht auf einen
+/// Wert aus der Konfiguration, der dann wie eine Messung aussähe.
 /// </para>
 /// <para>
-/// <b>Was hier NICHT steht, und warum:</b> Die genaue Protokollfassung (<c>2025-11-25</c>,
-/// <c>2026-07-28</c>, …) kennt nur das MCP-SDK, und sie endet in
-/// <c>SdkUpstreamConnection</c>; über <see cref="IUpstreamConnection"/> geht davon einzig
-/// <see cref="IUpstreamConnection.PushesCatalogChanges"/> nach oben. Daraus lässt sich die
-/// <em>Fassungsfamilie</em> ablesen, nicht die Fassung — und genau so steht es im Bericht. Die
-/// exakte Angabe durchzureichen wäre eine Änderung an <c>Bifrost.Abstractions</c> und
-/// <c>Bifrost.Upstream</c>; beides liegt ausserhalb dieses Arbeitspakets und ist als Fundstelle
-/// gemeldet.
+/// <b>Die genaue Fassung steht jetzt hier.</b> Bis zur Erweiterung des Verbindungsvertrags reichte
+/// <see cref="IUpstreamConnection"/> davon nur
+/// <see cref="IUpstreamConnection.PushesCatalogChanges"/> nach oben; daraus liess sich die
+/// Fassungs<em>familie</em> ablesen („vor Revision 2026-07-28"), nicht die Fassung. Mit
+/// <see cref="IUpstreamConnection.Protocol"/> kommt die ausgehandelte Angabe selbst nach oben — und
+/// wo es keine gibt, kommt der Grund mit.
 /// </para>
 /// </summary>
 public sealed class SupervisorNegotiationProbe : IUpstreamNegotiationProbe
@@ -35,7 +32,8 @@ public sealed class SupervisorNegotiationProbe : IUpstreamNegotiationProbe
         _supervisor = supervisor;
     }
 
-    public Task<UpstreamNegotiation?> DescribeAsync(string slug, CancellationToken ct)
+    public Task<UpstreamNegotiation?> DescribeAsync(
+        string slug, UpstreamTransportKind kind, CancellationToken ct)
     {
         var status = _supervisor.Statuses
             .FirstOrDefault(candidate => string.Equals(candidate.Slug, slug, StringComparison.Ordinal));
@@ -51,6 +49,8 @@ public sealed class SupervisorNegotiationProbe : IUpstreamNegotiationProbe
             return Task.FromResult<UpstreamNegotiation?>(null);
         }
 
+        // Beobachtet aus dem letzten Katalog: WAS tatsaechlich ankam. Das bleibt neben den
+        // gemeldeten Faehigkeiten stehen — ein Server darf 'prompts' anbieten und keine liefern.
         var capabilities = new List<string>();
         if (inventory is not null)
         {
@@ -70,31 +70,57 @@ public sealed class SupervisorNegotiationProbe : IUpstreamNegotiationProbe
             }
         }
 
-        string? family = null;
-        string? note = null;
         if (connection is null)
         {
-            note = "Es steht gerade keine Verbindung; die Angaben stammen aus dem letzten Katalog.";
+            return Task.FromResult<UpstreamNegotiation?>(new UpstreamNegotiation(
+                kind.ToString(),
+                ProtocolVersion: null,
+                capabilities,
+                status.ToolCount,
+                "Es steht gerade keine Verbindung; die Angaben stammen aus dem letzten Katalog. Die "
+                + "ausgehandelte Fassung gehört zur Verbindung und ist mit ihr weg.",
+                UpstreamProtocolAvailability.Unknown));
         }
-        else if (connection.PushesCatalogChanges)
+
+        var protocol = connection.Protocol;
+        capabilities.AddRange(protocol.Capabilities.Except(capabilities, StringComparer.Ordinal));
+
+        // Diese eine Angabe steht NICHT im Capability-Objekt: Sie folgt aus der Revision selbst
+        // (ADR-0023). Sie bleibt sichtbar, weil an ihr haengt, ob der Katalog nachgefragt wird —
+        // aber nur dort, wo sie etwas bedeutet. Bei einem Upstream ohne MCP steht
+        // 'PushesCatalogChanges' auf der Vorgabe true, und die heisst dort "hat keine
+        // Katalogaenderungen zu melden", nicht "meldet sie von selbst".
+        if (protocol.Availability is not UpstreamProtocolAvailability.NotApplicable
+            && connection.PushesCatalogChanges)
         {
             capabilities.Add("list_changed");
-            family = "vor Revision 2026-07-28";
-            note = "Die Gegenstelle meldet Katalogänderungen von sich aus. Die genaue Fassung "
-                + "reicht der Verbindungsvertrag nicht durch — nur diese Familie.";
-        }
-        else
-        {
-            family = "Revision 2026-07-28 oder neuer";
-            note = "Die Gegenstelle meldet keine Katalogänderungen mehr von sich aus; der Katalog "
-                + "wird turnusmäßig nachgefragt.";
         }
 
         return Task.FromResult<UpstreamNegotiation?>(new UpstreamNegotiation(
-            "MCP",
-            family,
+            kind.ToString(),
+            protocol.Version,
             capabilities,
             status.ToolCount,
-            note));
+            Note(protocol, connection.PushesCatalogChanges),
+            protocol.Availability));
     }
+
+    /// <summary>
+    /// Der Satz unter der Angabe. Er sagt entweder, was aus der Fassung folgt — oder, wenn keine
+    /// dasteht, <b>warum</b> keine dasteht. Ein Bericht ohne diesen Satz liesse offen, ob die Angabe
+    /// fehlt oder gar nicht existiert.
+    /// </summary>
+    private static string Note(UpstreamProtocolInfo protocol, bool pushes) => protocol.Availability switch
+    {
+        // Kein MCP: Die Frage nach Revision und list_changed stellt sich gar nicht. Sie hier
+        // trotzdem zu beantworten waere eine Auskunft ueber ein Protokoll, das niemand spricht.
+        UpstreamProtocolAvailability.NotApplicable => protocol.Reason ?? string.Empty,
+        UpstreamProtocolAvailability.Negotiated => Consequence(pushes),
+        _ => $"{protocol.Reason} {Consequence(pushes)}",
+    };
+
+    private static string Consequence(bool pushes) => pushes
+        ? "Die Gegenstelle meldet Katalogänderungen von sich aus."
+        : "Die Gegenstelle meldet keine Katalogänderungen mehr von sich aus; der Katalog wird "
+            + "turnusmäßig nachgefragt.";
 }

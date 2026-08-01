@@ -301,6 +301,23 @@ internal sealed class WasiUpstreamConnection
 
     public ServerId Id { get; }
 
+    /// <summary>
+    /// Ausdrücklich „nicht zutreffend", nicht „unbekannt".
+    /// <para>
+    /// <b>Und ausdrücklich nicht die Vertragsversion des Hosts.</b> Der Rust-Host spricht einen
+    /// eigenen, versionierten IPC-Vertrag (derzeit
+    /// <see cref="WasiRuntimeConnector.ProtocolVersion"/>) — der hat mit einer MCP-Spec-Revision
+    /// nichts zu tun. Ihn in dasselbe Feld zu schreiben hiesse, zwei verschiedene Zahlenwelten
+    /// unter einer Beschriftung zu führen; ein Betreiber läse „Protokoll 4" und suchte nach einer
+    /// Spec, die es nicht gibt. Er steht deshalb in der Begründung, wo er nicht verwechselbar ist.
+    /// </para>
+    /// </summary>
+    public UpstreamProtocolInfo Protocol { get; } = UpstreamProtocolInfo.NotApplicable(
+        "Ein WASI-Upstream spricht kein MCP: Der Gateway ruft ein signiertes Component über den "
+        + "eigenen IPC-Vertrag des Rust-Hosts auf (Vertrag "
+        + WasiRuntimeConnector.ProtocolVersion + ", ADR-0020) — das ist keine MCP-Spec-Revision. "
+        + "Es wird keine Protokollfassung ausgehandelt.");
+
     /// <summary>Publisher, dessen Signatur der Host akzeptiert hat — Ziel des Entzugs (WP4).</summary>
     public string PublisherKeyId { get; private set; } = string.Empty;
 

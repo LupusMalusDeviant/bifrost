@@ -92,6 +92,14 @@ public static partial class ImportSecretDetection
         RegexOptions.CultureInvariant)]
     private static partial Regex ReferenceForm();
 
+    /// <summary>
+    /// Dieselbe Verweisform, aber irgendwo im Wert statt als ganzer Wert. Gebraucht für die Form, in
+    /// der ein Autorisierungsheader tatsächlich geschrieben wird: <c>Bearer ${env:TOKEN}</c>.
+    /// </summary>
+    [GeneratedRegex(@"(\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex ReferenceFormAnywhere();
+
     /// <summary>Maskierungen, wie sie in geteilten Konfigurationen und Dokumentationen vorkommen.</summary>
     [GeneratedRegex(@"(\*{3,}|x{4,}|X{4,}|•{3,}|\.{3,}|…|<[^>]*>|\bREDACTED\b|\bREMOVED\b"
         + @"|\bPLACEHOLDER\b|\bCHANGE_?ME\b|\bTODO\b|\bYOUR[_ -]|\bDEIN[_ -]|\bBEISPIEL\b|\bEXAMPLE\b|\bHIER\b)",
@@ -176,6 +184,20 @@ public static partial class ImportSecretDetection
     /// <c>${HOME}/bin/server</c> ist genauso wenig auflösbar wie ein maskiertes Token, und beides
     /// wird gemeldet statt geraten.
     /// </para>
+    /// <para>
+    /// <b>Die Verweisform muss nicht der ganze Wert sein.</b> Bis WP4.3 galt sie nur, wenn sie den
+    /// Wert vollständig ausmachte — und damit galt <c>Bearer ${env:TOKEN}</c>, also die Form, in der
+    /// ein Autorisierungsheader tatsächlich geschrieben wird, als Klartextgeheimnis. Der Irrtum ging
+    /// in die sichere Richtung, war aber ein Falschpositiv, und Falschpositive in einer Liste, die
+    /// ein Mensch durchgehen soll, kosten genau die Aufmerksamkeit, die die echten Funde bräuchten.
+    /// </para>
+    /// <para>
+    /// <b>Die Grenze, an der es aufhört.</b> Als maskiert gilt nur, was nach dem Entfernen aller
+    /// Verweisformen <em>nichts Wertartiges</em> übrig lässt: <c>Bearer ${env:TOKEN}</c> hinterlässt
+    /// das Schemawort <c>Bearer</c> und damit nichts. <c>sk-abc${SUFFIX}</c> hinterlässt
+    /// <c>sk-abc</c> — dort steht ein halbes Geheimnis im Klartext, und ein halbes Geheimnis als
+    /// „maskiert" abzustempeln wäre der Irrtum in die andere, teurere Richtung.
+    /// </para>
     /// </summary>
     public static bool LooksMasked(string? value)
     {
@@ -185,8 +207,34 @@ public static partial class ImportSecretDetection
         }
 
         var trimmed = value.Trim();
-        return ReferenceForm().IsMatch(trimmed) || MaskForm().IsMatch(trimmed);
+        if (ReferenceForm().IsMatch(trimmed) || MaskForm().IsMatch(trimmed))
+        {
+            return true;
+        }
+
+        var remainder = ReferenceFormAnywhere().Replace(trimmed, " ");
+        return !string.Equals(remainder, trimmed, StringComparison.Ordinal)
+            && IsStructureOnly(remainder);
     }
+
+    /// <summary>
+    /// Schemawörter eines Autorisierungsheaders. Sie sind Struktur, kein Wert — <c>Bearer</c> allein
+    /// öffnet keine Tür.
+    /// </summary>
+    private static readonly HashSet<string> SchemeWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "bearer", "basic", "token", "apikey", "api-key", "key",
+    };
+
+    /// <summary>
+    /// Bleibt nach dem Entfernen der Verweisformen nur noch Struktur übrig — Schemawörter und
+    /// Satzzeichen? Alles andere zählt als Rest eines Wertes.
+    /// </summary>
+    private static bool IsStructureOnly(string remainder)
+        => remainder
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .All(word => SchemeWords.Contains(word)
+                || word.All(c => !char.IsAsciiLetterOrDigit(c)));
 
     private static ImportSecretVerdict Judge(string looked, string? value)
     {

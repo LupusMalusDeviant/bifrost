@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
 
+using Bifrost.Abstractions;
+
 namespace Bifrost.Core.Diagnostics.Upstreams;
 
 /// <summary>
@@ -78,17 +80,30 @@ public sealed class SystemHostResolutionProbe : IHostResolutionProbe
 }
 
 /// <summary>
-/// Was die Gegenstelle über sich preisgegeben hat. Nur der laufende Serverprozess kann das
-/// beantworten, und auch er nur für einen <b>bereits aktivierten</b> Upstream: Die ausgehandelte
-/// Protokollfassung lebt in der stehenden Verbindung, und der transiente Test räumt seine
-/// Verbindung wieder ab.
+/// Was die Gegenstelle über sich preisgegeben hat — aus der <b>stehenden</b> Verbindung eines
+/// bereits aktivierten Upstreams. Nur der laufende Serverprozess führt die.
 /// <para>
-/// Ohne Sonde meldet die Anzeige „nicht ermittelt" mit Begründung — nicht einen Wert aus der
-/// Konfiguration, der dann wie eine Messung aussähe.
+/// <b>Sie ist nicht mehr die einzige Quelle.</b> Der transiente Verbindungstest liest die Angabe
+/// inzwischen selbst, solange seine eigene Verbindung noch steht — auch für einen Upstream, der
+/// noch gar nicht angeschlossen ist. Diese Sonde bleibt die <em>erste</em> Quelle: Sie beschreibt
+/// die Verbindung, die tatsächlich den Verkehr trägt.
+/// </para>
+/// <para>
+/// Wo keine der beiden Quellen etwas hat, steht „nicht ermittelt" mit Begründung — nie ein Wert aus
+/// der Konfiguration, der dann wie eine Messung aussähe.
 /// </para>
 /// </summary>
 public interface IUpstreamNegotiationProbe
 {
-    /// <summary><c>null</c>, wenn zu diesem Slug nichts bekannt ist.</summary>
-    Task<UpstreamNegotiation?> DescribeAsync(string slug, CancellationToken ct);
+    /// <summary>
+    /// <c>null</c>, wenn zu diesem Slug nichts bekannt ist.
+    /// <para>
+    /// <paramref name="kind"/> ist der Transport der <b>geprüften</b> Konfiguration. Er wird
+    /// mitgegeben, weil die Sonde ihn nicht kennt: Sie sieht eine Verbindung, nicht deren Bauart.
+    /// Vorher stand deshalb pauschal „MCP" im Bericht — auch für einen OpenAPI- oder CLI-Upstream,
+    /// der nie MCP gesprochen hat.
+    /// </para>
+    /// </summary>
+    Task<UpstreamNegotiation?> DescribeAsync(
+        string slug, UpstreamTransportKind kind, CancellationToken ct);
 }

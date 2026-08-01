@@ -122,9 +122,9 @@ public sealed class WasiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAsync
         result.Status.Should().Be(InvocationStatus.Denied,
             "RBAC greift vor dem Transport — der WASI-Host bekommt den Aufruf nie zu sehen");
         await IntegrationSupport.WaitUntilAsync(
-            () => _gw.AuditQuery.QueryAsync(
+            async () => (await _gw.AuditQuery.QueryAsync(
                 new AuditFilter(Caller: identity, Status: InvocationStatus.Denied),
-                TestContext.Current.CancellationToken).GetAwaiter().GetResult().TotalCount >= 1,
+                TestContext.Current.CancellationToken)).TotalCount >= 1,
             because: "auch der Deny eines WASI-Tools steht im Audit (FR-22)");
     }
 
@@ -184,9 +184,9 @@ public sealed class WasiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAsync
 
         result.Status.Should().Be(InvocationStatus.Success);
         await IntegrationSupport.WaitUntilAsync(
-            () => _gw.AuditQuery.QueryAsync(
+            async () => (await _gw.AuditQuery.QueryAsync(
                 new AuditFilter(Caller: identity, Status: InvocationStatus.Success, ToolPrefix: Slug + "__"),
-                TestContext.Current.CancellationToken).GetAwaiter().GetResult().TotalCount >= 1,
+                TestContext.Current.CancellationToken)).TotalCount >= 1,
             because: "jeder erfolgreiche WASI-Aufruf ist auditiert (FR-22)");
     }
 

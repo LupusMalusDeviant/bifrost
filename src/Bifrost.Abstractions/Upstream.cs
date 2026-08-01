@@ -559,7 +559,18 @@ public sealed class GatewayIdentity
     public string InstanceId { get; } = Guid.NewGuid().ToString("N");
 }
 
-public sealed record UpstreamTestResult(bool Success, int ToolCount, string? Error);
+/// <param name="Protocol">
+/// Was die Gegenstelle über ihr Protokoll gesagt hat, <b>bevor</b> der Test seine Verbindung wieder
+/// abräumt. <c>null</c> heisst: Es kam gar nicht so weit (der Versuch scheiterte vorher).
+/// <para>
+/// Bis hierher war die Angabe an einem transienten Test überhaupt nicht zu haben — sie lebt in der
+/// stehenden Verbindung, und der Test hat keine. Sie <em>abzulesen, solange die Verbindung noch
+/// steht</em>, kostet nichts und beantwortet die Frage für einen Upstream, der noch gar nicht
+/// angeschlossen ist.
+/// </para>
+/// </param>
+public sealed record UpstreamTestResult(
+    bool Success, int ToolCount, string? Error, UpstreamProtocolInfo? Protocol = null);
 
 /// <summary>Testet eine Upstream-Konfiguration transient (Verbindung + Discovery), ohne sie zu registrieren — für "Verbindung testen" in der UI (FR-34).</summary>
 public interface IUpstreamConnectionTester
@@ -574,6 +585,100 @@ public interface IUpstreamConnector
 
     /// <summary>Baut eine Verbindung auf. <paramref name="id"/> wird vom Supervisor vergeben und identifiziert die Verbindung in Events.</summary>
     Task<IUpstreamConnection> ConnectAsync(ServerId id, UpstreamServerConfig config, CancellationToken ct);
+}
+
+/// <summary>
+/// Wie die Angabe zur ausgehandelten Protokollfassung zu lesen ist.
+/// <para>
+/// <b>Warum drei Werte und nicht zwei:</b> „Es steht keine Fassung da" hat zwei völlig
+/// verschiedene Gründe, und wer sie zusammenwirft, gibt eine Auskunft, mit der niemand etwas
+/// anfangen kann. Bei einem OpenAPI- oder CLI-Upstream ist die Frage gegenstandslos — dort wird
+/// nie eine MCP-Fassung ausgehandelt, und ein Betreiber, der danach sucht, sucht vergeblich. Bei
+/// einem MCP-Upstream dagegen ist eine fehlende Fassung ein <em>Befund</em>: Da wäre etwas zu
+/// holen, und es kam nichts.
+/// </para>
+/// </summary>
+public enum UpstreamProtocolAvailability
+{
+    /// <summary>
+    /// MCP wird gesprochen, die Fassung ist aber nicht ablesbar. Der Grund steht in
+    /// <see cref="UpstreamProtocolInfo.Reason"/>. <b>Der Vorgabewert</b> — wer nichts sagt, behauptet
+    /// damit nichts.
+    /// </summary>
+    Unknown = 0,
+
+    /// <summary>Die Gegenstelle hat sich auf eine Fassung geeinigt, und die steht in <see cref="UpstreamProtocolInfo.Version"/>.</summary>
+    Negotiated = 1,
+
+    /// <summary>
+    /// Dieser Transport spricht kein MCP (OpenAPI, OpenRPC, CLI, WASI). Es gibt nichts
+    /// auszuhandeln — die Lücke ist keine.
+    /// </summary>
+    NotApplicable = 2,
+}
+
+/// <summary>
+/// Was die Gegenstelle beim Verbindungsaufbau über ihr Protokoll preisgegeben hat: die
+/// ausgehandelte Fassung und die gemeldeten Fähigkeiten.
+/// <para>
+/// <b>Die Bauart erzwingt die Ehrlichkeit.</b> Eine Fassung gibt es nur zusammen mit
+/// <see cref="UpstreamProtocolAvailability.Negotiated"/>, und jeder andere Zustand braucht eine
+/// Begründung. Ein erfundener oder aus der Konfiguration abgeleiteter Wert liesse sich hier gar
+/// nicht erst bauen — er sähe sonst aus wie eine Messung.
+/// </para>
+/// <para>
+/// <see cref="Capabilities"/> trägt <b>Namen, keine Werte</b>: <c>tools</c>,
+/// <c>resources.subscribe</c>, <c>experimental:…</c>. Ein Capability-Objekt der Gegenstelle kann
+/// Felder tragen, die niemand vorhergesehen hat; deren <em>Inhalt</em> geht deshalb nirgends nach
+/// oben, und die Namen laufen in der Diagnose durch dieselbe Redaktion wie jeder andere Fremdtext.
+/// </para>
+/// </summary>
+public sealed record UpstreamProtocolInfo
+{
+    private UpstreamProtocolInfo(
+        UpstreamProtocolAvailability availability,
+        string? version,
+        IReadOnlyList<string> capabilities,
+        string? reason)
+    {
+        Availability = availability;
+        Version = version;
+        Capabilities = capabilities;
+        Reason = reason;
+    }
+
+    public UpstreamProtocolAvailability Availability { get; }
+
+    /// <summary>Die ausgehandelte Fassung, z. B. <c>2026-07-28</c>; <c>null</c> ausser bei <see cref="UpstreamProtocolAvailability.Negotiated"/>.</summary>
+    public string? Version { get; }
+
+    /// <summary>Die gemeldeten Fähigkeiten als Namen. Leer heisst: keine gemeldet, nicht „unbekannt".</summary>
+    public IReadOnlyList<string> Capabilities { get; }
+
+    /// <summary>Warum keine Fassung dasteht. Pflicht, sobald es keine gibt.</summary>
+    public string? Reason { get; }
+
+    /// <summary>Die Gegenstelle hat sich geeinigt. Ohne Fassung gibt es diesen Zustand nicht.</summary>
+    public static UpstreamProtocolInfo Negotiated(string version, IReadOnlyList<string>? capabilities = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(version);
+        return new UpstreamProtocolInfo(
+            UpstreamProtocolAvailability.Negotiated, version, capabilities ?? [], null);
+    }
+
+    /// <summary>MCP, aber die Fassung war nicht zu bekommen — mit Begründung, sonst gar nicht.</summary>
+    public static UpstreamProtocolInfo Unknown(string reason)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        return new UpstreamProtocolInfo(UpstreamProtocolAvailability.Unknown, null, [], reason);
+    }
+
+    /// <summary>Dieser Transport spricht kein MCP — mit Begründung, sonst gar nicht.</summary>
+    public static UpstreamProtocolInfo NotApplicable(string reason)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        return new UpstreamProtocolInfo(UpstreamProtocolAvailability.NotApplicable, null, [], reason);
+    }
 }
 
 /// <summary>
@@ -615,6 +720,28 @@ public interface IUpstreamConnection : IAsyncDisposable
     /// </para>
     /// </summary>
     bool PushesCatalogChanges => true;
+
+    /// <summary>
+    /// Die ausgehandelte Protokollfassung und die Fähigkeiten der Gegenstelle.
+    /// <para>
+    /// <b>Warum das über diesen Vertrag geht:</b> Bei einem Upstream, der sich anders verhält als
+    /// erwartet, ist die ausgehandelte Fassung oft die erste brauchbare Angabe — sie sagt, nach
+    /// welcher Spec beide Seiten gerade arbeiten (ADR-0023). Bisher reichte dieser Vertrag davon
+    /// nur <see cref="PushesCatalogChanges"/> durch; daraus liess sich die Fassungs<em>familie</em>
+    /// ableiten, nicht die Fassung. „2026-07-28 oder neuer" beantwortet die Frage nicht.
+    /// </para>
+    /// <para>
+    /// <b>Die Vorgabe ist <see cref="UpstreamProtocolAvailability.Unknown"/>, nicht „nicht
+    /// zutreffend".</b> Das ist der Unterschied zwischen „ich weiss es nicht" und „da gibt es
+    /// nichts zu wissen" — und nur den ersten Satz darf eine Vorgabe sagen. Eine Verbindung, die
+    /// kein MCP spricht, sagt das <b>ausdrücklich</b>
+    /// (<see cref="UpstreamProtocolInfo.NotApplicable"/>); eine Hülle, die eine andere Verbindung
+    /// umschliesst, reicht deren Antwort durch. Verschluckte sie diese, stünde bei einem
+    /// MCP-Upstream „nicht ermittelt", obwohl die Angabe eine Schicht tiefer bereitliegt.
+    /// </para>
+    /// </summary>
+    UpstreamProtocolInfo Protocol => UpstreamProtocolInfo.Unknown(
+        "Diese Verbindung reicht die ausgehandelte Protokollfassung nicht durch.");
 }
 
 /// <summary>

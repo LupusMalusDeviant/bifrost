@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
@@ -443,7 +443,7 @@ public sealed partial class CursorImportProvider : IImportProvider
                 arguments,
                 environment.Count > 0 ? environment : null));
 
-        return new ImportCandidate(name, config, findings, secrets);
+        return new ImportCandidate(name, config, findings, secrets, path);
     }
 
     private static ImportCandidate? Http(
@@ -515,7 +515,7 @@ public sealed partial class CursorImportProvider : IImportProvider
                 headers.Count > 0 ? headers : null,
                 AllowLegacySse: legacySse));
 
-        return new ImportCandidate(name, config, findings, secrets);
+        return new ImportCandidate(name, config, findings, secrets, path);
     }
 
     private static void Note(string value, string path, List<string> expansions)

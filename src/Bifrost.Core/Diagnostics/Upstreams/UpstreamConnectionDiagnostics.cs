@@ -360,7 +360,7 @@ public sealed partial class UpstreamConnectionDiagnostics : IUpstreamConnectionD
                 $"Der Katalog kam an: {result.ToolCount} Werkzeug(e).",
                 ("werkzeuge", result.ToolCount.ToString(CultureInfo.InvariantCulture)));
 
-            return await DescribeNegotiationAsync(config, result.ToolCount, ct).ConfigureAwait(false);
+            return await DescribeNegotiationAsync(config, result, ct).ConfigureAwait(false);
         }
 
         var message = result.Error ?? "Der Versuch scheiterte ohne Meldung.";
@@ -397,29 +397,62 @@ public sealed partial class UpstreamConnectionDiagnostics : IUpstreamConnectionD
         return null;
     }
 
+    /// <summary>
+    /// Was die Gegenstelle über sich gesagt hat — <b>beobachtet</b>, nie abgeleitet.
+    /// <para>
+    /// Zwei Quellen, in dieser Reihenfolge: Steht der Upstream bereits angeschlossen, gilt seine
+    /// laufende Verbindung — sie ist die, die den Verkehr trägt. Sonst gilt, was der transiente
+    /// Versuch soeben selbst gesehen hat. Seit WP-Upstream-Vertrag liefert auch er die Fassung: Sie
+    /// wird abgelesen, solange seine Verbindung noch steht.
+    /// </para>
+    /// </summary>
     private async Task<UpstreamNegotiation?> DescribeNegotiationAsync(
-        UpstreamServerConfig config, int toolCount, CancellationToken ct)
+        UpstreamServerConfig config, UpstreamTestResult result, CancellationToken ct)
     {
         if (_negotiation is not null)
         {
-            var facts = await _negotiation.DescribeAsync(config.Slug, ct).ConfigureAwait(false);
+            var facts = await _negotiation
+                .DescribeAsync(config.Slug, config.Kind, ct).ConfigureAwait(false);
             if (facts is not null)
             {
                 return facts;
             }
         }
 
-        // Kein erfundener Wert: Die ausgehandelte Protokollfassung lebt in der stehenden Verbindung,
-        // und der transiente Test raeumt seine wieder ab. Was hier steht, ist beobachtet.
+        var observed = result.Protocol;
+        var capabilities = new List<string>();
+        if (result.ToolCount > 0)
+        {
+            capabilities.Add("tools");
+        }
+
+        if (observed is not null)
+        {
+            capabilities.AddRange(observed.Capabilities.Except(capabilities, StringComparer.Ordinal));
+        }
+
         return new UpstreamNegotiation(
             config.Kind.ToString(),
-            ProtocolVersion: null,
-            Capabilities: toolCount > 0 ? ["tools"] : [],
-            ToolCount: toolCount,
-            Note: "Die ausgehandelte Protokollfassung ist an einem transienten Test nicht ablesbar — "
-                + "sie gehört zur stehenden Verbindung, die der Test wieder abräumt. Nach dem "
-                + "Anschliessen steht sie beim Upstream.");
+            observed?.Version,
+            capabilities,
+            result.ToolCount,
+            NegotiationNote(observed),
+            observed?.Availability ?? UpstreamProtocolAvailability.Unknown);
     }
+
+    /// <summary>
+    /// Der Satz unter der Angabe. Fehlt die Fassung, steht hier <b>warum</b> — und zwar mit dem
+    /// Grund der Verbindung selbst, nicht mit einem hier erfundenen. Steht sie da, sagt der Satz,
+    /// woher sie stammt: Eine Zahl ohne Herkunft ist in einem Störungsfall schwer zu glauben.
+    /// </summary>
+    private static string? NegotiationNote(UpstreamProtocolInfo? observed) => observed switch
+    {
+        null => "Der Versuch lieferte keine Angabe zum Protokoll. Kein Ersatzwert: Was aus der "
+            + "Konfiguration abgeleitet wäre, sähe aus wie eine Messung.",
+        { Availability: UpstreamProtocolAvailability.Negotiated } => "Abgelesen am transienten "
+            + "Versuch, solange dessen Verbindung noch stand — nicht aus der Konfiguration.",
+        _ => observed.Reason,
+    };
 
     private UpstreamDiagnosticReport Finish(
         UpstreamServerConfig config,
@@ -436,7 +469,7 @@ public sealed partial class UpstreamConnectionDiagnostics : IUpstreamConnectionD
             startedAt,
             _time.GetElapsedTime(stopwatch),
             timeline.Complete(),
-            negotiation);
+            Redact(negotiation));
 
         // Log-Korrelation (WP4.6, Punkt 4): Codes und Ausgänge, kein Fremdtext. Die Request-Id steht
         // auf dem Bildschirm; wer sie im Log sucht, findet dieselbe Kette wieder.
@@ -449,6 +482,49 @@ public sealed partial class UpstreamConnectionDiagnostics : IUpstreamConnectionD
 
         return report;
     }
+
+    /// <summary>
+    /// Die Angaben der Gegenstelle durch dieselbe Redaktion wie jeder Befund (M2-Vertrag §6,
+    /// Invariante 2). <b>Hier lief bisher nichts durch</b>, und das war eine Lücke: Fassung,
+    /// Fähigkeitsnamen und Begründung kommen ganz oder teilweise vom Upstream, und ein
+    /// Capability-Objekt kann Felder tragen, die niemand vorhergesehen hat — Namen inklusive.
+    /// <para>
+    /// An <b>einer</b> Stelle, weil beide Quellen (stehende Verbindung und transienter Versuch)
+    /// hier zusammenlaufen. Eine Maskierung je Quelle wäre an jeder Quelle vergessbar.
+    /// </para>
+    /// <para>
+    /// Die Deckelung der Liste ist die zweite Linie: Die Quelle kürzt bereits, aber ein Bericht
+    /// bleibt eine Auskunft für einen Menschen und kein Abbild des Gegenübers.
+    /// </para>
+    /// </summary>
+    private static UpstreamNegotiation? Redact(UpstreamNegotiation? negotiation)
+    {
+        if (negotiation is null)
+        {
+            return null;
+        }
+
+        var capabilities = negotiation.Capabilities
+            .Take(MaxCapabilityNames)
+            .Select(name => DiagnosticRedaction.Scrub(name) ?? string.Empty)
+            .ToList();
+
+        if (negotiation.Capabilities.Count > MaxCapabilityNames)
+        {
+            capabilities.Add($"… (+{negotiation.Capabilities.Count - MaxCapabilityNames} weitere)");
+        }
+
+        return negotiation with
+        {
+            Transport = DiagnosticRedaction.Scrub(negotiation.Transport) ?? string.Empty,
+            ProtocolVersion = DiagnosticRedaction.Scrub(negotiation.ProtocolVersion),
+            Capabilities = capabilities,
+            Note = DiagnosticRedaction.Scrub(negotiation.Note),
+        };
+    }
+
+    /// <summary>Obergrenze der Fähigkeitsnamen im Bericht.</summary>
+    private const int MaxCapabilityNames = 40;
 
     /// <summary>
     /// Nur Kennung, Slug, Code und Ausgang — <b>kein Fremdtext</b>. Der Meldungstext steht auf dem

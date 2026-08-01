@@ -217,7 +217,8 @@ internal static class ClientConfigReading
             ImportSeverity.Error,
             "Die Adresse ist keine absolute http- oder https-Adresse.",
             $"{path}/url",
-            "Die vollstaendige Adresse einschliesslich Schema eintragen."));
+            "Die vollstaendige Adresse einschliesslich Schema eintragen.",
+            ImportFindingScope.Entry));
         return null;
     }
 
@@ -273,7 +274,8 @@ internal static class ClientConfigReading
             $"Der Eintrag traegt weder '{commandField}' noch '{urlField}' — es ist nicht erkennbar, "
             + "was gestartet oder aufgerufen werden soll.",
             path,
-            "Den Eintrag in der Quelldatei vervollstaendigen.");
+            "Den Eintrag in der Quelldatei vervollstaendigen.",
+            ImportFindingScope.Entry);
 
     /// <summary>
     /// Der Befund für einen Eintrag, der lokal <b>und</b> entfernt zugleich sein will. Aufgelöst
@@ -286,7 +288,8 @@ internal static class ClientConfigReading
             $"Der Eintrag traegt '{commandField}' und '{urlField}' zugleich. Ob ein lokales Programm "
             + "oder ein entfernter Dienst gemeint ist, sagt die Quelle damit nicht.",
             path,
-            "Das ueberfluessige Feld in der Quelldatei entfernen.");
+            "Das ueberfluessige Feld in der Quelldatei entfernen.",
+            ImportFindingScope.Entry);
 
     /// <summary>Ein JSON-Typ auf Deutsch — für Meldungen, die ein Mensch liest.</summary>
     public static string Describe(JsonValueKind kind) => kind switch
@@ -322,7 +325,11 @@ internal static class ClientConfigReading
                     $"Der Server '{server.Name}' steht mehrfach in der Quelle. Welcher Eintrag gilt, "
                     + "haengt vom JSON-Leser ab — das wird hier nicht entschieden.",
                     path,
-                    "Den doppelten Eintrag in der Quelldatei entfernen und erneut importieren."));
+                    "Den doppelten Eintrag in der Quelldatei entfernen und erneut importieren.",
+                    // Nur dieser Name ist strittig. Der Befund findet ueber den Pfad zu genau dem
+                    // Kandidaten zurueck, der ihn traegt (ConfigurationImporter.Attach) — die
+                    // uebrigen Server der Datei bleiben anwendbar.
+                    ImportFindingScope.Entry));
                 continue;
             }
 
@@ -333,7 +340,9 @@ internal static class ClientConfigReading
                     ImportSeverity.Error,
                     $"Der Eintrag '{server.Name}' ist {Describe(server.Value.ValueKind)} statt eines "
                     + "Serverobjekts.",
-                    path));
+                    path,
+                    null,
+                    ImportFindingScope.Entry));
                 continue;
             }
 

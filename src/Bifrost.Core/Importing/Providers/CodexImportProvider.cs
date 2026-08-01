@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text;
 using System.Text.Json;
 
@@ -455,7 +455,7 @@ public sealed class CodexImportProvider : IImportProvider
                 workingDirectory),
             CallTimeout: timeout);
 
-        return new ImportCandidate(name, config, findings, secrets);
+        return new ImportCandidate(name, config, findings, secrets, path);
     }
 
     private static ImportCandidate? Http(
@@ -485,6 +485,6 @@ public sealed class CodexImportProvider : IImportProvider
                 AllowLegacySse: false),
             CallTimeout: timeout);
 
-        return new ImportCandidate(name, config, findings, secrets);
+        return new ImportCandidate(name, config, findings, secrets, path);
     }
 }

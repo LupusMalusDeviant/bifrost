@@ -21,12 +21,12 @@ public sealed class ContainerIsolationE2ETests
 {
     private const string Image = "alpine:3.20";
 
-    private static void RequireRuntime()
+    private static async Task RequireRuntimeAsync()
     {
         var required = Environment.GetEnvironmentVariable("BIFROST_REQUIRE_CONTAINER") is "1" or "true";
-        var available = ContainerLaunchPolicy
-            .ProbeAsync(new IsolationOptions(IsolationMode.Container, Image: Image), CancellationToken.None)
-            .GetAwaiter().GetResult() is null;
+        var available = (await ContainerLaunchPolicy
+            .ProbeAsync(new IsolationOptions(IsolationMode.Container, Image: Image), CancellationToken.None))
+            is null;
         if (!available)
         {
             Assert.SkipUnless(required, "Keine Container-Runtime erreichbar — Docker starten oder BIFROST_REQUIRE_CONTAINER setzen.");
@@ -63,7 +63,7 @@ public sealed class ContainerIsolationE2ETests
     [Fact]
     public async Task A_command_runs_inside_the_container()
     {
-        RequireRuntime();
+        await RequireRuntimeAsync();
 
         var (_, stdout, _) = await RunAsync(ContainerOptions("/bin/echo", ["hallo-aus-dem-container"]));
 
@@ -76,7 +76,7 @@ public sealed class ContainerIsolationE2ETests
     [Fact]
     public async Task The_command_does_not_run_as_root()
     {
-        RequireRuntime();
+        await RequireRuntimeAsync();
 
         var (_, stdout, _) = await RunAsync(ContainerOptions("/usr/bin/id", ["-u"]));
 
@@ -90,7 +90,7 @@ public sealed class ContainerIsolationE2ETests
     [Fact]
     public async Task The_root_filesystem_is_read_only()
     {
-        RequireRuntime();
+        await RequireRuntimeAsync();
 
         var (exitCode, output, _) = await RunAsync(
             ContainerOptions("/bin/sh", ["-c", "echo x > /etc/versuch"]));
@@ -103,7 +103,7 @@ public sealed class ContainerIsolationE2ETests
     [Fact]
     public async Task Tmp_stays_writable()
     {
-        RequireRuntime();
+        await RequireRuntimeAsync();
 
         var (exitCode, output, _) = await RunAsync(
             ContainerOptions("/bin/sh", ["-c", "echo geschrieben > /tmp/probe && cat /tmp/probe"]));
@@ -118,7 +118,7 @@ public sealed class ContainerIsolationE2ETests
     [Fact]
     public async Task Without_an_allowlist_there_is_no_network()
     {
-        RequireRuntime();
+        await RequireRuntimeAsync();
 
         var (exitCode, _, _) = await RunAsync(ContainerOptions(
             "/bin/sh", ["-c", "ping -c1 -W1 1.1.1.1"]));
@@ -139,7 +139,7 @@ public sealed class ContainerIsolationE2ETests
     [Fact]
     public async Task A_secret_reaches_the_program_without_touching_the_command_line()
     {
-        RequireRuntime();
+        await RequireRuntimeAsync();
         const string secret = "s3hr-geheim-xyz";
         var environment = new Dictionary<string, string> { ["API_TOKEN"] = secret };
 

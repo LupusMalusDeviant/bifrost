@@ -36,6 +36,17 @@ public class HttpConnectorIntegrationTests
                 var result = await connection.CallToolAsync(
                     "echo", JsonSerializer.SerializeToElement(new { message = "über HTTP" }), TestContext.Current.CancellationToken);
                 result.GetProperty("content")[0].GetProperty("text").GetString().Should().Be("Echo: über HTTP");
+
+                // Die ausgehandelte Fassung gegen eine ECHTE Gegenstelle. Ein Test mit erfundenem
+                // Client bewiese nur, dass eine Eigenschaft durchgereicht wird; hier steht, dass
+                // dabei auch etwas ankommt — und zwar eine Fassung, keine Familie.
+                var protocol = connection.Protocol;
+                protocol.Availability.Should().Be(UpstreamProtocolAvailability.Negotiated,
+                    "gegen einen laufenden MCP-Server ist die Fassung ausgehandelt, nicht unbekannt");
+                protocol.Version.Should().MatchRegex(@"^\d{4}-\d{2}-\d{2}$",
+                    "die Revisionen sind datumssortiert benannt");
+                protocol.Capabilities.Should().Contain("tools",
+                    "der Server hat gerade ein Werkzeug geliefert");
             }
         }
         finally

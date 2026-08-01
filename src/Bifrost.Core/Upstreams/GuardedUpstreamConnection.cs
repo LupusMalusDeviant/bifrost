@@ -45,6 +45,15 @@ public sealed class GuardedUpstreamConnection
     /// </summary>
     public bool PushesCatalogChanges => _inner.PushesCatalogChanges;
 
+    /// <summary>
+    /// Ebenfalls durchgereicht. Der Supervisor gibt <b>nur</b> diese Hülle heraus — verschluckte
+    /// sie die Angabe, sähe die Diagnose bei jedem angeschlossenen Upstream „nicht ermittelt",
+    /// obwohl die ausgehandelte Fassung eine Schicht tiefer bereitliegt. Eine Hülle, die den
+    /// Vertrag verkürzt, ist die schlechteste Art, eine Auskunft zu verlieren: Sie sieht aus wie
+    /// eine Eigenschaft des Upstreams.
+    /// </summary>
+    public UpstreamProtocolInfo Protocol => _inner.Protocol;
+
     public event EventHandler<UpstreamNotificationEventArgs>? NotificationReceived
     {
         add => _inner.NotificationReceived += value;

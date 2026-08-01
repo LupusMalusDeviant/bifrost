@@ -50,14 +50,14 @@ public sealed class WasiRealHostGovernanceTests : IClassFixture<GatewayFixture>
         refused.Status.Should().Be(InvocationStatus.Denied);
 
         await IntegrationSupport.WaitUntilAsync(
-            () => _gw.AuditQuery.QueryAsync(
-                new AuditFilter(Caller: allowed, Status: InvocationStatus.Success, ToolPrefix: Slug + "__"), ct)
-                .GetAwaiter().GetResult().TotalCount >= 1,
+            async () => (await _gw.AuditQuery.QueryAsync(
+                new AuditFilter(Caller: allowed, Status: InvocationStatus.Success, ToolPrefix: Slug + "__"), ct))
+                .TotalCount >= 1,
             because: "der Aufruf eines signierten Components steht im Audit (FR-22)");
         await IntegrationSupport.WaitUntilAsync(
-            () => _gw.AuditQuery.QueryAsync(
-                new AuditFilter(Caller: denied, Status: InvocationStatus.Denied), ct)
-                .GetAwaiter().GetResult().TotalCount >= 1,
+            async () => (await _gw.AuditQuery.QueryAsync(
+                new AuditFilter(Caller: denied, Status: InvocationStatus.Denied), ct))
+                .TotalCount >= 1,
             because: "der Deny ebenso");
     }
 

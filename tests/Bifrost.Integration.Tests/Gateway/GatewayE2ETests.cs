@@ -135,9 +135,9 @@ public sealed class GatewayE2ETests : IClassFixture<GatewayFixture>
         result.Content.OfType<TextContentBlock>().Single().Text.Should().Contain("Denied");
 
         await IntegrationSupport.WaitUntilAsync(
-            () => _gw.AuditQuery.QueryAsync(
-                new AuditFilter(Caller: identity, Status: InvocationStatus.Denied), TestContext.Current.CancellationToken)
-                .GetAwaiter().GetResult().TotalCount >= 1,
+            async () => (await _gw.AuditQuery.QueryAsync(
+                new AuditFilter(Caller: identity, Status: InvocationStatus.Denied), TestContext.Current.CancellationToken))
+                .TotalCount >= 1,
             because: "der Deny muss als Audit-Zeile persistiert werden (WP4-DoD, FR-22)");
     }
 

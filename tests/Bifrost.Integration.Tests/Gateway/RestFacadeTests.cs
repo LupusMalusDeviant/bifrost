@@ -217,11 +217,11 @@ public sealed class RestFacadeTests : IClassFixture<GatewayFixture>
             new StringContent("""{"message":"paritaet"}""", Encoding.UTF8, "application/json"));
 
         IReadOnlyList<AuditEvent> events = [];
-        await IntegrationSupport.WaitUntilAsync(() =>
+        await IntegrationSupport.WaitUntilAsync(async () =>
         {
-            events = _gw.AuditQuery.QueryAsync(
-                new AuditFilter(Caller: identity, ToolPrefix: "parity1__echo"), TestContext.Current.CancellationToken)
-                .GetAwaiter().GetResult().Items;
+            events = (await _gw.AuditQuery.QueryAsync(
+                new AuditFilter(Caller: identity, ToolPrefix: "parity1__echo"), TestContext.Current.CancellationToken))
+                .Items;
             return events.Count == 2;
         });
 

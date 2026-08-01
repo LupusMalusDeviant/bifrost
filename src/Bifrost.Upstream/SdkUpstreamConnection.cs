@@ -20,6 +20,12 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection
         NotificationMethods.PromptListChangedNotification,
     ];
 
+    /// <summary>Wie viele Namen aus einem offenen Wörterbuch höchstens im Bericht landen.</summary>
+    private const int MaxOpenSetEntries = 16;
+
+    /// <summary>Obergrenze für einen einzelnen Namen aus einem offenen Wörterbuch.</summary>
+    private const int MaxNameLength = 120;
+
     private readonly McpClient _client;
     private readonly List<IAsyncDisposable> _registrations = [];
 
@@ -50,6 +56,27 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection
     /// nachfragen. Auf älteren Ständen ist alles wie bisher.
     /// </summary>
     public bool PushesCatalogChanges => !SpeaksJuly2026OrLater(_client.NegotiatedProtocolVersion);
+
+    /// <summary>
+    /// Die ausgehandelte Fassung und die gemeldeten Fähigkeiten — hier, und nur hier, liegen sie.
+    /// <para>
+    /// Es wird <b>nichts nachgefragt</b>: Beide Werte stehen seit dem Verbindungsaufbau im Client.
+    /// Die Eigenschaft ist damit auch dann beantwortbar, wenn die Gegenstelle gerade nicht
+    /// antwortet — genau der Fall, in dem jemand die Diagnose aufruft.
+    /// </para>
+    /// </summary>
+    public UpstreamProtocolInfo Protocol
+    {
+        get
+        {
+            var negotiated = _client.NegotiatedProtocolVersion;
+            return string.IsNullOrWhiteSpace(negotiated)
+                ? UpstreamProtocolInfo.Unknown(
+                    "Die Verbindung steht, aber das SDK nennt keine ausgehandelte Fassung. Das ist "
+                    + "kein Normalfall — erwartbar ist es nur, solange der Aufbau noch laeuft.")
+                : UpstreamProtocolInfo.Negotiated(negotiated, DescribeCapabilities(_client.ServerCapabilities));
+        }
+    }
 
     public event EventHandler<UpstreamNotificationEventArgs>? NotificationReceived;
 
@@ -169,6 +196,103 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection
             new DiscoverRequestParams(),
             McpJsonUtilities.DefaultOptions,
             cancellationToken: ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Übersetzt das Capability-Objekt der Gegenstelle in <b>Namen</b>.
+    /// <para>
+    /// <b>Warum nur Namen:</b> <c>experimental</c> und <c>extensions</c> sind offene Wörterbücher —
+    /// die Gegenstelle darf dort alles hineinschreiben, auch Werte, die niemand vorhergesehen hat.
+    /// Ein Wert, den man nicht kennt, ist ein Wert, den man nicht anzeigen sollte; die Namen sagen,
+    /// <em>dass</em> es etwas gibt, und das ist die Frage, um die es hier geht. Die Namen selbst
+    /// kommen ebenfalls von aussen und laufen in der Diagnose durch die Redaktion.
+    /// </para>
+    /// <para>
+    /// <b>Warum gedeckelt:</b> Ein Upstream kann zehntausend Erweiterungsnamen melden. Diese Liste
+    /// landet in einem Diagnosebericht, den ein Mensch liest — sie ist eine Auskunft, kein Abbild.
+    /// Wird gekürzt, steht das als eigener Eintrag da, statt still zu verschwinden.
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<string> DescribeCapabilities(ServerCapabilities? capabilities)
+    {
+        if (capabilities is null)
+        {
+            return [];
+        }
+
+        var names = new List<string>();
+
+        if (capabilities.Tools is { } tools)
+        {
+            names.Add("tools");
+            if (tools.ListChanged is true)
+            {
+                names.Add("tools.listChanged");
+            }
+        }
+
+        if (capabilities.Resources is { } resources)
+        {
+            names.Add("resources");
+            if (resources.Subscribe is true)
+            {
+                names.Add("resources.subscribe");
+            }
+
+            if (resources.ListChanged is true)
+            {
+                names.Add("resources.listChanged");
+            }
+        }
+
+        if (capabilities.Prompts is { } prompts)
+        {
+            names.Add("prompts");
+            if (prompts.ListChanged is true)
+            {
+                names.Add("prompts.listChanged");
+            }
+        }
+
+        // Abgekuendigt seit der Revision 2026-07-28 (SEP-2577) — und gerade deshalb eine Angabe,
+        // die in eine Diagnose gehoert: Meldet eine Gegenstelle sie noch, sagt das etwas ueber
+        // ihren Stand. Hier wird nichts benutzt, nur wiedergegeben, was sie selbst gesagt hat.
+#pragma warning disable MCP9005
+        if (capabilities.Logging is not null)
+        {
+            names.Add("logging");
+        }
+#pragma warning restore MCP9005
+
+        if (capabilities.Completions is not null)
+        {
+            names.Add("completions");
+        }
+
+        AddOpenSet(names, "experimental", capabilities.Experimental?.Keys);
+        AddOpenSet(names, "extensions", capabilities.Extensions?.Keys);
+        return names;
+    }
+
+    /// <summary>Die offenen Wörterbücher: Namen, alphabetisch, gedeckelt — und die Kürzung sichtbar.</summary>
+    private static void AddOpenSet(List<string> names, string prefix, IEnumerable<string>? keys)
+    {
+        if (keys is null)
+        {
+            return;
+        }
+
+        var ordered = keys.OrderBy(key => key, StringComparer.Ordinal).ToList();
+        foreach (var key in ordered.Take(MaxOpenSetEntries))
+        {
+            // Ein einzelner Name kann beliebig lang sein; er steht in einer Tabellenzelle.
+            names.Add($"{prefix}:{(key.Length > MaxNameLength ? key[..MaxNameLength] + "…" : key)}");
+        }
+
+        if (ordered.Count > MaxOpenSetEntries)
+        {
+            names.Add($"{prefix}:… (+{ordered.Count - MaxOpenSetEntries} weitere)");
+        }
     }
 
     /// <summary>
