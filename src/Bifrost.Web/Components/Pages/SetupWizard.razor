@@ -1,0 +1,1600 @@
+@* Die Route steht als Zeichenkette auch in UiNavigation.SetupWizardRoute — dort mit der
+   Begruendung, warum sie NICHT unter /setup/ haengt. Razor nimmt an dieser Stelle nur eine
+   Konstante aus einem Literal; ein Test haelt beide gegeneinander. *@
+@page "/first-run"
+@layout EmptyLayout
+@attribute [AllowAnonymous]
+@using System.Text.Json
+@using Bifrost.Abstractions.Importing
+@using Bifrost.Abstractions.Setup
+@using Bifrost.Core
+@using Bifrost.Core.Diagnostics.Upstreams
+@inject ISetupWizard Wizard
+@inject ISetupSessionStore Sessions
+@inject IUpstreamSupervisor Supervisor
+@inject IUpstreamConfigStore ConfigStore
+@inject IUpstreamConnectionDiagnostics ConnectionDiagnostics
+@inject IRbacManagement Rbac
+@inject IApiKeyService ApiKeys
+@inject IToolCatalog Catalog
+@inject IToolInvoker Invoker
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+@inject IJSRuntime Js
+
+@*
+    Der gefuehrte Erstaufbau (WP4.4, FR-P012).
+
+    DREI DINGE, DIE HIER NICHT PASSIEREN — und die den Bau bestimmen:
+
+    1. KEIN HTTP-AUFRUF GEGEN DEN SETUP-ENDPUNKT. Diese Seite ist Blazor Interactive Server und
+       laeuft IM Serverprozess. Sie ruft den Wizard-Dienst direkt auf, und der ruft Importer und
+       Vorschauprojektion. '/setup/import/preview' bleibt auf Loopback beschraenkt und ist fuer
+       lokale Werkzeuge da (docs/plans/product-readiness-status.md).
+
+    2. KEINE KERNREGEL. Was anwendbar ist, sagt der Plan; was bestaetigt werden muss, sagt
+       ConfirmationsFor; was sicher voreingestellt wird, sagt SecureUpstreamDefaults; ob etwas nativ
+       laufen darf, sagt die Ausfuehrungs-Policy. Diese Seite stellt dar und fragt.
+
+    3. KEIN ZUSTAND IM BROWSER ausser der Kennung. Der Vorgang liegt serverseitig; die Kennung
+       steht in einem Cookie, nicht in der Adresszeile. Und der ausgestellte API-Key liegt in
+       KEINER Ablage — er lebt nur in diesem Circuit und ist nach einem Neuladen weg. Dann steht
+       dort ein Knopf, der einen neuen ausstellt, statt einer Ausrede.
+*@
+
+<div class="wizard">
+    <div class="wizard-head">
+        <BrandMark Tagline="Einrichtung in neun Schritten." />
+        <div style="flex:1; min-width:240px">
+            <h1 style="margin:0">Erstaufbau</h1>
+            <p class="muted" style="margin:.2rem 0 0">
+                Vom leeren Gateway bis zum ersten echten Toolaufruf — ohne eine Konfigurationsdatei
+                von Hand anzufassen.
+            </p>
+        </div>
+    </div>
+    <div class="wizard-rule" style="margin:.9rem 0 0"></div>
+
+    <ol class="wizard-steps" aria-label="Fortschritt der Einrichtung">
+        @foreach (var step in AllSteps)
+        {
+            <li data-state="@StepState(step)"
+                aria-current="@(step == Current ? "step" : null)">
+                <span class="n">@((int)step)</span>
+                <span>@Title(step)</span>
+            </li>
+        }
+    </ol>
+
+    @if (_notice is not null)
+    {
+        <div class="card" role="status">
+            <strong>Hinweis</strong>
+            <p class="muted" style="margin:.3rem 0 0">@_notice</p>
+        </div>
+    }
+
+    @if (_facts is null)
+    {
+        <div class="card"><p class="muted" style="margin:0">Lese den Zustand dieser Instanz …</p></div>
+    }
+    else
+    {
+        @switch (Current)
+        {
+            case SetupStep.SecurityMode: @StepSecurityMode; break;
+            case SetupStep.AdminAccess: @StepAdminAccess; break;
+            case SetupStep.KeyRing: @StepKeyRing; break;
+            case SetupStep.Source: @StepSource; break;
+            case SetupStep.ImportReview: @StepImportReview; break;
+            case SetupStep.Connection: @StepConnection; break;
+            case SetupStep.Agent: @StepAgent; break;
+            case SetupStep.Snippet: @StepSnippet; break;
+            case SetupStep.TestCall: @StepTestCall; break;
+        }
+
+        <div class="wizard-nav">
+            <button class="btn-ghost" @onclick="Back" disabled="@(!CanGoBack)">Zurück</button>
+            @* Auf dem letzten Schritt gibt es kein „Weiter". Ein Knopf, der grundsaetzlich nichts
+               tut, ist schlechter als keiner: Er laesst offen, ob man etwas falsch gemacht hat. *@
+            @if (Current is not SetupStep.TestCall)
+            {
+                <button @onclick="Forward" disabled="@_busy">@ForwardLabel</button>
+            }
+            <span class="spacer"></span>
+            @if (_message is not null)
+            {
+                <span class="@(_ok ? "msg-ok" : "msg-err")" role="alert">@_message</span>
+            }
+            <a class="btn btn-ghost btn-sm" href="/">Zur Oberfläche</a>
+            <button class="btn-ghost btn-sm" @onclick="Abort">Einrichtung abbrechen</button>
+        </div>
+    }
+</div>
+
+@code {
+    // ── Zustand dieses Circuits ─────────────────────────────────────────────────────────────────
+    // Was hier steht, ist entweder aus der Instanz gelesen (_facts) oder darf verloren gehen
+    // (_key). Alles, was einen Neustart des Browsers ueberleben muss, liegt in _session.
+
+    private SetupSession? _session;
+    private SetupFacts? _facts;
+    private string? _notice, _message;
+    private bool _ok, _busy;
+
+    /// <summary>Der ausgestellte Schlüssel — <b>nur hier</b>, nie in der Ablage. Siehe Kopf.</summary>
+    private string? _key;
+    private IReadOnlyList<ClientConfigSnippet> _snippets = [];
+    private string? _snippetHint;
+
+    // Schritt 1
+    private string _image = "";
+
+    // Schritt 4
+    private string _document = "", _documentName = "";
+    private string _manualSlug = "", _manualUrl = "", _manualCommand = "", _manualArgs = "";
+    private UpstreamTransportKind _manualKind = UpstreamTransportKind.StreamableHttp;
+    private bool _manualAllowPrivate;
+
+    // Schritt 6
+    private UpstreamDiagnosticReport? _shownReport;
+    private string? _shownSlug;
+
+    // Schritt 7
+    private string _agentName = "erster-agent";
+    private bool _globalGrant;
+
+    // Schritt 9
+    private string _testTool = "", _testArgs = "{}";
+
+    private static readonly SetupStep[] AllSteps = Enum.GetValues<SetupStep>();
+
+    private SetupStep Current => _session?.Step ?? SetupStep.SecurityMode;
+
+    // ── Aufbau und Fortsetzen ───────────────────────────────────────────────────────────────────
+
+    protected override async Task OnInitializedAsync()
+        => _facts = await Wizard.ReadFactsAsync(CancellationToken.None);
+
+    /// <summary>
+    /// Die Kennung liegt in einem Cookie und ist deshalb erst nach dem ersten Rendern lesbar —
+    /// waehrend des Prerenders gibt es keinen Browser, den man fragen koennte. Der kurze Moment
+    /// „Lese den Zustand dieser Instanz …" ist genau dieser Umstand und keine Ladeanimation.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        var handle = await Js.InvokeAsync<string?>("bifrostSetup.read");
+        var owner = await UserAsync();
+        var resumed = Sessions.Reopen(handle, owner);
+
+        if (resumed.Session is { } session)
+        {
+            _session = session;
+        }
+        else
+        {
+            _notice = resumed.Reason;
+            _session = Sessions.Start();
+            await Js.InvokeVoidAsync("bifrostSetup.write", _session.Handle);
+        }
+
+        _facts = await Wizard.ReadFactsAsync(CancellationToken.None);
+        Adopt(owner);
+        StateHasChanged();
+    }
+
+    private async Task<string?> UserAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        return state.User.Identity?.IsAuthenticated == true ? state.User.Identity.Name : null;
+    }
+
+    /// <summary>
+    /// Bringt den gespeicherten Schritt mit der Wirklichkeit in Einklang — und sagt es, wenn er
+    /// dabei zurueckgesetzt wird.
+    /// <para>
+    /// <b>Das ist die Fortsetzen-Semantik.</b> Der Vorgang merkt sich, wo jemand war; ob er dort
+    /// noch stehen darf, entscheidet die Instanz. Wer den Browser schliesst und wiederkommt, steht
+    /// dort, wo er war — es sei denn, die Lage hat sich geaendert, und dann steht hier warum.
+    /// </para>
+    /// </summary>
+    private void Adopt(string? owner)
+    {
+        if (_session is not { } session || _facts is not { } facts)
+        {
+            return;
+        }
+
+        if (owner is { Length: > 0 })
+        {
+            session.Owner = owner;
+        }
+
+        // Die Regel steht in SetupProgress und nicht hier: Sie ist die Antwort auf „kommt der Nutzer
+        // weiter oder steht er?", und die muss ohne Browser pruefbar sein.
+        var (step, reason) = SetupProgress.Normalise(session, facts, owner is { Length: > 0 });
+        session.Step = step;
+
+        // Kein stilles Zurueckspringen: Wenn zurueckgesetzt wurde, steht hier der Grund — sonst
+        // denkt der Nutzer, der Wizard habe seine Arbeit verloren.
+        _notice = reason ?? _notice;
+
+        _agentName = session.AgentName ?? _agentName;
+        _image = session.ContainerImage ?? _image;
+        Sessions.Touch(session);
+    }
+
+    private string StepState(SetupStep step)
+        => step < Current ? "done" : step == Current ? "current" : "open";
+
+    private static string Title(SetupStep step) => step switch
+    {
+        SetupStep.SecurityMode => "Betriebsart",
+        SetupStep.AdminAccess => "Zugang",
+        SetupStep.KeyRing => "Schlüsselring",
+        SetupStep.Source => "Quelle",
+        SetupStep.ImportReview => "Befunde",
+        SetupStep.Connection => "Verbindung",
+        SetupStep.Agent => "Agent",
+        SetupStep.Snippet => "Client",
+        _ => "Testaufruf",
+    };
+
+    // ── Navigation ──────────────────────────────────────────────────────────────────────────────
+
+    private bool CanGoBack => _session is { Step: > SetupStep.SecurityMode } && !_busy;
+
+    private string ForwardLabel => Current is SetupStep.Snippet ? "Zum Testaufruf" : "Weiter";
+
+    private void Back()
+    {
+        if (_session is not { } session || session.Step is SetupStep.SecurityMode)
+        {
+            return;
+        }
+
+        _message = null;
+        session.Step = (SetupStep)((int)session.Step - 1);
+        Sessions.Touch(session);
+    }
+
+    /// <summary>
+    /// Ein Schritt weiter — <b>wenn</b> dieser Schritt fertig ist. Was „fertig" heisst, steht je
+    /// Schritt in <see cref="Blocker"/>; die Absage nennt den Grund, statt den Knopf tot zu
+    /// stellen. Ein toter Knopf ohne Erklaerung ist die Bauform, an der Leute abbrechen.
+    /// </summary>
+    private void Forward()
+    {
+        if (_session is not { } session || _facts is not { } facts)
+        {
+            return;
+        }
+
+        _message = null;
+        if (SetupProgress.BlockerFor(session, facts, session.Owner is { Length: > 0 }) is { } reason)
+        {
+            _ok = false;
+            _message = reason;
+            return;
+        }
+
+        _notice = null;
+        session.Step = SetupProgress.Next(session);
+        Sessions.Touch(session);
+    }
+
+    private async Task Abort()
+    {
+        if (_session is { } session)
+        {
+            Sessions.Discard(session.Handle);
+        }
+
+        await Js.InvokeVoidAsync("bifrostSetup.clear");
+        Nav.NavigateTo("/", forceLoad: true);
+    }
+
+    // ── Schritt 1: Betriebsart ──────────────────────────────────────────────────────────────────
+
+    private RenderFragment StepSecurityMode => @<div class="card">
+        <h2 style="margin-top:0">1 · Was soll diese Instanz sein?</h2>
+        <p class="muted" style="margin-top:0">
+            Die Wahl entscheidet, was in den folgenden Schritten voreingestellt ist —
+            <strong>nicht</strong>, was erlaubt ist. Erlaubt wird von der Ausführungs-Policy und dem
+            Validator entschieden, und die sitzen im Kern.
+        </p>
+
+        <div class="pill-list" style="margin:.6rem 0 .2rem" role="radiogroup" aria-label="Betriebsart">
+            <label class="pill" style="padding:.35rem .8rem">
+                <input type="radio" name="mode" checked="@(_session?.Mode is SetupSecurityMode.Shielded)"
+                       @onchange="() => SetMode(SetupSecurityMode.Shielded)" />
+                Abgeschirmt (empfohlen)
+            </label>
+            <label class="pill" style="padding:.35rem .8rem">
+                <input type="radio" name="mode" checked="@(_session?.Mode is SetupSecurityMode.Workbench)"
+                       @onchange="() => SetMode(SetupSecurityMode.Workbench)" />
+                Lokale Werkbank
+            </label>
+        </div>
+
+        <RiskHint Title="Was die beiden Betriebsarten unterscheiden"
+                  WhenOn="@("Abgeschirmt: Ein Server, der ein Programm startet, läuft im Container. Er kommt an das, was der Container ihm gibt — nicht an den Rest der Maschine und nicht an den Schlüsselring. Dafür braucht jeder solche Server ein Image.")"
+                  WhenOff="@("Lokale Werkbank: Programme laufen mit den Rechten des Gateways. Sie können alles lesen, was diesem Benutzer offensteht, einschließlich der API-Keys aller Agenten und der Secrets aller anderen Upstreams.")"
+                  Noticed="@("Beim Anlegen steht die Betriebsart in der Konfigurationsversion; danach nichts mehr. Ein Zugriff des Programms auf Dateien der Maschine erscheint in keinem Log dieses Gateways.")" />
+
+        @if (_session?.Mode is SetupSecurityMode.Shielded)
+        {
+            <label for="wizard-image">
+                Container-Image für Server, die ein Programm starten (optional, wird pro Server
+                übernommen)
+            </label>
+            <input id="wizard-image" @bind="_image" @bind:event="oninput"
+                   placeholder="ghcr.io/beispiel/server@@sha256:…" />
+            <p class="muted" style="margin:.3rem 0 0">
+                Ohne Image weist der Validator einen Server ab, der im Container laufen soll —
+                <span class="mono">Isolation.Image</span> ist dort Pflicht. Server ohne eigenes
+                Programm (Streamable HTTP, OpenAPI) brauchen keines.
+            </p>
+        }
+
+        <h3>Was diese Instanz tatsächlich zulässt</h3>
+        <div class="table-wrap">
+            <table>
+                <tbody>
+                    <tr>
+                        <th style="width:220px">Native Ausführung</th>
+                        <td>
+                            <span class="badge @(_facts!.Execution.Allowed ? "badge-warn" : "badge-ok")">
+                                @(_facts.Execution.Allowed ? "erlaubt" : "verboten")
+                            </span>
+                            <span class="mono muted" style="margin-left:.4rem">@_facts.Execution.ReasonCode</span>
+                            <div class="muted">@_facts.Execution.Summary</div>
+                            @if (_facts.Execution.Remediation is { } remedy)
+                            {
+                                <div class="muted">@remedy</div>
+                            }
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Schlüsselring</th>
+                        <td>
+                            <span class="mono">@_facts.KeyRing.Mode</span>
+                            <div class="muted">@_facts.KeyRing.Summary</div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        @if (_session?.Mode is SetupSecurityMode.Workbench && !_facts.Execution.Allowed)
+        {
+            <p class="msg-err" style="margin-bottom:0">
+                Diese Instanz verbietet native Ausführung. Ein Server, der ein Programm startet,
+                wird in Schritt 4 abgewiesen — mit der Begründung aus dem Kern. Wer das ändern will,
+                setzt <span class="mono">@_facts.Execution.SwitchName</span> und startet neu.
+            </p>
+        }
+    </div>;
+
+    private void SetMode(SetupSecurityMode mode)
+    {
+        if (_session is not { } session)
+        {
+            return;
+        }
+
+        session.Mode = mode;
+        Wizard.Record(session.Owner ?? "anonym", $"Setup-Wizard: Betriebsart '{mode}' gewaehlt.");
+        Sessions.Touch(session);
+    }
+
+    // ── Schritt 2: Zugang ───────────────────────────────────────────────────────────────────────
+
+    private RenderFragment StepAdminAccess => @<div class="card">
+        <h2 style="margin-top:0">2 · Zugang anlegen</h2>
+        @if (_facts!.Access.AnyAdmin && _session?.Owner is { } owner)
+        {
+            <p class="msg-ok" style="margin-top:0">
+                Angemeldet als <strong>@owner</strong>. Der Erstzugang ist erledigt — ab hier legt
+                der Wizard Dinge an, und zwar unter diesem Namen.
+            </p>
+            <p class="muted" style="margin-bottom:0">
+                Ein zweites Setup-Token gibt es nur mit lokalem Nachweis auf dem Rechner, auf dem
+                der Gateway läuft. Weitere UI-Zugänge später unter
+                <a href="/users">UI-Nutzer</a>.
+            </p>
+        }
+        else if (_facts.Access.AnyAdmin)
+        {
+            <p class="muted" style="margin-top:0">@_facts.Access.Summary</p>
+            <p style="margin-bottom:0">
+                <a class="btn" href="@($"/login?returnUrl={Uri.EscapeDataString(UiNavigation.SetupWizardRoute)}")">
+                    Anmelden und hierher zurück
+                </a>
+            </p>
+        }
+        else if (_facts.Access.Pending)
+        {
+            <p class="muted" style="margin-top:0">
+                Beim ersten Start legt der Gateway ein Setup-Token an und schreibt es in
+                <code>&lt;datadir&gt;/config/bootstrap-token.txt</code> — nicht ins Log. Im Container:
+                <code>docker compose exec bifrost cat /data/config/bootstrap-token.txt</code>.
+                @if (_facts.Access.ExpiresAt is { } expires)
+                {
+                    <text> Es gilt bis @expires.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) UTC.</text>
+                }
+            </p>
+            @*
+                Nativer Form-POST, genau wie /setup und /login: Am Ende dieses Vorgangs wird ein
+                Cookie gesetzt, und ein Blazor-Circuit kann das nicht. Der Rueckweg fuehrt hierher —
+                geprueft wird er serverseitig mit derselben Funktion wie beim Login.
+            *@
+            <form action="/auth/setup" method="post">
+                <AntiforgeryToken />
+                <input type="hidden" name="returnUrl" value="@UiNavigation.SetupWizardRoute" />
+                <label for="wizard-token">Setup-Token</label>
+                <input id="wizard-token" name="token" autocomplete="off" autofocus />
+                <label for="wizard-user">Benutzername</label>
+                <input id="wizard-user" name="username" autocomplete="username" />
+                <label for="wizard-password">Passwort (mindestens 12 Zeichen)</label>
+                <input id="wizard-password" name="password" type="password" autocomplete="new-password" />
+                <button type="submit" style="margin-top:1rem">Zugang anlegen</button>
+            </form>
+            @if (Failed is not null)
+            {
+                <p class="msg-err" style="margin-bottom:0">@BootstrapReason(Failed)</p>
+            }
+        }
+        else
+        {
+            <p class="msg-err" style="margin-top:0">@_facts.Access.Summary</p>
+            <p class="muted" style="margin-bottom:0">
+                Der Wizard stellt kein Token aus. Das ist Absicht: Ein zweites Token gibt es nur mit
+                lokalem Nachweis auf dem Rechner, auf dem der Gateway läuft — sonst wäre der
+                Erstzugang über das Netz zurückdrehbar.
+            </p>
+        }
+    </div>;
+
+    [SupplyParameterFromQuery(Name = "failed")]
+    public string? Failed { get; set; }
+
+    // Derselbe Textvorrat wie auf /setup: Der Grund kommt als Code aus der Adresszeile, angezeigt
+    // wird ausschliesslich ein Text aus dieser Liste. Fremde Inhalte erreichen die Seite nicht.
+    private static string BootstrapReason(string code) => code switch
+    {
+        "NotPending" => "Es steht kein Erstzugang aus — entweder ist er schon eingelöst, oder diese "
+            + "Installation hatte bereits Zugänge.",
+        "Expired" => "Die Frist des Setup-Tokens ist verstrichen; es ist entwertet. Ein neues stellt "
+            + "der nächste Start aus, solange noch niemand eingerichtet ist.",
+        "InvalidToken" => "Das Setup-Token passt nicht.",
+        "UsernameTaken" => "Dieser Benutzername ist vergeben.",
+        "PasswordTooShort" => "Das Passwort ist zu kurz — mindestens 12 Zeichen.",
+        "CredentialsMissing" => "Benutzername und Passwort sind Pflicht.",
+        _ => "Der Erstzugang konnte nicht eingerichtet werden.",
+    };
+
+    // ── Schritt 3: Schlüsselring ────────────────────────────────────────────────────────────────
+
+    private RenderFragment StepKeyRing => @<div class="card">
+        <h2 style="margin-top:0">3 · Schlüsselring</h2>
+        <p class="muted" style="margin-top:0">
+            Der Schlüsselring entschlüsselt <strong>sämtliche</strong> Upstream-Zugangsdaten,
+            OAuth-Token und Webhook-Secrets dieser Instanz. Wie er geschützt wird, entscheidet die
+            Umgebung des Prozesses — deshalb steht hier eine Auskunft und kein Formular. Eine
+            Oberfläche, die das ändern könnte, wäre ein Weg, den Schutz aus der Ferne abzuschalten.
+        </p>
+        <div class="table-wrap">
+            <table>
+                <tbody>
+                    <tr><th style="width:200px">Betriebsart</th><td class="mono">@_facts!.KeyRing.Mode</td></tr>
+                    <tr>
+                        <th>Erklärt</th>
+                        <td>
+                            <span class="badge @(_facts.KeyRing.Declared ? "badge-ok" : "badge-warn")">
+                                @(_facts.KeyRing.Declared ? "ja" : "nein")
+                            </span>
+                        </td>
+                    </tr>
+                    <tr><th>Urteil beim Start</th><td>@(_facts.KeyRing.Verdict ?? "—")</td></tr>
+                    <tr><td colspan="2">@_facts.KeyRing.Summary</td></tr>
+                    @if (_facts.KeyRing.Remediation is { } remedy)
+                    {
+                        <tr><td colspan="2" class="muted">@remedy</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @if (!_facts.KeyRing.Declared)
+        {
+            <RiskHint Title="Was ein unerklärter Schlüsselring bedeutet"
+                      WhenOn="@("Mit einem Zertifikat liegt der Ring verschlüsselt. Wer das Datenverzeichnis kopiert, hat damit noch nichts.")"
+                      WhenOff="@("Ohne Zertifikat liegt der Ring im Klartext neben der Datenbank. Wer Lesezugriff auf das Datenverzeichnis hat — eine Sicherung, ein Volume-Snapshot, ein Container mit demselben Mount — kann jedes gespeicherte Zugangsdatum entschlüsseln.")"
+                      Noticed="@("Niemand. Es gibt keinen Zugriff, der auffiele: Die Entschlüsselung passiert außerhalb dieses Gateways und hinterlässt hier keine Spur.")" />
+            <p class="muted">
+                Entweder ein Zertifikat einrichten
+                (<span class="mono">@_facts.KeyRing.CertificatePathSetting</span>) oder den
+                ungeschützten Betrieb ausdrücklich wählen
+                (<span class="mono">@_facts.KeyRing.ProtectionSetting=@_facts.KeyRing.NoneValue</span>).
+                Beides gilt erst nach einem Neustart des Prozesses.
+            </p>
+            <label>
+                <input type="checkbox" checked="@(_session?.KeyRingAcknowledged == true)"
+                       @onchange="AcknowledgeKeyRing" />
+                Ich habe gelesen, dass der Schlüsselring hier ungeschützt liegt, und richte den
+                Schutz nach der Einrichtung ein.
+            </label>
+        }
+        else
+        {
+            <p class="msg-ok" style="margin-bottom:0">
+                Die Betriebsart ist erklärt. Nichts zu tun.
+            </p>
+        }
+    </div>;
+
+    private void AcknowledgeKeyRing(ChangeEventArgs args)
+    {
+        if (_session is not { } session)
+        {
+            return;
+        }
+
+        session.KeyRingAcknowledged = args.Value is true;
+        if (session.KeyRingAcknowledged)
+        {
+            // In den Audit, nicht nur in den Sitzungszustand: Wer spaeter fragt, warum diese Instanz
+            // ohne Zertifikat laeuft, findet hier den Namen und den Zeitpunkt.
+            Wizard.Record(
+                session.Owner ?? "anonym",
+                "Setup-Wizard: ungeschuetzter Key-Ring ausdruecklich zur Kenntnis genommen.");
+        }
+
+        Sessions.Touch(session);
+    }
+
+    // ── Schritt 4: Quelle ───────────────────────────────────────────────────────────────────────
+
+    private RenderFragment StepSource => @<div>
+        <div class="card">
+            <h2 style="margin-top:0">4 · Woher kommt der erste Server?</h2>
+            <p class="muted" style="margin-top:0">
+                Eine vorhandene Konfiguration aus Claude, Cursor, VS Code, Codex oder einer
+                generischen <span class="mono">mcp.json</span> einlesen — oder einen Server von Hand
+                beschreiben. Eingelesen heißt <strong>angesehen</strong>: Es entsteht ein Plan, und
+                der ist keine Änderung.
+            </p>
+
+            <label for="wizard-file">Konfigurationsdatei</label>
+            <InputFile id="wizard-file" OnChange="ReadFileAsync" accept=".json,.toml,application/json" />
+            <p class="muted" style="margin:.3rem 0 0">
+                Höchstens @(Wizard.MaxDocumentBytes / 1024) KiB — dieselbe Grenze wie an der
+                Schnittstelle. Die Datei wird im Browser gelesen und als Text übertragen; der Server
+                öffnet keinen Pfad, den ein Client ihm nennt.
+            </p>
+
+            <label for="wizard-doc">… oder Inhalt einfügen</label>
+            <textarea id="wizard-doc" class="mono" rows="6" @bind="_document"
+                      placeholder='{"mcpServers": { … }}'></textarea>
+
+            <div class="toolbar" style="margin-top:.75rem">
+                <button @onclick="AnalyseAsync" disabled="@_busy">Einlesen und ansehen</button>
+                @if (_documentName is { Length: > 0 })
+                {
+                    <span class="muted">@_documentName</span>
+                }
+            </div>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top:0">… oder von Hand</h3>
+            <div class="row">
+                <div>
+                    <label for="wizard-kind">Transport</label>
+                    <select id="wizard-kind" @bind="_manualKind">
+                        <option value="@UpstreamTransportKind.StreamableHttp">Streamable HTTP</option>
+                        <option value="@UpstreamTransportKind.Stdio">stdio (lokales Programm)</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="wizard-slug">Slug (Namespace)</label>
+                    <input id="wizard-slug" @bind="_manualSlug" placeholder="github" />
+                </div>
+            </div>
+            @if (_manualKind is UpstreamTransportKind.StreamableHttp)
+            {
+                <label for="wizard-url">Endpoint-URL</label>
+                <input id="wizard-url" @bind="_manualUrl" placeholder="https://host/mcp" />
+                <label>
+                    <input type="checkbox" @bind="_manualAllowPrivate" />
+                    Ziele im internen Netz erlauben (Loopback, privates Netz, Link-Local)
+                </label>
+                <RiskHint Title="Was die Freigabe interner Ziele öffnet"
+                          WhenOn="@("Das Gateway darf für diesen Upstream Adressen im eigenen Netz aufrufen. Damit wird es zum Sprungbrett: Wer die Zieladresse setzen darf, erreicht darüber Dienste, die von außen nicht erreichbar sind (SSRF). Auf einer Cloud-Instanz gehört der Metadaten-Endpunkt dazu, und der gibt Zugangsdaten heraus.")"
+                          WhenOff="@("Ein Ziel im internen Netz wird abgewiesen, bevor eine Verbindung entsteht. Das ist die Vorgabe für Neuanlagen.")"
+                          Noticed="@("Der Aufruf sieht im Audit-Log aus wie jeder andere Upstream-Aufruf — er trägt den Slug, nicht das Ziel.")" />
+            }
+            else
+            {
+                <div class="row">
+                    <div style="flex:2"><label for="wizard-cmd">Kommando</label><input id="wizard-cmd" @bind="_manualCommand" placeholder="npx" /></div>
+                    <div style="flex:3"><label for="wizard-cmdargs">Argumente (durch Leerzeichen)</label><input id="wizard-cmdargs" @bind="_manualArgs" /></div>
+                </div>
+                <p class="muted" style="margin:.3rem 0 0">
+                    Ein lokales Programm bekommt die Isolationsangabe aus Schritt 1:
+                    <span class="mono">@(_session?.Mode is SetupSecurityMode.Workbench ? "Host" : "Container")</span>@(_session?.Mode is SetupSecurityMode.Shielded && string.IsNullOrWhiteSpace(_image) ? " — ohne Image weist der Validator ihn ab." : ".")
+                </p>
+            }
+            <div class="toolbar" style="margin-top:.75rem">
+                <button @onclick="AddManualAsync" disabled="@_busy">Server anlegen</button>
+            </div>
+            @if (_session?.Source is SetupSourceKind.Manual && _session.Applied is { Created.Count: > 0 } done)
+            {
+                <p class="msg-ok" style="margin-bottom:0">
+                    Angelegt: @string.Join(", ", done.Created.Select(c => c.Slug)).
+                </p>
+            }
+        </div>
+    </div>;
+
+    private async Task ReadFileAsync(InputFileChangeEventArgs args)
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            var file = args.File;
+            await using var stream = file.OpenReadStream(Wizard.MaxDocumentBytes);
+            using var reader = new StreamReader(stream);
+            _document = await reader.ReadToEndAsync();
+            _documentName = file.Name;
+            _ok = true;
+            _message = $"'{file.Name}' gelesen ({file.Size} Bytes). Jetzt „Einlesen und ansehen“.";
+        }
+        catch (IOException exception)
+        {
+            // Der haeufigste Fall: die Datei ist groesser als die Grenze. Die Meldung nennt sie,
+            // statt von einem Lesefehler zu sprechen.
+            _ok = false;
+            _message = "Die Datei ließ sich nicht lesen — höchstens "
+                + $"{Wizard.MaxDocumentBytes / 1024} KiB. ({exception.Message})";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task AnalyseAsync()
+    {
+        if (_session is not { } session)
+        {
+            return;
+        }
+
+        _busy = true;
+        _message = null;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_document))
+            {
+                _ok = false;
+                _message = "Es ist keine Konfiguration da — Datei wählen oder Inhalt einfügen.";
+                return;
+            }
+
+            // Der Dateiname reist als BESCHRIFTUNG mit, damit ein Befund seine Fundstelle nennen
+            // kann. Geoeffnet wird er nie — das ist die Stopp-Regel aus WP4.3.
+            var outcome = Wizard.Analyse(
+                session, _document, string.IsNullOrWhiteSpace(_documentName) ? null : _documentName);
+            session.Source = SetupSourceKind.Import;
+            Sessions.Touch(session);
+
+            _ok = outcome.AnyApplicable;
+            _message = outcome.Summary;
+            if (outcome.AnyApplicable)
+            {
+                session.Step = SetupStep.ImportReview;
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+
+        await Task.CompletedTask;
+    }
+
+    private async Task AddManualAsync()
+    {
+        if (_session is not { } session)
+        {
+            return;
+        }
+
+        _busy = true;
+        _message = null;
+        try
+        {
+            var config = BuildManual(out var error);
+            if (config is null)
+            {
+                _ok = false;
+                _message = error;
+                return;
+            }
+
+            session.ContainerImage = string.IsNullOrWhiteSpace(_image) ? null : _image.Trim();
+            var report = await Wizard.ApplyManualAsync(
+                session, config, session.Owner ?? "anonym", CancellationToken.None);
+
+            if (report.Refusal is { } refusal)
+            {
+                _ok = false;
+                _message = refusal;
+                return;
+            }
+
+            session.Source = SetupSourceKind.Manual;
+            Sessions.Touch(session);
+            _facts = await Wizard.ReadFactsAsync(CancellationToken.None);
+            _ok = true;
+            _message = $"'{config.Slug}' angelegt.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>
+    /// Baut die Konfiguration aus dem Formular. Die Isolationsangabe kommt aus Schritt 1 — sie wird
+    /// hier <b>gesetzt</b> und nicht offengelassen: Eine fehlende Angabe hiess frueher
+    /// stillschweigend „kein Schutz", und genau das weist <c>SecureUpstreamDefaults</c> heute ab.
+    /// </summary>
+    private UpstreamServerConfig? BuildManual(out string? error)
+    {
+        error = null;
+        var slug = _manualSlug.Trim();
+        if (slug.Length == 0)
+        {
+            error = "Der Slug fehlt.";
+            return null;
+        }
+
+        try
+        {
+            if (_manualKind is UpstreamTransportKind.StreamableHttp)
+            {
+                return new UpstreamServerConfig(
+                    slug, slug, UpstreamTransportKind.StreamableHttp, true,
+                    Http: new HttpTransportOptions(
+                        new Uri(_manualUrl.Trim()),
+                        AllowLegacySse: true,
+                        AllowPrivateTargets: _manualAllowPrivate));
+            }
+
+            if (string.IsNullOrWhiteSpace(_manualCommand))
+            {
+                error = "Das Kommando fehlt.";
+                return null;
+            }
+
+            var isolation = _session?.Mode is SetupSecurityMode.Workbench
+                ? new IsolationOptions(IsolationMode.Host)
+                : new IsolationOptions(
+                    IsolationMode.Container,
+                    Image: string.IsNullOrWhiteSpace(_image) ? null : _image.Trim());
+
+            return new UpstreamServerConfig(
+                slug, slug, UpstreamTransportKind.Stdio, true,
+                Stdio: new StdioTransportOptions(
+                    _manualCommand.Trim(),
+                    _manualArgs.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                    Isolation: isolation));
+        }
+        catch (UriFormatException exception)
+        {
+            error = $"Die Adresse ist keine gültige URL: {exception.Message}";
+            return null;
+        }
+    }
+
+    // ── Schritt 5: Befunde ──────────────────────────────────────────────────────────────────────
+
+    private RenderFragment StepImportReview => @<div class="card">
+        <h2 style="margin-top:0">5 · Was in dieser Datei steht</h2>
+        @if (_session?.ImportSource is { } source)
+        {
+            <p class="muted" style="margin-top:0">
+                Format <span class="mono">@source.Provider</span>,
+                Erkennungssicherheit @source.Confidence.ToString("0.00", CultureInfo.InvariantCulture)@(source.OriginPath is { } origin ? $", Herkunft „{origin}“" : "").
+                Angezeigt werden <strong>Strukturangaben</strong>: Programm, Zieladresse, Namen von
+                Umgebungsvariablen und Headern. <strong>Keine Werte</strong> — was ein Wert ist,
+                verlässt diese Vorschau nicht, auch wenn die Erkennung ihn nicht für ein Geheimnis
+                hielt.
+            </p>
+        }
+
+        @if (_session?.BlockingFindings is { Count: > 0 } blocking)
+        {
+            <div class="card" style="border-color:rgba(255,107,131,.38)">
+                <strong class="msg-err">Diese Befunde betreffen das ganze Dokument.</strong>
+                <p class="muted" style="margin:.3rem 0 0">
+                    Sie lassen sich nicht durch eine Auswahl umgehen: Wer nicht weiß, welches Format
+                    er vor sich hat, weiß auch nicht, was der einzelne Eintrag bedeutet.
+                </p>
+                @foreach (var finding in blocking)
+                {
+                    @Finding(finding)
+                }
+            </div>
+        }
+
+        @foreach (var entry in _session?.Entries ?? [])
+        {
+            <div class="wizard-entry @(entry.CanApply ? null : "is-blocked")">
+                <div class="wizard-entry-head">
+                    @if (entry.CanApply)
+                    {
+                        <label>
+                            <input type="checkbox" checked="@(_session!.Selected.Contains(entry.SourceName))"
+                                   @onchange="e => Toggle(entry.SourceName, e.Value is true)" />
+                            <strong class="mono">@entry.SourceName</strong>
+                        </label>
+                    }
+                    else
+                    {
+                        <strong class="mono">@entry.SourceName</strong>
+                        <span class="badge badge-err">nicht anwendbar</span>
+                    }
+                    <span class="muted">→ <span class="mono">@entry.Slug</span></span>
+                    <span class="badge badge-muted">@entry.Kind</span>
+                    @if (entry.SourcePath is { } path)
+                    {
+                        <span class="mono muted" style="font-size:.72rem">@path</span>
+                    }
+                </div>
+                <div class="wizard-entry-meta">@entry.Transport</div>
+
+                @foreach (var blocker in entry.Blockers)
+                {
+                    @Finding(blocker)
+                }
+                @foreach (var finding in entry.Findings)
+                {
+                    @Finding(finding)
+                }
+                @if (entry.Secrets is { Count: > 0 } secrets)
+                {
+                    <div class="wizard-finding sev-Risk">
+                        <strong>Zugangsdaten in der Quelle:</strong>
+                        @foreach (var secret in secrets)
+                        {
+                            <div class="muted">
+                                <span class="mono">@secret.Location</span> — erkannt an: @secret.Looked;
+                                @(secret.ValuePresent
+                                    ? "die Quelle bringt einen Wert mit (er wird übernommen, aber nirgends angezeigt)."
+                                    : "die Quelle war bereits maskiert — aus einer Maske wird nichts rekonstruiert.")
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+
+        @if (_session?.UnreadableEntries is { Count: > 0 } unreadable)
+        {
+            @*
+                Stellen der Datei, aus denen GAR KEIN Kandidat wurde. Sie stehen hier, weil sie
+                sonst nirgends stuenden: Sie sind kein Eintrag oben (es gibt keinen Kandidaten) und
+                kein planweiter Befund (sie betreffen nur ihre Stelle). Ohne diesen Block ergaebe
+                eine Datei mit drei Eintraegen wortlos zwei Server.
+            *@
+            <div class="card" style="margin-top:1rem">
+                <strong>@unreadable.Count Stelle(n) ergeben keinen Server</strong>
+                <p class="muted" style="margin:.3rem 0 0">
+                    Sie stehen in der Datei, sind aber nicht als Server lesbar. Sie werden
+                    ausgelassen — benannt, nicht verschwiegen.
+                </p>
+                @foreach (var finding in unreadable)
+                {
+                    @Finding(finding)
+                }
+            </div>
+        }
+
+        @{
+            var confirmations = _session is null ? [] : Wizard.ConfirmationsFor(_session);
+        }
+        @if (confirmations.Count > 0)
+        {
+            <div class="card card-accent" style="margin-top:1rem">
+                <strong>Diese Auswahl verlangt eine ausdrückliche Bestätigung</strong>
+                <p class="muted" style="margin:.3rem 0 0">
+                    Bestätigt wird, was angelegt wird. Wer die Auswahl ändert, ändert diese Liste —
+                    eine Bestätigung, die pauschal für alles gilt, wird zur Formalie, und eine
+                    Formalie liest niemand.
+                </p>
+                @foreach (var finding in confirmations)
+                {
+                    @Finding(finding)
+                }
+                <label style="margin-top:.6rem">
+                    <input type="checkbox" checked="@(_session!.RisksConfirmed)"
+                           @onchange="e => Confirm(e.Value is true)" />
+                    Ich habe diese @confirmations.Count Befunde gelesen und übernehme sie bewusst.
+                </label>
+            </div>
+        }
+
+        <div class="toolbar" style="margin-top:1rem">
+            <button @onclick="ApplyAsync" disabled="@_busy">
+                @($"{_session?.Selected.Count ?? 0} Server übernehmen")
+            </button>
+            <span class="muted">
+                @($"{_session?.Entries.Count(e => e.CanApply) ?? 0} von {_session?.Entries.Count ?? 0} anwendbar")
+            </span>
+        </div>
+
+        @if (_session?.Applied is { } report)
+        {
+            <div class="card" style="margin-top:.75rem">
+                <strong class="msg-ok">@report.Created.Count Server angelegt.</strong>
+                @if (report.Created.Count > 0)
+                {
+                    <div class="pill-list" style="margin-top:.35rem">
+                        @foreach (var created in report.Created)
+                        {
+                            <span class="pill">@created.Slug</span>
+                        }
+                    </div>
+                }
+                @if (report.Skipped.Count > 0)
+                {
+                    <p style="margin:.6rem 0 .2rem"><strong>@report.Skipped.Count ausgelassen:</strong></p>
+                    @foreach (var skipped in report.Skipped)
+                    {
+                        <div class="wizard-finding sev-Error">
+                            <span class="mono">@skipped.SourceName</span> — @skipped.Reason
+                        </div>
+                    }
+                }
+            </div>
+        }
+    </div>;
+
+    private static RenderFragment Finding(ImportFinding finding) => @<div class="wizard-finding sev-@finding.Severity">
+        <span class="code">@finding.Code · @finding.Severity</span>
+        @if (finding.Path is { } path)
+        {
+            <span class="code"> · @path</span>
+        }
+        <div>@finding.Summary</div>
+        @if (finding.Remediation is { } remediation)
+        {
+            <div class="muted">@remediation</div>
+        }
+    </div>;
+
+    private void Toggle(string sourceName, bool on)
+    {
+        if (_session is not { } session)
+        {
+            return;
+        }
+
+        if (on)
+        {
+            session.Selected.Add(sourceName);
+        }
+        else
+        {
+            session.Selected.Remove(sourceName);
+        }
+
+        // Die Bestaetigung faellt bei jeder Aenderung der Auswahl weg: Sie galt fuer die alte
+        // Auswahl, und eine Bestaetigung, die eine andere Menge meint als die angelegte, ist keine.
+        session.RisksConfirmed = false;
+        Sessions.Touch(session);
+    }
+
+    private void Confirm(bool on)
+    {
+        if (_session is { } session)
+        {
+            session.RisksConfirmed = on;
+            Sessions.Touch(session);
+        }
+    }
+
+    private async Task ApplyAsync()
+    {
+        if (_session is not { } session)
+        {
+            return;
+        }
+
+        _busy = true;
+        _message = null;
+        try
+        {
+            session.ContainerImage = string.IsNullOrWhiteSpace(_image) ? null : _image.Trim();
+            var report = await Wizard.ApplySelectionAsync(
+                session, session.Owner ?? "anonym", CancellationToken.None);
+            Sessions.Touch(session);
+            _facts = await Wizard.ReadFactsAsync(CancellationToken.None);
+
+            if (report.Refusal is { } refusal)
+            {
+                _ok = false;
+                _message = refusal;
+                return;
+            }
+
+            _ok = report.Created.Count > 0;
+            _message = report.Skipped.Count == 0
+                ? $"{report.Created.Count} Server angelegt."
+                : $"{report.Created.Count} angelegt, {report.Skipped.Count} ausgelassen — die Gründe stehen unten.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    // ── Schritt 6: Verbindung ───────────────────────────────────────────────────────────────────
+
+    private RenderFragment StepConnection => @<div class="card">
+        <h2 style="margin-top:0">6 · Verbindung und Discovery</h2>
+        <p class="muted" style="margin-top:0">
+            Die Prüfung läuft denselben Weg wie das Anschließen: Validator, Torposten, Verbindung,
+            Aushandlung, Discovery. Was hier grün ist, ist im Betrieb grün — zwei Wege wären zwei
+            Wahrheiten darüber, ob eine Konfiguration funktioniert.
+        </p>
+        @*
+            Ein importierter Server kommt AUSGESCHALTET an. Das ist keine Nachlaessigkeit des
+            Imports, sondern seine Kernaussage: Ein Plan, dessen Server bereits liefen, haette den
+            Unterschied zwischen „analysiert" und „angelegt" nur noch im Namen. Der Wizard schaltet
+            deshalb nicht von selbst ein — er sagt, dass es zu tun ist, und stellt den Knopf daneben.
+        *@
+        <p class="muted">
+            <strong>Eingelesene Server kommen ausgeschaltet an.</strong> Der Import analysiert, er
+            aktiviert nicht — sonst wäre die Vorschau nur ein anderes Wort für „angelegt". Erst mit
+            <em>Aktivieren</em> startet der Server und meldet seine Werkzeuge.
+        </p>
+        @if (_facts!.Upstreams.Count == 0)
+        {
+            <div class="empty">
+                Noch kein Server angeschlossen. Zurück zu Schritt 4.
+            </div>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Slug</th><th>Zustand</th><th>Tools</th><th>Letzter Fehler</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var upstream in _facts.Upstreams)
+                        {
+                            <tr>
+                                <td class="mono">@upstream.Slug</td>
+                                <td><span class="badge @StateCss(upstream.State)">@upstream.State</span></td>
+                                <td>@upstream.ToolCount</td>
+                                <td class="muted cell-clamp"><div class="clamp-3">@(upstream.LastError ?? "—")</div></td>
+                                <td class="col-actions">
+                                    @if (upstream.State == nameof(UpstreamState.Stopped))
+                                    {
+                                        <button class="btn-sm" disabled="@_busy"
+                                                @onclick="() => SetEnabledAsync(upstream, true)">Aktivieren</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn-sm btn-ghost" disabled="@_busy"
+                                                @onclick="() => SetEnabledAsync(upstream, false)">Abschalten</button>
+                                    }
+                                    <button class="btn-sm btn-ghost" disabled="@_busy"
+                                            @onclick="() => DiagnoseAsync(upstream)">Zeitlinie</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="toolbar" style="margin-top:.75rem">
+                <button class="btn-ghost" @onclick="RefreshFactsAsync" disabled="@_busy">Zustand neu lesen</button>
+                @if (_shownSlug is { } slug)
+                {
+                    <span class="muted">Zeitlinie für <span class="mono">@slug</span></span>
+                }
+            </div>
+            <UpstreamDiagnosticsView Report="_shownReport" />
+        }
+    </div>;
+
+    private static string StateCss(string state) => state switch
+    {
+        nameof(UpstreamState.Healthy) => "badge-ok",
+        nameof(UpstreamState.Degraded) => "badge-warn",
+        nameof(UpstreamState.Failed) => "badge-err",
+        _ => "badge-muted",
+    };
+
+    private async Task RefreshFactsAsync()
+    {
+        _busy = true;
+        try
+        {
+            _facts = await Wizard.ReadFactsAsync(CancellationToken.None);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>
+    /// Schaltet einen Server ein oder aus — über denselben Supervisor, den auch die Serverseite
+    /// benutzt. Danach wird gewartet, bis der Zustand sich bewegt hat: Ein „Aktivieren", nach dem
+    /// die Tabelle unverändert dasteht, sieht aus wie ein Knopf ohne Wirkung.
+    /// </summary>
+    private async Task SetEnabledAsync(SetupUpstreamFacts upstream, bool enabled)
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            await Supervisor.SetEnabledAsync(upstream.Id, enabled, CancellationToken.None);
+
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (DateTime.UtcNow < deadline
+                && Supervisor.GetStatus(upstream.Id)?.State is UpstreamState.Starting)
+            {
+                await Task.Delay(150);
+            }
+
+            _facts = await Wizard.ReadFactsAsync(CancellationToken.None);
+            var state = Supervisor.GetStatus(upstream.Id)?.State;
+            _ok = !enabled || state is UpstreamState.Healthy or UpstreamState.Degraded;
+            _message = enabled
+                ? _ok
+                    ? $"'{upstream.Slug}' läuft."
+                    : $"'{upstream.Slug}' ist eingeschaltet, aber im Zustand '{state}'. Die Zeitlinie sagt, woran es liegt."
+                : $"'{upstream.Slug}' ist abgeschaltet.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DiagnoseAsync(SetupUpstreamFacts upstream)
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            var latest = await ConfigStore.GetAllLatestAsync(CancellationToken.None);
+            if (!latest.TryGetValue(upstream.Id, out var version))
+            {
+                _ok = false;
+                _message = $"Zu '{upstream.Slug}' liegt keine gespeicherte Konfiguration vor.";
+                return;
+            }
+
+            _shownReport = await ConnectionDiagnostics.DiagnoseAsync(
+                version.Config, CancellationToken.None);
+            _shownSlug = upstream.Slug;
+            _ok = _shownReport.Succeeded;
+            _message = _shownReport.Succeeded
+                ? $"'{upstream.Slug}': Verbindung ok — {_shownReport.Negotiation?.ToolCount ?? 0} Werkzeug(e)."
+                : $"'{upstream.Slug}': {_shownReport.FirstFailure!.Code} — {_shownReport.FirstFailure.Check.Summary}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    // ── Schritt 7: Agent ────────────────────────────────────────────────────────────────────────
+
+    private RenderFragment StepAgent => @<div class="card">
+        <h2 style="margin-top:0">7 · Agentenidentität, Rolle und Profil</h2>
+        <p class="muted" style="margin-top:0">
+            Ein Agent ist eine Identität mit einer Rolle (was er darf) und einem Profil (was er
+            sieht). Der Wizard legt alle drei an — dieselben Dienste, die auch
+            <a href="/rbac">Agenten &amp; Keys</a> benutzt.
+        </p>
+        <div class="row">
+            <div>
+                <label for="wizard-agent">Name</label>
+                <input id="wizard-agent" @bind="_agentName" placeholder="erster-agent" />
+            </div>
+        </div>
+        <label>
+            <input type="checkbox" @bind="_globalGrant" />
+            Global-Grant (alle Tools aller Server — auch der, die morgen dazukommen)
+        </label>
+        <RiskHint Title="Was ein Global-Grant umfasst"
+                  WhenOn="@("Diese Identität darf jedes Tool jedes angeschlossenen Servers aufrufen — auch Tools, die es heute noch nicht gibt. Ein Upstream, den morgen jemand anschließt, ist sofort mit erfasst, ohne dass die Rolle angefasst wird.")"
+                  WhenOff="@("Die Rolle darf genau die Server, die jetzt angeschlossen sind. Ein neuer Server erweitert sie nicht.")"
+                  Noticed="@("Im Audit-Log steht der einzelne Aufruf, nicht die Reichweite der Rolle. Dass eine Rolle zu weit greift, sieht man nur in der Rollentabelle.")" />
+        <p class="muted">
+            Ohne Global-Grant bekommt die Rolle je angeschlossenem Server eine Freigabe:
+            @if (_facts!.Upstreams.Count == 0)
+            {
+                <strong>derzeit keinen</strong>
+            }
+            else
+            {
+                @string.Join(", ", _facts.Upstreams.Select(u => u.Slug))
+            }.
+        </p>
+        <div class="toolbar" style="margin-top:.75rem">
+            <button @onclick="CreateAgentAsync" disabled="@_busy">Agent anlegen und Schlüssel ausstellen</button>
+        </div>
+        @if (_session?.Identity is not null)
+        {
+            <p class="msg-ok" style="margin-bottom:0">
+                Identität <strong>@_session.AgentName</strong> mit Rolle
+                <span class="mono">@_session.RoleName</span> und Profil
+                <span class="mono">@_session.ProfileName</span> angelegt.
+            </p>
+        }
+    </div>;
+
+    private async Task CreateAgentAsync()
+    {
+        if (_session is not { } session)
+        {
+            return;
+        }
+
+        _busy = true;
+        _message = null;
+        try
+        {
+            var name = _agentName.Trim();
+            if (name.Length == 0)
+            {
+                _ok = false;
+                _message = "Der Name fehlt.";
+                return;
+            }
+
+            var ct = CancellationToken.None;
+            var servers = _facts!.Upstreams;
+
+            // Die Rolle. Ohne Global-Grant je Server eine Freigabe — 'server' ist die Ebene, die auf
+            // alle Tools des Servers vererbt; eine Liste einzelner Tools waere beim naechsten
+            // Discovery unvollstaendig.
+            List<Grant> grants = _globalGrant || servers.Count == 0
+                ? [new Grant(new PermissionScope(null, null),
+                    [ToolAction.UseTool, ToolAction.ReadResource, ToolAction.UsePrompt])]
+                : [.. servers.Select(server => new Grant(
+                    new PermissionScope(server.Id, null),
+                    [ToolAction.UseTool, ToolAction.ReadResource, ToolAction.UsePrompt]))];
+
+            if (!_globalGrant && servers.Count == 0)
+            {
+                _message = "Es ist kein Server angeschlossen — die Rolle bekommt deshalb einen "
+                    + "Global-Grant. Er greift auf das, was später dazukommt.";
+            }
+
+            var role = new Role(RoleId.New(), $"{name}-rolle", grants);
+            await Rbac.UpsertRoleAsync(role, ct);
+
+            // Das Profil. Gepinnt werden die Tools der angeschlossenen Server; alles Weitere bleibt
+            // ueber die Meta-Tools erreichbar (ADR-0003) — deshalb bleibt Lazy an.
+            var serverIds = servers.Select(server => server.Id).ToHashSet();
+            var pinned = Catalog.Snapshot
+                .Where(entry => entry.Kind is CatalogEntryKind.Tool && serverIds.Contains(entry.Server))
+                .Select(entry => entry.Name)
+                .ToList();
+            var profile = new ToolProfile(ProfileId.New(), $"{name}-profil", pinned, LazyToolsEnabled: true);
+            await Rbac.UpsertProfileAsync(profile, ct);
+
+            var identity = new Identity(
+                IdentityId.New(), name, IdentityKind.Agent, [role.Id], profile.Id);
+            await Rbac.UpsertIdentityAsync(identity, ct);
+
+            var issued = await ApiKeys.IssueAsync(identity.Id, $"{name}-key", null, ct);
+
+            session.AgentName = name;
+            session.Identity = identity.Id;
+            session.RoleName = role.Name;
+            session.ProfileName = profile.Name;
+            session.KeyLabel = $"{name}-key";
+            Sessions.Touch(session);
+
+            // Der Klartext bleibt im Circuit. Er geht NICHT in den Sitzungszustand — ein Geheimnis,
+            // das laenger lebt als der Blick darauf, ist eines zu viel.
+            _key = issued.PlaintextKey;
+            BuildSnippets(name);
+
+            Wizard.Record(
+                session.Owner ?? "anonym",
+                $"Setup-Wizard: Agent '{name}' mit Rolle '{role.Name}', Profil '{profile.Name}' "
+                + $"({pinned.Count} gepinnte Tools) und einem Schluessel angelegt.");
+
+            _ok = true;
+            _message = $"'{name}' angelegt — {pinned.Count} Tool(s) gepinnt.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void BuildSnippets(string agentName)
+    {
+        if (_key is not { } key)
+        {
+            _snippets = [];
+            return;
+        }
+
+        var baseAddress = new Uri(Nav.BaseUri);
+        _snippetHint = baseAddress.IsLoopback
+            ? "Hinweis: Die Adresse stammt aus dem Browser-Aufruf und zeigt auf localhost — für "
+                + "Agenten auf anderen Rechnern die extern erreichbare Adresse eintragen."
+            : null;
+        _snippets = ClientConfigSnippets.Build(baseAddress, agentName, key);
+    }
+
+    // ── Schritt 8: Client-Snippet ───────────────────────────────────────────────────────────────
+
+    private RenderFragment StepSnippet => @<div class="card">
+        <h2 style="margin-top:0">8 · Den Agenten anbinden</h2>
+        @if (_key is null)
+        {
+            <p class="muted" style="margin-top:0">
+                Der Schlüssel wird <strong>genau einmal</strong> angezeigt und liegt in keiner
+                Ablage — auch nicht in der dieses Vorgangs. Nach einem Neuladen der Seite ist er
+                deshalb weg. Das ist kein Verlust: Ein neuer Schlüssel kostet einen Klick, der alte
+                bleibt bis zum Widerruf gültig und steht unter
+                <a href="/rbac">Agenten &amp; Keys</a>.
+            </p>
+            <div class="toolbar">
+                <button @onclick="IssueAnotherKeyAsync" disabled="@_busy">Neuen Schlüssel ausstellen</button>
+            </div>
+        }
+        else
+        {
+            <div class="card card-accent">
+                <strong class="msg-ok">Neuer Schlüssel (wird nie wieder angezeigt):</strong>
+                <pre>@_key</pre>
+                <p class="muted" style="margin:.3rem 0">
+                    Enthält den Schlüssel im Klartext. Sinnvollerweise direkt übernehmen, nicht in
+                    einen Chat oder ein Ticket kopieren.
+                </p>
+                @foreach (var snippet in _snippets)
+                {
+                    <label>@snippet.Client</label>
+                    <pre class="mono">@snippet.Content</pre>
+                }
+                @if (_snippetHint is { } hint)
+                {
+                    <p class="muted" style="margin-bottom:0">@hint</p>
+                }
+            </div>
+        }
+    </div>;
+
+    private async Task IssueAnotherKeyAsync()
+    {
+        if (_session is not { Identity: { } identity, AgentName: { } name })
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            var label = $"{name}-key-{DateTime.UtcNow:yyyyMMddHHmm}";
+            var issued = await ApiKeys.IssueAsync(identity, label, null, CancellationToken.None);
+            _key = issued.PlaintextKey;
+            _session.KeyLabel = label;
+            Sessions.Touch(_session);
+            BuildSnippets(name);
+            Wizard.Record(
+                _session.Owner ?? "anonym",
+                $"Setup-Wizard: zweiter Schluessel '{label}' fuer Agent '{name}' ausgestellt.");
+            _ok = true;
+            _message = "Ein neuer Schlüssel ist ausgestellt.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    // ── Schritt 9: Testaufruf ───────────────────────────────────────────────────────────────────
+
+    private RenderFragment StepTestCall => @<div class="card">
+        <h2 style="margin-top:0">9 · Der erste echte Aufruf</h2>
+        <p class="muted" style="margin-top:0">
+            Der Aufruf läuft über denselben Weg wie ein Aufruf des Agenten selbst: RBAC-Prüfung,
+            Argument-Validierung, Routing, Timeout, Upstream, Audit. Als Aufrufer steht die eben
+            angelegte Identität — nicht ein Administrator. Damit prüft dieser Schritt genau das,
+            was danach im Betrieb passiert.
+        </p>
+
+        @{
+            var callable = CallableTools();
+        }
+        @if (callable.Count == 0)
+        {
+            <div class="empty">
+                <strong>Diese Instanz hat kein aufrufbares Tool.</strong>
+                <p class="muted" style="margin:.35rem 0 0">
+                    Entweder ist kein Server im Zustand <span class="mono">Healthy</span>, oder er
+                    liefert keine Tools. Der Wizard stellt hier <em>keinen</em> Erfolg dar, den es
+                    nicht gibt — zurück zu Schritt 6 und die Zeitlinie ansehen.
+                </p>
+            </div>
+        }
+        else
+        {
+            <div class="row">
+                <div>
+                    <label for="wizard-tool">Tool</label>
+                    <select id="wizard-tool" @bind="_testTool">
+                        <option value="">(wählen)</option>
+                        @foreach (var tool in callable)
+                        {
+                            <option value="@tool.Name.Value">@tool.Name.Value</option>
+                        }
+                    </select>
+                </div>
+            </div>
+            @if (callable.FirstOrDefault(t => t.Name.Value == _testTool) is { } selected)
+            {
+                <p class="muted" style="margin:.4rem 0 0">@selected.Description</p>
+                <label for="wizard-schema">Erwartete Argumente</label>
+                <pre id="wizard-schema">@FormatJson(selected.InputSchema.GetRawText())</pre>
+            }
+            <label for="wizard-args">Argumente (JSON)</label>
+            <textarea id="wizard-args" class="mono" rows="3" @bind="_testArgs"></textarea>
+            <div class="toolbar" style="margin-top:.75rem">
+                <button @onclick="TestCallAsync" disabled="@_busy">Aufrufen</button>
+            </div>
+        }
+
+        @if (_session?.TestResult is { } result)
+        {
+            <div class="card @(result.Succeeded ? "card-accent" : null)" style="margin-top:.75rem">
+                <div class="toolbar" style="margin-top:0">
+                    <strong class="mono">@result.Tool</strong>
+                    <span class="badge @(result.Succeeded ? "badge-ok" : "badge-err")">@result.Status</span>
+                </div>
+                <p style="margin:.4rem 0 0">@result.Explanation</p>
+                @if (result.Detail is { } detail)
+                {
+                    <pre style="margin-top:.5rem">@detail</pre>
+                }
+                @if (result.Succeeded)
+                {
+                    <p style="margin:.6rem 0 0">
+                        Damit ist die Einrichtung durch: Ein Agent mit eigenem Schlüssel hat über
+                        dieses Gateway ein Werkzeug eines fremden Servers aufgerufen, und der Aufruf
+                        steht im <a href="/logs">Audit-Log</a>. Weiter geht es auf der
+                        <a href="/">Oberfläche</a>.
+                    </p>
+                }
+            </div>
+        }
+    </div>;
+
+    private IReadOnlyList<CatalogEntry> CallableTools()
+        => _session?.Identity is not { } identity
+            ? []
+            : [.. Catalog.GetViewFor(identity).PinnedTools
+                .Concat(Catalog.Snapshot.Where(entry => entry.Kind is CatalogEntryKind.Tool))
+                .DistinctBy(entry => entry.Name.Value)
+                .OrderBy(entry => entry.Name.Value, StringComparer.Ordinal)];
+
+    private async Task TestCallAsync()
+    {
+        if (_session is not { Identity: { } identity } session || string.IsNullOrWhiteSpace(_testTool))
+        {
+            _ok = false;
+            _message = "Erst ein Tool wählen.";
+            return;
+        }
+
+        _busy = true;
+        _message = null;
+        try
+        {
+            JsonElement arguments;
+            try
+            {
+                arguments = JsonSerializer.Deserialize<JsonElement>(_testArgs);
+            }
+            catch (JsonException exception)
+            {
+                _ok = false;
+                _message = $"Die Argumente sind kein gültiges JSON: {exception.Message}";
+                return;
+            }
+
+            var name = new NamespacedToolName(_testTool);
+            var result = await Invoker.InvokeAsync(
+                new ToolInvocationRequest(identity, CallOrigin.Ui, name, arguments, null),
+                CancellationToken.None);
+
+            session.TestTool = _testTool;
+            session.TestResult = new SetupTestCall(
+                _testTool,
+                result.Status,
+                result.Status is InvocationStatus.Success
+                    ? FormatJson(result.Content?.GetRawText() ?? "")
+                    : result.ErrorMessage,
+                Explain(result.Status));
+            Sessions.Touch(session);
+
+            _ok = result.Status is InvocationStatus.Success;
+            _message = _ok ? "Der Aufruf ist durchgelaufen." : "Der Aufruf ist nicht durchgelaufen.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>
+    /// Was dieses Ergebnis bedeutet — und was als Nächstes zu tun ist.
+    /// <para>
+    /// Der Unterschied, auf den es hier ankommt: <c>Denied</c> heisst „darf nie", und die Ursache
+    /// liegt in Schritt 7. <c>ApprovalRequired</c> heisst „darf nach Freigabe" — der Aufruf ist
+    /// nicht gescheitert, er wartet. Beide als „Fehler" darzustellen wuerde den zweiten Fall zu
+    /// einer Fehlersuche machen, die es nicht gibt.
+    /// </para>
+    /// </summary>
+    private static string Explain(InvocationStatus status) => status switch
+    {
+        InvocationStatus.Success =>
+            "Durchgelaufen. Der Aufruf ist durch RBAC, Validierung, Routing und den Upstream "
+            + "gegangen und steht im Audit-Log mit Origin=Ui und dieser Identität.",
+        InvocationStatus.Denied =>
+            "Abgelehnt: Die Rolle dieser Identität deckt dieses Tool nicht ab. Das ist kein Defekt, "
+            + "sondern die Rechteprüfung — zurück zu Schritt 7 und die Freigabe erweitern.",
+        InvocationStatus.ValidationFailed =>
+            "Die Argumente passen nicht zum Schema des Tools. Das Schema steht oben; der Aufruf hat "
+            + "den Upstream nicht erreicht.",
+        InvocationStatus.ToolNotFound =>
+            "Dieses Tool gibt es im Katalog nicht (mehr). Häufigste Ursache: Der Server ist nicht "
+            + "mehr Healthy — Schritt 6 zeigt, woran es liegt.",
+        InvocationStatus.ApprovalRequired =>
+            "Der Aufruf braucht eine menschliche Freigabe und wartet als Vorgang. Er ist NICHT "
+            + "gescheitert: Unter „Freigaben“ lässt er sich erteilen oder ablehnen.",
+        InvocationStatus.GuardBlocked =>
+            "Die Inhaltsprüfung hat das Ergebnis zurückgehalten. Achtung: Der Upstream-Aufruf ist zu "
+            + "diesem Zeitpunkt bereits gelaufen, ein Seiteneffekt also eingetreten.",
+        InvocationStatus.Timeout =>
+            "Der Upstream hat nicht rechtzeitig geantwortet. Ob er überhaupt erreichbar ist, sagt "
+            + "die Zeitlinie in Schritt 6.",
+        _ => "Der Upstream hat einen Fehler gemeldet. Der Text darunter stammt von ihm; die "
+            + "Zeitlinie in Schritt 6 sagt, ob die Verbindung selbst steht.",
+    };
+
+    private static string FormatJson(string raw)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(raw);
+            return JsonSerializer.Serialize(document, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (JsonException)
+        {
+            return raw;
+        }
+    }
+}

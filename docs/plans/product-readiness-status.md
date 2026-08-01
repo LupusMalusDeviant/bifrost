@@ -180,7 +180,7 @@ Vertrag in `src/Bifrost.Abstractions/Importing.cs`. Die Einfrierung der ersten W
 | 4.5 Basic/Advanced-Informationsarchitektur | `implementiert` |
 | 4.6 Einheitliche Upstream-Diagnose | `implementiert` |
 | 4.7 Dokumentation, i18n, Contributor-Basis | `implementiert` |
-| 4.4 Geführter Setup-Wizard | `offen` — setzt auf 4.3 auf |
+| 4.4 Geführter Setup-Wizard | `implementiert` — neun Schritte unter `/first-run` |
 
 ### Vier Befunde aus der Abnahme von 4.1–4.3 — behoben
 
@@ -229,6 +229,26 @@ um" statt „Syntaxfehler in Zeile 1". Wer Codex wirklich unterstützen will, br
 zählt eine Verweisform auch mitten im Wert — aber nur, wenn nach ihrem Entfernen nichts Wertartiges
 übrig bleibt. `Bearer ${env:TOKEN}` hinterlässt ein Schemawort und ist maskiert; `sk-abc${SUFFIX}`
 hinterlässt ein halbes Geheimnis und bleibt ein Klartextfund.
+
+### Offene Produktentscheidung: Container-Import braucht ein Image, das niemand mitbringt
+
+Im abgeschirmten Modus ist `Isolation.Image` Pflicht — und **kein Quellformat bringt eines mit**.
+Wer eine Claude-Konfiguration voller `npx`-Server auf einer frischen Instanz einliest, bekommt für
+jeden Eintrag eine Absage, bis er ein Image nennt.
+
+Der Wizard sagt das an drei Stellen deutlich und kann es nicht auflösen. Das ist keine
+Oberflächenfrage: Entweder gibt es eine Vorgabe je Ökosystem (`npx` → ein Node-Image, `uvx` → ein
+Python-Image), oder es bleibt Handarbeit. Eine Vorgabe wäre bequem und zugleich eine
+Vertrauensentscheidung, die das Produkt dem Betreiber abnimmt — offen für den Product Owner.
+
+### Ein dritter Wächter fehlt: `Bifrost.Web`
+
+Die Architekturtests zu ADR-0025 E4 prüfen `Bifrost.Core` und `Bifrost.Server`. Der Wizard baut in
+`Bifrost.Web` eine `UpstreamServerConfig` und geht damit korrekt über `SecureUpstreamDefaults` und
+den Supervisor — **aber der Wächter würde es nicht merken, wenn das jemand ändert.**
+
+Gemeldet von WP4.4, nicht nebenbei erledigt: Ein dritter Wächter ist eine Entscheidung, und die
+Aufzählung, die dabei entstünde, ist genau das Problem, das diese Tests lösen sollen.
 
 ### Entscheidung: Der Setup-Endpunkt bleibt auf Loopback beschränkt
 

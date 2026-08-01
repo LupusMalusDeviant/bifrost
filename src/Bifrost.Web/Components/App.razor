@@ -516,6 +516,64 @@
         .login-card .brand-rule { margin: 0 0 .9rem; }
         .brand-tagline { color: var(--muted); font-size: .84rem; margin: 0 0 1.4rem; }
 
+        /* ── Gefuehrter Erstaufbau (WP4.4) ───────────────────────────────────────────────────
+           Der Wizard laeuft ohne Seitenleiste — er ist die einzige Aufgabe auf dem Bildschirm, und
+           ein Menue daneben waere eine Einladung, mittendrin woanders hinzugehen. Die Schrittleiste
+           uebernimmt deren Aufgabe: zeigen, wo man ist und wie weit es noch geht.
+
+           Sie SCROLLT MIT und klebt nicht oben fest. Der Fehler aus WP4.5 war genau der andere Fall
+           — eine feste Spalte, die laenger war als das Fenster; hier waere ein klebender Kopf mit
+           neun Zeilen auf einem 720-px-Schirm dasselbe Problem in waagerecht. */
+        .wizard { max-width: 1080px; margin: 0 auto; padding: 1.6rem 1.4rem 3rem; }
+        .wizard-head { display: flex; align-items: flex-start; gap: 1.2rem; flex-wrap: wrap; }
+        .wizard-head .brand { padding-left: 0; }
+
+        /* Die Schritte als nummerierte Liste — nicht als Reihe von Punkten. Ein Punkt ohne Text
+           sagt nur "es gibt noch etwas"; die Beschriftung sagt, was. */
+        .wizard-steps {
+            list-style: none; margin: 1rem 0 1.4rem; padding: 0;
+            display: flex; flex-wrap: wrap; gap: .3rem;
+        }
+        .wizard-steps li {
+            display: flex; align-items: center; gap: .4rem;
+            font-size: .74rem; color: var(--dim);
+            border: 1px solid transparent; border-radius: 999px; padding: .18rem .62rem;
+        }
+        .wizard-steps li .n {
+            font-family: var(--mono); font-size: .68rem;
+            border: 1px solid var(--edge); border-radius: 999px;
+            min-width: 1.3rem; text-align: center;
+        }
+        .wizard-steps li[data-state="done"] { color: var(--ok); border-color: rgba(86, 224, 189, .28); }
+        .wizard-steps li[data-state="done"] .n { border-color: rgba(86, 224, 189, .4); }
+        .wizard-steps li[data-state="current"] {
+            color: #eaf7ff; background: var(--ice-wash); border-color: rgba(111, 211, 255, .34);
+        }
+        .wizard-steps li[data-state="current"] .n { border-color: rgba(111, 211, 255, .55); }
+
+        /* Der Fortschrittsbalken ist die einzige Stelle im Wizard, an der das Farbband auftaucht —
+           und er ist zwei Pixel hoch. Regel 2 des Designsystems gilt auch hier. */
+        .wizard-rule { height: 2px; border-radius: 2px; background: var(--bifrost); opacity: .55; }
+
+        /* Eine Zeile je Eintrag der eingelesenen Datei. Der gesperrte Eintrag bleibt stehen und
+           wird nicht ausgeblendet: Eine Vorschau, die einen Eintrag weglaesst, luegt. */
+        .wizard-entry { border-top: 1px solid rgba(150, 205, 250, .085); padding: .7rem 0; }
+        .wizard-entry:first-of-type { border-top: none; }
+        .wizard-entry.is-blocked { opacity: .78; }
+        .wizard-entry-head { display: flex; align-items: baseline; gap: .55rem; flex-wrap: wrap; }
+        .wizard-entry-meta {
+            font-family: var(--mono); font-size: .76rem; color: var(--muted);
+            margin-top: .25rem; word-break: break-word;
+        }
+        .wizard-finding { font-size: .8rem; margin: .3rem 0 0; padding-left: .7rem; border-left: 2px solid var(--edge); }
+        .wizard-finding.sev-Error { border-left-color: rgba(255, 107, 131, .5); }
+        .wizard-finding.sev-Risk { border-left-color: rgba(244, 184, 96, .5); }
+        .wizard-finding.sev-Warning { border-left-color: rgba(244, 184, 96, .3); }
+        .wizard-finding .code { font-family: var(--mono); font-size: .74rem; color: var(--dim); }
+
+        .wizard-nav { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin-top: 1.2rem; }
+        .wizard-nav .spacer { flex: 1; }
+
         /* ── Bildlaufleisten ─────────────────────────────────────────────────────────────── */
         * { scrollbar-width: thin; scrollbar-color: rgba(111, 211, 255, .22) transparent; }
         ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -565,6 +623,28 @@
             }
         };
         document.documentElement.dataset.uiMode = window.bifrostUiMode.read();
+
+        // Der gefuehrte Erstaufbau (WP4.4). Im Browser liegt AUSSCHLIESSLICH die Kennung des
+        // Vorgangs; der Zustand selbst bleibt im Serverprozess. Deshalb ein Cookie und nicht die
+        // Adresszeile: Was in der Adresszeile steht, steht danach im Verlauf, im Referrer und in
+        // jedem Zugriffsprotokoll davor.
+        //
+        // Ein Cookie und nicht sessionStorage, weil die Zusage lautet: Wer den Browser schliesst
+        // und wiederkommt, steht dort, wo er war. sessionStorage ueberlebt das Schliessen nicht.
+        // Ohne 'Secure' — aus demselben Grund wie oben: Die Einrichtung laeuft haeufig ueber
+        // http://localhost, und die Kennung traegt kein Geheimnis.
+        window.bifrostSetup = {
+            read: function () {
+                var m = document.cookie.match(/(?:^|;\s*)bifrost-setup=([^;]*)/);
+                return m ? m[1] : null;
+            },
+            write: function (handle) {
+                document.cookie = 'bifrost-setup=' + handle + ';path=/;max-age=43200;samesite=lax';
+            },
+            clear: function () {
+                document.cookie = 'bifrost-setup=;path=/;max-age=0;samesite=lax';
+            }
+        };
     </script>
     <HeadOutlet @rendermode="InteractiveServer" />
 </head>

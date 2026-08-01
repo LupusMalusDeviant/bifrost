@@ -56,8 +56,11 @@ public class UiNavigationModelTests
     public void Every_authorized_page_appears_in_the_navigation()
     {
         // Die Gegenrichtung: Eine Seite, die niemand im Menü findet, ist so gut wie nicht da.
-        // Zwei sind absichtlich nicht im Menü — man ist dort, bevor es ein Menü gibt.
-        string[] outsideTheShell = ["/login", "/setup"];
+        // Drei sind absichtlich nicht im Menü — man ist dort, bevor es ein Menü gibt. Der geführte
+        // Erstaufbau (WP4.4) gehört dazu: Er legt den Zugang erst an, sein Weg dorthin führt über
+        // /setup, /login und den leeren Zustand des Dashboards. Ein anonymer Eintrag zwischen lauter
+        // rollengebundenen wäre die eine Zeile, die den Rollenfilter des Menüs aushebelt.
+        string[] outsideTheShell = ["/login", "/setup", UiNavigation.SetupWizardRoute];
 
         var routed = RoutableComponents()
             .SelectMany(t => t.GetCustomAttributes<RouteAttribute>())

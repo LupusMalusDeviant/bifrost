@@ -18,6 +18,7 @@ using Bifrost.Server.Execution;
 using Bifrost.Server.Importing;
 using Bifrost.Server.KeyRing;
 using Bifrost.Server.Operations;
+using Bifrost.Server.Setup;
 using Bifrost.Upstream;
 using Bifrost.Web;
 using Bifrost.Web.Components;
@@ -498,6 +499,12 @@ builder.Services.AddBifrostOperations(dataDir, dbProvider, connectionString);
 // Der Importer aus WP4.1 und die Ablage der vorgemerkten Plaene. Erst diese Zeile macht ihn
 // erreichbar — bis hierher war er gebaut und von keinem Aufrufweg aus zu erreichen.
 builder.Services.AddBifrostImporting();
+
+// ── Gefuehrter Erstaufbau (M4, WP4.4) ────────────────────────────────────────
+// Der Wizard laeuft IM Serverprozess (Blazor Interactive Server) und ruft Importer, Erstzugang und
+// Vorschauprojektion direkt auf. Er benutzt NICHT den HTTP-Setup-Endpunkt — der bleibt auf Loopback
+// beschraenkt und ist fuer lokale Werkzeuge gedacht (docs/plans/product-readiness-status.md).
+builder.Services.AddBifrostSetupWizard();
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 builder.Services.AddHostedService<GatewayStartupService>();

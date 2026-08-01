@@ -80,8 +80,16 @@ public class UiAuthorizationAttributeTests
     /// ob gerade ein Token aussteht, und sie kann nichts anlegen. Die Entscheidung fällt im Server,
     /// gegen den gespeicherten Hash — eine Anmeldung davorzuhängen wäre ein Henne-Ei.
     /// </para>
+    /// <para>
+    /// <c>SetupWizard</c> ist der geführte Erstaufbau (WP4.4) und steht aus demselben Grund hier:
+    /// Sein Schritt 2 <em>legt den Zugang an</em>. Was die Seite ohne Anmeldung zeigt, ist der
+    /// Zustand der Einrichtung und dasselbe Token-Formular wie <c>/setup</c>; alles, was etwas
+    /// anlegt, hängt an den Diensten dahinter, und die prüfen ihre Rollen selbst. Der Vorgang
+    /// bekommt beim ersten angemeldeten Aufruf einen Eigentümer und wird danach keinem anderen
+    /// mehr herausgegeben.
+    /// </para>
     /// </summary>
-    private static readonly string[] PublicByDesign = ["Login", "Setup"];
+    private static readonly string[] PublicByDesign = ["Login", "Setup", "SetupWizard"];
 
     [Fact]
     public void No_routable_page_is_left_unauthorized()

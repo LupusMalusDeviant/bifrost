@@ -53,7 +53,17 @@
 <div class="card">
     @if (_total == 0)
     {
-        <p class="muted">Noch keine Upstream-Server. Lege welche unter <a href="/servers">Server</a> an.</p>
+        @* Der leere Zustand ist der einzige Moment, in dem der Assistent (WP4.4) noch etwas nuetzt —
+           deshalb steht er hier und in keinem Menue. Wer schon Server hat, soll ihn nicht sehen. *@
+        <div class="empty">
+            <strong>Noch keine Upstream-Server.</strong>
+            <p class="muted" style="margin:.35rem 0 0">
+                Der <a href="@UiNavigation.SetupWizardRoute">geführte Erstaufbau</a> geht in neun
+                Schritten bis zum ersten echten Toolaufruf — Konfiguration einlesen, Verbindung
+                prüfen, Agent anlegen, Client-Snippet. Einzeln geht es unter
+                <a href="/servers">Server</a>.
+            </p>
+        </div>
     }
     else
     {

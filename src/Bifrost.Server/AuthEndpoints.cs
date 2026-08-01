@@ -104,6 +104,15 @@ internal static class AuthEndpoints
 #pragma warning restore CA1848
     }
 
-    private static bool IsLocal(string? url)
+    /// <summary>
+    /// Zeigt diese Adresse auf dieselbe Anwendung?
+    /// <para>
+    /// <b>Warum das intern und nicht privat ist:</b> Der Einloesepfad des Erstzugangs hat dieselbe
+    /// Frage (er schickt nach dem Anlegen in den Wizard zurueck). Zwei Fassungen derselben Pruefung
+    /// waeren zwei Wahrheiten darueber, was eine lokale Adresse ist — und die laxere waere ein
+    /// offener Umleitungspunkt.
+    /// </para>
+    /// </summary>
+    internal static bool IsLocal(string? url)
         => !string.IsNullOrEmpty(url) && url.StartsWith('/') && !url.StartsWith("//") && !url.StartsWith("/\\");
 }

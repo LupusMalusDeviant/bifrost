@@ -35,8 +35,13 @@
         {
             <p class="msg-err" style="margin-bottom:0">@Reason(Failed)</p>
         }
+        @* Der gefuehrte Weg (WP4.4). Diese Seite bleibt, was sie ist — eine Eingabemaske fuer das
+           Token. Wer nicht nur einen Zugang, sondern eine benutzbare Instanz will, ist im
+           Assistenten besser aufgehoben: Er enthaelt genau dieses Formular als Schritt 2 und fuehrt
+           danach bis zum ersten echten Toolaufruf. *@
         <p class="muted" style="margin-bottom:0">
-            Zugang bereits eingerichtet? <a href="/login">Zur Anmeldung</a>.
+            Zugang bereits eingerichtet? <a href="/login">Zur Anmeldung</a>.<br />
+            Lieber geführt? <a href="@UiNavigation.SetupWizardRoute">Erstaufbau in neun Schritten</a>.
         </p>
     </div>
 </div>

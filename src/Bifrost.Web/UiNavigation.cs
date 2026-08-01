@@ -86,6 +86,29 @@ public static class UiNavigation
     public const string AdvancedCookieValue = "advanced";
 
     /// <summary>
+    /// Die Adresse des gefuehrten Erstaufbaus (WP4.4).
+    ///
+    /// <para>
+    /// Er steht <b>nicht</b> in <see cref="All"/>: Das Menue gehoert der eingerichteten Instanz,
+    /// und der Wizard ist die Seite davor — anonym erreichbar, weil Schritt 2 den Zugang erst
+    /// anlegt. Ein anonymer Eintrag zwischen lauter rollengebundenen waere die eine Zeile, die den
+    /// Rollenfilter des Menues aushebelt.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Und er haengt bewusst NICHT unter <c>/setup/</c>.</b> Der erste Anlauf tat das, und der
+    /// Zugriffstest aus WP4.3 wurde rot: Dort gilt die Zusage „alles unterhalb von <c>/setup/</c>
+    /// ist Schnittstelle und antwortet anonym mit einer Absage". Eine anonyme Oberflaechenseite an
+    /// dieser Stelle haette die Zusage aufgeweicht, statt ihr zu folgen — und aufgeweicht haette sie
+    /// der Wizard, nicht der Angreifer.
+    /// </para>
+    /// </summary>
+    public const string SetupWizardRoute = "/first-run";
+
+    /// <summary>Name des Cookies, in dem die Kennung des laufenden Wizard-Vorgangs liegt.</summary>
+    public const string SetupHandleCookieName = "bifrost-setup";
+
+    /// <summary>
     /// Alle Menuepunkte in Anzeigereihenfolge.
     /// <para>
     /// Die Gruppen sind nach Aufgabe geschnitten, nicht nach Rolle: „Betrieb" ist die taegliche
