@@ -63,6 +63,7 @@ public sealed class DiagnosticService : IDiagnosticService
         new AppliedMigrationsCheck(),
         new PendingMigrationsCheck(),
         new SqliteDatabaseFileCheck(),
+        new PostgresBackupToolVersionCheck(),
 
         new KeyRingPresenceCheck(),
         new KeyRingProtectionCheck(),

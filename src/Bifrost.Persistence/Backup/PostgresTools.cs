@@ -193,6 +193,130 @@ public static class PostgresTools
         return null;
     }
 
+    // ── Versionen ───────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Der Diagnosecode, unter dem die Unverträglichkeit <b>vor</b> dem Ernstfall sichtbar ist. Als
+    /// Zeichenkette und nicht als Verweis: Bifrost.Persistence kennt Bifrost.Core nicht, und ein
+    /// Code ist ohnehin das, was der Betreiber sucht — nicht der Klassenname dahinter.
+    /// </summary>
+    public const string VersionDiagnosticCode = "BFR-DB-0006";
+
+    /// <summary>
+    /// Die Hauptversion aus einer Versionsangabe — <b>die eine Stelle</b>, an der das hier passiert.
+    /// <para>
+    /// Erkannt werden beide Formen, die im Betrieb vorkommen: die Bannerzeile eines Werkzeugs
+    /// (<c>pg_dump (PostgreSQL) 16.14 (Ubuntu 16.14-0ubuntu0.24.04.1)</c>) und die nackte Angabe
+    /// eines Servers (<c>17.10</c>). Die Regel ist beide Male dieselbe: die erste Zeichenfolge, die
+    /// mit einer Ziffer beginnt, und daraus die führenden Ziffern.
+    /// </para>
+    /// <para>
+    /// <c>null</c> heißt „nicht lesbar" und ist ausdrücklich <b>kein</b> Ersatzwert: Wer aus einer
+    /// unlesbaren Angabe eine Zahl erfindet, behauptet damit eine Verträglichkeit, die niemand
+    /// geprüft hat.
+    /// </para>
+    /// </summary>
+    public static int? ParseMajorVersion(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        foreach (var token in text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!char.IsAsciiDigit(token[0]))
+            {
+                continue;
+            }
+
+            var digits = new string([.. token.TakeWhile(char.IsAsciiDigit)]);
+            return int.TryParse(digits, CultureInfo.InvariantCulture, out var major) && major > 0
+                ? major
+                : null;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Die Hauptversion des Clients, gefragt beim Client selbst (<c>--version</c>).
+    /// <para>
+    /// <c>null</c> heißt: Das Programm ließ sich nicht starten, antwortete nicht binnen der Frist
+    /// oder sagte etwas, das keine Version ist. Der Aufrufer muss diesen Fall <b>benennen</b> und
+    /// darf ihn nicht als „passt schon" verbuchen.
+    /// </para>
+    /// </summary>
+    public static async Task<int?> ReadMajorVersionAsync(
+        string executable, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(executable);
+
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo(executable, "--version")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            },
+        };
+
+        // Eine eigene Frist: Ein Werkzeug, das auf '--version' nicht antwortet, darf weder eine
+        // Diagnose noch eine Testvorbereitung anhalten.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(10));
+
+        try
+        {
+            process.Start();
+            var text = await process.StandardOutput.ReadToEndAsync(deadline.Token).ConfigureAwait(false);
+            await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
+            return process.ExitCode == 0 ? ParseMajorVersion(text) : null;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception
+            or InvalidOperationException or IOException or PlatformNotSupportedException)
+        {
+            return null;
+        }
+        finally
+        {
+            TryKill(process);
+        }
+    }
+
+    // Die Regel selbst — "ein Client sichert nur Server bis zu seiner eigenen Hauptversion" — steht
+    // bewusst NICHT hier, sondern einmal im Diagnosecheck BFR-DB-0006
+    // (Bifrost.Core.Diagnostics.Checks.PostgresBackupToolVersionCheck). Dort wird sie angewendet;
+    // eine zweite Fassung hier hätte keinen Aufrufer und wäre nur eine weitere Stelle, die jemand
+    // irgendwann anders korrigiert.
+
+    /// <summary>
+    /// Der Zusatz, der aus einer <c>stderr</c>-Zeile von PostgreSQL eine Handlungsanweisung macht.
+    /// Leer, wenn die Meldung nichts mit den Versionen zu tun hat.
+    /// <para>
+    /// Öffentlich, weil er eine Zusage ist und keine Verzierung: Wer diese Meldung im Ernstfall
+    /// liest, soll daraus wissen, was zu tun ist — und genau das ist ohne Server prüfbar.
+    /// </para>
+    /// </summary>
+    public static string ExplainFailure(string? errorText, string program)
+        => errorText is not null
+           && errorText.Contains("server version mismatch", StringComparison.OrdinalIgnoreCase)
+            ? $"\n\nDas ist keine Störung des Servers, sondern eine Unverträglichkeit der Werkzeuge: "
+              + $"'{program}' sichert nur Server bis zu seiner eigenen Hauptversion. Abhilfe: ein "
+              + "PostgreSQL-Clientpaket ab der Hauptversion des Servers installieren "
+              + "(Debian/Ubuntu über den PGDG-Apt-Spiegel, weil die Distribution nur ihre eigene "
+              + $"Version führt) — oder {BinDirectoryVariable} auf ein Verzeichnis setzen, in dem "
+              + "ein passender Client liegt. Es gibt bewusst keinen Rückfall auf einen "
+              + "selbstgebauten Zeilenexport (ADR-0024 E2).\n"
+              + $"Vorher sichtbar ist diese Lage in 'bifrost doctor' unter {VersionDiagnosticCode}."
+            : "";
+
     private static IEnumerable<string> WithExtensions(string basePath)
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -352,12 +476,15 @@ public static class PostgresTools
 
             if (process.ExitCode != 0)
             {
+                var program = Path.GetFileName(executable);
+                var reported = string.IsNullOrEmpty(errorText) ? outputText : errorText;
                 throw new PostgresToolFailedException(string.Format(
                     CultureInfo.InvariantCulture,
-                    "'{0}' ist mit Rückgabewert {1} fehlgeschlagen.\n{2}",
-                    Path.GetFileName(executable),
+                    "'{0}' ist mit Rückgabewert {1} fehlgeschlagen.\n{2}{3}",
+                    program,
                     process.ExitCode,
-                    string.IsNullOrEmpty(errorText) ? outputText : errorText));
+                    reported,
+                    ExplainFailure(reported, program)));
             }
         }
         finally

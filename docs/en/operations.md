@@ -461,7 +461,20 @@ message names what is missing and where to get it. Install the PostgreSQL client
 `brew install libpq`), or point `BIFROST_POSTGRES_BIN` at the directory holding them. When that
 variable is set, **only** that directory is searched.
 
-The client major version must be at least the server's — `pg_dump` refuses to dump a newer server.
+**The client major version must be at least the server's.** `pg_dump` refuses to dump a newer
+server (`aborting because of server version mismatch`). This is the likely case, not an edge one:
+Ubuntu 24.04 ships client **16**, a current server is **17** or **18** — that combination has no
+backup at all, including the pre-migration one (E7).
+
+> **`bifrost doctor` says so up front: `BFR-DB-0006`.** It compares the major version of the
+> `pg_dump` actually found with the server the gateway actually runs against: "client 16, server 17
+> — this client cannot dump this server; >= 17 is required". If either number cannot be determined,
+> the finding says exactly that instead of claiming compatibility.
+
+Remedy: install a client from the PGDG apt mirror (`postgresql-client-17`/`-18`; the distribution
+package only ever carries its own version), `apk add postgresql17-client` on Alpine, or point
+`BIFROST_POSTGRES_BIN` at a directory holding a matching client. A hand-written row export is not a
+substitute (ADR-0024 E2).
 
 The password reaches `pg_dump` through a `PGPASSFILE` created for the duration of the call (mode
 `0600` on Unix) and deleted afterwards — never on the command line, which is visible in every

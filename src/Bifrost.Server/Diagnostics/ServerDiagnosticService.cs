@@ -3,6 +3,7 @@ using Bifrost.Abstractions.Operations;
 using Bifrost.Core.Diagnostics;
 using Bifrost.Core.Execution;
 using Bifrost.Persistence;
+using Bifrost.Persistence.Backup;
 using Bifrost.Persistence.Startup;
 
 using Microsoft.AspNetCore.Hosting.Server;
@@ -157,6 +158,12 @@ public sealed class ServerDiagnosticContextFactory
             ContainerRuntimeName = runtimeName,
             Database = _database,
             Upstreams = _upstreamProbe,
+            // ADR-0024 E2: Ob der vorhandene pg_dump diesen Server sichern kann, ist ein Befund und
+            // keine Überraschung für den Ernstfall (BFR-DB-0006). Die Sonde entsteht hier statt in
+            // der Verdrahtung, weil sie ausser dem konfigurierten Werkzeugverzeichnis nichts
+            // braucht — und dieses steht in den ohnehin registrierten BackupOptions.
+            PostgresBackupTools = new PostgresBackupToolProbe(
+                _services.GetService<BackupOptions>()?.PostgresToolDirectory),
             // Der ERMITTELTE Zustand, nicht die Umgebungsvariable: Eine Instanz kann ihren Wert
             // uebernommen haben (ADR-0025 E3), und genau dieser Unterschied ist der Befund.
             HostExecution = _hostExecution.State,

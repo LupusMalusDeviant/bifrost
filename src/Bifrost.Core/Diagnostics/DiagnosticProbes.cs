@@ -76,11 +76,47 @@ public interface IDatabaseDiagnosticProbe
 /// Fremdtext. Er läuft durch die Redaktion, weil Datenbankausnahmen die Verbindungszeichenfolge
 /// mitführen.
 /// </param>
+/// <param name="ServerVersion">
+/// Die Version, die der Server über sich meldet (<c>17.10</c>). <c>null</c> heißt „nicht ermittelt"
+/// — nie „egal".
+/// </param>
+/// <param name="ServerMajorVersion">
+/// Dieselbe Angabe als Hauptversion. Sie kommt <b>ausgewertet</b> von der Sonde und wird hier nicht
+/// noch einmal aus dem Text geschnitten: Zwei Auswertungen derselben Zeichenkette sind zwei
+/// Gelegenheiten, sie verschieden zu verstehen.
+/// </param>
 public sealed record DatabaseDiagnosticFacts(
     bool CanConnect,
     string? Failure = null,
     IReadOnlyList<string>? AppliedMigrations = null,
-    IReadOnlyList<string>? PendingMigrations = null);
+    IReadOnlyList<string>? PendingMigrations = null,
+    string? ServerVersion = null,
+    int? ServerMajorVersion = null);
+
+/// <summary>
+/// Die Lage der PostgreSQL-Sicherungswerkzeuge auf <b>diesem</b> Rechner (ADR-0024 E2).
+/// <para>
+/// <b>Warum eine eigene Sonde:</b> Bifrost.Core kennt <c>PostgresTools</c> nicht — das Suchen der
+/// Programme und das Lesen ihrer Version stehen in Bifrost.Persistence, und dort sollen sie auch
+/// bleiben. Der Check hier vergleicht nur noch zwei Zahlen; eine zweite Suchlogik in Core wäre eine
+/// zweite Wahrheit darüber, welches <c>pg_dump</c> überhaupt gemeint ist.
+/// </para>
+/// </summary>
+public interface IPostgresBackupToolProbe
+{
+    Task<PostgresBackupToolFacts> DescribeAsync(CancellationToken ct);
+}
+
+/// <param name="Located">Sind <c>pg_dump</c> und <c>pg_restore</c> beide erreichbar?</param>
+/// <param name="DumpPath">Der Pfad des gefundenen <c>pg_dump</c>; <c>null</c>, wenn keines da ist.</param>
+/// <param name="ClientMajorVersion">
+/// Die Hauptversion des gefundenen Clients. <c>null</c> heißt „nicht lesbar" — der Check meldet das
+/// dann und behauptet keine Verträglichkeit.
+/// </param>
+public sealed record PostgresBackupToolFacts(
+    bool Located,
+    string? DumpPath = null,
+    int? ClientMajorVersion = null);
 
 /// <summary>Zustände der Upstreams — kennt nur der laufende Serverprozess (WP2.7).</summary>
 public interface IUpstreamDiagnosticProbe

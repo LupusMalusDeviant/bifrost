@@ -46,6 +46,17 @@ public static class DiagnosticCodes
     /// <summary>SQLite-Datenbankdatei im Datenverzeichnis (auch der alte Name).</summary>
     public const string SqliteDatabaseFile = "BFR-DB-0005";
 
+    /// <summary>
+    /// Kann der vorhandene <c>pg_dump</c> diesen Server überhaupt sichern? (ADR-0024 E2)
+    /// <para>
+    /// Der teuerste Zeitpunkt, das zu erfahren, ist der Ernstfall. Ubuntu 24.04 liefert Client 16,
+    /// ein aktueller Server ist 17 oder 18 — und <c>pg_dump</c> bricht dann mit „aborting because of
+    /// server version mismatch" ab. Dieser Code macht die Lage zu einem Befund <b>vor</b> der ersten
+    /// Sicherung.
+    /// </para>
+    /// </summary>
+    public const string PostgresBackupToolVersion = "BFR-DB-0006";
+
     // ── BFR-KEY: DataProtection-Key-Ring ────────────────────────────────────────────────────────
 
     /// <summary>Key-Ring-Verzeichnis vorhanden und nicht leer.</summary>
@@ -146,6 +157,7 @@ public static class DiagnosticCodes
         DatabaseAppliedMigrations,
         DatabasePendingMigrations,
         SqliteDatabaseFile,
+        PostgresBackupToolVersion,
         KeyRingPresent,
         KeyRingUnprotected,
         KeyRingCertificate,

@@ -6,6 +6,7 @@ using Bifrost.Persistence.Backup;
 using Bifrost.Integration.Tests.Persistence;
 using Bifrost.Persistence.Startup;
 using Bifrost.Server.Operations;
+using Bifrost.Tests.Postgres;
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -100,7 +101,7 @@ public sealed class PostgresPreMigrationBackupTests : IAsyncLifetime
     {
         Directory.CreateDirectory(_root);
 
-        if (!PostgresTools.TryLocate(out _))
+        if (!PostgresTools.TryLocate(out var tools) || tools is null)
         {
             if (PostgresRequired)
             {
@@ -112,9 +113,26 @@ public sealed class PostgresPreMigrationBackupTests : IAsyncLifetime
             return;
         }
 
+        // Der Server wird aus dem vorhandenen Client abgeleitet und nicht fest gesetzt: Ein
+        // 'postgres:17-alpine' gegen einen Client 16 — die Lage auf Ubuntu 24.04 — bricht mit
+        // "aborting because of server version mismatch" ab, und dieser Fehlschlag sagt nichts über
+        // die Vor-Migrationssicherung aus. Die Ableitung ist dieselbe wie in
+        // PostgresBackupRestoreTests; sie steht in PostgresServerImage und nicht zweimal hier.
+        var image = await PostgresServerImage.ForLocalClientAsync(tools.DumpPath);
+        if (image is null)
+        {
+            if (PostgresRequired)
+            {
+                throw new InvalidOperationException(PostgresServerImage.UndeterminedReason);
+            }
+
+            _unavailableReason = PostgresServerImage.UndeterminedReason;
+            return;
+        }
+
         try
         {
-            _container = new PostgreSqlBuilder("postgres:17-alpine").Build();
+            _container = new PostgreSqlBuilder(image).Build();
             await _container.StartAsync();
         }
         catch (Exception ex) when (!PostgresRequired)

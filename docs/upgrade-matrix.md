@@ -118,6 +118,14 @@ Und einer, der wieder Server **und** Werkzeuge braucht:
 > nicht fest. Grund: `pg_dump` weigert sich, einen *neueren* Server zu sichern. Ein fest verdrahtetes
 > `postgres:17-alpine` wäre auf jedem Rechner mit älterem Client rot — aus einem Grund, der mit dem
 > Prüfling nichts zu tun hat.
+>
+> Die Ableitung steht in **`PostgresServerImage`** und gilt für **beide** Suiten, die einen Server
+> starten, gegen den gesichert wird (`PostgresBackupRestoreTests` und
+> `PostgresPreMigrationBackupTests`) — eine Stelle, verlinkt statt kopiert. Der erste echte CI-Lauf
+> hat gezeigt, warum: Das Feld E7 hatte seine eigene, feste Version und lief auf dem Ubuntu-Läufer
+> (Client 16, Server 17) in genau den Fehler, gegen den die Ableitung geschrieben war. Lässt sich
+> keine passende Version ableiten, wird **übersprungen mit Begründung** statt auf irgendeine Version
+> auszuweichen.
 
 ### Legende
 
@@ -255,8 +263,11 @@ wird. Was weiterhin **nicht** geprüft ist:
 - **Ein Wechsel der PostgreSQL-Hauptversion zwischen Sicherung und Wiederherstellung.** Der Test
   fährt beides gegen denselben Container.
 - **Ein Restore, dessen `pg_dump` älter ist als der Zielserver.** Die Werkzeugversion wird im Test
-  bewusst an den Server angeglichen (§2.1); im Betrieb ist die Diskrepanz ein Fehlerfall, den die
-  Meldung des Werkzeugs trägt und den kein Test hier nachstellt.
+  bewusst an den Server angeglichen (§2.1); im Betrieb ist die Diskrepanz ein Fehlerfall. Seit dem
+  ersten echten CI-Lauf ist er **kein blinder Fleck mehr**: `bifrost doctor` meldet ihn als
+  `BFR-DB-0006`, bevor die erste Sicherung ansteht, und die Vergleichsregel selbst ist ohne Server
+  geprüft (`PostgresBackupToolVersionCheckTests`). Nachgestellt wird die Lage *gegen einen echten
+  Server* weiterhin nicht — dafür bräuchte es zwei Clientversionen auf demselben Läufer.
 
 Ohne installiertes Clientpaket bleibt es auf einer Instanz beim alten Zustand: Der Aufruf lehnt mit
 einer Meldung ab, und Sichern ist Betriebspflicht. Der Unterschied zu vorher ist, dass das jetzt

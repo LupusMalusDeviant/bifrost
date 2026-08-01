@@ -28,6 +28,20 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
     `BIFROST_POSTGRES_BIN` benennt ein Verzeichnis; ist es gesetzt, wird ausschließlich dort gesucht.
   - **Das Passwort geht über eine `PGPASSFILE`** (auf Unix `0600`, nach dem Aufruf gelöscht) und
     nicht über die Kommandozeile — die steht in der Prozessliste jedes Benutzers auf dem Rechner.
+- **`BFR-DB-0006` — „dieser `pg_dump` kann diesen Server nicht sichern", *bevor* jemand sichern
+  will.** `bifrost doctor` vergleicht die Hauptversion des tatsächlich gefundenen `pg_dump` mit der
+  des Servers, gegen den der Gateway wirklich läuft, und meldet: „Client 16, Server 17 — dieser
+  Client kann diesen Server nicht sichern; gebraucht wird >= 17."
+  - **Der Anlass ist gemessen, nicht ausgedacht:** Ubuntu 24.04 liefert Client 16, ein aktueller
+    Server ist 17 oder 18. Wer beides kombiniert, hat keine Sicherung — auch keine vor einer
+    Migration (E7), denn die läuft über dasselbe Programm. Bisher fiel das erst beim Sichern auf,
+    also im Ernstfall.
+  - **Der Befund rät nicht.** Fehlt eine der beiden Zahlen — kein Client, keine Verbindung, eine
+    Version, die sich nicht lesen lässt —, sagt er genau das, statt eine Verträglichkeit zu
+    behaupten. Ein unbelegtes „passt schon" beruhigt genau den, der sich gerade auf seinen Rückweg
+    verlässt.
+  - Scheitert eine Sicherung trotzdem an der Versionslage, trägt die Fehlermeldung des Werkzeugs
+    jetzt die Abhilfe (PGDG-Paket, `BIFROST_POSTGRES_BIN`) und den Verweis auf `BFR-DB-0006`.
 
 ### Geändert
 
@@ -42,6 +56,21 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
 - **CI und Releaselauf installieren `postgresql-client`**, falls der Runner ihn nicht mitbringt.
   Ohne ihn überspringen sich die neuen Backupfelder selbst — und ein übersprungener Nachweis ist auf
   Linux ein stiller Ausfall, kein Ergebnis. Kein Gate wurde dabei angehoben oder gelockert.
+
+### Behoben
+
+- **Zwei PostgreSQL-Befunde aus dem ersten echten CI-Lauf** — beide in der Prüfung, keiner im
+  Sicherungsweg selbst:
+  - Das Feld zur **Vor-Migrationssicherung** startete einen fest verdrahteten `postgres:17-alpine`
+    und lief damit auf dem Ubuntu-Läufer (Client 16) in genau die Versionsunverträglichkeit, gegen
+    die die übrige Suite längst gewappnet war. Die Ableitung „welcher Server passt zum vorhandenen
+    `pg_dump`" steht jetzt an **einer** Stelle (`PostgresServerImage`) und gilt für beide Suiten.
+    Lässt sich keine passende Version ableiten, wird übersprungen mit Begründung statt auf
+    irgendeine Version auszuweichen.
+  - Das PostgreSQL-Feld erwartete `BackupSections.All`, legte in seiner Testinstanz aber **kein
+    Connector-Paket** an — anders als das SQLite-Gegenstück. Ein Bereich steht nur dann im Manifest,
+    wenn wirklich etwas darin liegt; die Erwartung war falsch, die Sicherung vollständig. Die
+    Testinstanz legt jetzt dieselbe Datei an wie die SQLite-Seite.
 
 ### Offen und ausdrücklich nicht entschieden
 

@@ -1363,9 +1363,38 @@ keine Anregung.
 | macOS | `brew install libpq` |
 | Windows | „Command Line Tools" des PostgreSQL-Installers |
 
-**Die Hauptversion muss mindestens so hoch sein wie die des Servers.** `pg_dump` weigert sich, einen
-neueren Server zu sichern („aborting because of server version mismatch") — die Meldung des Werkzeugs
-wird durchgereicht.
+##### Die Hauptversion muss mindestens so hoch sein wie die des Servers
+
+`pg_dump` weigert sich, einen **neueren** Server zu sichern:
+
+```
+pg_dump: error: aborting because of server version mismatch
+pg_dump: detail: server version: 17.10; pg_dump version: 16.14
+```
+
+Das ist der wahrscheinlichste Fall überhaupt und keine Randlage: Ubuntu 24.04 liefert im Paket
+`postgresql-client` die Version **16**, ein aktueller Server ist **17** oder **18**. Wer beides
+kombiniert, hat **keine Sicherung** — und auch keine Vor-Migrationssicherung (E7), denn die läuft
+über dasselbe Programm.
+
+> **`bifrost doctor` sagt es vorher: `BFR-DB-0006`.** Der Befund vergleicht die Hauptversion des
+> tatsächlich gefundenen `pg_dump` mit der des Servers, gegen den der Gateway wirklich läuft:
+> „Client 16, Server 17 — dieser Client kann diesen Server nicht sichern; gebraucht wird >= 17."
+> Lässt sich eine der beiden Zahlen nicht ermitteln, sagt der Befund **das** — er behauptet nie eine
+> Verträglichkeit, die niemand geprüft hat.
+
+Abhilfe:
+
+- **Debian/Ubuntu:** den PGDG-Apt-Spiegel einbinden (`apt.postgresql.org`) und daraus
+  `postgresql-client-17` bzw. `-18` installieren. Das Distributionspaket allein führt nur die eigene
+  Version und wird nicht nachziehen;
+- **Alpine:** `apk add postgresql17-client` (bzw. `postgresql18-client`);
+- oder `BIFROST_POSTGRES_BIN` auf ein Verzeichnis setzen, in dem ein passender Client liegt — etwa
+  `/usr/lib/postgresql/17/bin`.
+
+Ein selbstgebauter Zeilenexport ist **kein** Ersatz (ADR-0024 E2). Scheitert eine Sicherung dennoch
+an der Versionslage, trägt die Fehlermeldung dieselbe Abhilfe und den Verweis auf `BFR-DB-0006` —
+die Meldung des Werkzeugs wird durchgereicht und um die Handlungsanweisung ergänzt.
 
 Das Passwort erreicht `pg_dump` über eine `PGPASSFILE`, die für die Dauer des Aufrufs in einem
 eigenen temporären Verzeichnis liegt (auf Unix mit `0600`) und danach gelöscht wird. **Nicht** über
@@ -1441,6 +1470,10 @@ der Text daneben darf sich ändern, der Code nicht.
 | `BFR-NET-*` | Ports, öffentliche Adresse, Proxy-Vertrauen |
 | `BFR-RT-*` | Container-Runtime, WASI-Host |
 | `BFR-UP-*` | Upstreams |
+
+Auf PostgreSQL lohnt der Blick auf **`BFR-DB-0006`** vor dem ersten Ernstfall: Er sagt, ob der
+vorhandene `pg_dump` den Server überhaupt sichern kann (siehe
+[PostgreSQL-Backup](#voraussetzung-pg_dump-und-pg_restore)).
 
 Dieselbe Ansicht gibt es in der Oberfläche unter **Betrieb** (nur für Admins), zusammen mit dem
 Anlegen einer Sicherung.

@@ -1,3 +1,5 @@
+using System.Globalization;
+
 using Bifrost.Abstractions.Operations;
 
 namespace Bifrost.Core.Diagnostics.Checks;
@@ -260,6 +262,137 @@ public sealed class SqliteDatabaseFileCheck : IDiagnosticCheck
             + "fehlerfrei als bereit — ohne Server, ohne Rollen, ohne Key-Ring. Vor dem Start "
             + "'docker compose config --volumes' gegen die vorhandenen Volumes halten.",
             details));
+    }
+}
+
+/// <summary>
+/// BFR-DB-0006 — <b>kann der vorhandene <c>pg_dump</c> diesen Server sichern?</b> (ADR-0024 E2)
+/// <para>
+/// Der Anlass ist ein gemessener: Ubuntu 24.04 liefert das Clientpaket 16, ein aktueller Server ist
+/// 17 oder 18. <c>pg_dump</c> sichert nur Server bis zu seiner eigenen Hauptversion und bricht sonst
+/// mit „aborting because of server version mismatch" ab. Ein Betreiber in dieser Lage <b>hat keine
+/// Sicherung</b> — und erfährt es ohne diesen Befund erst im Ernstfall oder beim ersten Upgrade, weil
+/// die Vor-Migrationssicherung aus E7 an derselben Stelle scheitert.
+/// </para>
+/// <para>
+/// <b>Dieser Check rät nicht.</b> Fehlt eine der beiden Zahlen — kein Client, keine Verbindung, eine
+/// Version, die sich nicht lesen lässt —, sagt er genau das. Eine unbelegte Verträglichkeitszusage
+/// wäre schlimmer als gar keine: Sie beruhigt den, der sich gerade auf seinen Rückweg verlässt.
+/// </para>
+/// </summary>
+public sealed class PostgresBackupToolVersionCheck : IDiagnosticCheck
+{
+    public string Code => DiagnosticCodes.PostgresBackupToolVersion;
+
+    public DiagnosticScope Scope => DiagnosticScope.Database;
+
+    // Ein Prozessstart (pg_dump --version) und eine Abfrage an den Server.
+    public TimeSpan Timeout => TimeSpan.FromSeconds(20);
+
+    public async Task<DiagnosticCheck> RunAsync(DiagnosticContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        if (!context.DatabaseProvider.Equals("postgres", StringComparison.OrdinalIgnoreCase))
+        {
+            return CheckOutcome.Skipped(
+                Code,
+                "Der Provider ist nicht PostgreSQL; die Sicherung läuft dann ohne pg_dump "
+                + "(ADR-0024 E2).");
+        }
+
+        if (context.PostgresBackupTools is null)
+        {
+            return CheckOutcome.Skipped(
+                Code,
+                "Keine Werkzeugsonde verdrahtet. Dieser Befund entsteht nur dort, wo die "
+                + "Installation wirklich untersucht wird — im Serverprozess.");
+        }
+
+        var tools = await context.PostgresBackupTools.DescribeAsync(ct).ConfigureAwait(false);
+        if (!tools.Located)
+        {
+            return CheckOutcome.Warning(
+                Code,
+                "Auf dieser Instanz sind 'pg_dump' und 'pg_restore' nicht erreichbar — es gibt "
+                + "damit keine Sicherung der PostgreSQL-Datenbank.",
+                "Das PostgreSQL-Clientpaket installieren oder BIFROST_POSTGRES_BIN auf sein "
+                + "Verzeichnis setzen. Es gibt bewusst keinen Rückfall auf einen selbstgebauten "
+                + "Zeilenexport (ADR-0024 E2); ohne die Werkzeuge migriert der Start zwar weiter, "
+                + "aber ohne Rückweg.",
+                CheckOutcome.Details(("werkzeuge_gefunden", DetailFormat.YesNo(false))));
+        }
+
+        var client = tools.ClientMajorVersion;
+        var server = await ServerMajorAsync(context, ct).ConfigureAwait(false);
+
+        // Reihenfolge ist Absicht: erst die Zahl, die auf DIESEM Rechner steht — sie fehlt, wenn das
+        // gefundene Programm gar keines ist.
+        if (client is null)
+        {
+            return CheckOutcome.Warning(
+                Code,
+                $"'{tools.DumpPath ?? "pg_dump"}' antwortet nicht mit einer lesbaren "
+                + "Versionsangabe. Ob dieser Client den Server sichern kann, ist damit unbeantwortet.",
+                "Das Programm von Hand mit '--version' aufrufen. Antwortet es nicht, ist es kein "
+                + "brauchbarer Client — dann steht die Sicherung nur auf dem Papier.",
+                CheckOutcome.Details(("client_version", "nicht lesbar")));
+        }
+
+        if (server is null)
+        {
+            return CheckOutcome.Warning(
+                Code,
+                $"Die Serverversion ließ sich nicht ermitteln; der Client ist Hauptversion "
+                + $"{client.Value.ToString(CultureInfo.InvariantCulture)}. Ob er diesen Server "
+                + "sichern kann, ist damit unbeantwortet.",
+                $"Erreichbarkeit der Datenbank prüfen (siehe {DiagnosticCodes.DatabaseReachable}). "
+                + "Solange die Serverversion unbekannt ist, sagt dieser Befund bewusst nichts über "
+                + "die Verträglichkeit — 'unbekannt' ist kein 'passt'.",
+                CheckOutcome.Details(
+                    ("client_hauptversion", DetailFormat.Count(client.Value)),
+                    ("server_hauptversion", "nicht ermittelt")));
+        }
+
+        var details = CheckOutcome.Details(
+            ("client_hauptversion", DetailFormat.Count(client.Value)),
+            ("server_hauptversion", DetailFormat.Count(server.Value)));
+
+        if (client.Value < server.Value)
+        {
+            return CheckOutcome.Fail(
+                Code,
+                $"Client {client.Value.ToString(CultureInfo.InvariantCulture)}, Server "
+                + $"{server.Value.ToString(CultureInfo.InvariantCulture)} — dieser Client kann "
+                + $"diesen Server nicht sichern; gebraucht wird >= "
+                + $"{server.Value.ToString(CultureInfo.InvariantCulture)}. Jede Sicherung bricht mit "
+                + "'aborting because of server version mismatch' ab, auch die vor einer Migration "
+                + "(ADR-0024 E7).",
+                "Ein PostgreSQL-Clientpaket ab der Hauptversion des Servers installieren "
+                + "(Debian/Ubuntu: den PGDG-Apt-Spiegel einbinden, weil die Distribution nur ihre "
+                + "eigene Version führt; Alpine: 'postgresql"
+                + $"{server.Value.ToString(CultureInfo.InvariantCulture)}-client') — oder "
+                + "BIFROST_POSTGRES_BIN auf ein Verzeichnis setzen, in dem ein passender Client "
+                + "liegt. Ein selbstgebauter Zeilenexport ist ausdrücklich kein Ersatz (ADR-0024 E2).",
+                details);
+        }
+
+        return CheckOutcome.Pass(
+            Code,
+            $"Client {client.Value.ToString(CultureInfo.InvariantCulture)} kann Server "
+            + $"{server.Value.ToString(CultureInfo.InvariantCulture)} sichern.",
+            details);
+    }
+
+    private static async Task<int?> ServerMajorAsync(DiagnosticContext context, CancellationToken ct)
+    {
+        if (context.Database is null)
+        {
+            return null;
+        }
+
+        var facts = await context.Database.DescribeAsync(ct).ConfigureAwait(false);
+        return facts.CanConnect ? facts.ServerMajorVersion : null;
     }
 }
 

@@ -1,6 +1,7 @@
 using Bifrost.Abstractions;
 using Bifrost.Core.Diagnostics;
 using Bifrost.Persistence;
+using Bifrost.Persistence.Backup;
 
 using Microsoft.EntityFrameworkCore;
 
@@ -47,7 +48,8 @@ public sealed class EfDatabaseDiagnosticProbe : IDatabaseDiagnosticProbe
 
             var applied = (await db.Database.GetAppliedMigrationsAsync(ct).ConfigureAwait(false)).ToList();
             var pending = (await db.Database.GetPendingMigrationsAsync(ct).ConfigureAwait(false)).ToList();
-            return new DatabaseDiagnosticFacts(true, null, applied, pending);
+            var (version, major) = await ReadServerVersionAsync(db, ct).ConfigureAwait(false);
+            return new DatabaseDiagnosticFacts(true, null, applied, pending, version, major);
         }
         catch (OperationCanceledException)
         {
@@ -62,6 +64,78 @@ public sealed class EfDatabaseDiagnosticProbe : IDatabaseDiagnosticProbe
             // dokumentierte Aufgabe des Feldes 'Failure'.
             return new DatabaseDiagnosticFacts(false, exception.Message);
         }
+    }
+
+    /// <summary>
+    /// Die Version, die der Server über sich selbst meldet — gefragt wird die offene Verbindung,
+    /// nicht die Konfiguration. Für BFR-DB-0006 ist genau das der Punkt: Ob der vorhandene
+    /// <c>pg_dump</c> reicht, entscheidet der Server, gegen den wirklich gearbeitet wird.
+    /// <para>
+    /// Ein Fehlschlag ist hier <b>kein</b> Fehler des Berichts: Die Antwort ist dann „nicht
+    /// ermittelt", und der Check sagt das, statt eine Verträglichkeit zu behaupten.
+    /// </para>
+    /// </summary>
+    private static async Task<(string? Version, int? Major)> ReadServerVersionAsync(
+        BifrostDbContext db, CancellationToken ct)
+    {
+        try
+        {
+            await db.Database.OpenConnectionAsync(ct).ConfigureAwait(false);
+            try
+            {
+                var version = db.Database.GetDbConnection().ServerVersion;
+
+                // Ausgewertet wird HIER, mit dem Parser aus Bifrost.Persistence — derselbe, der auch
+                // die Clientversion liest. Zwei Auswertungen derselben Schreibweise wären zwei
+                // Gelegenheiten, sie verschieden zu verstehen.
+                return (version, PostgresTools.ParseMajorVersion(version));
+            }
+            finally
+            {
+                await db.Database.CloseConnectionAsync().ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+#pragma warning disable CA1031 // "Nicht ermittelt" ist eine gültige Antwort; ein Absturz wäre keine.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            return (null, null);
+        }
+    }
+}
+
+/// <summary>
+/// Die Werkzeugsonde für BFR-DB-0006 (ADR-0024 E2): Sind <c>pg_dump</c>/<c>pg_restore</c> da, und
+/// welche Hauptversion hat der gefundene Client?
+/// <para>
+/// Sie sucht und liest <b>nicht selbst</b>, sondern fragt <see cref="PostgresTools"/> — dieselbe
+/// Stelle, die auch die Sicherung benutzt. Eine eigene Suche hier hieße: Die Diagnose beurteilt ein
+/// anderes Programm als das, welches im Ernstfall läuft.
+/// </para>
+/// </summary>
+public sealed class PostgresBackupToolProbe : IPostgresBackupToolProbe
+{
+    private readonly string? _binDirectory;
+
+    /// <param name="binDirectory">
+    /// Ein ausdrücklich konfiguriertes Verzeichnis (<c>BackupOptions.PostgresToolDirectory</c>);
+    /// <c>null</c> heißt <c>BIFROST_POSTGRES_BIN</c>, sonst <c>PATH</c>.
+    /// </param>
+    public PostgresBackupToolProbe(string? binDirectory = null) => _binDirectory = binDirectory;
+
+    public async Task<PostgresBackupToolFacts> DescribeAsync(CancellationToken ct)
+    {
+        if (!PostgresTools.TryLocate(_binDirectory, out var toolset) || toolset is null)
+        {
+            return new PostgresBackupToolFacts(false);
+        }
+
+        var major = await PostgresTools.ReadMajorVersionAsync(toolset.DumpPath, ct).ConfigureAwait(false);
+        return new PostgresBackupToolFacts(true, toolset.DumpPath, major);
     }
 }
 

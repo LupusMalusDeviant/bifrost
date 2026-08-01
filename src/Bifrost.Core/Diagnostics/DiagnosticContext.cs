@@ -64,6 +64,12 @@ public sealed record DiagnosticContext
     public IUpstreamDiagnosticProbe? Upstreams { get; init; }
 
     /// <summary>
+    /// Die PostgreSQL-Sicherungswerkzeuge dieser Installation. <c>null</c> = nicht verdrahtet;
+    /// BFR-DB-0006 meldet dann Skipped.
+    /// </summary>
+    public IPostgresBackupToolProbe? PostgresBackupTools { get; init; }
+
+    /// <summary>
     /// Der ermittelte Zustand der Ausführungs-Policy (ADR-0025, Codes BFR-POL). <c>null</c> heißt
     /// „nicht verdrahtet"; die BFR-POL-Checks melden dann Skipped.
     /// <para>

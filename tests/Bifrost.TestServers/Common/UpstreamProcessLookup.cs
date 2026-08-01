@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 
 namespace Bifrost.TestServers.Common;
@@ -21,6 +22,64 @@ namespace Bifrost.TestServers.Common;
 /// </summary>
 public static class UpstreamProcessLookup
 {
+    /// <summary>
+    /// Beschreibt gefundene Prozesse so, dass ein Fehlschlag beantwortbar wird: Id, Startzeit und
+    /// Programmpfad.
+    /// <para>
+    /// <b>Warum eine Zahl allein nicht reicht.</b> Die Aufräumprobe kann nur zu viel finden — und
+    /// „gefunden: 1" beantwortet die einzige Frage nicht, die dann zählt: <em>wessen</em> Prozess.
+    /// Die Startzeit trennt einen Nachzügler des eigenen Laufs von einem Fremden, der Pfad trennt
+    /// die Baukonfiguration (ein zweiter Lauf derselben Suite auf demselben Rechner heißt genauso).
+    /// Ohne diese drei Angaben bleibt für den nächsten Fehlschlag nur Raten übrig — und dieser Test
+    /// hat schon zweimal falsche Antworten bekommen, weil geraten wurde.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<string> DescribeByExecutableName(string executableName)
+    {
+        var described = new List<string>();
+        foreach (var id in FindByExecutableName(executableName))
+        {
+            described.Add(Describe(id));
+        }
+
+        return described;
+    }
+
+    private static string Describe(int processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            string started;
+            try
+            {
+                started = process.StartTime.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture);
+            }
+            catch (Exception e) when (e is InvalidOperationException or SystemException)
+            {
+                started = "Start unbekannt";
+            }
+
+            string path;
+            try
+            {
+                path = process.MainModule?.FileName ?? "Pfad unbekannt";
+            }
+            catch (Exception e) when (e is InvalidOperationException or SystemException)
+            {
+                // Ein fremder Prozess gibt sein Abbild nicht her. Genau das ist dann die Auskunft.
+                path = "Pfad nicht lesbar (fremder Prozess?)";
+            }
+
+            return $"#{processId} seit {started}, {path}";
+        }
+        catch (ArgumentException)
+        {
+            // Zwischen Zählen und Beschreiben verschwunden — auch das gehört in die Meldung.
+            return $"#{processId} (beim Nachsehen bereits beendet)";
+        }
+    }
+
     /// <summary>
     /// Alle laufenden Prozess-Ids zum angegebenen Programmnamen (ohne Endung).
     /// </summary>

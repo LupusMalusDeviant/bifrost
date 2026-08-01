@@ -88,12 +88,20 @@ public sealed class ProcessLifecycleTests
     /// im Namen": Ein Test, der fremde Prozesse abräumt, ist gefährlicher als der Zustand, den er
     /// beheben soll.
     /// </para>
+    /// <para>
+    /// <b>Und sie sagt, WAS sie gefunden hat.</b> Eine Zahl allein („gefunden: 1") lässt genau die
+    /// Frage offen, an der die Antwort hängt: der Nachzügler eines eigenen Tests, ein Fremder aus
+    /// einem zweiten Lauf derselben Suite auf demselben Rechner, oder ein Waise, den die
+    /// Prozesshygiene des Produkts nicht erwischt hat. Id, Startzeit und Programmpfad trennen diese
+    /// drei Fälle; ohne sie bleibt beim nächsten Fehlschlag nur Raten.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task The_suite_returns_to_its_process_baseline()
     {
         var ct = TestContext.Current.CancellationToken;
-        var baseline = UpstreamProcessLookup.FindByExecutableName(UpstreamProcessName).Count;
+        var before = UpstreamProcessLookup.DescribeByExecutableName(UpstreamProcessName);
+        var baseline = before.Count;
 
         var host = StartHost(TestPaths.EchoServerExecutable);
         int childId;
@@ -124,10 +132,17 @@ public sealed class ProcessLifecycleTests
             timeoutMs: 20000,
             because: "nach dem Lauf darf der Upstream-Prozess des Wirts nicht mehr laufen");
 
-        UpstreamProcessLookup.FindByExecutableName(UpstreamProcessName).Count
-            .Should().BeLessThanOrEqualTo(
-                baseline,
-                "diese Klasse darf keinen zusaetzlichen Upstream-Prozess hinterlassen");
+        var after = UpstreamProcessLookup.DescribeByExecutableName(UpstreamProcessName);
+        after.Count.Should().BeLessThanOrEqualTo(
+            baseline,
+            "diese Klasse darf keinen zusaetzlichen Upstream-Prozess hinterlassen.\n"
+                + "Vorher ({0}):\n  {1}\nNachher ({2}):\n  {3}\n"
+                + "Eigener Upstream war #{4}.",
+            baseline,
+            before.Count == 0 ? "—" : string.Join("\n  ", before),
+            after.Count,
+            after.Count == 0 ? "—" : string.Join("\n  ", after),
+            childId);
     }
 
     private static Process StartHost(string upstreamExecutable)

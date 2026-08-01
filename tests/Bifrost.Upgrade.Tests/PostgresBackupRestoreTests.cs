@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.IO.Compression;
 using System.Text;
 
@@ -10,6 +9,7 @@ using Bifrost.Abstractions.Operations;
 using Bifrost.Persistence;
 using Bifrost.Persistence.Backup;
 using Bifrost.Persistence.Startup;
+using Bifrost.Tests.Postgres;
 using Bifrost.Upgrade.Tests.Harness;
 
 using Microsoft.EntityFrameworkCore;
@@ -32,7 +32,9 @@ namespace Bifrost.Upgrade.Tests;
 /// server version mismatch". Ein fest verdrahtetes <c>postgres:17-alpine</c> waere auf jedem
 /// Rechner mit aelterem Client rot, und zwar aus einem Grund, der mit dem Pruefling nichts zu tun
 /// hat. Geprueft werden soll, ob <i>unser</i> Code die Werkzeuge richtig bedient; also bekommt der
-/// Server die Hauptversion des vorhandenen Clients.
+/// Server die Hauptversion des vorhandenen Clients. Die Ableitung steht in
+/// <see cref="PostgresServerImage"/> — an EINER Stelle fuer alle Suiten, die einen Server starten,
+/// gegen den gesichert wird.
 /// </para>
 ///
 /// <para>
@@ -68,51 +70,29 @@ public sealed class PostgresBackupFixture : IAsyncLifetime
             return;
         }
 
+        var image = await PostgresServerImage.ForLocalClientAsync(tools.DumpPath);
+        if (image is null)
+        {
+            // Kein Ausweichen auf irgendeine Version: Ein Server, den dieser Client nicht sichern
+            // kann, wuerde nur den Versionsunterschied vorfuehren und nicht den Pruefling.
+            if (PostgresRequired)
+            {
+                throw new InvalidOperationException(PostgresServerImage.UndeterminedReason);
+            }
+
+            UnavailableReason = PostgresServerImage.UndeterminedReason;
+            return;
+        }
+
         try
         {
-            Container = new PostgreSqlBuilder(await ServerImageAsync(tools.DumpPath)).Build();
+            Container = new PostgreSqlBuilder(image).Build();
             await Container.StartAsync();
         }
         catch (Exception ex) when (!PostgresRequired)
         {
             UnavailableReason = $"PostgreSQL-Testcontainer nicht startbar: {ex.Message}";
         }
-    }
-
-    /// <summary>Das Serverabbild zur Hauptversion des vorhandenen <c>pg_dump</c>.</summary>
-    private static async Task<string> ServerImageAsync(string dumpPath)
-    {
-        var major = await ReadMajorVersionAsync(dumpPath);
-
-        // Ausserhalb der Spanne, fuer die es offizielle Abbilder gibt: lieber ein bekannter Stand
-        // als ein Abbild, das es nicht gibt — der Container scheitert dann mit "manifest unknown"
-        // und die Meldung sagt nichts ueber den Pruefling.
-        return major is >= 13 and <= 18
-            ? $"postgres:{major.ToString(CultureInfo.InvariantCulture)}-alpine"
-            : "postgres:17-alpine";
-    }
-
-    private static async Task<int> ReadMajorVersionAsync(string dumpPath)
-    {
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo(dumpPath, "--version")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            },
-        };
-
-        process.Start();
-        var text = await process.StandardOutput.ReadToEndAsync();
-        await process.WaitForExitAsync();
-
-        // "pg_dump (PostgreSQL) 17.2 (Debian 17.2-1)" — gesucht ist die erste Zahl nach der Klammer.
-        var digits = new string([.. text.SkipWhile(c => c != ')').Skip(1).SkipWhile(c => !char.IsDigit(c))
-            .TakeWhile(char.IsDigit)]);
-        return int.TryParse(digits, CultureInfo.InvariantCulture, out var major) ? major : 0;
     }
 
     public async ValueTask DisposeAsync()
@@ -188,6 +168,13 @@ public sealed class PostgresBackupRestoreTests : IClassFixture<PostgresBackupFix
             + "Rueckwaerts-Tor aus E6");
         created.Manifest.Encrypted.Should().BeTrue();
         created.Manifest.Sections.Should().Be(BackupSections.All);
+
+        // Und zwar belegt: Ein Bereich steht nur dann im Manifest, wenn wirklich etwas darin liegt.
+        // Ohne diese Zeile koennte 'All' auch dann gruen sein, wenn der Paketbereich als leeres
+        // Versprechen darin stuende.
+        EntryNames(archive).Should().Contain(
+            "packages/com.example.paket/manifest.json",
+            "der Paketbereich ist Teil von BackupSections.All — mit Inhalt, nicht als Zusage");
 
         // ADR-0024 E2: Die Nutzlast ist ein pg_dump, keine Zeilenliste.
         EntryNames(archive).Should().Contain(
@@ -537,7 +524,18 @@ public sealed class PostgresBackupRestoreTests : IClassFixture<PostgresBackupFix
 
     private sealed record EmptyTarget(string Directory, string ConnectionString, BackupOptions Options);
 
-    /// <summary>Eine vollstaendige Instanz: migrierte Datenbank, Schluesselring, Bestand, Konfiguration.</summary>
+    /// <summary>
+    /// Eine vollstaendige Instanz: migrierte Datenbank, Schluesselring, Bestand, Konfiguration
+    /// <b>und ein Connector-Paket</b>.
+    /// <para>
+    /// Das Paket ist kein Beiwerk: <c>BackupSections.All</c> umfasst den Paketbereich, und ein
+    /// Bereich steht nur dann im Manifest, wenn wirklich etwas darin liegt (bewusst so — ein leer
+    /// versprochener Bereich waere beim Pruefen ein Unvollstaendigkeitsfehler). Ohne diese Datei
+    /// meldet das Archiv <c>Database|KeyRing|Config</c>, und die Erwartung <c>All</c> waere falsch,
+    /// obwohl an der Sicherung nichts fehlt. Dieselbe Instanz baut
+    /// <see cref="BackupRestoreUpgradeTests"/> auf der SQLite-Seite auf.
+    /// </para>
+    /// </summary>
     private async Task<Instance> NewInstanceAsync(string name, CancellationToken ct)
     {
         var directory = Path.Combine(_root, name);
@@ -558,6 +556,10 @@ public sealed class PostgresBackupRestoreTests : IClassFixture<PostgresBackupFix
             Path.Combine(configDirectory, "instance.json"),
             $$"""{"instanceId":"{{Guid.NewGuid()}}"}""",
             ct);
+
+        var packageDirectory = Path.Combine(directory, "packages", "com.example.paket");
+        Directory.CreateDirectory(packageDirectory);
+        await File.WriteAllTextAsync(Path.Combine(packageDirectory, "manifest.json"), "{}", ct);
 
         return new Instance(directory, connectionString, OptionsFor(directory, connectionString), payload, protection);
     }

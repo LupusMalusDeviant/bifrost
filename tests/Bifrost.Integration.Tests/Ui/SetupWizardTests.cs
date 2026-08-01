@@ -257,12 +257,24 @@ public sealed class SetupWizardTests : IClassFixture<GatewayFixture>
     /// Die beiden Schritte, die keinen eigenen Fehlgriff kennen — sie haengen an dem, was vorher
     /// passiert ist. Der Vollstaendigkeit halber ausdruecklich geprueft, statt in der Liste oben zu
     /// fehlen und wie ein Versehen auszusehen.
+    ///
+    /// <para>
+    /// <b>Der Zugang wird hier hergestellt, nicht vorausgesetzt.</b> <see cref="SetupProgress.Normalise"/>
+    /// prueft zuerst die Instanz und erst danach den Vorgang: Ohne Zugang faellt <em>jeder</em> Schritt
+    /// hinter 2 auf 2 zurueck — zu Recht, ab Schritt 3 legt der Wizard Dinge an. Wer diesen Test gegen
+    /// die rohen Fakten laufen laesst, prueft deshalb nicht Schritt 8, sondern nur, ob vorher zufaellig
+    /// ein anderer Test derselben Fixture den Erstzugang eingeloest hat. Genau das ist im CI
+    /// auseinandergegangen: Der Vorgang stand auf 2 statt auf 7, und die Begruendung sagte es
+    /// woertlich („diese Installation hat noch keinen Zugang"). Dieselbe Ueberlegung wie bei
+    /// <see cref="Situation"/>.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task Schritt_8_und_9_haengen_am_agenten_und_nicht_an_sich_selbst()
     {
         var ct = TestContext.Current.CancellationToken;
-        var facts = await Wizard.ReadFactsAsync(ct);
+        var read = await Wizard.ReadFactsAsync(ct);
+        var facts = read with { Access = read.Access with { AnyAdmin = true } };
 
         var session = Store.Start();
         session.Owner = "pruefer";
