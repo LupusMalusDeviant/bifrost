@@ -32,6 +32,23 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: docker pull alpine:3.20
 
+      # ADR-0024 E2: Die PostgreSQL-Sicherung laeuft ueber pg_dump/pg_restore. Ohne sie ueberspringen
+      # sich die Backupfelder der Upgrade-Matrix selbst — und ein uebersprungener Nachweis ist auf
+      # Linux ein stiller Ausfall, kein Ergebnis. Mit BIFROST_REQUIRE_POSTGRES=1 ist er ein
+      # Fehlschlag; deshalb muessen die Werkzeuge hier wirklich da sein.
+      #
+      # Die Testsuite leitet die Serverversion des Containers aus dem gefundenen Client ab — ein
+      # aelterer Client ist also kein Problem, ein fehlender schon.
+      - name: PostgreSQL-Clientwerkzeuge bereitstellen (pg_dump/pg_restore)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          if ! command -v pg_dump >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends postgresql-client
+          fi
+          pg_dump --version
+          pg_restore --version
+
       - name: Test with coverage
         env:
           # Auf Linux ist Docker da — ein nicht startbarer Postgres-Container ist dort ein

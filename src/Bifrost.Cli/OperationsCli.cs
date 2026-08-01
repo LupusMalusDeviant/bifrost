@@ -523,8 +523,9 @@ public sealed class OperationsCli
             "usage" => UsageError,
             "archive-invalid" => ArchiveInvalid,
             "target-not-empty" => TargetNotEmpty,
-            // Der Dienst kann es nicht (PostgreSQL-Sicherung). Kein Serverfehler, sondern eine
-            // Anfrage, die auf dieser Instanz nicht anwendbar ist.
+            // Der Dienst kann es auf DIESER Instanz nicht — heute vor allem: pg_dump/pg_restore
+            // fehlen (ADR-0024 E2). Kein Serverfehler, sondern eine Anfrage, die hier nicht
+            // anwendbar ist; der Text der Antwort sagt, was fehlt und wo man es herbekommt.
             "unsupported" => UsageError,
             _ => status switch
             {

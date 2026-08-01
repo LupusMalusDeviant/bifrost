@@ -274,10 +274,21 @@ internal static class ArchiveInspector
             }
         }
 
-        if (manifest.Sections.Any(s => string.Equals(s, "database", StringComparison.OrdinalIgnoreCase))
-            && archive.GetEntry(BackupLayout.DatabaseEntry) is null)
+        if (!manifest.Sections.Any(s => string.Equals(s, "database", StringComparison.OrdinalIgnoreCase)))
         {
-            result.Problems.Add($"Dem Archiv fehlt '{BackupLayout.DatabaseEntry}'.");
+            return;
+        }
+
+        // Der Name der Nutzlast hängt am Anbieter: SQLite legt eine Datenbankdatei ab, PostgreSQL
+        // einen pg_dump. Ein unbekannter Anbieter im Manifest ist an anderer Stelle bereits ein
+        // Blocker; hier wird dann der SQLite-Name geprüft, was den Befund nicht verfälscht.
+        var expected = BackupManifestDocument.TryParseProvider(manifest.Database.Provider, out var provider)
+            ? BackupLayout.DatabaseEntryFor(provider)
+            : BackupLayout.DatabaseEntry;
+
+        if (archive.GetEntry(expected) is null)
+        {
+            result.Problems.Add($"Dem Archiv fehlt '{expected}'.");
         }
     }
 

@@ -1323,16 +1323,68 @@ Begründung im Bericht, und das ist die Aussage.
 
 ### PostgreSQL
 
-**Es gibt keine PostgreSQL-Sicherung über `bifrost backup`.** Vorgesehen ist `pg_dump`
-(ADR-0024 E2); solange das nicht gebaut ist, lehnt der Befehl mit einer Meldung ab, statt still
-Zeilen zu exportieren. Für PostgreSQL also weiterhin: Datenbank mit `pg_dump` sichern und `keys/`
-aus dem Datenverzeichnis dazu — beides gehört zusammen.
+`bifrost backup` und `bifrost restore` arbeiten auch auf PostgreSQL — über `pg_dump` und
+`pg_restore` (ADR-0024 E2). Archivformat, Manifest, Prüfsummen, Key-Ring und Verschlüsselung sind
+dieselben wie bei SQLite; nur die Nutzlast unter `database/` heißt dort `bifrost.dump` statt
+`bifrost.db`.
 
-Dieselbe Grenze gilt für die automatische Sicherung vor Migrationen (siehe unten).
+> **Stand des Nachweises.** Die Tests dazu stehen (`PostgresBackupRestoreTests`, acht Felder gegen
+> einen echten Server), sind aber noch nicht grün gelaufen: Auf dem Rechner, auf dem dieser Weg
+> entstanden ist, fehlten Docker und `pg_dump`, und übersprungene Tests sind keine bestandenen.
+> Bis zum ersten Lauf mit `BIFROST_REQUIRE_POSTGRES=1` gilt dieser Abschnitt als **beschrieben,
+> nicht belegt** — siehe `docs/upgrade-matrix.md` §2.1.
+
+**Das Format ist `custom` (`pg_dump --format=custom`).** Begründung:
+
+- **eine Datei** — das Archiv legt je Bereich genau eine Nutzlast ab, bildet eine Prüfsumme darüber
+  und verschlüsselt sie am Stück; `directory` wären hunderte Einträge mit demselben Nutzen;
+- **Daten statt Skript** — `plain` ergäbe eine SQL-Datei, die beim Zurückspielen *ausgeführt* werden
+  müsste. Ein Archiv ist Fremdeingabe; ein Format, dessen Wiederherstellung „führe diesen Text aus"
+  heißt, ist dafür die falsche Wahl;
+- **`--single-transaction`** — nur das custom-Format erlaubt es. Entweder die Wiederherstellung ist
+  ganz durch, oder die Datenbank ist unberührt. Genau die Zusage aus ADR-0024 E5;
+- **komprimiert selbst**, was das Archiv deutlich kleiner macht als ein Klartext-Dump.
+
+#### Voraussetzung: `pg_dump` und `pg_restore`
+
+> **Fehlen die Werkzeuge, ist das ein Fehler mit Meldung — kein stiller Zeilenexport** (ADR-0024 E2).
+> Ein selbstgebauter Export wäre eine zweite, schlechter geprüfte Sicherung derselben Daten, und
+> auffallen würde der Unterschied erst beim Zurückspielen.
+
+Gesucht wird im `PATH`; `BIFROST_POSTGRES_BIN` benennt stattdessen ein Verzeichnis. Ist die
+Variable gesetzt, wird **ausschließlich** dort gesucht — wer den Ort nennt, macht eine Aussage und
+keine Anregung.
+
+| Betriebssystem | Installation |
+|---|---|
+| Debian/Ubuntu | `apt-get install postgresql-client` |
+| Alpine | `apk add postgresql17-client` |
+| RHEL/Fedora | `dnf install postgresql` |
+| macOS | `brew install libpq` |
+| Windows | „Command Line Tools" des PostgreSQL-Installers |
+
+**Die Hauptversion muss mindestens so hoch sein wie die des Servers.** `pg_dump` weigert sich, einen
+neueren Server zu sichern („aborting because of server version mismatch") — die Meldung des Werkzeugs
+wird durchgereicht.
+
+Das Passwort erreicht `pg_dump` über eine `PGPASSFILE`, die für die Dauer des Aufrufs in einem
+eigenen temporären Verzeichnis liegt (auf Unix mit `0600`) und danach gelöscht wird. **Nicht** über
+die Kommandozeile: die steht in der Prozessliste jedes Benutzers auf dem Rechner.
+
+#### Wiederherstellung
+
+Vorgabe ist auch hier das **leere Ziel** — bei PostgreSQL heißt „leer": keine Tabellen außerhalb der
+Systemschemata. Mit `--replace` wird überschrieben; davor entsteht eine Vorsicherung, und
+`pg_restore` läuft mit `--clean --if-exists --single-transaction`.
+
+> **Der Rückweg nach einem PostgreSQL-Restore ist die Vorsicherung, nicht ein Rückbau.** Bei SQLite
+> wandert die alte Datei beiseite und kann zurückwandern; ein `pg_restore` lässt sich so nicht
+> zurücknehmen. Bricht er ab, rollt PostgreSQL selbst zurück (eine Transaktion) — ist er aber durch,
+> hilft nur das Archiv, das vorher entstanden ist.
 
 ### Sicherung vor jeder Migration
 
-Bei **SQLite** entsteht vor einer schemaändernden Migration automatisch eine Vollsicherung unter
+Vor einer schemaändernden Migration entsteht automatisch eine Vollsicherung unter
 `<Datenverzeichnis>/backups/pre-migration-*.zip` — und ohne sie wird nicht migriert (ADR-0024 E7).
 Der Pfad steht im Migrationsjournal und in der Meldung, falls die Migration scheitert.
 
@@ -1340,14 +1392,30 @@ Diese Sicherung ist standardmäßig **unverschlüsselt**; sie liegt im selben Sc
 Datenbank, aus der sie entsteht. Wer sie verschlüsselt haben will, setzt `BIFROST_BACKUP_PASSPHRASE`
 — dann ist die Sicherung ohne diese Passphrase allerdings wertlos.
 
-Bei **PostgreSQL** entsteht keine automatische Sicherung (siehe oben). Der Start warnt und migriert
-weiter; die Sicherung ist dort Betriebspflicht.
+Bei **SQLite** hängt die Zusage an der Datenbankdatei: Für eine Datenbank im Arbeitsspeicher gibt es
+nichts zu sichern.
 
-> **Damit läuft auf PostgreSQL jedes Upgrade ohne Rückweg.** Das ist die direkte Folge der fehlenden
-> PostgreSQL-Sicherung: `PreMigrationBackupRequirement` bleibt dort auf `WhenAvailable` statt
-> `Always` — `Always` wäre ein Startverbot, keine Zusage. Ein Downgrade gibt es ebenfalls nicht,
-> `Down`-Migrationen werden weder gefahren noch geprüft. Vor **jedem** Upgrade selbst `pg_dump` plus
-> `keys/` ziehen; das Produkt tut es nicht, und es hält auch niemanden auf, der es vergisst.
+Bei **PostgreSQL** hängt sie an den Werkzeugen. Der Start prüft **einmal beim Hochfahren**, ob
+`pg_dump` und `pg_restore` erreichbar sind:
+
+| Lage | `PreMigrationBackupRequirement` | Folge |
+|---|---|---|
+| Werkzeuge erreichbar | `Always` | ohne Sicherung keine Migration |
+| Werkzeuge fehlen | `WhenAvailable` | Start warnt und migriert weiter |
+
+> **Warum nicht immer `Always`:** `Always` heißt „ohne Sicherung keine Migration". Auf einer Instanz
+> ohne die Werkzeuge wäre das kein Schutz, sondern ein **Startverbot** — der Server käme nach einem
+> Upgrade nicht mehr hoch, aus einem Grund, der mit seinen Daten nichts zu tun hat. Deshalb wird
+> gemessen statt angenommen.
+
+> **Ohne die Werkzeuge läuft auf PostgreSQL jedes Upgrade weiterhin ohne Rückweg.** Ein Downgrade
+> gibt es ebenfalls nicht, `Down`-Migrationen werden weder gefahren noch geprüft. Dann gilt
+> unverändert: vor **jedem** Upgrade selbst `pg_dump` plus `keys/` ziehen. Der bessere Weg ist, das
+> Clientpaket zu installieren — danach tut das Produkt es von selbst.
+
+> **Im Container:** Ob `postgresql-client` im mitgelieferten Image liegt, ist eine offene
+> Entscheidung (Gewicht gegen das Image-Gate). Steht es nicht drin, greift die Zeile „Werkzeuge
+> fehlen" oben — alles andere läuft weiter, nur Backup und Restore melden die Absage.
 
 ## Diagnose
 

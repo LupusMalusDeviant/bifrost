@@ -24,14 +24,17 @@ Three decisions that are painful to change later:
 
 **Database.** SQLite is fine until the audit log gets large. A team generates far more calls than a
 solo operator, and audit retention on SQLite is an operational obligation, not a nicety. Moving to
-PostgreSQL is a real option — but read the two gaps first, because they are not small:
+PostgreSQL is a real option — but one condition comes with it:
 
-- **There is no PostgreSQL backup in the product.** `bifrost backup` refuses. You own `pg_dump`
-  **plus** the `keys/` directory, together, forever.
-- **On PostgreSQL, no pre-migration backup is created.** Every upgrade there runs without a way
-  back, and there is no downgrade path.
+- **PostgreSQL backup runs through `pg_dump`/`pg_restore`, and they must be on the host.** With
+  them, `bifrost backup`/`restore` work exactly as on SQLite, and the pre-migration backup is
+  demanded before every schema change.
+- **Without them, both refuse with a message.** Then you own `pg_dump` **plus** the `keys/`
+  directory, together, forever — and every upgrade runs without a way back, since there is no
+  downgrade path.
 
-If nobody on the team will own a dump schedule, stay on SQLite and manage retention.
+So: install the client package on the host that runs Bifrost. If nobody on the team will own that
+(or a dump schedule instead), stay on SQLite and manage retention.
 See [Known limitations](../operations.md#known-limitations).
 
 **TLS.** Not optional here. More than one machine reaches the UI, which means the session cookie

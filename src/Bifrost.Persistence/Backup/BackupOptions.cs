@@ -21,6 +21,26 @@ public sealed class BackupOptions
     /// </summary>
     public string? SqliteFilePath { get; init; }
 
+    /// <summary>
+    /// Die Verbindungszeichenfolge, wenn <see cref="Provider"/> <see cref="DatabaseProvider.Postgres"/>
+    /// ist. <c>pg_dump</c> und <c>pg_restore</c> bekommen Wirt, Port, Benutzer und Datenbank daraus;
+    /// das Passwort geht über eine <c>PGPASSFILE</c> und nicht über die Kommandozeile (ADR-0024 E2,
+    /// siehe <see cref="PostgresTools"/>).
+    /// <para>
+    /// Bewusst hier und nicht aus der Umgebung gelesen: Gesichert werden muss <b>die</b> Datenbank,
+    /// gegen die der Server tatsächlich läuft. Eine zweite Ableitung wäre eine zweite Fehlerquelle —
+    /// und ihr Fehler fiele erst beim Zurückspielen auf.
+    /// </para>
+    /// </summary>
+    public string? PostgresConnectionString { get; init; }
+
+    /// <summary>
+    /// Wo <c>pg_dump</c> und <c>pg_restore</c> liegen, falls sie nicht im <c>PATH</c> stehen. Leer
+    /// heißt: <c>BIFROST_POSTGRES_BIN</c>, sonst <c>PATH</c>. Ist der Wert gesetzt, wird
+    /// <b>ausschließlich</b> dort gesucht (siehe <see cref="PostgresTools.TryLocate(string?, out PostgresToolset?)"/>).
+    /// </summary>
+    public string? PostgresToolDirectory { get; init; }
+
     /// <summary>Key-Ring-Verzeichnis; Vorgabe <c>&lt;DataDirectory&gt;/keys</c>.</summary>
     public string? KeyRingDirectory { get; init; }
 
@@ -66,6 +86,17 @@ public sealed class BackupOptions
             return !File.Exists(current) && File.Exists(legacy) ? legacy : current;
         }
     }
+
+    /// <summary>
+    /// Die PostgreSQL-Verbindung — oder eine klare Absage. Ein Backupdienst, der auf Postgres
+    /// eingestellt ist und keine Verbindung kennt, kann nichts sichern; das jetzt zu sagen ist
+    /// besser, als ein leeres Archiv zu erzeugen.
+    /// </summary>
+    public string RequiredPostgresConnectionString => string.IsNullOrWhiteSpace(PostgresConnectionString)
+        ? throw new InvalidOperationException(
+            "Für PostgreSQL fehlt die Verbindungszeichenfolge in den Backupoptionen. Ohne sie weiß "
+            + "pg_dump nicht, welche Datenbank es sichern soll.")
+        : PostgresConnectionString;
 
     public string ResolvedKeyRingDirectory =>
         string.IsNullOrWhiteSpace(KeyRingDirectory) ? Path.Combine(DataDirectory, "keys") : KeyRingDirectory;

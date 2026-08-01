@@ -66,8 +66,13 @@ public class OperationsCliTests
         handler.Requests.Should().BeEmpty("ein Bedienfehler faellt auf, bevor irgendetwas laeuft");
     }
 
+    /// <summary>
+    /// Der Server antwortet mit <c>501</c>, wenn der Vorgang auf dieser Installation nicht geht —
+    /// seit ADR-0024 E2 umgesetzt ist, ist das die Lage „pg_dump ist nicht installiert". Die CLI
+    /// gibt den Text weiter, statt einen unerwarteten Fehler daraus zu machen.
+    /// </summary>
     [Fact]
-    public async Task Backup_create_on_postgres_says_so_instead_of_pretending()
+    public async Task Backup_create_without_pg_dump_says_so_instead_of_pretending()
     {
         var handler = new RecordingHandler(_ => Json(
             HttpStatusCode.NotImplemented,

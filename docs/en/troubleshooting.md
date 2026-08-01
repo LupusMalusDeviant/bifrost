@@ -325,18 +325,28 @@ is still required before production use — it does not exist yet.
 
 ## Backup, restore and upgrade
 
-### `bifrost backup create` refuses on PostgreSQL
+### `bifrost backup create` refuses on PostgreSQL: "pg_dump … not reachable"
 
-Correct, and deliberate: it refuses rather than silently exporting rows. **There is no PostgreSQL
-backup in the product.** Use `pg_dump` **plus** the `keys/` directory from the data directory —
-they only work together. FR-P020 is open for PostgreSQL.
+Correct, and deliberate: it refuses rather than silently exporting rows. PostgreSQL backup runs
+through `pg_dump`/`pg_restore` (ADR-0024 E2), and they are not on this host.
+
+Install the PostgreSQL client package (`apt-get install postgresql-client`,
+`apk add postgresql17-client`, `dnf install postgresql`, `brew install libpq`), or set
+`BIFROST_POSTGRES_BIN` to the directory holding them — when that variable is set, **only** that
+directory is searched. Until then, `pg_dump` **plus** the `keys/` directory by hand; they only work
+together.
+
+### `pg_dump` fails with "aborting because of server version mismatch"
+
+The client is older than the server. `pg_dump` never dumps a newer server. Install a client whose
+major version is at least the server's; the message from the tool is passed through unchanged.
 
 ### An upgrade on PostgreSQL went wrong and there is no pre-migration backup
 
-There never was one. On SQLite a full backup is created automatically before a schema-changing
-migration and the migration does not proceed without it. On PostgreSQL that backup **cannot** be
-created, so the start warns and migrates anyway. **Every upgrade on PostgreSQL runs without a way
-back**, and `Down` migrations do not exist. Take your own dump before every upgrade.
+Check whether `pg_dump` was reachable at the time. With the tools present the server demands the
+backup before migrating (`Always`); without them it warns and migrates anyway — and **that upgrade
+ran without a way back**, since `Down` migrations do not exist. Install the client package, or take
+your own dump before every upgrade.
 
 ### An archive from a newer version was restored and now the instance will not start
 

@@ -185,23 +185,75 @@ public sealed class BackupCreationTests
         (await File.ReadAllTextAsync(target, TestContext.Current.CancellationToken)).Should().Be("kein archiv");
     }
 
+    /// <summary>
+    /// ADR-0024 E2: Fehlt <c>pg_dump</c>, ist das ein <b>Fehler mit Meldung</b> — kein Rückfall auf
+    /// einen selbstgebauten Zeilenexport, und kein halbes Archiv.
+    /// <para>
+    /// Das Werkzeugverzeichnis wird ausdrücklich gesetzt und zeigt auf ein leeres Verzeichnis. So
+    /// hängt der Test <b>nicht</b> daran, ob der Rechner zufällig ein <c>pg_dump</c> im <c>PATH</c>
+    /// hat: Auf einem Entwicklerrechner mit installiertem Client wäre er sonst grün, ohne je die
+    /// Absage geprüft zu haben.
+    /// </para>
+    /// </summary>
     [Fact]
-    public async Task A_postgres_instance_refuses_loudly_instead_of_exporting_rows()
+    public async Task A_missing_pg_dump_refuses_loudly_instead_of_exporting_rows()
     {
         using var instance = new InstanceDirectory("postgres");
         using var archives = new ArchiveDirectory();
+
+        var leeresWerkzeugverzeichnis = Path.Combine(instance.Root, "ohne-werkzeuge");
+        Directory.CreateDirectory(leeresWerkzeugverzeichnis);
 
         var options = new BackupOptions
         {
             DataDirectory = instance.Root,
             Provider = DatabaseProvider.Postgres,
+            PostgresConnectionString = "Host=127.0.0.1;Port=1;Database=bifrost;Username=u;Password=p",
+            PostgresToolDirectory = leeresWerkzeugverzeichnis,
         };
 
         var act = async () => await new BackupService(options).CreateAsync(
             new BackupRequest(archives.File("pg.zip")), TestContext.Current.CancellationToken);
 
-        (await act.Should().ThrowAsync<NotSupportedException>())
-            .WithMessage("*pg_dump*");
+        var thrown = (await act.Should().ThrowAsync<PostgresToolMissingException>()).Which;
+
+        // Die Meldung muss sagen, WAS fehlt und WO man es herbekommt — sonst ist sie eine Absage
+        // ohne Ausweg.
+        thrown.Message.Should().Contain("pg_dump").And.Contain("pg_restore");
+        thrown.Message.Should().Contain("postgresql-client", "die Meldung nennt den Weg zur Abhilfe");
+        thrown.Message.Should().Contain(PostgresTools.BinDirectoryVariable);
+
         File.Exists(archives.File("pg.zip")).Should().BeFalse();
+        archives.TempLeftovers().Should().BeEmpty("es entsteht nicht einmal ein halbes Archiv");
+    }
+
+    /// <summary>
+    /// Die Gegenprobe zur Absage: Ohne Datenbankbereich braucht niemand <c>pg_dump</c> — dann darf
+    /// die fehlende Installation auch nicht im Weg stehen. Ohne diese Probe könnte die Absage oben
+    /// auch von einer Prüfung stammen, die schlicht jede PostgreSQL-Sicherung ablehnt.
+    /// </summary>
+    [Fact]
+    public async Task Without_the_database_section_a_missing_pg_dump_is_no_obstacle()
+    {
+        using var instance = new InstanceDirectory("postgres-ohne-db");
+        using var archives = new ArchiveDirectory();
+        instance.WriteKeyRing();
+
+        var leeresWerkzeugverzeichnis = Path.Combine(instance.Root, "ohne-werkzeuge");
+        Directory.CreateDirectory(leeresWerkzeugverzeichnis);
+
+        var options = new BackupOptions
+        {
+            DataDirectory = instance.Root,
+            Provider = DatabaseProvider.Postgres,
+            PostgresToolDirectory = leeresWerkzeugverzeichnis,
+        };
+
+        var result = await new BackupService(options).CreateAsync(
+            new BackupRequest(archives.File("nur-ring.zip"), BackupSections.KeyRing),
+            TestContext.Current.CancellationToken);
+
+        result.Manifest.Provider.Should().Be(DatabaseProvider.Postgres);
+        result.Manifest.Sections.Should().Be(BackupSections.KeyRing);
     }
 }

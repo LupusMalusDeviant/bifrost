@@ -524,7 +524,7 @@ Reihenfolgeentscheidung, die hier festgehalten wird, damit sie bei der Abnahme s
 | WP2.3 Migrationssicherheit | `implementiert` | 80/80 im Namensraum `Persistence`, SQLite **und** Postgres |
 | WP2.4 Diagnosedienst (`doctor`) | `implementiert` | 17 Codes, 107 Tests; Sonden noch nicht verdrahtet |
 | WP2.5 Konfigurationsexport/-import | `implementiert` | 20 Tests, Secret-Negativkorpus je 8-Zeichen-Bruchstück |
-| WP2.6 Upgrade-Kompatibilitätsmatrix | `implementiert` | 43 Tests, 15 Migrationsstände × 2 Provider; **hat E6 widerlegt** |
+| WP2.6 Upgrade-Kompatibilitätsmatrix | `implementiert` | 50 Tests, 15 Migrationsstände × 2 Provider, Archivpfad auf beiden; **hat E6 widerlegt** |
 | WP2.7 Adapter (CLI, API, UI) | `implementiert` | 7 Befehlsgruppen, API hinter Global-Grant, Sonden verdrahtet |
 
 Gesamtlauf nach der Zusammenführung: `./build.sh verify-dotnet` → **948 Tests grün, 0 Fehler**
@@ -635,12 +635,21 @@ ist keine dritte, und das steht so im Test.
 
 ### Offen aus dieser Welle
 
-- **PostgreSQL-Backup fehlt.** Der Weg lehnt laut ab statt still Zeilen zu exportieren (ADR-0024 E2),
-  aber FR-P020 ist für Postgres damit nicht erfüllt. **Das ist die größte offene Lücke aus M2**, und
-  sie zieht eine zweite nach sich: Auf PostgreSQL läuft jedes Upgrade ohne Rückweg, weil E7 dort
-  keine Sicherung erzeugen kann (`WhenAvailable` statt `Always` — `Always` wäre dort ein
-  Startverbot, keine Zusage).
-- **E7 ist für SQLite erfüllt**, für PostgreSQL und Datenbanken im Arbeitsspeicher nicht.
+- ~~**PostgreSQL-Backup fehlt.**~~ **Erledigt** (ADR-0024 E2): Sicherung über
+  `pg_dump --format=custom`, Wiederherstellung über `pg_restore --single-transaction`, dasselbe
+  Archivformat wie bei SQLite. FR-P020 ist damit auch für Postgres erfüllt — **unter einer
+  Bedingung:** `pg_dump` und `pg_restore` müssen auf dem Wirt erreichbar sein. Fehlen sie, lehnt der
+  Aufruf mit einer Meldung ab, die sagt, was fehlt und wo man es herbekommt; einen Zeilenexport gibt
+  es weiterhin nicht. Geprüft in `PostgresBackupRestoreTests` gegen einen echten Server, siehe
+  `docs/upgrade-matrix.md` §2.1.
+- **E7 hängt jetzt an den Werkzeugen statt am Provider.** `Always` gilt bei SQLite mit einer Datei
+  dahinter und bei PostgreSQL mit erreichbarem `pg_dump`; sonst `WhenAvailable`. Ein `Always`, das
+  an einem fehlenden Werkzeug scheitert, wäre ein Startverbot statt einer Zusage — deshalb wird
+  beim Zusammenbau gemessen statt angenommen. Für Datenbanken im Arbeitsspeicher bleibt es dabei,
+  dass es nichts zu sichern gibt.
+- **Offen und ausdrücklich nicht entschieden: `postgresql-client` im mitgelieferten Image.** Ohne
+  ihn ist das Feature *im Container* tot, obwohl es im Code lebt. Das Gewicht steht gegen das
+  350-MB-Gate; die Messung und die Optionen gehören in eine eigene Entscheidung.
 - **`IAssetStore` kann keinen einzelnen Skill entfernen** und `CreateAsync` erhält die exportierte
   `AssetId` nicht. `RemoveSkillAsync` wirft deshalb; der Rückstand landet sichtbar in der
   Rückstandsliste der Kompensation, statt als „vollständig zurückgenommen" gemeldet zu werden. Ein

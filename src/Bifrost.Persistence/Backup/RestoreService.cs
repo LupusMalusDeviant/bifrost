@@ -118,7 +118,7 @@ public sealed class RestoreService : IRestoreService
             CheckManifest(manifest, request, blockers, warnings);
         }
 
-        var targetIsEmpty = IsTargetEmpty();
+        var targetIsEmpty = await IsTargetEmptyAsync(ct).ConfigureAwait(false);
         if (!targetIsEmpty && request.Mode == RestoreMode.EmptyTargetOnly)
         {
             blockers.Add(
@@ -185,9 +185,18 @@ public sealed class RestoreService : IRestoreService
                 $"'{BackupManifestDocument.ProviderName(_options.Provider)}'. Ein Anbieterwechsel ist " +
                 "kein Restore.");
         }
-        else if (provider == DatabaseProvider.Postgres)
+        else if (provider == DatabaseProvider.Postgres
+            && manifest.Sections.Any(s => string.Equals(s, "database", StringComparison.OrdinalIgnoreCase))
+            && !PostgresTools.TryLocate(_options.PostgresToolDirectory, out _))
         {
-            blockers.Add(PostgresBackup.NotImplementedMessage);
+            // ADR-0024 E2: Fehlt das Werkzeug, ist das ein Blocker mit Meldung — geprüft in der
+            // VORprüfung, also bevor irgendetwas entpackt wurde.
+            //
+            // Nur bei einem Archiv MIT Datenbankbereich: Ein Archiv, das nur den Key-Ring oder die
+            // Pakete trägt, braucht kein pg_restore. Es daran scheitern zu lassen wäre eine Hürde
+            // ohne Grund — und ausgerechnet in der Lage, in der jemand einen Schlüsselring
+            // zurückholen will.
+            blockers.Add(PostgresTools.MissingMessage);
         }
 
         if (manifest.IsEncrypted && string.IsNullOrEmpty(request.Passphrase))
@@ -253,12 +262,26 @@ public sealed class RestoreService : IRestoreService
     /// bewusst nicht mit — die Datei entsteht beim ersten Start und wäre sonst der Grund, warum ein
     /// frisch aufgesetztes Ziel als „nicht leer" gälte.
     /// </summary>
-    private bool IsTargetEmpty()
+    private async Task<bool> IsTargetEmptyAsync(CancellationToken ct)
     {
-        var database = _options.ResolvedSqliteFile;
-        if (File.Exists(database) && new FileInfo(database).Length > 0)
+        if (_options.Provider is DatabaseProvider.Postgres)
         {
-            return false;
+            // Bei PostgreSQL liegt die Datenbank nicht im Datenverzeichnis. „Leer" heißt hier: keine
+            // Tabellen außerhalb der Systemschemata.
+            if (!await PostgresBackup
+                    .IsEmptyAsync(_options.RequiredPostgresConnectionString, ct)
+                    .ConfigureAwait(false))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            var database = _options.ResolvedSqliteFile;
+            if (File.Exists(database) && new FileInfo(database).Length > 0)
+            {
+                return false;
+            }
         }
 
         return !HasAnyFile(_options.ResolvedKeyRingDirectory) && !HasAnyFile(_options.ResolvedPackagesDirectory);
@@ -328,7 +351,7 @@ public sealed class RestoreService : IRestoreService
                 notes.Add($"Der bisherige Zustand liegt in '{preBackup}'.");
             }
 
-            SwitchOver(staging, sections, notes);
+            await SwitchOverAsync(staging, sections, plan, notes, ct).ConfigureAwait(false);
             return new RestoreResult(true, sections, preBackup, notes.AsReadOnly());
         }
         finally
@@ -476,7 +499,12 @@ public sealed class RestoreService : IRestoreService
     /// dasselbe Dateisystem — ein Move dorthin ist ein Umbenennen und kein Kopieren), dann wird das
     /// Neue eingehängt. Scheitert ein Schritt, laufen die vorigen rückwärts zurück.
     /// </summary>
-    private void SwitchOver(string staging, BackupSections sections, List<string> notes)
+    private async Task SwitchOverAsync(
+        string staging,
+        BackupSections sections,
+        RestorePlan plan,
+        List<string> notes,
+        CancellationToken ct)
     {
         var parked = Path.Combine(staging, ".replaced");
         Directory.CreateDirectory(parked);
@@ -484,14 +512,9 @@ public sealed class RestoreService : IRestoreService
 
         try
         {
-            if (sections.HasFlag(BackupSections.Database))
-            {
-                var target = _options.ResolvedSqliteFile;
-                MoveFileIntoPlace(Path.Combine(staging, "database", "bifrost.db"), target, parked, undo);
-                SqliteSnapshot.RemoveSidecars(target);
-                notes.Add("Datenbank ersetzt; liegengebliebene WAL-Begleiter entfernt.");
-            }
-
+            // Die Dateizonen zuerst, die Datenbank zuletzt. Grund: Ein Fehlschlag in den Dateizonen
+            // lässt sich rückgängig machen, ein eingespielter Datenbankstand nicht — der hat als
+            // Ausweg nur die Vorsicherung. Also wird das Unumkehrbare als Letztes getan.
             if (sections.HasFlag(BackupSections.KeyRing))
             {
                 MoveDirectoryIntoPlace(
@@ -515,6 +538,11 @@ public sealed class RestoreService : IRestoreService
                     undo);
                 notes.Add("Instanzkonfiguration ersetzt.");
             }
+
+            if (sections.HasFlag(BackupSections.Database))
+            {
+                await RestoreDatabaseAsync(staging, plan, parked, undo, notes, ct).ConfigureAwait(false);
+            }
         }
         catch
         {
@@ -533,6 +561,56 @@ public sealed class RestoreService : IRestoreService
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// Der Datenbankteil des Umschaltens.
+    /// <para>
+    /// Bei SQLite ist es ein Umbenennen und damit rückbaubar. Bei PostgreSQL ist es ein
+    /// <c>pg_restore</c> — und der lässt sich nicht durch ein Umbenennen zurücknehmen. Er läuft
+    /// deshalb unter <c>--single-transaction</c>: Entweder er ist ganz durch, oder die Datenbank ist
+    /// unberührt (ADR-0024 E5). Der Ausweg <em>nach</em> einem erfolgreichen Einspielen ist die
+    /// Vorsicherung, die bei <c>Replace</c> vorher entstanden ist — nicht der Rückbaustapel.
+    /// </para>
+    /// </summary>
+    private async Task RestoreDatabaseAsync(
+        string staging,
+        RestorePlan plan,
+        string parked,
+        Stack<Action> undo,
+        List<string> notes,
+        CancellationToken ct)
+    {
+        if (_options.Provider is DatabaseProvider.Postgres)
+        {
+            var dump = Path.Combine(staging, "database", "bifrost.dump");
+            if (!File.Exists(dump))
+            {
+                return;
+            }
+
+            // '--clean' nur, wenn im Ziel wirklich etwas steht: Auf ein leeres Ziel wäre es die
+            // Aufforderung, Objekte zu löschen, die es nicht gibt.
+            await PostgresBackup
+                .RestoreAsync(
+                    _options.RequiredPostgresConnectionString,
+                    dump,
+                    clean: !plan.TargetIsEmpty,
+                    _options.PostgresToolDirectory,
+                    ct)
+                .ConfigureAwait(false);
+
+            notes.Add(plan.TargetIsEmpty
+                ? "Datenbank aus dem pg_dump eingespielt (leeres Ziel, eine Transaktion)."
+                : "Datenbank aus dem pg_dump eingespielt; vorhandene Objekte wurden zuvor entfernt "
+                  + "(eine Transaktion). Der Rückweg ist die Vorsicherung, nicht ein Rückbau.");
+            return;
+        }
+
+        var target = _options.ResolvedSqliteFile;
+        MoveFileIntoPlace(Path.Combine(staging, "database", "bifrost.db"), target, parked, undo);
+        SqliteSnapshot.RemoveSidecars(target);
+        notes.Add("Datenbank ersetzt; liegengebliebene WAL-Begleiter entfernt.");
     }
 
     private static void MoveFileIntoPlace(string staged, string target, string parked, Stack<Action> undo)

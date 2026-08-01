@@ -1,3 +1,5 @@
+using Bifrost.Abstractions.Operations;
+
 namespace Bifrost.Persistence.Backup;
 
 /// <summary>
@@ -24,6 +26,22 @@ public static class BackupLayout
     /// <summary>Der Datenbankschnappschuss liegt immer unter demselben Namen — unabhängig davon,
     /// wie die Quelldatei auf der Platte heißt (v1.0 hieß sie <c>mcpmcp.db</c>).</summary>
     public const string DatabaseEntry = DatabaseZone + "bifrost.db";
+
+    /// <summary>
+    /// Die PostgreSQL-Nutzlast: ein <c>pg_dump</c> im custom-Format (ADR-0024 E2, siehe
+    /// <c>PostgresBackup</c>). Eigener Name statt derselben Datei mit anderem Inhalt — wer ein
+    /// Archiv von Hand öffnet, soll nicht raten müssen, was er vor sich hat.
+    /// <para>
+    /// Das ist <b>keine</b> Formatänderung an bestehenden Archiven: Bis hierher konnte für
+    /// PostgreSQL gar kein Archiv entstehen, der Aufruf wurde abgewiesen. Es gibt also kein Archiv
+    /// der Formatversion 1, dessen Bedeutung sich damit ändert.
+    /// </para>
+    /// </summary>
+    public const string DatabaseDumpEntry = DatabaseZone + "bifrost.dump";
+
+    /// <summary>Wie die Datenbanknutzlast dieses Anbieters im Archiv heißt.</summary>
+    public static string DatabaseEntryFor(DatabaseProvider provider)
+        => provider is DatabaseProvider.Postgres ? DatabaseDumpEntry : DatabaseEntry;
 
     public const string InstanceConfigEntry = ConfigZone + "instance.json";
 

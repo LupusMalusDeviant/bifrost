@@ -23,9 +23,12 @@ namespace Bifrost.Upgrade.Tests;
 /// <b>abgelehnt</b>, nicht versucht.
 ///
 /// <para>
-/// Diese Suite ist der einzige Ort, an dem Datenbank <i>und</i> Schluesselring zusammen reisen —
-/// und damit der einzige, an dem sich zeigen laesst, dass ein Restore nicht nur Zeilen, sondern
-/// auch deren Lesbarkeit wiederherstellt (ADR-0024 E3).
+/// Hier laeuft der Weg auf <b>SQLite</b>. Das Gegenstueck auf PostgreSQL — dieselben Zusagen ueber
+/// <c>pg_dump</c>/<c>pg_restore</c> — steht in <see cref="PostgresBackupRestoreTests"/>.
+/// </para>
+/// <para>
+/// Diese Suite zeigt, dass Datenbank <i>und</i> Schluesselring zusammen reisen und ein Restore
+/// nicht nur Zeilen, sondern auch deren Lesbarkeit wiederherstellt (ADR-0024 E3).
 /// </para>
 /// </summary>
 public sealed class BackupRestoreUpgradeTests : IAsyncLifetime
@@ -334,31 +337,10 @@ public sealed class BackupRestoreUpgradeTests : IAsyncLifetime
         await again.Should().ThrowAsync<InvalidOperationException>("ein Handle ist einmalig");
     }
 
-    /// <summary>
-    /// Fuer PostgreSQL gibt es kein Archiv — und damit auch kein Matrixfeld „Backup einer aelteren
-    /// Version". Dieser Test haelt die <b>Absage</b> fest, nicht eine Faehigkeit: Solange
-    /// <c>pg_dump</c> nicht gebaut ist, muss der Aufruf scheitern statt still etwas Halbes zu
-    /// erzeugen (ADR-0024 E2).
-    /// </summary>
-    [Fact]
-    public async Task Postgres_backup_is_refused_rather_than_faked()
-    {
-        var ct = TestContext.Current.CancellationToken;
-        var directory = Path.Combine(_root, "pg-absage");
-        Directory.CreateDirectory(directory);
-
-        var options = new BackupOptions
-        {
-            DataDirectory = directory,
-            Provider = DatabaseProvider.Postgres,
-        };
-
-        var act = async () => await new BackupService(options)
-            .CreateAsync(new BackupRequest(Path.Combine(directory, "pg.zip")), ct);
-
-        (await act.Should().ThrowAsync<NotSupportedException>()).Which
-            .Message.Should().Contain("pg_dump");
-    }
+    // Das PostgreSQL-Gegenstueck steht in PostgresBackupRestoreTests: Seit ADR-0024 E2 umgesetzt
+    // ist, gibt es dort ein echtes Archiv gegen einen echten Server. Die Absage bei fehlendem
+    // pg_dump prueft Bifrost.Core.Tests (BackupCreationTests) — ohne Container, damit sie in jedem
+    // Lauf wirklich laeuft.
 
     // ── Harness ────────────────────────────────────────────────────────────────────────────────
 

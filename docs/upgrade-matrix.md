@@ -67,16 +67,64 @@ Nach dem Upgrade wird zweierlei geprüft:
 | 6 | Backup einer **älteren** Produktversion (0.10.0), Schema einen Stand zurück, verschlüsselt | Restore in 0.11.0, danach Migration | SQLite | **grün** (ADR-0024 E6 vorwärts) | `BackupRestoreUpgradeTests.Backup_of_an_older_version_restores_and_migrates_afterwards` |
 | 7 | Backup einer **neueren** Version (Mindestversion 99.0.0) | Restore in 0.11.0 | SQLite | **grün — wird abgelehnt**, Zielverzeichnis bleibt leer | `BackupRestoreUpgradeTests.Backup_of_a_newer_version_is_refused_instead_of_attempted` |
 | 8 | Archiv mit **neuerem Schema**, aber heutiger Mindestangabe | Restore läuft durch, **Start verweigert** `BFR-DB-0102` | SQLite | **grün — und ein Befund**, siehe §4.1 | `BackupRestoreUpgradeTests.An_archive_with_a_newer_schema_passes_the_version_gate_and_is_stopped_at_the_start` |
-| 9 | Backup/Restore | – | PostgreSQL | **nicht prüfbar** — für PostgreSQL nicht implementiert; die *Absage* ist getestet | `BackupRestoreUpgradeTests.Postgres_backup_is_refused_rather_than_faked` |
+| 9 | Backup einer Instanz **mit Bestand inkl. Geheimtext** | Restore auf leeres Ziel und mit `--replace` | PostgreSQL | **prüfbar, Nachweis steht aus** (8 Felder, siehe §2.1) | `PostgresBackupRestoreTests.*` |
 | 10 | Upgrade über drei **veröffentlichte Releases** | – | beide | **nicht prüfbar** — es gibt die Artefakte nicht, siehe §4.2 | – |
 
-Gesamt: **43 Testfälle, alle grün** (SQLite 20, PostgreSQL 16, Archivpfad 7).
+Gesamt in `tests/Bifrost.Upgrade.Tests`: **50 Testfälle**. Ohne Docker und ohne `pg_dump` laufen
+davon **26** (SQLite-Matrix und Archivpfad); die übrigen **24** melden sich als übersprungen
+(16 PostgreSQL-Matrix, 8 PostgreSQL-Backup). Mit `BIFROST_REQUIRE_POSTGRES=1` gibt es diese
+Unterscheidung nicht — dort ist eine fehlende Voraussetzung ein Fehlschlag.
+
+### 2.1 Feld 9 im Einzelnen (neu, ADR-0024 E2 umgesetzt)
+
+Feld 9 stand bis hierher auf „nicht prüfbar (nicht implementiert)". Mit `pg_dump`/`pg_restore` ist
+es herstellbar. Geprüft wird gegen einen **echten** PostgreSQL-Server (Testcontainers) und mit den
+**echten** Werkzeugen.
+
+> **Stand: geschrieben, aber noch nicht einmal grün gelaufen.** Der Rechner, auf dem dieses Paket
+> entstanden ist, hatte weder einen erreichbaren Docker-Daemon noch ein installiertes `pg_dump`;
+> alle acht Felder unten wurden **übersprungen**, nicht bestanden. Das steht hier, weil ein
+> Matrixfeld, das „grün" behauptet ohne je gelaufen zu sein, genau der Fehler ist, gegen den dieses
+> Dokument geschrieben wurde. Der erste Lauf mit `BIFROST_REQUIRE_POSTGRES=1` (CI, Linux) ist der
+> Nachweis — bis dahin gilt Feld 9 als **offen**.
+
+| Was | Test |
+|---|---|
+| Sicherung und Wiederherstellung, Bestand danach vollständig **und lesbar** (Geheimtext) | `Backup_and_restore_keep_the_stored_ciphertext_readable` |
+| Gegenprobe: **ohne** Key-Ring kommen die Zeilen zurück und ihr Inhalt nicht | `Without_the_key_ring_the_restored_rows_are_unreadable` |
+| Die Nutzlast ist wirklich ein `pg_dump` im custom-Format (Kennung `PGDMP`) | `The_payload_is_a_pg_dump_in_the_documented_custom_format` |
+| Abbruch mitten im Schreiben — nichts bleibt liegen (E4) | `A_cancelled_backup_leaves_no_archive_behind` |
+| Verschlüsseltes Archiv, **falsche Passphrase** → Zielinstanz unverändert, keine Vorsicherung | `A_wrong_passphrase_leaves_the_target_untouched` |
+| `--replace` über eine bestehende Instanz, Vorsicherung entsteht **und ist ein gültiges Archiv** (E5) | `Replace_overwrites_an_existing_instance_and_keeps_a_valid_pre_backup` |
+| Archiv aus einer **neueren** Version → abgelehnt, Zieldatenbank bleibt leer (E6) | `An_archive_from_a_newer_version_is_refused_instead_of_attempted` |
+| Archiv mit **unbekanntem Migrationsstand** → abgelehnt (E6, zweite Hälfte) | `An_archive_with_an_unknown_migration_is_refused` |
+
+Dazu, **ohne Container und damit in jedem Lauf**:
+
+| Was | Test |
+|---|---|
+| Fehlendes `pg_dump` → Meldung mit Ursache und Abhilfe, kein Ersatzweg, kein halbes Archiv | `BackupCreationTests.A_missing_pg_dump_refuses_loudly_instead_of_exporting_rows` |
+| Gegenprobe: ohne Datenbankbereich stört ein fehlendes `pg_dump` nicht | `BackupCreationTests.Without_the_database_section_a_missing_pg_dump_is_no_obstacle` |
+| E7-Verdrahtung: `Always` genau dann, wenn die Werkzeuge da sind | `PostgresPreMigrationBackupWiringTests.*` (2 Fälle) |
+| Ohne `pg_dump` meldet der Vor-Migrationshaken ein **Nein mit Begründung** statt eines Ersatzwegs | `PostgresPreMigrationBackupTests.Without_pg_dump_the_hook_says_no_instead_of_inventing_a_backup` |
+
+Und einer, der wieder Server **und** Werkzeuge braucht:
+
+| Was | Test |
+|---|---|
+| Vor-Migrationssicherung entsteht auf PostgreSQL und ist ein gültiges Archiv (E7) | `PostgresPreMigrationBackupTests.A_pre_migration_backup_is_created_and_is_a_valid_archive` |
+
+> **Die Serverversion des Testcontainers wird aus dem vorhandenen `pg_dump` abgeleitet** und steht
+> nicht fest. Grund: `pg_dump` weigert sich, einen *neueren* Server zu sichern. Ein fest verdrahtetes
+> `postgres:17-alpine` wäre auf jedem Rechner mit älterem Client rot — aus einem Grund, der mit dem
+> Prüfling nichts zu tun hat.
 
 ### Legende
 
 - **grün** — geprüft und bestanden.
-- **übersprungen** — die Voraussetzung fehlt (kein Docker-Daemon). Wird als übersprungen gemeldet,
-  nie als bestanden.
+- **übersprungen** — die Voraussetzung fehlt (kein Docker-Daemon **oder** kein `pg_dump` auf dem
+  Rechner). Wird als übersprungen gemeldet, nie als bestanden. Mit `BIFROST_REQUIRE_POSTGRES=1` ist
+  beides ein Fehlschlag.
 - **nicht prüfbar** — der Fall lässt sich mit dem vorhandenen Code oder den vorhandenen Artefakten
   nicht herstellen. Kein Test tut so, als ob.
 
@@ -191,16 +239,28 @@ Der Bestand deckt ab: `Identities`, `Roles`, `Profiles`, `ConfigVersions` (versc
 `ApiKeys`, `UiUsers` — und `UpstreamOAuthTokens` (verschlüsselt), sobald der Fixturestand die
 Tabelle kennt.
 
-### 4.5 Backup und Restore für PostgreSQL
+### 4.5 Backup und Restore für PostgreSQL — was Feld 9 *nicht* abdeckt
 
-**Nicht implementiert.** ADR-0024 E2 sieht `pg_dump`/`pg_restore` vor; `PostgresBackup` weist jeden
-Aufruf mit einer klaren Meldung ab, ohne stillen Rückfall auf einen Zeilenexport. Die Matrixfelder 6
-bis 8 existieren für PostgreSQL deshalb nicht. Getestet ist allein die **Absage** — ein Test, der
-sie als Erfolg feierte, wäre eine Fertigmeldung ohne Deckung.
+**Implementiert** (ADR-0024 E2, `pg_dump --format=custom` / `pg_restore --single-transaction`).
+Die Lücke aus der ersten Fassung dieses Dokuments ist geschlossen; §2.1 zählt auf, was jetzt geprüft
+wird. Was weiterhin **nicht** geprüft ist:
 
-Damit ist der Weg „Backup einer älteren Version → Restore in den heutigen Stand" auf PostgreSQL
-heute **kein Produktpfad**. Betreiber sind auf `pg_dump` von Hand angewiesen; ADR-0024 E2 sagt das,
-die Matrix bestätigt es.
+- **„Backup einer älteren Version → Restore in den heutigen Stand" auf PostgreSQL.** Feld 9 sichert
+  und stellt auf dem *heutigen* Schemastand wieder her. Das SQLite-Gegenstück (Feld 6) fährt ein
+  Archiv von einem älteren Stand ein und migriert danach; auf PostgreSQL fehlt dieses Feld noch. Der
+  Weg dahin ist derselbe Harness — nur mit einem Fixturestand statt einer vollmigrierten Datenbank.
+- **Ein `pg_restore`, der mittendrin abbricht.** `--single-transaction` sagt zu, dass die Datenbank
+  dann unberührt bleibt; das ist eine Zusage von PostgreSQL, keine dieser Suite. Herbeigeführt wird
+  der Abbruch nicht.
+- **Ein Wechsel der PostgreSQL-Hauptversion zwischen Sicherung und Wiederherstellung.** Der Test
+  fährt beides gegen denselben Container.
+- **Ein Restore, dessen `pg_dump` älter ist als der Zielserver.** Die Werkzeugversion wird im Test
+  bewusst an den Server angeglichen (§2.1); im Betrieb ist die Diskrepanz ein Fehlerfall, den die
+  Meldung des Werkzeugs trägt und den kein Test hier nachstellt.
+
+Ohne installiertes Clientpaket bleibt es auf einer Instanz beim alten Zustand: Der Aufruf lehnt mit
+einer Meldung ab, und Sichern ist Betriebspflicht. Der Unterschied zu vorher ist, dass das jetzt
+behebbar ist, statt auf eine Ausbaustufe zu warten.
 
 ### 4.6 Restore auf einem anderen Rechner oder unter einem anderen Benutzer
 
@@ -228,27 +288,32 @@ Der M2-Vertrag §7 nennt diese Grenze bereits, und sie gilt hier unverändert:
   Suite nicht.
 - **Volle Platte** wird in `RestoreService` vorab geprüft, aber nicht im Ernstfall provoziert.
 
-### 4.8 Der Rückweg: kein Downgrade, und auf PostgreSQL auch kein Vor-Migrationsbackup
+### 4.8 Der Rückweg: kein Downgrade, und auf PostgreSQL nur mit den Werkzeugen
 
 `Down`-Migrationen werden weder gefahren noch geprüft. Der Rückweg aus einem missglückten Upgrade
 ist das **Vor-Migrationsbackup** aus ADR-0024 E7, nicht ein Downgrade.
 
-Verdrahtet ist es: `OperationsRegistration.AddBifrostOperations` (aufgerufen in `Program.cs`)
-registriert `PreMigrationBackupService` und setzt `PreMigrationBackupRequirement.Always` — aber
-**nur, wenn der Provider SQLite ist und eine Datei dahinter steht**. Für PostgreSQL bleibt es bei
-`WhenAvailable`, und weil `PostgresBackup` jeden Aufruf abweist, entsteht dort **kein**
-Vor-Migrationsbackup: Der Start warnt und migriert trotzdem.
+Verdrahtet ist es in `OperationsRegistration.AddBifrostOperations` (aufgerufen in `Program.cs`).
+`PreMigrationBackupRequirement.Always` gilt
 
-Damit gilt für die Matrix: Auf PostgreSQL läuft jedes Upgrade **ohne den Rückweg**, den ADR-0024 E7
-zusagt. Das ist die direkte Folge von §4.5 und der Grund, warum dort „migriert ohne Datenverlust"
-(Feld 4) und „hat im Fehlerfall einen Ausweg" zwei verschiedene Aussagen sind — geprüft ist nur die
-erste.
+- bei **SQLite**, sobald eine Datei hinter der Verbindung steht;
+- bei **PostgreSQL**, sobald `pg_dump` und `pg_restore` erreichbar sind — geprüft **einmal beim
+  Zusammenbau**, mit Dateisystemzugriffen und ohne Prozessstart.
 
-Zusätzlich prüft **kein Test im Repository** die Verdrahtung selbst: dass ein hochfahrender Server
-den Backuphaken wirklich gerufen bekommt. Dass der Haken gerufen *wird*, wenn er da ist, prüft WP2.3
-(`MigrationSafetyTests.Pre_migration_backup_hook_is_called_before_the_migration`); dass die
-DI-Zusammensetzung ihn liefert, prüft niemand. Ein solcher Test braucht den Serverstart und gehört
-deshalb nicht in dieses Paket.
+Fehlen die Werkzeuge, bleibt es bei `WhenAvailable`: Der Start warnt und migriert. `Always` wäre
+dort kein Schutz, sondern ein **Startverbot** — der Server käme nach einem Upgrade nicht mehr hoch,
+aus einem Grund, der mit seinen Daten nichts zu tun hat.
+
+Damit gilt für die Matrix: Auf einer PostgreSQL-Instanz **mit** Clientpaket hat ein Upgrade den
+Rückweg, den ADR-0024 E7 zusagt; **ohne** läuft es weiterhin ohne. Die Unterscheidung ist geprüft
+(`PostgresPreMigrationBackupWiringTests`), und dass die Sicherung dann wirklich entsteht und ein
+gültiges Archiv ist, ebenfalls (`PostgresPreMigrationBackupTests`).
+
+> **Nachtrag:** Die frühere Feststellung „kein Test prüft die Verdrahtung selbst" ist damit für die
+> DI-Zusammensetzung erledigt. **Nicht** erledigt ist der zweite Teil: dass ein *hochfahrender
+> Server* den Backuphaken wirklich gerufen bekommt. Dass der Haken gerufen *wird*, wenn er da ist,
+> prüft WP2.3 (`MigrationSafetyTests.Pre_migration_backup_hook_is_called_before_the_migration`); der
+> Weg über den echten Serverstart fehlt weiterhin.
 
 ### 4.9 Datenmenge und Laufzeit
 
@@ -263,10 +328,12 @@ Auditzeilen in ein Sperren- oder Zeitproblem läuft, fällt hier nicht auf. Die 
 | Feld | Voraussetzung |
 |---|---|
 | Upgrade über veröffentlichte Releases | Abgenommenes M1 und ein Releaselauf; danach Fixtures aus echten Artefakten (§4.2, §4.3) |
-| Backup/Restore auf PostgreSQL | `pg_dump`/`pg_restore` in `PostgresBackup` (ADR-0024 E2) |
+| ~~Backup/Restore auf PostgreSQL~~ | **erledigt** — `pg_dump`/`pg_restore` in `PostgresBackup` (ADR-0024 E2), siehe §2.1 |
+| „Backup einer älteren Version" auf PostgreSQL | Ein Fixturestand statt einer vollmigrierten Datenbank in `PostgresBackupRestoreTests` (§4.5) |
 | Rückwärts-Tor greift am Schema | Mindestversion beim Sichern aus dem Migrationsstand ableiten (§4.1) |
 | `AuditEvents`/`Assets` im Bestand | Ein Schreibpfad, der gegen ein historisches Schema arbeitet — oder Release-Fixtures (§4.4) |
 | Umzug auf einen anderen Rechner | Ein Zertifikat für den Schlüsselring (`BIFROST_KEYRING_CERT_PATH`) und ein Test, der ihn wechselt (§4.6) |
 | DataProtection-Bezeichner festgenagelt | Ein Test in einem Paket, das `src/**` und die bestehenden Testprojekte anfassen darf (§4.3) |
-| Vor-Migrationsbackup auf PostgreSQL | `pg_dump` (§4.5); danach `PreMigrationBackupRequirement.Always` auch dort (§4.8) |
+| ~~Vor-Migrationsbackup auf PostgreSQL~~ | **erledigt** — mit erreichbarem `pg_dump` gilt dort `Always` (§4.8) |
+| `postgresql-client` im mitgelieferten Image | Eine Entscheidung zum Image-Gewicht gegen das 350-MB-Gate; bis dahin installiert der Betreiber es selbst (§4.8) |
 | Backuphaken im Serverstart belegt | Ein Test über den echten Serverstart — gehört in `Bifrost.Integration.Tests` (§4.8) |

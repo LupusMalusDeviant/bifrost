@@ -219,6 +219,17 @@ jobs:
       - name: Pull image for the container isolation tests
         run: docker pull alpine:3.20
 
+      # Wie in ci.yml: ohne pg_dump/pg_restore ueberspringen sich die PostgreSQL-Backupfelder
+      # (ADR-0024 E2), und BIFROST_REQUIRE_POSTGRES=1 macht daraus einen Fehlschlag.
+      - name: PostgreSQL-Clientwerkzeuge bereitstellen (pg_dump/pg_restore)
+        run: |
+          if ! command -v pg_dump >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends postgresql-client
+          fi
+          pg_dump --version
+          pg_restore --version
+
       - name: Test with coverage
         env:
           # Wie in ci.yml: Auf Linux sind Docker und Postgres da — ein Skip waere dort ein stiller

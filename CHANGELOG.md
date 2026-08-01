@@ -11,6 +11,51 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt
+
+- **Backup und Restore für PostgreSQL** (FR-P020, ADR-0024 E2) — bis hierher die größte offene
+  Lücke aus M2. `bifrost backup` und `bifrost restore` arbeiten dort über `pg_dump --format=custom`
+  und `pg_restore --single-transaction`; Archivformat, Manifest, Prüfsummen, Key-Ring und
+  Verschlüsselung sind dieselben wie bei SQLite. Die Nutzlast heißt `database/bifrost.dump`.
+  - **Das Format ist eine Entscheidung, keine Vorliebe:** `custom` ist eine Datei statt eines
+    Verzeichnisbaums, es ist *Daten* statt eines auszuführenden SQL-Skripts (ein Archiv ist
+    Fremdeingabe), und es ist das einzige Format, mit dem `pg_restore --single-transaction` geht —
+    entweder die Wiederherstellung ist ganz durch, oder die Datenbank ist unberührt (E5).
+  - **Voraussetzung: `pg_dump` und `pg_restore` auf dem Wirt.** Fehlen sie, lehnt der Aufruf mit
+    einer Meldung ab, die sagt, *was* fehlt und *wo* man es herbekommt. **Einen Zeilenexport als
+    Ersatz gibt es nicht** und wird es nicht geben: Er wäre eine zweite, schlechter geprüfte
+    Sicherung derselben Daten, und der Unterschied fiele erst beim Zurückspielen auf.
+    `BIFROST_POSTGRES_BIN` benennt ein Verzeichnis; ist es gesetzt, wird ausschließlich dort gesucht.
+  - **Das Passwort geht über eine `PGPASSFILE`** (auf Unix `0600`, nach dem Aufruf gelöscht) und
+    nicht über die Kommandozeile — die steht in der Prozessliste jedes Benutzers auf dem Rechner.
+
+### Geändert
+
+- **Vor-Migrationssicherung auf PostgreSQL** (ADR-0024 E7): Der Start prüft einmal beim Hochfahren,
+  ob die Werkzeuge erreichbar sind. Sind sie es, gilt dort jetzt `PreMigrationBackupRequirement.
+  Always` — **ohne Sicherung keine Migration**, dieselbe Zusage wie bei SQLite. Sind sie es nicht,
+  bleibt es bei `WhenAvailable`: Der Start warnt und migriert. Ein `Always`, das an einem fehlenden
+  Werkzeug scheitert, wäre kein Schutz, sondern ein Startverbot — deshalb wird gemessen statt
+  angenommen.
+- Damit ist die Aussage „auf PostgreSQL läuft jedes Upgrade ohne Rückweg" **an eine Bedingung
+  geknüpft** statt allgemein wahr. Ohne Clientpaket gilt sie unverändert weiter.
+- **CI und Releaselauf installieren `postgresql-client`**, falls der Runner ihn nicht mitbringt.
+  Ohne ihn überspringen sich die neuen Backupfelder selbst — und ein übersprungener Nachweis ist auf
+  Linux ein stiller Ausfall, kein Ergebnis. Kein Gate wurde dabei angehoben oder gelockert.
+
+### Offen und ausdrücklich nicht entschieden
+
+- **Ob `postgresql-client` in das mitgelieferte Container-Image gehört.** Ohne ihn ist das Feature
+  *im Container* nicht benutzbar, obwohl es im Code lebt. Das vollständige Clientpaket zieht auf
+  Ubuntu die Perl-Kette nach (`libperl`, `perl-modules`), weil `/usr/bin/pg_dump` dort ein
+  Perl-Wrapper ist — nach den Paketangaben rund 57 MB, womit das 350-MB-Gate reißen würde. Der
+  schlanke Weg (nur die beiden Programme plus `libpq5` aus einer Builder-Stufe) liegt bei rund
+  4–5 MB. **Beides ist gerechnet, nicht gemessen**, und die Entscheidung steht aus; das Dockerfile
+  ist unverändert.
+- **„Backup einer älteren Version → Restore in den heutigen Stand" auf PostgreSQL.** Das
+  SQLite-Gegenstück ist geprüft, das PostgreSQL-Feld noch nicht — siehe
+  `docs/upgrade-matrix.md` §4.5.
+
 ### Dokumentation
 
 - **Englische Kernseiten** unter `docs/en/`: Quickstart, Betrieb, Sicherheit, Fehlersuche,

@@ -37,8 +37,10 @@ you would plan a deployment, and each one is easy to discover too late.
 
 | Limitation | Consequence | Detail |
 |---|---|---|
-| **There is no PostgreSQL backup.** `bifrost backup` refuses the call with a message rather than silently exporting rows | On PostgreSQL, backup is entirely your own responsibility: `pg_dump` **plus** the `keys/` directory. FR-P020 is open for Postgres | [Backup](#backup-and-restore), [ADR-0024 E2](../adr/0024-backup-restore-und-migrationssicherheit.md), [upgrade matrix §4.5](../upgrade-matrix.md) |
-| **On PostgreSQL, no pre-migration backup is taken.** The start warns and migrates anyway | **Every upgrade on PostgreSQL runs without a way back.** Take your own dump before every upgrade — this is an operational obligation, not a suggestion | [Upgrades](#upgrades), [upgrade matrix §4.8](../upgrade-matrix.md) |
+| **PostgreSQL backup needs `pg_dump`/`pg_restore` on the host.** Without them the call is refused with a message rather than silently exporting rows | Install the PostgreSQL client package (or set `BIFROST_POSTGRES_BIN`). Without it, backup on PostgreSQL stays entirely your own responsibility: `pg_dump` **plus** the `keys/` directory | [Backup](#backup-and-restore), [ADR-0024 E2](../adr/0024-backup-restore-und-migrationssicherheit.md), [upgrade matrix §4.5](../upgrade-matrix.md) |
+| **Whether the shipped container image carries `postgresql-client` is an open decision** (image weight vs. the 350 MB CI gate) | If it does not, PostgreSQL backup inside the container needs the client mounted or installed. Everything else keeps running; only backup and restore report the refusal | [Backup](#backup-and-restore) |
+| **Without those tools, no pre-migration backup is taken on PostgreSQL.** The start warns and migrates anyway | **That upgrade runs without a way back.** With the tools present the server demands the backup (`Always`); without them, take your own dump before every upgrade | [Upgrades](#upgrades), [upgrade matrix §4.8](../upgrade-matrix.md) |
+| **A `pg_restore` cannot be undone by moving files back.** Its safety net is the pre-backup taken beforehand, plus `--single-transaction` while it runs | On SQLite a failed switch-over rolls back; on PostgreSQL a *completed* restore is final. Keep the pre-backup | [Backup](#backup-and-restore) |
 | **`AllowPrivateTargets` is still undecided for *existing* HTTP upstreams — which means allowed** | An MCP-over-HTTP upstream configured before the switch existed still reaches private, loopback and link-local addresses. `null` means "not decided", not "forbidden" | [Private network targets](#private-network-targets) |
 | **Config import and restore keep `AllowPrivateTargets` as it was** | Deliberate: those paths reproduce an existing configuration, they do not create one. A restore that silently tightened a setting would change what it claims to restore. Newly created upstreams *do* get an explicit `false` | [Private network targets](#private-network-targets) |
 | **`CODEOWNERS` enforces nothing on its own** | Without "Require review from Code Owners" in the branch protection rules for `main`, the security-gate approval requirement is documented but **not enforced** | [Security](security.md#the-approval-requirement-is-not-enforced-yet) |
@@ -442,20 +444,35 @@ overwriting, a backup of the previous state is taken automatically — no overwr
 (ADR-0024 E5). **A restore needs a maintenance window:** it swaps database and key ring, which
 cannot be kept atomic under live writes. Stop, restore, start.
 
-### PostgreSQL: there is no backup
+### PostgreSQL: needs `pg_dump` and `pg_restore`
 
-**`bifrost backup` does not support PostgreSQL.** `pg_dump` is the intended path
-([ADR-0024 E2](../adr/0024-backup-restore-und-migrationssicherheit.md)); until it is built, the
-command **refuses** with a message rather than silently exporting rows. Refusing is the right
-behaviour — but it means FR-P020 is **not met for PostgreSQL**.
+`bifrost backup` and `bifrost restore` work on PostgreSQL too, via `pg_dump`/`pg_restore`
+([ADR-0024 E2](../adr/0024-backup-restore-und-migrationssicherheit.md)). Archive format, manifest,
+checksums, key ring and encryption are the same as for SQLite; only the payload under `database/`
+is named `bifrost.dump` instead of `bifrost.db`.
 
-For PostgreSQL, therefore, and this is an operational obligation:
+The format is **`custom`** (`pg_dump --format=custom`): one file rather than a directory tree, data
+rather than an executable SQL script, and the only format that supports `pg_restore
+--single-transaction` — either the restore completes or the database is untouched (ADR-0024 E5).
 
-1. `pg_dump` the database yourself, on your own schedule.
-2. Take `keys/` from the data directory in the same run. **They only work together** — the dump
-   without the key ring gives you rows whose contents cannot be decrypted.
-3. Do both **before every upgrade**, because the automatic pre-migration backup does not exist
-   there either (see [Upgrades](#upgrades)).
+**If the tools are missing, that is an error with a message — never a silent row export.** The
+message names what is missing and where to get it. Install the PostgreSQL client package
+(`apt-get install postgresql-client`, `apk add postgresql17-client`, `dnf install postgresql`,
+`brew install libpq`), or point `BIFROST_POSTGRES_BIN` at the directory holding them. When that
+variable is set, **only** that directory is searched.
+
+The client major version must be at least the server's — `pg_dump` refuses to dump a newer server.
+
+The password reaches `pg_dump` through a `PGPASSFILE` created for the duration of the call (mode
+`0600` on Unix) and deleted afterwards — never on the command line, which is visible in every
+user's process list.
+
+> **The way back after a PostgreSQL restore is the pre-backup, not an undo.** For SQLite the old
+> file is moved aside and can be moved back; a `pg_restore` cannot be taken back that way. If it
+> aborts, PostgreSQL rolls it back itself (single transaction) — but once it has completed, only
+> the archive taken beforehand helps.
+
+> The German page is authoritative: [`docs/operations.md`](../operations.md).
 
 ### Exit codes
 
@@ -508,17 +525,18 @@ That backup is **unencrypted** by default — it sits in the same protection dom
 came from. `BIFROST_BACKUP_PASSPHRASE` encrypts it, at the price of being worthless without that
 passphrase.
 
-> **On PostgreSQL, no pre-migration backup is created.** The start warns and migrates anyway.
-> **Every upgrade on PostgreSQL therefore runs without a way back.** This is a direct consequence
-> of the missing PostgreSQL backup: `PreMigrationBackupRequirement` stays at `WhenAvailable` there
-> rather than `Always`, because `Always` would be a start prohibition, not a promise. Take your own
-> `pg_dump` plus `keys/` before every upgrade — nothing in the product will do it for you, and
-> nothing will stop you if you forget.
+> **On PostgreSQL it depends on the tools.** At startup the server checks once whether `pg_dump`
+> and `pg_restore` are reachable. If they are, `PreMigrationBackupRequirement` is `Always` — no
+> migration without a backup. If they are not, it stays at `WhenAvailable`: the start warns and
+> migrates anyway, and **that upgrade runs without a way back**. `Always` on an instance without the
+> tools would be a start prohibition rather than a promise, so the check measures instead of
+> assuming. Either install the client package, or take your own `pg_dump` plus `keys/` before every
+> upgrade — nothing will stop you if you forget.
 
 ### What the upgrade harness proves — and what it does not
 
-`tests/Bifrost.Upgrade.Tests` runs 43 cases across 15 published migration states × 2 providers, with
-real ciphertext written by the real stores. Full detail:
+`tests/Bifrost.Upgrade.Tests` runs 50 cases across 15 published migration states × 2 providers, plus
+the archive path on both providers, with real ciphertext written by the real stores. Full detail:
 [`docs/upgrade-matrix.md`](../upgrade-matrix.md) (German). The limits that matter operationally:
 
 - **Old schema, today's code.** The fixture schema is genuinely old; the code that fills it is

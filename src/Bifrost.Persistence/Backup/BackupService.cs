@@ -32,9 +32,13 @@ public sealed class BackupService : IBackupService
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.TargetPath);
 
-        if (_options.Provider == DatabaseProvider.Postgres)
+        // ADR-0024 E2: Fehlt das Werkzeug, endet der Aufruf HIER — bevor eine temporäre Datei
+        // entstanden ist. Ein "kein pg_dump" nach dem halben Archiv wäre dieselbe Absage mit
+        // Aufräumarbeit.
+        if (_options.Provider == DatabaseProvider.Postgres
+            && request.Sections.HasFlag(BackupSections.Database))
         {
-            throw PostgresBackup.NotImplemented();
+            PostgresTools.Require(_options.PostgresToolDirectory);
         }
 
         var targetPath = Path.GetFullPath(request.TargetPath);
@@ -60,7 +64,8 @@ public sealed class BackupService : IBackupService
         var work = Directory.CreateTempSubdirectory("bifrost-backup-");
         try
         {
-            var (entries, migrationId) = CollectEntries(request.Sections, work.FullName);
+            var (entries, migrationId) = await CollectEntriesAsync(request.Sections, work.FullName, ct)
+                .ConfigureAwait(false);
             var manifest = BuildManifest(entries, migrationId, request.Passphrase, out var cipher);
 
             await WriteArchiveAsync(tempArchive, manifest, entries, cipher, ct).ConfigureAwait(false);
@@ -97,18 +102,37 @@ public sealed class BackupService : IBackupService
 
     private sealed record PlannedEntry(string Name, string SourceFile);
 
-    private (List<PlannedEntry> Entries, string? MigrationId) CollectEntries(
-        BackupSections sections, string workDirectory)
+    private async Task<(List<PlannedEntry> Entries, string? MigrationId)> CollectEntriesAsync(
+        BackupSections sections, string workDirectory, CancellationToken ct)
     {
         var entries = new List<PlannedEntry>();
         string? migrationId = null;
 
         if (sections.HasFlag(BackupSections.Database))
         {
-            var snapshot = Path.Combine(workDirectory, "database.db");
-            SqliteSnapshot.Create(_options.ResolvedSqliteFile, snapshot);
-            migrationId = SqliteSnapshot.ReadLatestMigration(snapshot);
-            entries.Add(new PlannedEntry(BackupLayout.DatabaseEntry, snapshot));
+            if (_options.Provider is DatabaseProvider.Postgres)
+            {
+                // ADR-0024 E2: pg_dump im custom-Format. Der Migrationsstand wird VOR dem Dump
+                // gelesen — danach ist die Verbindung nicht mehr nötig, und ein Manifest ohne Stand
+                // ließe das Rückwärts-Tor aus E6 ins Leere laufen.
+                var connectionString = _options.RequiredPostgresConnectionString;
+                migrationId = await PostgresBackup
+                    .ReadLatestMigrationAsync(connectionString, ct)
+                    .ConfigureAwait(false);
+
+                var dump = Path.Combine(workDirectory, "database.dump");
+                await PostgresBackup
+                    .CreateAsync(connectionString, dump, _options.PostgresToolDirectory, ct)
+                    .ConfigureAwait(false);
+                entries.Add(new PlannedEntry(BackupLayout.DatabaseDumpEntry, dump));
+            }
+            else
+            {
+                var snapshot = Path.Combine(workDirectory, "database.db");
+                SqliteSnapshot.Create(_options.ResolvedSqliteFile, snapshot);
+                migrationId = SqliteSnapshot.ReadLatestMigration(snapshot);
+                entries.Add(new PlannedEntry(BackupLayout.DatabaseEntry, snapshot));
+            }
         }
 
         if (sections.HasFlag(BackupSections.KeyRing))

@@ -62,18 +62,18 @@ public sealed partial class PreMigrationBackupService : IPreMigrationBackup
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        if (BifrostDbOptions.IsPostgres(context.Provider))
+        var postgres = BifrostDbOptions.IsPostgres(context.Provider);
+
+        if (postgres && !PostgresTools.TryLocate(_options.PostgresToolDirectory, out _))
         {
-            // Kein Rückfall auf einen Zeilenexport (ADR-0024 E2). Der Dienst kann es nicht, also
-            // sagt er das — statt eine Sicherung zu melden, die keine ist.
-            return new PreMigrationBackupOutcome(
-                false,
-                null,
-                "Für PostgreSQL gibt es in dieser Ausbaustufe keine Sicherung über den Backupdienst "
-                + "(ADR-0024 E2, pg_dump ist nicht implementiert). Vor der Migration von Hand sichern.");
+            // Kein Rückfall auf einen Zeilenexport (ADR-0024 E2). Der Dienst kann es ohne das
+            // Werkzeug nicht, also sagt er das — statt eine Sicherung zu melden, die keine ist.
+            return new PreMigrationBackupOutcome(false, null, PostgresTools.MissingMessage);
         }
 
-        if (context.DatabaseFilePath is null)
+        // Bei PostgreSQL liegt die Datenbank nicht im Datenverzeichnis; ein fehlender Dateipfad ist
+        // dort der Normalfall und kein Hindernis.
+        if (!postgres && context.DatabaseFilePath is null)
         {
             // Datenbank im Arbeitsspeicher: Sie überlebt den Prozess nicht, also gibt es nichts zu
             // sichern — und eine erfundene Sicherung wäre schlimmer als keine.

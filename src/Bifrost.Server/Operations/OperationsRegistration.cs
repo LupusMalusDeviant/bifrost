@@ -45,6 +45,10 @@ public static class OperationsRegistration
             Provider = provider,
             SqliteFilePath = sqliteFile,
 
+            // pg_dump und pg_restore sichern GENAU die Datenbank, gegen die der Server läuft — nicht
+            // eine aus dem Datenverzeichnis geratene.
+            PostgresConnectionString = provider is DatabaseProvider.Postgres ? connectionString : null,
+
             // ADR-0024 E6: Woran der Restore erkennt, dass ein Archiv aus einer neueren Instanz
             // stammt. Ohne diese Menge kann er es nicht erkennen und sagt das auch.
             KnownMigrationIds = KnownMigrations.For(provider),
@@ -59,15 +63,12 @@ public static class OperationsRegistration
         services.AddSingleton<IRestoreService>(sp => new RestoreService(
             backupOptions, sp.GetRequiredService<IBackupService>()));
 
-        // ADR-0024 E7: Vor einer schemaändernden Migration entsteht bei SQLite automatisch eine
-        // Sicherung. 'Always' heißt: ohne Sicherung keine Migration.
+        // ADR-0024 E7: Vor einer schemaändernden Migration entsteht automatisch eine Sicherung.
+        // 'Always' heißt: ohne Sicherung keine Migration.
         services.AddSingleton<IPreMigrationBackup, PreMigrationBackupService>();
         services.AddSingleton(new MigrationSafetyOptions
         {
-            // Für PostgreSQL und für eine Datenbank im Arbeitsspeicher kann der Dienst nichts
-            // sichern (ADR-0024 E2 / keine Datei). 'Always' wäre dort keine Zusage, sondern ein
-            // Startverbot — der Start warnt dann und macht weiter.
-            PreMigrationBackup = provider is DatabaseProvider.Sqlite && sqliteFile is not null
+            PreMigrationBackup = RequirePreMigrationBackup(provider, sqliteFile)
                 ? PreMigrationBackupRequirement.Always
                 : PreMigrationBackupRequirement.WhenAvailable,
         });
@@ -103,6 +104,31 @@ public static class OperationsRegistration
 
         return services;
     }
+
+    /// <summary>
+    /// Die Entscheidung zu ADR-0024 E7: Darf der Start auf einer Sicherung <b>bestehen</b>?
+    /// <para>
+    /// <b>SQLite:</b> ja, sobald eine Datei dahintersteht. Für eine Datenbank im Arbeitsspeicher
+    /// gibt es nichts zu sichern.
+    /// </para>
+    /// <para>
+    /// <b>PostgreSQL:</b> ja — <b>aber nur, wenn <c>pg_dump</c> und <c>pg_restore</c> wirklich
+    /// erreichbar sind.</b> Das ist der eigentliche Punkt dieser Methode. 'Always' bedeutet „ohne
+    /// Sicherung keine Migration"; auf einer Instanz ohne die Werkzeuge wäre das kein Schutz,
+    /// sondern ein Startverbot: Der Server käme nach einem Upgrade nicht mehr hoch, und zwar aus
+    /// einem Grund, der mit seinen Daten nichts zu tun hat. Deshalb wird hier <b>gemessen statt
+    /// angenommen</b> — einmal beim Zusammenbau, mit Dateisystemzugriffen und ohne Prozessstart.
+    /// </para>
+    /// <para>
+    /// Fehlen die Werkzeuge, bleibt es bei <c>WhenAvailable</c>: Der Start warnt und migriert. Das
+    /// ist derselbe Zustand wie vorher — nur ist er jetzt behebbar, indem man das Clientpaket
+    /// installiert, statt auf eine Ausbaustufe zu warten.
+    /// </para>
+    /// </summary>
+    private static bool RequirePreMigrationBackup(DatabaseProvider provider, string? sqliteFile)
+        => provider is DatabaseProvider.Postgres
+            ? PostgresTools.TryLocate(out _)
+            : sqliteFile is not null;
 
     /// <summary>
     /// Der Dateipfad hinter einer SQLite-Verbindungszeichenfolge; <c>null</c> für eine Datenbank im
