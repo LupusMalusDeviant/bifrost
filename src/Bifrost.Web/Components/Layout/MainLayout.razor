@@ -5,30 +5,49 @@
         <div class="layout">
             <nav class="sidebar">
                 <BrandMark />
-                @* Ueberschriften statt einer blossen Trennlinie: Die untere Haelfte ist nur fuer
-                   Admins sichtbar, und ohne Beschriftung sieht eine Liste, die bei manchen Nutzern
-                   kuerzer ist, nach einem Fehler aus statt nach einer Berechtigung. *@
+                @*
+                    Die Navigation kommt aus UiNavigation.All — der Zuordnung Basic/Advanced an
+                    genau einer Stelle. Zwei Dinge daran sind Absicht:
+
+                    1. GERENDERT WIRD IMMER ALLES, was die Rolle erreichen darf. Der Modus
+                       entscheidet hier nichts; er wirkt erst im Stylesheet ueber
+                       data-ui-section und das Attribut am Wurzelelement. Der Server erfaehrt den
+                       Modus also nie und kann ihn deshalb nicht mit einer Berechtigung
+                       verwechseln.
+                    2. DIE ROLLE PRUEFT AuthorizeView, nicht dieses Layout. Jeder Eintrag nennt
+                       nur die Policy seiner Seite; ob sie erfuellt ist, sagt der echte
+                       Autorisierungsdienst. Eine eigene Rollenlogik im Menue waere eine zweite
+                       Wahrheit — und die sichtbare waere die falsche.
+
+                    Ueberschriften statt einer blossen Trennlinie: Eine Liste, die bei manchen
+                    Nutzern kuerzer ist, sieht ohne Beschriftung nach einem Fehler aus statt nach
+                    einer Berechtigung.
+                *@
                 <div class="nav">
-                    <div class="nav-label">Betrieb</div>
-                    <NavLink href="/" Match="NavLinkMatch.All">Dashboard</NavLink>
-                    <NavLink href="/servers">Server</NavLink>
-                    <NavLink href="/tools">Tool-Explorer</NavLink>
-                    <NavLink href="/logs">Audit-Log</NavLink>
-                    <NavLink href="/approvals">Freigaben</NavLink>
-                    <NavLink href="/tasks">Vorgänge</NavLink>
-                    <AuthorizeView Policy="@UiPolicies.Admin" Context="admin">
-                        <div class="nav-label">Verwaltung</div>
-                        <NavLink href="/rbac">RBAC</NavLink>
-                        <NavLink href="/profiles">Profile &amp; Token</NavLink>
-                        <NavLink href="/assets">Skills / Assets</NavLink>
-                        <NavLink href="/guardrails">Guardrails</NavLink>
-                        <NavLink href="/packages">Connector-Pakete</NavLink>
-                        <NavLink href="/webhooks">Webhooks</NavLink>
-                        <NavLink href="/users">UI-Nutzer</NavLink>
-                        <NavLink href="/operations">Betrieb</NavLink>
+                    <AuthorizeView Policy="@UiNavigation.BasicHeadingPolicy" Context="basicGroup">
+                        <div class="nav-label" data-ui-section="basic">Betrieb</div>
                     </AuthorizeView>
+                    @foreach (var entry in UiNavigation.ForSection(UiNavSection.Basic))
+                    {
+                        <AuthorizeView Policy="@entry.Policy" Context="nav">
+                            @NavEntry(entry)
+                        </AuthorizeView>
+                    }
+
+                    @* Die Ueberschrift traegt dieselbe Section wie ihre Eintraege — sonst bliebe
+                       im Basic-Modus eine Ueberschrift ohne Inhalt stehen. *@
+                    <AuthorizeView Policy="@UiNavigation.AdvancedHeadingPolicy" Context="advGroup">
+                        <div class="nav-label" data-ui-section="advanced">Feinsteuerung</div>
+                    </AuthorizeView>
+                    @foreach (var entry in UiNavigation.ForSection(UiNavSection.Advanced))
+                    {
+                        <AuthorizeView Policy="@entry.Policy" Context="nav">
+                            @NavEntry(entry)
+                        </AuthorizeView>
+                    }
                 </div>
                 <div class="sidebar-footer">
+                    <UiModeSwitch />
                     <div>@context.User.Identity?.Name</div>
                     <div class="badge badge-muted" style="margin:.3rem 0">@RoleName(context)</div>
                     <form action="/auth/logout" method="post">
@@ -50,4 +69,19 @@
 @code {
     private static string RoleName(AuthenticationState state)
         => state.User.FindFirst(UiPolicies.RoleClaim)?.Value ?? "?";
+
+    /// <summary>
+    /// Ein Menuepunkt. Untereintraege zeigen mit einer Sprungmarke in eine Seite hinein und
+    /// bekommen deshalb kein <c>NavLink</c>: Dessen Aktiv-Erkennung vergleicht Pfade und wuerde
+    /// bei drei Marken derselben Seite drei aktive Eintraege markieren.
+    /// </summary>
+    private static RenderFragment NavEntry(UiNavEntry entry) => entry.IsSubEntry
+        ? @<a href="@entry.Route" class="nav-sub" data-ui-section="@Section(entry)">@entry.Label</a>
+        : @<NavLink href="@entry.Route"
+                    Match="@(entry.Route == "/" ? NavLinkMatch.All : NavLinkMatch.Prefix)"
+                    data-ui-section="@Section(entry)">@entry.Label</NavLink>;
+
+    /// <summary>Der Wert, den das Stylesheet liest. Kleinschreibung, damit der Selektor passt.</summary>
+    private static string Section(UiNavEntry entry)
+        => entry.Section is UiNavSection.Advanced ? "advanced" : "basic";
 }

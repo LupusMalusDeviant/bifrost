@@ -92,7 +92,46 @@ laufen parallel mit disjunkten Dateizonen; `release.yml` hat genau einen Schreib
 | WP1.4 Compose-/Installationspfade | `done` | drei `docker compose config`-Läufe grün, Volume-Name nachgeprüft |
 | WP1.5 Release-Automation | `done` | sechs Jobs zusammengeführt, `actionlint` auf `release.yml` ohne Befund, 783 Tests grün |
 
-**Die Abnahme steht aus.** Alle fünf Pakete sind implementiert und lokal geprüft, aber **kein
+**M1 ist am 2026-08-01 abgenommen.** `v0.12.0` ist veröffentlicht: Image unter
+`ghcr.io/lupusmalusdeviant/bifrost:0.12.0`, 13 Release-Anhänge (fünf CLI-Archive, sechs SBOMs,
+Prüfsummen, Signatur-Bündel), keyless signiert, sechs Attestationen, Trivy-Gates auf Image und
+CLI-Artefakten grün. Der Signatur-Selbsttest lief in **beide** Richtungen — der Negativtest verlangt
+ausdrücklich, dass Falsches durchfällt; ein Verifikationsschritt, der nur bestätigt, bestätigt auch
+Unsinn.
+
+### Was der erste Lauf gekostet hat: neun Befunde
+
+Drei Trockenläufe und drei Tag-Läufe. Keiner dieser Punkte wäre ohne echten Lauf sichtbar geworden.
+
+| # | Wo | Art |
+|---|---|---|
+| 1 | Push-Protection | erfundener Slack-Token im Negativkorpus, nicht aufgeteilt — Push blockiert |
+| 2 | Secret-Gate | Baseline kannte zwei Werte aus WP3.3 nicht |
+| 3 | Versionstest | Literal `"0.11.0"`, brach beim Versionssprung |
+| 4 | **Bootstrap** | **Produktfehler:** bei zwei gleichzeitigen Einlösungen verloren beide |
+| 5 | **WP0.4-Nachweis** | funktionierte unter Linux **noch nie** — 15-Zeichen-Grenze von `/proc/*/comm` |
+| 6 | WP0.4-Nachweis, zweiter Anlauf | Namenszählung auch danach unzuverlässig |
+| 7 | `supply-chain` | im Trockenlauf **immer** rot — der Trockenlaufmodus war selbst nie gelaufen |
+| 8 | `release` | `dist/*` erfasste Unterverzeichnisse; Release angelegt, Anhänge fehlten |
+| 9 | Backup-Test | Nebenläufigkeitsnachweis hing am Planer, nicht am Produkt |
+
+Der schärfste ist **Nummer 5**. Ausgerechnet das Paket, dessen ganzer Sinn „Nachweis statt
+Behauptung" war, hat auf einer ganzen Plattform nichts geprüft und trotzdem grün gemeldet. Er galt
+als belegt, weil er nur unter Windows gelaufen war — seit seiner Entstehung war nichts gepusht
+worden.
+
+**Nummer 8** ist die unangenehmste Sorte: Das Release wurde angelegt, die Anhänge fehlten — genau
+der Zustand, den der Kommentar über diesem Job vermeiden will („eine Zusage ohne Deckung"). Beim
+Beheben sind zwei Torposten dazugekommen, die es vorher nicht gab: leere Dateiliste bricht ab,
+doppelte Basisnamen brechen ab (`gh` hängt unter dem Basisnamen an — zwei gleichnamige Dateien
+überschrieben einander lautlos).
+
+**Der Satz „implementiert, aber nicht abgenommen" stand seit drei Meilensteinen im Protokoll und
+klang nach Formalie. Er war keine.**
+
+### Der ursprüngliche Vermerk (Stand bis 2026-07-31)
+
+Alle fünf Pakete sind implementiert und lokal geprüft, aber **kein
 einziger Releaselauf hat stattgefunden**. Was erst der erste echte Tag zeigt: arm64-Build unter
 QEMU, GHCR-Login und Push, die Form von `steps.push.outputs.digest`, Attestation und Signatur mit
 den gesetzten Berechtigungen, und ob die fünf CLI-Runner-Labels für dieses Repository verfügbar

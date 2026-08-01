@@ -11,6 +11,49 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
 
 ## [Unveröffentlicht]
 
+### Dokumentation
+
+- **Englische Kernseiten** unter `docs/en/`: Quickstart, Betrieb, Sicherheit, Fehlersuche,
+  Support/Releasekanäle sowie drei Tutorials (Einzelbetrieb, kleines Team,
+  freigabepflichtiges Deployment). Betrieb und Mitarbeit sind damit ohne Deutschkenntnisse möglich.
+- **Eine Sprachregel, und sie steht auf beiden Seiten** (`docs/i18n.md`): Bei Widerspruch gilt die
+  Fassung in der **Ursprungssprache** des Dokuments; jede Seite nennt sie im Kopf. Zwei Wahrheiten
+  über denselben Betriebsablauf sind schlimmer als eine Fassung in der falschen Sprache. Die
+  historischen ADRs bleiben ausdrücklich deutsch und sind **kein 1.0-Blocker**.
+- **Beitragsgrundlage:** `.github/CONTRIBUTING.md`, `.github/CODE_OF_CONDUCT.md`, Issue-Vorlagen
+  (Fehler, Wunsch, Doku) und eine PR-Vorlage. Die PR-Vorlage fragt nach dem **Nachweis**, nicht nach
+  grünen Tests, und nach dem, was bewusst nicht getan wurde.
+- **Produktlücken stehen jetzt dort, wo jemand danach sucht**, statt nur im Prüfprotokoll:
+  - `docs/operations.md` und `docs/en/operations.md` — dass `AllowPrivateTargets` für **bestehende**
+    HTTP-Upstreams unentschieden und damit **erlaubt** ist. Neu angelegte bekommen seit WP3.2 ein
+    ausdrückliches `false`; Konfigurationsimport und Restore lassen den Wert bewusst, wie er war,
+    weil sie eine Konfiguration reproduzieren und nicht erzeugen;
+  - dass auf PostgreSQL **jedes Upgrade ohne Rückweg** läuft (keine Sicherung, kein Downgrade);
+  - dass der Upgrade-Harness **altes Schema mit heutigem Code** prüft und eine Formatregression
+    eines früheren Builds prinzipiell nicht findet.
+- **Neun Befunde aus dem ersten Releaselauf** sind in die Fehlersuche übernommen worden, statt im
+  Statusdokument zu bleiben (`docs/en/troubleshooting.md`).
+- Veraltete Aussagen nachgezogen, jeweils als datierter Nachtrag statt durch Überschreiben:
+  `docs/security-gates.md` (CODEOWNERS existiert; der erste Releaselauf hat stattgefunden — G4 ist
+  gelaufen, aber weiterhin nie rot gewesen), `docs/upgrade-matrix.md` (§4.2 Releaseartefakt
+  vorhanden, §4.3 `CryptographicNamesTests` angelegt), `SECURITY.md` (`v0.12.0` in der
+  Versionstabelle).
+
+- **Sechs tote interne Verweise** repariert — Folgeschaden der Umbenennung: Die Textersetzung hat
+  `mcp-mcp` auch in Linkzielen zu `bifrost` gemacht, die Dateien heißen aber weiter
+  `0001-mcp-mcp-meta-gateway.md` (in `docs/acceptance/`, `docs/adr/0001`, `docs/adr/0003`,
+  `docs/plans/0001`). Geändert wurde ausschließlich der Pfad, kein Inhalt. Geprüft ist das jetzt
+  maschinell: **575 interne Verweise über 103 Markdown-Dateien lösen auf**, und der Prüfer wurde
+  gegen einen absichtlich kaputten Baum gegengeprüft — ein Linkprüfer, der nichts findet, findet
+  auch nichts, wenn etwas kaputt ist.
+
+### Gefunden, nicht geändert
+
+- `.env.example` und der Vorgabewert in `docker-compose.yml` nennen weiterhin `0.11.0`, während
+  `0.12.0` das aktuelle Release ist. Wer `.env.example` unverändert kopiert, zieht die
+  Vorgängerversion. Beide Dateien liegen außerhalb der Dokumentationszone; in `docs/en/quickstart.md`
+  steht der Hinweis, die Zeile selbst zu setzen.
+
 ## [0.12.0] — 2026-08-01
 
 Zwei Meilensteine: **Wiederherstellbarkeit** (sichern, zurückspielen, migrieren, diagnostizieren)

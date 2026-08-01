@@ -1,0 +1,77 @@
+name: Feature request
+description: Propose a capability or a change in behaviour.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project has a written requirements document (`docs/prd/`, German) and written
+        architecture decisions (`docs/adr/`, German). A proposal that contradicts an accepted
+        decision needs that decision revisited — which is a fine thing to propose, but it is a
+        different conversation from "add a flag".
+
+        **You do not need to read the German documents to file this.** Describe the problem; the
+        maintainer will map it onto the requirements. What helps most is the *problem*, in enough
+        detail that a different solution could be recognised as also solving it.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >-
+        What are you unable to do, or what goes wrong today? Concrete beats general —
+        "I cannot back up a PostgreSQL instance without writing my own pg_dump job" is actionable;
+        "backup should be better" is not.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like to happen
+      description: >-
+        Your proposed behaviour. Include what should happen in the failure case — this project
+        fails closed and loudly, and a proposal that only describes the happy path is half a
+        proposal.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried or considered instead
+      description: >-
+        Workarounds you are using today, and why they are not enough. This is often the part that
+        decides whether something gets built.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Gateway pipeline (RBAC, guardrail, approval, audit)
+        - Upstream connectors (stdio, HTTP, OpenAPI, OpenRPC, CLI, WASI)
+        - Web UI
+        - REST API / CLI
+        - Operations (backup, restore, migration, diagnostics)
+        - Packaging, release, supply chain
+        - Documentation
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: existing-behaviour
+    attributes:
+      label: Compatibility
+      description: >-
+        This project does not silently change behaviour for existing installations. New
+        installations may get a stricter default; existing ones keep theirs until an operator
+        decides otherwise, and the migration is written down and audited.
+      options:
+        - label: >-
+            My proposal would change behaviour for existing installations, and I have said above
+            what should happen to them.
+          required: false
+        - label: I have checked that this is not already listed as a known limitation or an open item.
+          required: false

@@ -107,6 +107,10 @@
     {
         <label>Regex-Muster</label>
         <input class="mono" @bind="_pattern" placeholder="\bdeploy_[a-zA-Z0-9]{32}\b" />
+        <RiskHint Title="Woran ein eigenes Muster scheitert"
+                  WhenOn="@("Ein zu enges Muster fängt das Zugangsdatum nicht — es fließt weiter, und die Regel steht trotzdem grün in der Liste. Ein zu weites Muster trifft harmlose Werte; im Modus Blockieren brechen dann Aufrufe ab, die nichts mit Zugangsdaten zu tun haben.")"
+                  WhenOff="@("Das geführte Formular erzeugt ein Muster aus Präfix, Zeichenklasse und Länge. Es kann weniger, aber es kann nicht daneben.")"
+                  Noticed="@("Der zweite Fall sofort — jemand meldet einen abgebrochenen Aufruf. Der erste Fall gar nicht: Ein Muster, das nichts trifft, verhält sich wie ein Muster, das es nicht zu treffen gab.")" />
         <div class="row">
             <div><label>Vorfilter-Zeichenfolge (optional, beschleunigt)</label><input @bind="_keyword" placeholder="deploy_" /></div>
         </div>

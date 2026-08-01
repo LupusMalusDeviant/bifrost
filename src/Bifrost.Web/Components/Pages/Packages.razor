@@ -68,16 +68,24 @@
         </div>
     }
 
-    <div class="row" style="margin-top:.5rem">
+    <div class="row" style="margin-top:.5rem" id="grants">
         <div style="flex:2">
             <label>Zugestimmte Zugriffe (eine je Zeile, z.&nbsp;B. <span class="mono">env:TOKEN</span>)</label>
             <textarea class="mono" rows="3" @bind="_grants"></textarea>
+            <RiskHint Title="Was eine Zugriffs-Freigabe kostet"
+                      WhenOn="@("Jede Zeile hebt für dieses Paket eine Wand der Sandbox auf. env:TOKEN gibt den Klartext des Secrets in fremden Code; eine Netz-Freigabe erlaubt ihm, alles Gelesene nach außen zu tragen. Die Freigabe gilt nicht für einen Aufruf, sondern dauerhaft.")"
+                      WhenOff="@("Fehlt eine Freigabe, die das Manifest verlangt, wird die Installation abgewiesen — das Paket läuft nicht halb, sondern gar nicht. Eine zu enge Freigabe ist deshalb ein sichtbarer Fehler.")"
+                      Noticed="@("Niemand von selbst. Was ein Paket mit einem freigegebenen Zugriff tut, steht nicht im Audit-Log dieses Gateways — dort steht nur, dass es aufgerufen wurde. Ein zu weit gefasster Zugriff fällt erst auf, wenn das Secret woanders auftaucht.")" />
         </div>
     </div>
     <label>
         <input type="checkbox" @bind="_allowUntrusted" />
         Nicht eingestuften Herausgeber (Community) ausdrücklich freigeben
     </label>
+    <RiskHint Title="Was die Vertrauensstufe entscheidet"
+              WhenOn="@("Das Paket wird installiert, obwohl sein Signaturschlüssel hier nicht eingestuft ist. Die Signatur belegt dann nur noch, dass die Datei unterwegs nicht verändert wurde — nicht, wer sie gebaut hat.")"
+              WhenOff="@("Nur Pakete gepinnter Herausgeber kommen durch. Das ist die Vorgabe und der Grund, warum es diese Frage überhaupt gibt.")"
+              Noticed="@("Erst der nächste, der die Herausgeber-Spalte liest. Der Haken gilt genau dieser Installation und hinterlässt keine Warnung im Betrieb.")" />
     <div class="toolbar" style="margin-top:.5rem">
         <button @onclick="Install" disabled="@(_busy || _pending is null)">Installieren</button>
     </div>
@@ -123,7 +131,17 @@
     </div>
 }
 
-<div class="card">
+<div class="card" id="publishers">
+    @* Sprungziel der Feinsteuerung „Herausgeber & Stufen": Wer wissen will, unter welchem
+       Schluessel und mit welcher Einstufung etwas installiert wurde, landet hier. Eine eigene
+       Seite dafuer gibt es nicht — die Einstufung selbst wird ausserhalb der Oberflaeche
+       gepflegt. *@
+    <h2 style="margin-top:0">Installierte Pakete</h2>
+    <p class="muted">
+        Herausgeber und Stufe stehen je Zeile. Die Stufe entscheidet, ob ein Paket ohne
+        ausdrückliche Freigabe installiert werden darf; die Spalte „Zugriffe" zeigt, welche Wände
+        der Sandbox für dieses Paket offen sind.
+    </p>
     @if (_packages.Count == 0)
     {
         <p class="muted">Kein Paket installiert.</p>

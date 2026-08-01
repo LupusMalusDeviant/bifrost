@@ -1,8 +1,14 @@
 # Upgrade-Kompatibilitätsmatrix (WP2.6)
 
-**Stand:** 2026-07-31 · **Harness:** `tests/Bifrost.Upgrade.Tests/**` · **Grundlage:**
+**Stand:** 2026-07-31 (mit Nachträgen vom 2026-08-01) · **Harness:**
+`tests/Bifrost.Upgrade.Tests/**` · **Grundlage:**
 [ADR-0024](adr/0024-backup-restore-und-migrationssicherheit.md) E6/E7,
 [M2-Vertrag](plans/m2-recoverability-contract.md) §7
+
+> **Diese Seite ist die maßgebliche Fassung.** Eine englische Zusammenfassung der betrieblich
+> wichtigen Grenzen steht in [`docs/en/operations.md`](en/operations.md#upgrades); sie ist
+> **abgeleitet**, und **bei Widerspruch gilt diese Seite**. Sprachregel:
+> [`docs/i18n.md`](i18n.md).
 
 Ein Upgrade darf keine Daten verlieren und keine Instanz in einen Zustand bringen, aus dem es keinen
 Weg zurück gibt. Dieses Dokument sagt, **was der Harness davon prüft** — und, ausführlicher, **was er
@@ -125,6 +131,11 @@ fest, statt ihn zu verschweigen.
 nicht abgenommen, ein Releaselauf hat nicht stattgefunden. Es existiert kein Binary einer früheren
 Version, das man installieren, befüllen und dann ablösen könnte.
 
+> **Nachtrag 2026-08-01:** M1 ist abgenommen, `v0.12.0` ist veröffentlicht — es gibt jetzt **ein**
+> Releaseartefakt. Für dieses Feld ändert das noch nichts: Ein Upgrade *über* Releases braucht
+> mindestens zwei, und der Absatz darunter gilt unverändert weiter — ein Migrationsstand ist nicht
+> dasselbe wie ein Release. Ab dem nächsten Release ist das Feld erstmals herstellbar.
+
 Wichtiger als die fehlenden Artefakte ist der Unterschied dahinter: **Ein Migrationsstand ist nicht
 dasselbe wie ein Release.** Ein Release ist Binary *plus* Migrationen *plus* Konfigurationsformat
 *plus* Key-Ring-Format *plus* Paketlayout *plus* Manifestformat. Der Harness variiert allein die
@@ -156,6 +167,13 @@ Alle drei gehen in die Schlüsselableitung ein. Eine Umbenennung wäre stiller T
 gespeicherten Geheimtextes. **Kein Test im Repository nagelt diese drei Zeichenketten fest** —
 geprüft wurde das für dieses Dokument. Ein solcher Test gehört in ein Paket, das `src/**` und die
 bestehenden Testprojekte anfassen darf.
+
+> **Nachtrag 2026-08-01:** Erledigt. Die Bezeichner stehen jetzt als Konstanten in
+> `src/Bifrost.Persistence/CryptographicNames.cs` — inzwischen **vier**, mit
+> `McpMcp.Webhook.Secret.v1` — und `CryptographicNamesTests` prüft sie gegen ihre Werte;
+> `.github/CODEOWNERS` führt die Datei zusätzlich. **Die Lücke des Harness bleibt davon unberührt:**
+> Der Test nagelt die Namen fest, er schreibt keine Daten in der alten Form. Der Absatz oben zur
+> Formatregression gilt unverändert.
 
 ### 4.4 `AuditEvents` und `Assets` sind nicht Teil des Bestands
 

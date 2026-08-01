@@ -1,0 +1,26 @@
+@*
+    Der Umschalter zwischen Basic und Erweitert (WP4.5).
+
+    Hier steht bewusst KEIN C#-Zustand und kein @@onclick. Der Modus ist eine reine
+    Darstellungsvorliebe; er wird im Browser gehalten (Cookie) und wirkt ueber ein Attribut am
+    <html>-Element, das die Stylesheet-Regeln lesen. Daraus folgen drei Dinge, die alle erwuenscht
+    sind:
+
+    1. Der Server erfaehrt den Modus nie. Er kann ihn deshalb auch nicht mit einer Berechtigung
+       verwechseln — das ist der Kern dieses Pakets.
+    2. Der Schalter funktioniert, bevor der Blazor-Circuit steht. Kein Aufblitzen des falschen
+       Menues nach dem Laden, kein toter Knopf waehrend des Verbindungsaufbaus.
+    3. Welcher der beiden Knoepfe aktiv aussieht, entscheidet ebenfalls das Stylesheet. Es gibt
+       also keine zweite Fassung des Zustands, die veralten koennte.
+*@
+<div class="mode-switch" role="group" aria-label="Darstellung">
+    <button type="button" class="btn-ghost btn-sm" data-mode="basic"
+            title="Nur der Kern: Dashboard, Server, Agenten, Tools, Freigaben, Log."
+            onclick="bifrostUiMode.write('basic')">Basic</button>
+    <button type="button" class="btn-ghost btn-sm" data-mode="advanced"
+            title="Zusätzlich die Feinsteuerung. Nimmt nichts weg — Direktlinks gelten in beiden Ansichten."
+            onclick="bifrostUiMode.write('advanced')">Erweitert</button>
+</div>
+@* Ein Schalter, der etwas versteckt, muss sagen, dass er nichts verbietet — sonst haelt ihn
+   jemand fuer eine Sicherheitsfunktion und verlaesst sich darauf. *@
+<div class="mode-note">Ansicht, keine Berechtigung. Direktlinks funktionieren in beiden.</div>

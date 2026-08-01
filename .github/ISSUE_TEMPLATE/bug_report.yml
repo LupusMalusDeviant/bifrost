@@ -1,0 +1,136 @@
+name: Bug report
+description: Something behaves differently than documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Not for security problems.** Use
+        [private vulnerability reporting](https://github.com/LupusMalusDeviant/bifrost/security/advisories/new)
+        instead — a public issue exposes the problem before there is a fix.
+
+        Please check [troubleshooting](https://github.com/LupusMalusDeviant/bifrost/blob/main/docs/en/troubleshooting.md)
+        first. Several failure modes in this product **look like success** — an empty volume that
+        reports "ready", an admin UI that renders perfectly but is not interactive, a login that
+        silently never sticks. If one of those matches, the page tells you what to check.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you observed, and what you expected instead.
+      placeholder: |
+        Expected: the upstream comes up after adding it.
+        Actual: it shows as Failed with "..." and nothing appears in the catalogue.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: >-
+        Numbered steps, starting from a state someone else can reach. If it only happens
+        occasionally, say so and say how often — an intermittent report is still worth filing.
+      placeholder: |
+        1. docker compose up -d with the .env below
+        2. Add an HTTP upstream pointing at ...
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: >-
+        The image tag or digest, or the commit if you built from source. `bifrost --version`
+        reports the commit for the CLI.
+      placeholder: "0.12.0 / ghcr.io/lupusmalusdeviant/bifrost@sha256:... / commit 71e4acf"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How is it running
+      options:
+        - Docker Compose (default, SQLite)
+        - Docker Compose with the PostgreSQL override
+        - Docker, other orchestration
+        - dotnet run from source
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: database
+    attributes:
+      label: Database provider
+      options:
+        - SQLite
+        - PostgreSQL
+        - Not applicable / unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: exposure
+    attributes:
+      label: How is the UI reached
+      description: >-
+        This matters more than it looks. The session cookie carries `Secure` outside Development,
+        and a browser discards it over plain HTTP without any error — anywhere.
+      options:
+        - http://localhost:8080 directly
+        - Behind a TLS reverse proxy (BIFROST_TRUSTED_PROXIES set)
+        - Behind a TLS reverse proxy (BIFROST_TRUSTED_PROXIES not set)
+        - Plain HTTP on a hostname or IP
+        - Not relevant to this report
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`bifrost doctor` output"
+      description: >-
+        Paste the report if the gateway runs. It is safe to paste: it never names the location of
+        key material and never shows a password. Findings carry stable codes (`BFR-DB-0002`) that
+        answer most questions before anyone replies. Skip this if the gateway does not start —
+        say so instead.
+      render: text
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: >-
+        Include the start-up line `Datenbank initialisiert (...)` if the problem is anywhere near
+        the database or a volume. **Check before pasting that you are not including a credential.**
+      render: text
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration (redacted)
+      description: >-
+        The relevant `BIFROST_*` variables and, for an upstream problem, the transport
+        configuration. **Remove every secret value.** If a value matters but is secret, say what
+        shape it has rather than what it is.
+      render: text
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: This is not a security vulnerability (those go through private reporting).
+          required: true
+        - label: I have removed credentials, tokens and passwords from everything I pasted.
+          required: true
+        - label: >-
+            I checked that the version I am reporting against is the version actually running
+            (`docker compose config` if in doubt — the effective image and volume names are not
+            always the ones in the file you edited).
+          required: false

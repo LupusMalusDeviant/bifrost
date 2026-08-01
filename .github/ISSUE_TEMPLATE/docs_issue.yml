@@ -1,0 +1,77 @@
+name: Documentation problem
+description: Something in the documentation is wrong, missing, or contradicts another page.
+labels: ["docs"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Documentation is treated like code here. Two kinds of report are especially welcome:
+
+        - **A page that is wrong.** Documentation that describes behaviour the product does not
+          have is the worst kind of stale, because it looks like a product bug to whoever hits it.
+        - **Two pages that contradict each other**, in particular a German page and its English
+          translation. That is the failure mode the language policy exists to prevent, and it needs
+          reporting rather than a quick one-sided fix — fixing one side without reading the other
+          produces a third variant.
+
+        The rule while you wait: **follow the version in the document's source language.** Each page
+        names which that is in its header; the table is in
+        [`docs/i18n.md`](https://github.com/LupusMalusDeviant/bifrost/blob/main/docs/i18n.md).
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of problem
+      options:
+        - The documentation is wrong (product behaves differently)
+        - Two pages contradict each other
+        - Something is missing
+        - A link is broken
+        - An example command does not work
+        - Unclear or misleading wording
+    validations:
+      required: true
+
+  - type: textarea
+    id: where
+    attributes:
+      label: Where
+      description: >-
+        File path plus heading, for **every** page involved. For a contradiction, name both — e.g.
+        `docs/operations.md` → "Backup" and `docs/en/operations.md` → "Backup and restore".
+      placeholder: |
+        docs/en/operations.md → "Upgrades"
+        docs/operations.md → "Schema & Upgrades"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What it says, and what is actually true
+      description: >-
+        Quote the passage and describe the actual behaviour. If you found it by running something,
+        say what you ran — that turns a report into a fix.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version you checked against
+      placeholder: "0.12.0 / main @ 71e4acf"
+
+  - type: checkboxes
+    id: notes
+    attributes:
+      label: Notes
+      options:
+        - label: >-
+            I understand that the historical ADRs, the requirements documents and the
+            implementation plans stay German on purpose, and that a full translation of them is
+            explicitly not a 1.0 blocker.
+          required: false
+        - label: >-
+            This is not a request to translate something that has deliberately not been translated
+            (see `docs/i18n.md` → "What is deliberately not translated").
+          required: false

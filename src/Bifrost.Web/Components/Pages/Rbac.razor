@@ -35,6 +35,10 @@
         <div><label>Rate-Limit (Calls/min, leer = unbegrenzt)</label><input type="number" @bind="_roleRate" /></div>
     </div>
     <label><input type="checkbox" @bind="_roleGlobal" /> Global-Grant (alle Tools/Aktionen — Admin-Agent)</label>
+    <RiskHint Title="Was ein Global-Grant umfasst"
+              WhenOn="@("Jede Identität mit dieser Rolle darf jedes Tool jedes angeschlossenen Servers aufrufen — auch Tools, die es heute noch nicht gibt. Ein Upstream, den morgen jemand anschließt, ist damit sofort mit erfasst, ohne dass diese Rolle angefasst wird.")"
+              WhenOff="@("Die Rolle darf genau das, was unten aufgezählt ist. Ein neuer Server erweitert sie nicht.")"
+              Noticed="@("Im Audit-Log steht der einzelne Aufruf, nicht die Reichweite der Rolle. Dass eine Rolle zu weit greift, sieht man nur hier in dieser Tabelle — und dort steht dann eine Zeile statt hundert.")" />
     @if (!_roleGlobal)
     {
         <div class="row">

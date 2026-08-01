@@ -2,6 +2,11 @@
 
 Praxisleitfaden zum Deployment und Betrieb. Zielgruppe: Self-hosted Single-Operator (ADR-0001).
 
+> **Diese Seite ist die maßgebliche Fassung.** Es gibt eine englische Übersetzung unter
+> [`docs/en/operations.md`](en/operations.md); sie ist kürzer und **abgeleitet**. **Bei Widerspruch
+> gilt diese Seite** — sie ändert sich zuerst. Die vollständige Sprachregel und die Tabelle, welches
+> Dokument in welcher Sprache maßgeblich ist, stehen in [`docs/i18n.md`](i18n.md).
+
 ### Die Web-UI braucht HTTPS — sonst hält die Anmeldung nicht
 
 **Hinter einem TLS-Proxy zusätzlich `BIFROST_TRUSTED_PROXIES` setzen.** Sonst sieht der Gateway nur
@@ -859,6 +864,46 @@ In der UI ist es das Häkchen „Ziele im internen Netz erlauben" im OpenAPI-For
 > Fehlermeldung nennt die Adresse und den Schalter beim Namen — der Upstream steht auf `Failed`,
 > nichts läuft still weiter.
 
+### Die Lücke: MCP-über-HTTP-Upstreams
+
+**Für HTTP-Upstreams ist `AllowPrivateTargets` weiterhin unentschieden — und unentschieden heißt
+erlaubt.** Das ist kein Versehen in dieser Seite, sondern der Ist-Zustand des Produkts, und er
+gehört an genau diese Stelle, weil hier jemand danach sucht.
+
+MCP-über-HTTP war bis vor Kurzem der einzige Transport **ganz ohne** Zielprüfung: Der Endpunkt ging
+direkt in den Transport, während OpenAPI, OpenRPC und der OAuth-Issuer private Adressen abwiesen.
+Das ist behoben — `HttpTransportOptions` trägt jetzt `bool? AllowPrivateTargets`, und die Prüfung
+greift. Der dritte Zustand ist Absicht:
+
+| Wert | Bedeutung |
+|---|---|
+| `true` | private Ziele erlaubt |
+| `false` | private Ziele abgewiesen |
+| `null` | **nicht entschieden — erlaubt** |
+
+`null` ist das, was **jede Bestandsinstanz** hat: Den Schalter gab es nicht, als diese Upstreams
+angelegt wurden. Sie beim nächsten Neustart abzuklemmen wäre genau die stille Verhaltensänderung,
+die [ADR-0025 E3](adr/0025-host-ausfuehrung-verbieten-und-bestehende-instanzen-migrieren.md) für
+die Hostausführung ablehnt — und ein MCP-Server im eigenen Netz ist bei diesem Produkt der
+Regelfall, nicht die Ausnahme.
+
+**Für Neuanlagen ist die Lücke geschlossen.** Formular und API rufen
+`SecureUpstreamDefaults.ForNewUpstream` auf und setzen den Wert ausdrücklich auf `false`, bevor
+irgendetwas gespeichert wird. Belegt ist das an der **gespeicherten** Fassung, nicht an der Antwort
+(`A_newly_created_http_upstream_no_longer_stores_an_undecided_ssrf_switch`) — was gespeichert ist,
+gilt beim nächsten Start.
+
+**Offen bleibt der Bestand**, und zwei Wege lassen `null` bewusst stehen:
+
+| Weg | Verhalten | Warum |
+|---|---|---|
+| Formular, API | setzt `false` | Neuanlage — hier gibt es eine Entscheidung zu treffen |
+| Konfigurationsimport, Restore | lässt den Wert, wie er war | Diese Wege **reproduzieren** eine Konfiguration, sie erzeugen keine. Ein Restore, der stillschweigend etwas verschärft, stellt nicht wieder her, was er zu tun behauptet |
+
+Für den Betrieb heißt das: Bei Upstreams, die vor der Umstellung angelegt wurden, den Endpunkt als
+ungeprüft behandeln und `AllowPrivateTargets: false` selbst setzen, wo ein privates, Loopback- oder
+Link-Local-Ziel nicht beabsichtigt ist. Ein Blick in die Konfiguration zeigt, welche das sind.
+
 ## CLI-Programme im Container ausführen
 
 Ein CLI-Upstream läuft standardmäßig als Host-Prozess: gehärtet (absolute Pfade, Root-Allowlist,
@@ -1176,6 +1221,25 @@ Es ist **kein manueller Schritt nötig** — der Gateway erkennt das Alt-Schema 
 
 Bei einem Rollback auf einen solchen Alt-Build ist die zusätzliche Tabelle `__EFMigrationsHistory` unschädlich — er ignoriert sie.
 
+### Was der Upgrade-Harness belegt — und was nicht
+
+`tests/Bifrost.Upgrade.Tests` fährt 43 Fälle über 15 veröffentlichte Migrationsstände × 2 Provider,
+mit echtem Geheimtext aus den echten Stores. Vollständig in
+[`docs/upgrade-matrix.md`](upgrade-matrix.md). Die eine Grenze, die man betrieblich kennen muss:
+
+> **Der Harness prüft altes SCHEMA mit heutigem CODE, nicht altes Verhalten.** Das Schema der
+> Fixtures ist echt alt; der Code, der sie befüllt, ist der heutige. Eine Regression im
+> **Serialisierungsformat** eines früheren Builds — eine geänderte JSON-Form, ein anderes Hashformat,
+> ein umbenanntes Feld im geschützten Blob — findet er **nicht**, weil er die Daten nie in der alten
+> Form schreibt. Er belegt, dass **Migrationen** den Bestand nicht beschädigen; er belegt nicht, dass
+> **Formatänderungen** es nicht tun. Schließen lässt sich das nur mit Fixtures, die ein früherer
+> Build erzeugt hat — also mit echten Release-Artefakten.
+
+Ebenfalls nicht abgedeckt: `AuditEvents` und `Assets` gehören nicht zum geprüften Bestand (ein
+Datenverlust genau dort machte die Matrix nicht rot), und ein Restore auf einem *anderen* Rechner
+oder unter einem *anderen* Konto ist ungeprüft — unter Windows ist ein ungeschützter Key-Ring per
+DPAPI an den ausführenden Benutzer gebunden.
+
 Jeder Provider hat eine eigene Migrations-Assembly (`Bifrost.Persistence.Migrations.Sqlite` bzw. `.Postgres`), weil SQLite und PostgreSQL unterschiedliches DDL brauchen. Beide sind im Image enthalten; die Auswahl erfolgt automatisch über `BIFROST_DB_PROVIDER`.
 
 ## TLS / Reverse-Proxy
@@ -1278,6 +1342,12 @@ Datenbank, aus der sie entsteht. Wer sie verschlüsselt haben will, setzt `BIFRO
 
 Bei **PostgreSQL** entsteht keine automatische Sicherung (siehe oben). Der Start warnt und migriert
 weiter; die Sicherung ist dort Betriebspflicht.
+
+> **Damit läuft auf PostgreSQL jedes Upgrade ohne Rückweg.** Das ist die direkte Folge der fehlenden
+> PostgreSQL-Sicherung: `PreMigrationBackupRequirement` bleibt dort auf `WhenAvailable` statt
+> `Always` — `Always` wäre ein Startverbot, keine Zusage. Ein Downgrade gibt es ebenfalls nicht,
+> `Down`-Migrationen werden weder gefahren noch geprüft. Vor **jedem** Upgrade selbst `pg_dump` plus
+> `keys/` ziehen; das Produkt tut es nicht, und es hält auch niemanden auf, der es vergisst.
 
 ## Diagnose
 

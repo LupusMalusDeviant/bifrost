@@ -1,8 +1,12 @@
 # Security- und Supply-Chain-Gates
 
-Stand: 2026-07-31 · Arbeitspaket **WP3.5** · Ergänzt [SECURITY.md](../SECURITY.md),
-den [Distributionsvertrag](plans/m1-distribution-contract.md) und
+Stand: 2026-07-31 (mit Nachträgen vom 2026-08-01) · Arbeitspaket **WP3.5** · Ergänzt
+[SECURITY.md](../SECURITY.md), den [Distributionsvertrag](plans/m1-distribution-contract.md) und
 [supply-chain.md](security/supply-chain.md).
+
+> **Diese Seite ist die maßgebliche Fassung für die Gates.** Eine englische Zusammenfassung steht in
+> [`docs/en/security.md`](en/security.md); sie ist **abgeleitet**, und **bei Widerspruch gilt diese
+> Seite**. Sprachregel: [`docs/i18n.md`](i18n.md).
 
 Dieses Dokument beschreibt, **was blockiert, wann es blockiert und womit belegt ist, dass es
 überhaupt blockieren kann.** Der letzte Teil ist der eigentliche Inhalt. Ein Gate, das noch nie rot
@@ -245,6 +249,16 @@ Ausnahmen" oder „alle Ausnahmen" anzunehmen. Fehlt eine erwartete SARIF-Datei,
 Repository **nicht**; sie liegt außerhalb der Dateizone von WP3.5. Bis der Lead sie anlegt, ist die
 Freigabepflicht dokumentiert, aber nicht durchgesetzt.
 
+> **Nachtrag 2026-08-01:** `.github/CODEOWNERS` ist inzwischen angelegt (in M3) und führt die
+> Sicherheitsgates, `.trivyignore.yaml`, die Release-Pipeline, `CryptographicNames.cs` und die ADRs.
+> Der Absatz darüber beschreibt den Stand vom 2026-07-31 und bleibt als solcher stehen.
+>
+> **Die Abhängigkeit gilt unverändert: CODEOWNERS allein erzwingt nichts.** In den
+> Branch-Protection-Regeln für `main` muss „Require review from Code Owners" eingeschaltet sein,
+> sonst ist der Eintrag ein Vorschlag. Das ist eine Repository-Einstellung und lässt sich nicht
+> mitliefern. Bis sie gesetzt ist, ist die PO-Freigabepflicht dokumentiert und **nicht
+> durchgesetzt** — wer das Ausnahmeregister ändern darf, kann seine eigene Ausnahme freigeben.
+
 ---
 
 ## 6. Was ungeprüft bleibt, bis ein echter Lauf stattfindet
@@ -252,6 +266,20 @@ Freigabepflicht dokumentiert, aber nicht durchgesetzt.
 `release.yml` wurde in M1 gebaut, aber **es hat nie ein Releaselauf stattgefunden**
 ([product-readiness-status.md](plans/product-readiness-status.md)). Alles, was WP3.5 ergänzt, ist
 damit ebenfalls ungelaufen. Diese Trennung ist der Kern der Abgabe:
+
+> **Nachtrag 2026-08-01 — der erste Lauf hat stattgefunden.** `v0.12.0` ist veröffentlicht; drei
+> Trockenläufe und drei Tag-Läufe waren nötig, und sie haben **neun Befunde** produziert (Liste in
+> [product-readiness-status.md](plans/product-readiness-status.md)). Der Abschnitt unten beschreibt
+> den Stand vom 2026-07-31 und bleibt als solcher stehen. Was sich dadurch **ändert**:
+>
+> - **G4 ist gelaufen** — Trivy meldete auf Image und CLI-Artefakten grün. Ein grüner Lauf belegt
+>   aber die Verdrahtung, nicht das Gate: Ein Lauf **dieser** Konfiguration gegen ein Image mit einem
+>   echten Critical-Fund gibt es weiterhin nicht. **G4 bleibt das schwächste Glied.**
+> - **Der Trockenlaufmodus war selbst nie gelaufen** und war im Trockenlauf *immer* rot (Befund 7).
+>   Genau das Muster, das dieses Dokument beschreibt, eine Ebene höher.
+> - Was oben unter „steht in der YAML und ist ungeprüft" zu CodeQL, SARIF-Upload und Dependabot
+>   steht, ist durch den Lauf **nicht** pauschal erledigt; belegt ist nur, was im Lauf wirklich
+>   ausgeführt wurde.
 
 ### Lokal/containerisiert wirklich ausgeführt
 
@@ -345,6 +373,9 @@ behoben, wie beauftragt:
 2. **`.trivyignore.yaml` fehlt** (§8). Der Workflow ist jetzt unempfindlich dagegen; wer die Datei
    anlegt, braucht dafür auch den CODEOWNERS-Eintrag.
 3. **CODEOWNERS fehlt vollständig.** Ohne sie ist keine der PO-Freigaben technisch erzwungen (§5).
+   — *Erledigt in M3: `.github/CODEOWNERS` ist angelegt. Die Freigabe ist damit trotzdem erst
+   erzwungen, wenn „Require review from Code Owners" in der Branch-Protection von `main` aktiv ist;
+   siehe den Nachtrag in §5.*
 4. **DataProtection-Key-Ring im Arbeitsbaum:**
    `src/Bifrost.Server/data/keys/key-bd37746a-c325-441d-81f4-f414c9d4c7ca.xml`.
    **Kein Leck** — die Datei ist über `.gitignore:486` (`src/Bifrost.Server/data/`) ausgeschlossen

@@ -1,0 +1,18 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability (do NOT open an issue)
+    url: https://github.com/LupusMalusDeviant/bifrost/security/advisories/new
+    about: >-
+      Report privately through GitHub security advisories. Initial response within 7 days.
+      A public issue for a security problem exposes it to everyone before there is a fix.
+  - name: Code of conduct concern
+    url: https://github.com/LupusMalusDeviant/bifrost/blob/main/.github/CODE_OF_CONDUCT.md
+    about: How to report privately, and what this project can and cannot offer as a channel.
+  - name: Before you file — troubleshooting
+    url: https://github.com/LupusMalusDeviant/bifrost/blob/main/docs/en/troubleshooting.md
+    about: >-
+      Symptoms sorted by what they look like, including the failures that look like success
+      (empty volume reporting "ready", dead admin UI that renders fine, login that never sticks).
+  - name: Contributing guide
+    url: https://github.com/LupusMalusDeviant/bifrost/blob/main/.github/CONTRIBUTING.md
+    about: Build, test, house rules, language policy. You do not need German to contribute.

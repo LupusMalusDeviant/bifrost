@@ -134,9 +134,16 @@ public static class ConfigurationSecretScrubber
             }
         }
 
-        // OpenRPC trägt dasselbe Credential-Feld wie OpenAPI. Es fehlt im heutigen
-        // UpstreamConfigRedactor (Bifrost.Core/Upstreams) — hier ist es abgedeckt, dort ist es als
-        // Befund gemeldet.
+        // OpenRPC trägt dasselbe Credential-Feld wie OpenAPI.
+        //
+        // Hier stand bis 2026-08-01, es fehle im UpstreamConfigRedactor. Das stimmte, als der
+        // Kommentar entstand, und war der Hinweis, der die Lücke aufgedeckt hat — der Redactor gab
+        // das Credential eines OpenRPC-Servers im Klartext an die API. Behoben; seitdem war der
+        // Satz falsch, und ein Folgepaket hat ihn als aktuellen Befund weitergereicht.
+        //
+        // Deshalb datiert statt gelöscht: Ein Kommentar über den Zustand einer ANDEREN Datei
+        // veraltet, ohne dass jemand diese Datei anfasst. Wer hier etwas behauptet, das anderswo
+        // gilt, sollte dazuschreiben, wann.
         var openRpc = config.OpenRpc;
         if (openRpc is { Credential: { Length: > 0 } openRpcCredential })
         {

@@ -1,13 +1,24 @@
 # Security Policy
 
+> **Language.** This page is English and is the **authoritative** version; there is no German
+> translation of it. The German security-gate description in
+> [`docs/security-gates.md`](docs/security-gates.md) is authoritative for the gates themselves. The
+> full per-document rule is in [`docs/i18n.md`](docs/i18n.md). An operator-facing summary of both —
+> including what the design deliberately does **not** promise — is in
+> [`docs/en/security.md`](docs/en/security.md).
+
 ## Supported versions
 
 B.I.F.R.O.S.T is in **pre-release development**. There are no supported release versions yet; security fixes land on `main`. Once v1.0 ships, this table will list supported versions.
 
+Release channels, what ships with a release, and how to verify it yourself:
+[`docs/en/support.md`](docs/en/support.md).
+
 | Version | Supported |
 |---|---|
 | `main` | ✅ best effort |
-| `v0.11.0` | ✅ best effort |
+| `v0.12.0` | ✅ best effort |
+| `v0.11.0` | ⚠️ superseded by `v0.12.0` |
 | `v0.10.0` | ⚠️ superseded by `v0.11.0` |
 | `v0.9.1` | ⚠️ superseded by `v0.10.0` |
 | `v0.9.0` | ⚠️ superseded by `v0.9.1` |
@@ -77,10 +88,25 @@ in `.github/security-exceptions.yml`: it names the approver, carries a reason, a
 most 90 days — after which the gate closes again on its own. There is no `continue-on-error` switch
 and no environment variable that softens a gate.
 
-The full description — including **which gates were proven able to fail, and which parts are
-untested until the first real release run** — is in
-[docs/security-gates.md](docs/security-gates.md). That distinction is deliberate: no release run has
-ever taken place, so anything concerning it is a reasoned assumption, not an acceptance.
+The full description — including **which gates were proven able to fail, and which parts remain
+untested** — is in [docs/security-gates.md](docs/security-gates.md). That distinction is deliberate,
+and it survived contact with reality: the **first** release run of this pipeline happened on
+2026-08-01 (`v0.12.0`), needed three dry runs and three tag runs, and produced nine findings — among
+them a dry-run mode that had never itself been run, and a proof that had never worked on Linux while
+reporting green the whole time.
+
+Two things follow, and both are stated rather than smoothed over:
+
+- **The container-image gate (G4) has now run green against a real release image, but has still
+  never been shown able to fail.** A green run proves the plumbing, not the gate. G4 remains the
+  weakest link.
+- Everything that only happens on GitHub — CodeQL itself, the SARIF upload path, Dependabot's
+  handling of the config — is verified only to the extent that the one run exercised it.
+
+**`.github/CODEOWNERS` exists, but on its own it enforces nothing.** "Require review from Code
+Owners" must be enabled in the branch protection rules for `main`; that is a repository setting and
+cannot be shipped in the repository. Until it is enabled, the Product Owner approval requirement for
+overriding a gate is documented and **not enforced**.
 
 ## Out of scope
 

@@ -92,6 +92,65 @@
     }
 </div>
 
+@* Sprungziel der Feinsteuerung „Tool-Pins & OAuth" (WP4.5). Beides sind Eigenschaften eines
+   Upstreams und keine eigenen Seiten — deshalb steht hier eine Uebersicht und kein weiterer
+   Bildschirm. Bewusst LESEND: Die Aktion „neue Fassung annehmen" bleibt oben in der Serverzeile,
+   wo der Alarm steht. Dieselbe Schaltflaeche an zwei Stellen waeren zwei Wege zu einer
+   Entscheidung, die man genau einmal treffen soll. *@
+<div class="card" id="erweitert">
+    <h3 style="margin-top:0">Tool-Pins &amp; OAuth-Anbindung</h3>
+    <p class="muted">
+        Ein <strong>Tool-Pin</strong> hält die Definition fest, die zuletzt angesehen wurde. Ändert
+        ein Upstream Beschreibung oder Schema eines Tools, wird die neue Fassung zurückgehalten,
+        bis jemand sie annimmt — bis dahin ist das Tool weder sichtbar noch aufrufbar (FR-33).
+        <strong>OAuth</strong> steht in der Konfiguration des Upstreams; hier ist nur zu sehen,
+        wer eine Anbindung hat und ob sie verbunden werden kann.
+    </p>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Slug</th><th>Zurückgehaltene Definitionen</th><th>OAuth</th><th>Endpunkt</th></tr></thead>
+            <tbody>
+                @foreach (var s in _statuses)
+                {
+                    <tr>
+                        <td class="mono">@s.Slug</td>
+                        <td>
+                            @if (s.QuarantinedTools is { Count: > 0 } held)
+                            {
+                                <div class="pill-list">
+                                    @foreach (var tool in held)
+                                    {
+                                        <span class="pill">@tool</span>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <span class="muted">— keine</span>
+                            }
+                        </td>
+                        <td>
+                            @if (_oauthServers.Contains(s.Id))
+                            {
+                                <a href="@($"/oauth/upstream/{s.Id.Value}/connect")">verbinden</a>
+                            }
+                            else
+                            {
+                                <span class="muted">—</span>
+                            }
+                        </td>
+                        <td class="mono muted">@(_endpoints.TryGetValue(s.Id, out var url) ? url : "—")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    @if (_statuses.Count == 0)
+    {
+        <p class="empty" style="margin-bottom:0">Noch kein Upstream angeschlossen — hier steht dann je Server, was zurückgehalten wird.</p>
+    }
+</div>
+
 @if (_historyServer is not null)
 {
     <div class="card">
@@ -207,6 +266,10 @@
             <input type="checkbox" @bind="_cliAllowPathLookup" />
             Unsichere PATH-Auflösung erlauben (Development)
         </label>
+        <RiskHint Title="Was die PATH-Auflösung riskiert"
+                  WhenOn="@("Welches Programm startet, entscheidet die PATH-Variable des Gateway-Prozesses. Wer eine gleichnamige Datei in ein früher durchsuchtes Verzeichnis legt, tauscht damit den Upstream aus, ohne diese Konfiguration anzufassen.")"
+                  WhenOff="@("Es startet genau die Datei, die hier absolut angegeben ist. Das ist die Vorgabe und in Produktion die einzige zulässige Einstellung.")"
+                  Noticed="@("Niemand. Der Austausch hinterlässt keine Konfigurationsversion und keinen Audit-Eintrag — im Log steht derselbe Slug wie vorher.")" />
         <label>Tools (JSON-Array aus CliToolSpec)</label>
         <textarea class="mono" rows="12" @bind="_cliToolsJson"
                   placeholder='[{"name":"status","fixedArguments":["status"],"risk":"Read"}]'></textarea>
@@ -246,12 +309,17 @@
             <input type="checkbox" @bind="_allowLegacySse" />
             Rückfall auf HTTP+SSE erlauben, wenn der Server kein Streamable HTTP spricht (FR-02)
         </label>
+        <RiskHint Title="Was der Rückfall auf HTTP+SSE bedeutet"
+                  WhenOn="@("Antwortet der Endpunkt nicht wie erwartet, wird still auf das abgelöste Protokoll gewechselt. Ein Upstream, der gar nicht der gemeinte ist, wirkt dadurch trotzdem erreichbar.")"
+                  WhenOff="@("Ein Endpunkt, der kein Streamable HTTP spricht, gilt als kaputt und der Upstream bleibt unten. Das ist laut, aber eindeutig.")"
+                  Noticed="@("An der Tool-Zahl in der Serverliste — wenn überhaupt. Das abgelöste Protokoll wird im MCP-Standard entfernt; dann fällt der Upstream ohne Vorwarnung aus.")" />
         @* Ohne diesen Schalter ginge die Adresse ungeprueft in den Transport; das Formular
            entscheidet die Frage jetzt ausdruecklich, statt sie offenzulassen. *@
         <label title="Ohne diese Freigabe wird ein Endpunkt im internen Netz abgewiesen (SSRF).">
             <input type="checkbox" @bind="_allowPrivateTargets" />
             Ziele im internen Netz erlauben (Loopback, privates Netz, Link-Local)
         </label>
+        @PrivateTargetRisk
         @if (_httpPrivateTargetsWasUndecided)
         {
             <p class="msg-err">
@@ -287,6 +355,7 @@
             <input type="checkbox" @bind="_allowPrivateTargets" />
             Ziele im internen Netz erlauben (Loopback, privates Netz, Link-Local)
         </label>
+        @PrivateTargetRisk
     }
 
     <div class="toolbar" style="margin-top:1rem">
@@ -312,6 +381,12 @@
 
     /// <summary>Upstreams, für die eine OAuth-Anbindung konfiguriert ist — nur die zeigen den Knopf.</summary>
     private HashSet<ServerId> _oauthServers = [];
+
+    /// <summary>
+    /// Die Zieladresse je Upstream, soweit es eine gibt (HTTP/OpenAPI). Nur zur Anzeige in der
+    /// Feinsteuerung — ein lokaler Prozess hat keine.
+    /// </summary>
+    private Dictionary<ServerId, string> _endpoints = [];
     private UpstreamTransportKind _kind = UpstreamTransportKind.Stdio;
     private string _slug = "", _displayName = "", _command = "", _args = "", _env = "";
     private string _httpUrl = "", _headers = "";
@@ -358,6 +433,16 @@
     private bool _historyOk;
 
     /// <summary>
+    /// Die Risikohilfe zur Freigabe interner Ziele — einmal formuliert, an beiden Stellen
+    /// dieselbe. Zwei Fassungen derselben Warnung wären zwei Wahrheiten, von denen eine veraltet.
+    /// </summary>
+    private static readonly RenderFragment PrivateTargetRisk = @<RiskHint
+        Title="Was die Freigabe interner Ziele öffnet"
+        WhenOn="@("Das Gateway darf für diesen Upstream Adressen im eigenen Netz aufrufen — Loopback, privates Netz, Link-Local. Damit wird es zum Sprungbrett: Wer die Zieladresse setzen darf, erreicht darüber Dienste, die von außen nicht erreichbar sind (SSRF). Auf einer Cloud-Instanz gehört der Metadaten-Endpunkt dazu, und der gibt Zugangsdaten heraus.")"
+        WhenOff="@("Ein Ziel im internen Netz wird abgewiesen, bevor eine Verbindung entsteht. Das ist die Vorgabe für Neuanlagen.")"
+        Noticed="@("Der Aufruf sieht im Audit-Log aus wie jeder andere Upstream-Aufruf — er trägt den Slug, nicht das Ziel. Ein Missbrauch fällt hier nicht auf.")" />;
+
+    /// <summary>
     /// Der Isolationsabschnitt — derselbe für stdio und CLI, weil es dasselbe Modell ist
     /// (ADR-0025 E5). Zwei Formularblöcke für dieselbe Frage wären zwei Wahrheiten, von denen eine
     /// veraltet.
@@ -367,6 +452,10 @@
             <input type="checkbox" @bind="_isolationContainer" />
             In einem Container ausführen (Vorgabe; ADR-0018)
         </label>
+        <RiskHint Title="Was ohne Container offensteht"
+                  WhenOn="@("Das Programm läuft eingesperrt. Ein übernommener Upstream kommt an das, was der Container ihm gibt — nicht an den Rest der Maschine.")"
+                  WhenOff="@("Das Programm läuft mit den Rechten des Gateways. Es kann alles lesen, was diesem Benutzer offensteht, einschließlich des Schlüsselrings — also der API-Keys aller Agenten und der Secrets aller anderen Upstreams.")"
+                  Noticed="@("Beim Start steht die Betriebsart in der Konfigurationsversion; danach nichts mehr. Ein Zugriff des Programms auf Dateien der Maschine erscheint in keinem Log dieses Gateways.")" />
         @if (_isolationContainer)
         {
             <div class="row">
@@ -380,6 +469,10 @@
                 <input type="checkbox" @bind="_requireImageDigest" />
                 Digest erzwingen (Start verweigern, wenn nur ein Tag dasteht)
             </label>
+            <RiskHint Title="Warum ein Tag nicht festlegt, was läuft"
+                      WhenOn="@("Der Start wird verweigert, solange kein Digest dasteht. Was einmal geprüft wurde, läuft danach unverändert weiter.")"
+                      WhenOff="@("Ein Tag ist ein Zeiger und kann umgehängt werden. Nach dem nächsten Neustart kann hinter demselben Namen anderer Code stehen, ohne dass jemand hier etwas geändert hat.")"
+                      Noticed="@("Niemand. Die Konfiguration ist unverändert, der Slug ist derselbe, und im Audit-Log steht kein Wechsel.")" />
             @if (ImageWarning() is { } warning)
             {
                 <p class="msg-err">@warning</p>
@@ -424,6 +517,12 @@
         var latest = ConfigStore.GetAllLatestAsync(CancellationToken.None).GetAwaiter().GetResult();
         _oauthServers = [.. latest.Where(kv => kv.Value.Config.Http?.OAuth is not null).Select(kv => kv.Key)];
         _kinds = latest.ToDictionary(kv => kv.Key, kv => kv.Value.Config.Kind);
+        _endpoints = latest
+            .Select(kv => (kv.Key, Url: kv.Value.Config.Http?.Endpoint?.ToString()
+                ?? kv.Value.Config.OpenApi?.BaseAddress?.ToString()
+                ?? kv.Value.Config.OpenApi?.SpecLocation.ToString()))
+            .Where(x => x.Url is not null)
+            .ToDictionary(x => x.Key, x => x.Url!);
     }
 
     private async Task<string> UserAsync()

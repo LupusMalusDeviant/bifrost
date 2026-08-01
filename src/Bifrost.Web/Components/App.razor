@@ -170,7 +170,16 @@
         }
 
         /* ── Navigation ──────────────────────────────────────────────────────────────────── */
-        .nav { display: flex; flex-direction: column; gap: 1px; }
+        /* Die Liste scrollt, die Fusszeile bleibt stehen. Ohne das hier war die Feinsteuerung ein
+           Eigentor: Mit allen Eintraegen wuchs die Seitenleiste auf 965 px, und auf einem
+           720-px-Schirm lagen Umschalter und "Abmelden" UNTERHALB des Bildes — wer einmal auf
+           Erweitert gestellt hatte, kam nicht mehr zurueck und nicht mehr heraus.
+           'min-height:0' ist der Teil, der wirkt: Ein Flex-Kind laesst sich sonst nicht unter
+           seinen Inhalt schrumpfen, und dann scrollt nichts, sondern es quillt ueber. */
+        .nav {
+            display: flex; flex-direction: column; gap: 1px;
+            flex: 0 1 auto; min-height: 0; overflow-y: auto;
+        }
         .nav a {
             display: block; padding: .44rem .7rem; border-radius: var(--radius-sm);
             color: var(--muted); font-size: .875rem; position: relative;
@@ -190,9 +199,69 @@
             color: var(--dim); padding: .9rem .7rem .3rem;
         }
 
+        /* ── Basic / Erweitert (WP4.5) ───────────────────────────────────────────────────────
+           HIER, in vier Zeilen Stylesheet, wirkt der Modus — und NUR hier. Er ist damit
+           nachweislich keine Berechtigungsgrenze: Der Server sieht ihn nie, der Router auch
+           nicht, und kein Direktlink haengt daran. Was der Modus tut, ist Menuepunkte ausblenden;
+           was er nicht tun kann, ist irgendetwas erreichbar machen, das die Rolle nicht ohnehin
+           erreicht — gerendert wird in beiden Ansichten dieselbe Menge.
+
+           'display:none' und nicht 'visibility'/'opacity': Ein nur optisch verschwundener Link
+           bliebe in der Tabulatorfolge und im Screenreader. Ausgeblendet heisst ausgeblendet. */
+        html[data-ui-mode="basic"] [data-ui-section="advanced"] { display: none; }
+
+        /* Untereintraege zeigen in eine Seite hinein, nicht auf eine eigene Route. Eingerueckt und
+           leiser, damit die Gliederung ohne Linie erkennbar bleibt. */
+        .nav a.nav-sub {
+            padding-left: 1.55rem; font-size: .8rem; color: var(--dim);
+        }
+        .nav a.nav-sub::marker { content: none; }
+        .nav a.nav-sub:hover { color: var(--muted); }
+
+        /* Der Umschalter: zwei Knoepfe als ein Objekt. Welcher aktiv ist, entscheidet das Attribut
+           am Wurzelelement — es gibt keinen zweiten Zustand in C#, der veralten koennte. */
+        .mode-switch { display: flex; gap: 0; margin-bottom: .5rem; }
+        .mode-switch button {
+            flex: 1; border-radius: 0; font-size: .72rem; padding: .22rem .4rem;
+            letter-spacing: .04em;
+        }
+        .mode-switch button:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+        .mode-switch button:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; border-left: none; }
+        html[data-ui-mode="basic"] .mode-switch button[data-mode="basic"],
+        html[data-ui-mode="advanced"] .mode-switch button[data-mode="advanced"] {
+            background: var(--ice-wash); color: #eaf7ff; border-color: rgba(111, 211, 255, .34);
+        }
+        .mode-note {
+            font-size: .66rem; color: var(--dim); line-height: 1.35; margin-bottom: .7rem;
+        }
+
+        /* ── Risiko-Hilfe an komplexen Feldern ───────────────────────────────────────────────
+           Sie steht neben dem Feld, nicht in einem Tooltip: Ein 'title' erscheint nur bei der
+           Maus, verschwindet nach Sekunden und ist auf dem Telefon gar nicht da — fuer die Frage
+           „was geht hier kaputt" ist das die falsche Bauform. */
+        .risk-hint { margin: .15rem 0 .55rem; }
+        .risk-hint > summary {
+            cursor: pointer; font-size: .74rem; color: var(--warn); list-style: none;
+            display: inline-flex; align-items: center; gap: .32rem; width: fit-content;
+        }
+        .risk-hint > summary::-webkit-details-marker { display: none; }
+        .risk-hint > summary::before {
+            content: '△'; font-size: .8em; opacity: .8;
+        }
+        .risk-hint > summary:hover { color: #ffd39a; }
+        .risk-hint-body {
+            border-left: 2px solid rgba(244, 184, 96, .34); padding: .1rem 0 .1rem .7rem;
+            margin-top: .35rem; font-size: .8rem; color: var(--muted);
+        }
+        .risk-hint-body p { margin: .25rem 0; max-width: 78ch; }
+        .risk-hint-body strong { color: var(--text); font-weight: 600; }
+
         .sidebar-footer {
             margin-top: auto; padding: .8rem .7rem 0; font-size: .8rem; color: var(--muted);
             border-top: 1px solid var(--edge);
+            /* Sie darf nicht mitschrumpfen, wenn die Liste lang wird — sonst waere der Umschalter
+               das Erste, was verschwindet. */
+            flex: none;
         }
 
         /* Die Grenze gehoert an den FLIESSTEXT, nicht an die Seite — das ist der Unterschied
@@ -467,6 +536,36 @@
             .content { padding: 1.2rem 1rem; }
         }
     </style>
+    @* Basic/Erweitert (WP4.5). Der Schnipsel steht IM KOPF und nicht am Seitenende — er muss
+       laufen, bevor die Seitenleiste gezeichnet wird, sonst blitzt bei jedem Laden fuer einen
+       Moment das falsche Menue auf.
+
+       Der Modus liegt in einem gewoehnlichen Cookie: Er ueberlebt einen Seitenrefresh, das
+       Schliessen des Tabs und den Neustart des Browsers, und er haengt am angemeldeten Browser
+       statt an einer Sitzung. Bewusst OHNE HttpOnly und vom Browser aus beschreibbar — der Wert
+       traegt keine Sicherheitsaussage. Wer ihn faelscht, sieht ein anderes Menue und sonst nichts.
+
+       Ein Cookie und nicht localStorage: localStorage ist erst nach dem Start des JS-Kontexts
+       lesbar und haette genau das Aufblitzen zurueckgebracht, das dieser Schnipsel verhindert.
+       Und nicht auf dem Server: Dort waere aus einer Anzeigevorliebe ein Datum geworden, das in
+       einer Autorisierungsentscheidung landen KANN — und irgendwann landet. *@
+    <script>
+        window.bifrostUiMode = {
+            read: function () {
+                var m = document.cookie.match(/(?:^|;\s*)bifrost-ui-mode=([^;]*)/);
+                return m && m[1] === 'advanced' ? 'advanced' : 'basic';
+            },
+            write: function (mode) {
+                var value = mode === 'advanced' ? 'advanced' : 'basic';
+                // Ein Jahr, pfadweit, SameSite=Lax: dieselbe Lebensdauer wie die Gewohnheit, die
+                // dahintersteht. 'Secure' fehlt absichtlich — sonst ginge die Vorliebe in der
+                // HTTP-Entwicklungsumgebung verloren, und geschuetzt werden muss hier nichts.
+                document.cookie = 'bifrost-ui-mode=' + value + ';path=/;max-age=31536000;samesite=lax';
+                document.documentElement.dataset.uiMode = value;
+            }
+        };
+        document.documentElement.dataset.uiMode = window.bifrostUiMode.read();
+    </script>
     <HeadOutlet @rendermode="InteractiveServer" />
 </head>
 <body>

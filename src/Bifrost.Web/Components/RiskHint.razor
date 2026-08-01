@@ -1,0 +1,45 @@
+@*
+    Hilfe zu einem komplexen Feld (WP4.5, Auftrag 4).
+
+    Der Text erklaert das RISIKO, nicht die Bedienung. Was ein Feld tut, steht in seiner
+    Beschriftung; was schiefgeht, wenn man es falsch setzt, stand bisher nirgends — und genau das
+    ist die Frage, die jemand vor dem Haken hat.
+
+    Deshalb sind die drei Angaben getrennt: Was passiert, wenn es AN ist. Was passiert, wenn es AUS
+    ist. Und wer es danach merkt. Eine Zeile Fliesstext wuerde die dritte Frage verschlucken, und
+    sie ist die wichtigste: Ein Fehler, den niemand bemerkt, wird nicht zurueckgenommen.
+*@
+<details class="risk-hint" data-ui-help>
+    <summary>@(Title ?? "Was steht hier auf dem Spiel?")</summary>
+    <div class="risk-hint-body">
+        @if (WhenOn is not null)
+        {
+            <p><strong>Wenn gesetzt:</strong> @WhenOn</p>
+        }
+        @if (WhenOff is not null)
+        {
+            <p><strong>Wenn nicht gesetzt:</strong> @WhenOff</p>
+        }
+        @if (Noticed is not null)
+        {
+            <p><strong>Wer merkt einen Fehler:</strong> @Noticed</p>
+        }
+        @ChildContent
+    </div>
+</details>
+
+@code {
+    /// <summary>Die Zeile, die zugeklappt zu sehen ist. Ohne Angabe die Standardfrage.</summary>
+    [Parameter] public string? Title { get; set; }
+
+    /// <summary>Was der gesetzte/aktive Wert bewirkt — als Risiko, nicht als Bedienung.</summary>
+    [Parameter] public string? WhenOn { get; set; }
+
+    /// <summary>Was der leere/abgewaehlte Wert bewirkt.</summary>
+    [Parameter] public string? WhenOff { get; set; }
+
+    /// <summary>Woran ein Fehlgriff auffaellt — und woran nicht.</summary>
+    [Parameter] public string? Noticed { get; set; }
+
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

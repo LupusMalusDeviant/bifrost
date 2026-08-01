@@ -6,11 +6,13 @@
 
 **A self-hosted meta-MCP gateway on .NET** — connect one endpoint to your agents, and manage all your MCP servers behind it.
 
-> **[v0.11.0](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.11.0)** is the current release — and the first one under the name **B.I.F.R.O.S.T** (formerly MCP-MCP). Two things landed together: the **`2026-07-28` protocol revision** with its stateless core, MRTR approvals and cacheable lists ([ADR-0023](docs/adr/0023-stateless-kern-und-mrtr.md)), and the rename across code, configuration and this repository.
+> **[v0.12.0](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.12.0)** is the current release, and the **first one produced by the release pipeline** rather than by hand: signed image for amd64 and arm64, five native CLI archives, SBOMs, checksums and provenance attestations. It brings recoverability (backup, restore, migration safety, `bifrost doctor`) and secure defaults (container isolation, key-ring protection, first access without credentials in the log).
 >
-> **Upgrading from an MCP-MCP install:** environment variables moved from `MCPMCP_*` to `BIFROST_*`, but the old names are still read and reported once at startup, and an existing `mcpmcp.db` keeps being used. The DataProtection application name and the encryption purposes deliberately keep their old values — renaming them would make every stored secret unreadable. Your session cookie is invalidated once, so expect a single re-login.
+> Getting that first run out took three dry runs and three tag runs and produced **nine findings** — including a dry-run mode that had never itself been run, and a proof that had never worked on Linux while reporting green the whole time. They are written up in [the readiness protocol](docs/plans/product-readiness-status.md) and, in English, under [Troubleshooting → Release pipeline](docs/en/troubleshooting.md#release-pipeline--nine-findings-from-the-first-real-run).
 >
-> The version is deliberately below 1.0, and that is the whole statement: the code is feature-complete for its scope and covered by tests against SQLite *and* real PostgreSQL, but **it still has barely any operational uptime behind it**, and releases do not yet ship prebuilt images or signed binaries. 1.0 follows from running it and from a delivery chain, not from adding features — see [the product-readiness gates](docs/plans/product-readiness-status.md).
+> **Upgrading from an MCP-MCP install:** environment variables moved from `MCPMCP_*` to `BIFROST_*`, but the old names are still read and reported once at startup, and an existing `mcpmcp.db` keeps being used. The DataProtection application name and the encryption purposes deliberately keep their old values — renaming them would make every stored secret unreadable. Your session cookie is invalidated once, so expect a single re-login. **Do not let the volume name change with it** — a renamed volume is an empty volume, and the gateway starts on it without complaint.
+>
+> The version is deliberately below 1.0, and that is the whole statement: the code is feature-complete for its scope and covered by tests against SQLite *and* real PostgreSQL, but **it still has barely any operational uptime behind it**. There are also gaps that a deployment plan has to account for — **no PostgreSQL backup, and therefore no pre-migration backup there either**; see [Known limitations](docs/en/operations.md#known-limitations). 1.0 follows from running it over time, not from adding features — see [the product-readiness gates](docs/plans/product-readiness-status.md).
 
 ## The problem
 
@@ -128,14 +130,36 @@ Read this part before exposing the gateway to anything you care about.
 
 ## Documentation
 
-The full design documentation lives in [`docs/`](docs/) — written in **German**:
+**English core set** — everything you need to run it and to contribute:
 
-- [`docs/prd/`](docs/prd/) — requirements (Lastenheft): 41 functional requirements, NFRs, acceptance criteria
+| Page | For |
+|---|---|
+| [Quickstart](docs/en/quickstart.md) | Zero to one agent connected |
+| [Operations](docs/en/operations.md) | Configuration, TLS, key ring, backup, upgrades, diagnostics — and the [known limitations](docs/en/operations.md#known-limitations) |
+| [Security](docs/en/security.md) | What the design promises, what it deliberately does not, and which gates are actually proven |
+| [Troubleshooting](docs/en/troubleshooting.md) | Symptoms sorted by what they look like — including the failures that look like success |
+| [Support and releases](docs/en/support.md) | Supported versions, release channels, reporting |
+| [Tutorials](docs/en/README.md#tutorials) | [Solo](docs/en/tutorials/solo.md) · [Small team](docs/en/tutorials/small-team.md) · [Approval-gated deployment](docs/en/tutorials/approval-deployment.md) |
+| [Contributing](.github/CONTRIBUTING.md) | Build, test, house rules. **German is not required to contribute.** |
+
+**The full design documentation** lives in [`docs/`](docs/) and is written in **German**:
+
+- [`docs/operations.md`](docs/operations.md) — the authoritative operations manual: TLS, key ring, backups, connector packages, internal network targets. Longer and more detailed than the English translation
 - [`docs/adr/`](docs/adr/README.md) — architecture decisions, from proxying and governance to capabilities, connectors, WASI and tasks
+- [`docs/prd/`](docs/prd/) — requirements (Lastenheft): 41 functional requirements, NFRs, acceptance criteria
 - [`docs/plans/`](docs/plans/) — implementation plans (Pflichtenheft): work packages with definitions of done, test strategy, coding rules
-- [`docs/operations.md`](docs/operations.md) — running it: TLS, key ring, backups, connector packages, internal network targets
+- [`docs/security-gates.md`](docs/security-gates.md) — what blocks, when, and what proves it *can* block
+- [`docs/upgrade-matrix.md`](docs/upgrade-matrix.md) — what the upgrade harness checks, and at greater length what it does not
 - [`docs/security/threat-model.md`](docs/security/threat-model.md) — findings, fixes and accepted residual risks
+- [`docs/security/verifying-releases.md`](docs/security/verifying-releases.md) — verifying signatures and provenance yourself
 - [`docs/gateway-cli.md`](docs/gateway-cli.md) — the official CLI client
+
+> **Which version wins.** Where a page exists in both languages, the header names the original, and
+> **the original wins on contradiction** — two truths about the same operational procedure are worse
+> than one truth in the wrong language. The rule and the per-document table are in
+> [`docs/i18n.md`](docs/i18n.md). The historical ADRs stay German on purpose, and translating them is
+> explicitly **not** a 1.0 blocker: a stale translation of a decision reads like a different
+> decision.
 
 ## Roadmap
 
@@ -164,6 +188,9 @@ The full design documentation lives in [`docs/`](docs/) — written in **German*
 | Skills in packages | A connector package carries the skills that explain its connector; consent is bound to the text, not the publisher ([ADR-0021](docs/adr/0021-skills-in-paketen.md)) | ✅ on `main`; a package type for skill bundles without a connector is decided but not built |
 | M9 "v0.6.0 pre-release" | Everything since v0.5.0 brought into a tagged build | ✅ [pre-release](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.6.0) |
 | First real operation | An instance running on real hardware — which surfaced three defects no test could have found: a silently dropped session cookie over HTTP, `http://` redirects behind a TLS proxy, and **an admin UI that was never interactive at all** because the Blazor entry point was never served | ✅ fixed in [v0.6.1](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.6.1) and [v0.6.2](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.6.2) |
+| M2 "Recoverability" | Backup/restore with a manifest and verification, migration safety with a journal and a start-time block, `bifrost doctor` with stable codes, configuration export/import | ✅ on `main`; **no PostgreSQL backup** ([ADR-0024](docs/adr/0024-backup-restore-und-migrationssicherheit.md) E2) |
+| M3 "Secure defaults" | Container isolation as the default for new native upstreams, key-ring protection with loss detection, first access via a short-lived token instead of log credentials, security and supply-chain gates | ✅ on `main`; `AllowPrivateTargets` still undecided for existing HTTP upstreams |
+| M1 acceptance / [v0.12.0](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.12.0) | The first run of the release pipeline: multi-arch image, five CLI archives, SBOMs, keyless signature, six attestations | ✅ released 2026-08-01 — after nine findings that only a real run could show |
 | "1.0" | Real-world operation over time — the one thing tests can't provide | ⏳ open |
 
 ## License

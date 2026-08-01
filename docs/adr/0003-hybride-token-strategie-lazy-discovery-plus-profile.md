@@ -99,5 +99,5 @@ Nur der Hybrid erfüllt Z-2 für alle Agent-Typen (spezialisierte wie explorativ
 
 ### Referenzen
 
-- [PRD 0001, FR-11 bis FR-16](../prd/0001-bifrost-meta-gateway.md)
+- [PRD 0001, FR-11 bis FR-16](../prd/0001-mcp-mcp-meta-gateway.md)
 - Vergleichbare Muster: mcpproxy-go (BM25-Filterung), MarimerLLC/mcp-aggregator (lazy discovery), Anthropic „Tool Search Tool"-Pattern

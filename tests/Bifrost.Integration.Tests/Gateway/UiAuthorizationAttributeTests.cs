@@ -34,7 +34,30 @@ public class UiAuthorizationAttributeTests
         { "/operations", UiPolicies.Admin },
         { "/logs", UiPolicies.Authenticated },
         { "/", UiPolicies.Authenticated },
+        // Beide standen bisher nicht in dieser Tabelle: Sie kamen nach ihr dazu und wurden nur vom
+        // Auffangtest unten gehalten, der lediglich „irgendeine Policy" verlangt. Mit der
+        // Basic-/Advanced-Navigation (WP4.5) stehen sie jetzt im Menü und damit im Blickfeld.
+        { "/tasks", UiPolicies.Operator },
+        { "/packages", UiPolicies.Admin },
     };
+
+    /// <summary>
+    /// WP4.5: Was das Menü verspricht, muss die Seite halten. Ein Menüpunkt mit lockererer Policy
+    /// als seine Seite erscheint bei jemandem, der die Seite gar nicht öffnen kann — ein toter Link
+    /// mit dem Beigeschmack einer versteckten Funktion. Umgekehrt wäre die Seite unauffindbar.
+    /// </summary>
+    [Fact]
+    public void Navigation_entries_and_pages_agree_on_the_policy()
+    {
+        foreach (var entry in UiNavigation.All)
+        {
+            var page = RoutableComponents()
+                .SingleOrDefault(t => t.GetCustomAttributes<RouteAttribute>().Any(r => r.Template == entry.Path));
+
+            page.Should().NotBeNull($"der Menüpunkt '{entry.Label}' zeigt auf {entry.Path}");
+            page!.GetCustomAttribute<AuthorizeAttribute>()?.Policy.Should().Be(entry.Policy);
+        }
+    }
 
     [Theory]
     [MemberData(nameof(ExpectedPolicies))]

@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Aktiv (lebendes Dokument) |
 | **Datum** | 2026-07-17 |
-| **Basis-PRD** | [0001-bifrost-meta-gateway.md](../prd/0001-bifrost-meta-gateway.md) (Lastenheft) |
+| **Basis-PRD** | [0001-bifrost-meta-gateway.md](../prd/0001-mcp-mcp-meta-gateway.md) (Lastenheft) |
 | **Bindende ADRs** | [0001](../adr/0001-zentraler-proxy-gateway-statt-direktanbindung.md)–[0008](../adr/0008-api-mcp-bridge-als-erstklassige-fassaden.md) |
 | **Rollen** | Senior PM (Scope/DoD), Senior-Tech-Specialist (Architektur/Performance) |
 
