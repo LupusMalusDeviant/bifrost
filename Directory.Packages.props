@@ -17,7 +17,7 @@
     <PackageVersion Include="ModelContextProtocol.Core" Version="2.0.0" />
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.0.0" />
     <!-- Serverseitige Argument-Validierung im Lazy-Pfad (ADR-0003, Plan-Risiko R3; MIT) -->
-    <PackageVersion Include="JsonSchema.Net" Version="9.3.0" />
+    <PackageVersion Include="JsonSchema.Net" Version="9.4.0" />
 
     <!-- Hosting / ASP.NET Core -->
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
@@ -34,12 +34,12 @@
          öffentlich mit; BouncyCastle ist MIT, rein verwaltet (kein natives Beipack, also auch auf
          arm64 unverändert) und geprüfter Code. Eine eigene Kurvenarithmetik an einer
          Vertrauensgrenze wäre die schlechtere Wahl, egal wie kurz sie ausfiele. -->
-    <PackageVersion Include="BouncyCastle.Cryptography" Version="2.6.2" />
+    <PackageVersion Include="BouncyCastle.Cryptography" Version="2.7.0" />
 
     <!-- Token-Prüfung, wenn der Gateway selbst Resource Server ist (MCP-Autorisierung).
          Bringt JWKS-Abruf mit Zwischenspeicher und Schlüsselrotation mit — genau das, was man
          nicht selbst schreiben will, wenn eine Signaturprüfung davon abhängt. -->
-    <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.21.0" />
+    <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.22.0" />
 
     <!-- Persistenz (ADR-0007) + Secret-Verschlüsselung (NFR-04) -->
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
