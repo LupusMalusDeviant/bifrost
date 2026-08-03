@@ -34,7 +34,7 @@ RUN dotnet publish src/Bifrost.Server/Bifrost.Server.csproj \
 # `--platform=$BUILDPLATFORM` hält die Stage auf der Architektur des Bauhosts und kreuzkompiliert
 # von dort. Ohne das liefe der Rust-Build für arm64 unter QEMU-Emulation — bei wasmtime sind das
 # Größenordnungen mehr Bauzeit.
-FROM --platform=$BUILDPLATFORM rust:1.94-slim-bookworm AS wasi-host
+FROM --platform=$BUILDPLATFORM rust:1.97-slim-bookworm AS wasi-host
 ARG TARGETARCH
 WORKDIR /src
 
