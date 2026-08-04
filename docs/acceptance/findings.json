@@ -1,0 +1,253 @@
+{
+  "schemaVersion": 1,
+  "note": "Quelle der Wahrheit. Der lesbare Bericht wird daraus erzeugt und nie von Hand gepflegt. Uebernommen aus docs/plans/product-readiness-status.md und CHANGELOG.md — ein Fund, der einmal aufgeschrieben wurde, verschwindet nicht durch eine neue Liste.",
+  "coverage": {
+    "from": "M4",
+    "reason": "Ab M4 fuehrt das Fortschrittsprotokoll die Befunde durchnummeriert und mit Schweregrad. Die Befunde aus M0-M3 sind in ihren eigenen Abschnitten als behoben dokumentiert, aber nicht hier uebernommen. Diese Luecke ist selbst ein Befund (BFR-F-0026) und keine stille Auslassung."
+  },
+  "findings": [
+    {
+      "id": "BFR-F-0001",
+      "title": "Teilimport: ein kaputter Eintrag machte den ganzen Plan unanwendbar",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M4, Abnahme WP4.1-4.3",
+      "detail": "ImportPlan.CanApply galt planweit. Ein einziger unlesbarer Eintrag blockierte den Import aller uebrigen — bei einer Fremdkonfiguration mit zwanzig Servern der Normalfall.",
+      "evidence": "docs/plans/product-readiness-status.md#vier-befunde-aus-der-abnahme-von-41-43--behoben"
+    },
+    {
+      "id": "BFR-F-0002",
+      "title": "Zentrale Nachbearbeitung setzte den Fundort fest auf mcpServers/<name>",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M4, Abnahme WP4.1-4.3",
+      "detail": "Der Pfad in einem Befund zeigte auf eine Stelle, die es in der gelesenen Datei nicht gab. Wer dort nachsah, fand nichts und hielt den Befund fuer falsch.",
+      "evidence": "docs/plans/product-readiness-status.md#vier-befunde-aus-der-abnahme-von-41-43--behoben"
+    },
+    {
+      "id": "BFR-F-0003",
+      "title": "Falschpositiv in der Maskenerkennung",
+      "severity": "low",
+      "status": "behoben",
+      "source": "M4, Abnahme WP4.1-4.3",
+      "detail": "LooksMasked erkannte eine Verweisform nur als Maske; ein echter Wert dahinter waere als maskiert durchgegangen.",
+      "evidence": "docs/plans/product-readiness-status.md#vier-befunde-aus-der-abnahme-von-41-43--behoben"
+    },
+    {
+      "id": "BFR-F-0004",
+      "title": "Ein vorhandener Waechter war rot, und die Fertigmeldung kam trotzdem",
+      "severity": "high",
+      "status": "behoben",
+      "source": "M5-Audit 2026-08-02, Befund 1",
+      "detail": "WP5.6 fuehrte einen neuen Maskierungsdurchgang ein; RedactionCorpusTests fiel um, und die Security-Suite wurde nach dem Einbau nie gelaufen. Die Meldung '14 Tests gruen' war wahr und meinte die selbst geschriebenen.",
+      "evidence": "RedactionCorpusTests.A_new_redactor_forces_a_decision_about_the_corpus"
+    },
+    {
+      "id": "BFR-F-0005",
+      "title": "Die Grenze des Maskierungslaufs klang nach mehr, als sie ist",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M5-Audit 2026-08-02, Befund 2",
+      "detail": "'Kein Korpuswert im Bundle' stimmte, weil die Quellen ihre Secrets unter secret-artigen Feldnamen fuehren. Ein Wert unter einem harmlosen Namen bleibt stehen. Die Grenze steht jetzt als Test da.",
+      "evidence": "docs/plans/product-readiness-status.md#audit-gegen-den-code-2026-08-02"
+    },
+    {
+      "id": "BFR-F-0006",
+      "title": "Die Browserwege prueften ein Debug-Publish",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M5-Audit 2026-08-02, Befund 3",
+      "detail": "dotnet publish ohne -c nimmt immer Debug, auch wenn die CI in Release baut. Die Wege haetten unbemerkt ein anderes Artefakt geprueft als das ausgelieferte.",
+      "evidence": "tests/Bifrost.Ui.E2E/Harness/PublishedGateway.cs"
+    },
+    {
+      "id": "BFR-F-0007",
+      "title": "Der Waisen-Detektor hatte keine Gegenprobe",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M5-Audit 2026-08-02, Befund 4",
+      "detail": "'Keine verwaisten Prozesse' beruhte auf einem Pruefer, der in jedem Lauf eine leere Liste meldete — von einem kaputten nicht zu unterscheiden.",
+      "evidence": "OrphanDetectionTests"
+    },
+    {
+      "id": "BFR-F-0008",
+      "title": "'rotates' bewies keine Rotation",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M5-Audit 2026-08-02, Befund 5",
+      "detail": "Der Test prueste, dass ein neues Refresh-Token zurueckkommt — nicht, dass das alte danach wertlos ist. Ohne das laege nach jeder Erneuerung ein weiterer gueltiger Schluessel herum.",
+      "evidence": "docs/plans/product-readiness-status.md#audit-gegen-den-code-2026-08-02"
+    },
+    {
+      "id": "BFR-F-0009",
+      "title": "Vertrag gegen Code dreimal auseinander (Jobname, Vorschaupflicht, Compose-Datei)",
+      "severity": "low",
+      "status": "behoben",
+      "source": "M5-Audit 2026-08-02, Befunde 6-8",
+      "detail": "Der E2E-Job hiess chromium statt ui-e2e (Branch-Protection haengt am Jobnamen); der Vertrag schrieb 'Vorschau ist Pflicht', der Dienst erzwingt sie nicht; der Vertrag nannte eine docker-compose.oauth.yml, gebaut wurde ein Testcontainer.",
+      "evidence": "docs/plans/m5-compatibility-contract.md"
+    },
+    {
+      "id": "BFR-F-0010",
+      "title": "Zwei ungeprueste Wege im Support-Bundle",
+      "severity": "low",
+      "status": "behoben",
+      "source": "M5-Audit 2026-08-02, Befunde 9-10",
+      "detail": "Die Kategorie Logs war nur in ihrer abwesenden Form geprueft, der Vorgabepfad ohne --out gar nicht.",
+      "evidence": "docs/plans/product-readiness-status.md#audit-gegen-den-code-2026-08-02"
+    },
+    {
+      "id": "BFR-F-0011",
+      "title": "Der Skip-Waechter der CI zaehlte nur eine einzige Testassembly",
+      "severity": "high",
+      "status": "behoben",
+      "source": "M5-Audit, CI-Nachbau, Befund 11",
+      "detail": "Mit festem trx-Dateinamen ueberschreibt jede Assembly dieselbe Datei; gezaehlt wurden die Skips der zuletzt geschriebenen. Acht uebersprungene Upgrade-Tests waeren unbemerkt durchgegangen — bei einem Waechter, dessen einziger Zweck es ist, stille Skips zu verhindern.",
+      "evidence": ".github/workflows/ci.yml"
+    },
+    {
+      "id": "BFR-F-0012",
+      "title": "Der eigene Waisen-Test war nicht laufplan-fest",
+      "severity": "low",
+      "status": "behoben",
+      "source": "M5-Audit, CI-Nachbau, Befund 12",
+      "detail": "Er verlangte 'genau ein neuer Prozess' und fiel im Lauf ueber die ganze Solution um.",
+      "evidence": "OrphanDetectionTests"
+    },
+    {
+      "id": "BFR-F-0013",
+      "title": "Upstream-OAuth fand die Metadaten mancher Authorization Server nicht",
+      "severity": "high",
+      "status": "behoben",
+      "source": "M5/WP5.2, erster Lauf gegen echtes Keycloak",
+      "detail": "Ein HTTP-Fehlerstatus kam als HttpRequestException heraus, waehrend die Schleife nur den eigenen Fehlertyp abfing. Sie brach beim ersten 404 ab; die beiden Ausweichpfade waren toter Code. Gegen jeden Server, der seine Metadaten nur unter {issuer}/.well-known/openid-configuration ausliefert, scheiterte die Anbindung.",
+      "evidence": "src/Bifrost.Upstream/OAuth/OAuthDiscovery.cs"
+    },
+    {
+      "id": "BFR-F-0014",
+      "title": "Der Messstand rechnete 11 ms Gateway-Overhead, die es nicht gab",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M5/WP5.3",
+      "detail": "Abgezogen wurden die angeforderten 20 ms Upstream-Zeit, waehrend Task.Delay(20) unter Windows gut 31 ms dauert. Die Timeraufloesung erschien als Gateway-Anteil. Der Upstream misst seinen Span jetzt selbst.",
+      "evidence": "docs/acceptance/performance.md"
+    },
+    {
+      "id": "BFR-F-0015",
+      "title": "Speicherwachstum unter Saettigung: 110 MB je Minute ohne Abflachen",
+      "severity": "medium",
+      "status": "offen",
+      "source": "M5/WP5.4",
+      "detail": "Der Lauf ohne Wartezeit (~3 500 Aufrufe/s) zeigte ueber 6,7 Minuten RSS 615 -> 1 485 MB bei flachen Handles und Threads. Beim realistischen Lauf (242/s) bleiben 213 -> 289 MB ueber sechs Minuten — nicht ungebremst, aber auch nicht abgeflacht. Befund, keine Diagnose: Flache Handles passen auf einen Rueckstau (Verdacht Audit-Pfad) genauso wie auf eine Server-GC ohne Speicherdruck.",
+      "evidence": "artifacts/soak/20260802-155800-load-and-chaos/metrics.jsonl",
+      "owner": "unbesetzt",
+      "due": "vor M8/WP8.1 (72-h-Soak)",
+      "mitigation": "Der 4-Stunden-Nachtlauf bei realistischer Rate entscheidet, ob die Kurve abflacht. Bis dahin gilt die Betriebsempfehlung: Speicher beobachten, Retention aktiv halten. Kein bekannter Ausfall im Betrieb."
+    },
+    {
+      "id": "BFR-F-0016",
+      "title": "Die Oberflaeche war im Entwicklungslayout tot",
+      "severity": "high",
+      "status": "behoben",
+      "source": "M5/WP5.5",
+      "detail": "_framework/blazor.web.js kam mit Status 200 und null Bytes, weil die Datei erst beim Veroeffentlichen nach wwwroot gelangt. Die Seiten sahen benutzbar aus, kein Knopf tat etwas. Dreizehn gruene eigene Tests hatten das nicht bemerkt.",
+      "evidence": "BlazorScriptDeliveryTests"
+    },
+    {
+      "id": "BFR-F-0017",
+      "title": "Der Approval-Zusteller rief seine Zieladresse ungeprueft",
+      "severity": "high",
+      "status": "behoben",
+      "source": "M6/WP6.3, gefunden vom bestehenden SSRF-Waechter",
+      "detail": "Der Dispatcher oeffnete einen eigenen HttpClient an der zentralen SSRF-Pruefung vorbei. Ein Ziel im internen Netz waere damit erreichbar gewesen.",
+      "evidence": "SsrfCentralFetcherTests"
+    },
+    {
+      "id": "BFR-F-0018",
+      "title": "Ein Policy Pack konnte keine bestehende Rolle aendern",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M6/WP6.1",
+      "detail": "Der Importweg aus M2 legte nur an; ein vergebener Name war ein Konflikt. Der interessante Fall eines Packs — dieselbe Rolle, andere Rechte — war damit nicht anwendbar. Aufgeloest durch ConfigurationImportMode.Update samt neu begruendeter Ruecknahme.",
+      "evidence": "ConfigurationImportUpdateTests.Taking_back_an_import_restores_a_replaced_role_instead_of_deleting_it"
+    },
+    {
+      "id": "BFR-F-0019",
+      "title": "Eine auf ein Werkzeug eingeschraenkte Berechtigung wurde beim Lesen aus JSON unbeschraenkt",
+      "severity": "critical",
+      "status": "behoben",
+      "source": "M6/WP6.1, gefunden ueber den Ende-zu-Ende-Test des Rueckwegs",
+      "detail": "NamespacedToolName und CapabilityId sind Wertetypen mit Value ohne Setter; System.Text.Json nimmt bei Structs den impliziten parameterlosen Konstruktor. Ein Grant mit Scope.Tool = 'github__read' wurde beim Deserialisieren zu einem Grant OHNE Werkzeugeinschraenkung — aus 'darf genau dieses Werkzeug' wurde 'darf alles'. Ohne Ausnahme, ohne Meldung. Betroffen war jeder JSON-Weg, der eine Berechtigung traegt.",
+      "evidence": "ValueTypeJsonTests.A_grant_restricted_to_one_tool_stays_restricted"
+    },
+    {
+      "id": "BFR-F-0020",
+      "title": "Der Schreib-Port des Konfigurationsimports hiess AddRoleAsync und ersetzte trotzdem",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M6/WP6.1",
+      "detail": "Unter der Haube ein Upsert, waehrend die Test-Attrappe wirklich nur anhaengte. Ein Test haette 'ersetzt' gemeldet, wo im Betrieb zwei Rollen desselben Namens entstanden waeren. Heisst jetzt SaveRoleAsync/SaveProfileAsync.",
+      "evidence": "ConfigurationImportUpdateTests"
+    },
+    {
+      "id": "BFR-F-0021",
+      "title": "?format=jsonl wurde mit 400 abgewiesen",
+      "severity": "low",
+      "status": "behoben",
+      "source": "M6/WP6.2",
+      "detail": "Die Standardbindung von Enum-Query-Parametern ist case-sensitiv; Gross- und Kleinschreibung ist in einer URL keine Aussage.",
+      "evidence": "AuditExportApiTests.The_export_streams_instead_of_answering_with_one_document"
+    },
+    {
+      "id": "BFR-F-0022",
+      "title": "Der Browser-Harness lief gegen eine alte Veroeffentlichung",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M6/WP6.2",
+      "detail": "Das Publish wurde uebersprungen, wenn die Executable schon existierte — vom vorigen Paket. Der neue Weg war rot, und die Ursache zeigte auf die Oberflaeche statt auf den Harness. Schlimmer waere der umgekehrte Fall gewesen: ein gruener Lauf gegen einen alten Stand.",
+      "evidence": "tests/Bifrost.Ui.E2E/Harness/PublishedGateway.cs"
+    },
+    {
+      "id": "BFR-F-0023",
+      "title": "Toolargumente verschwanden bei chunked uebertragenen Anfragen",
+      "severity": "high",
+      "status": "behoben",
+      "source": "M5/WP5.5, gefunden ueber den Browserweg zur Freigabe",
+      "detail": "Der Invoke-Endpunkt las den Rumpf nur bei gesetztem Content-Length; bei Transfer-Encoding: chunked ist der null. Jeder Client, der die Laenge nicht vorab berechnet — darunter HttpClient.PostAsJsonAsync von .NET — verlor still seine Argumente und scheiterte an der Schemapruefung mit 'Pflichtfeld fehlt', also an der falschen Stelle. Der bestehende Test hiess works_like_curl und setzte die Laenge, wie curl es tut.",
+      "evidence": "RestFacadeTests.Rest_invoke_also_works_for_a_client_that_sends_no_content_length"
+    },
+    {
+      "id": "BFR-F-0024",
+      "title": "Zwei Unterdrueckungen ohne Begruendung in Program.cs",
+      "severity": "low",
+      "status": "behoben",
+      "source": "M7/WP7.1, gefunden vom neuen Waechter",
+      "detail": "Zwei #pragma warning disable CA1848 ohne Kommentar. Eine Unterdrueckung ohne Begruendung ist nicht nachpruefbar.",
+      "evidence": "DisabledGateTests.Every_suppression_says_why"
+    },
+    {
+      "id": "BFR-F-0025",
+      "title": "Ein Solution-Lauf meldete einen Fehlschlag, dessen Name verloren ging",
+      "severity": "medium",
+      "status": "offen",
+      "source": "M6/WP6.1",
+      "detail": "Ein Lauf ueber die ganze Solution meldete 443 statt 444 bestandene Integrationstests. Drei spaetere volle Laeufe und ein Lauf der Suite allein waren gruen. Welcher Test es war, ist nicht bekannt — der Ausgabefilter des Laufs hatte die Zeile mit dem Namen verworfen. Ohne Namen gibt es keine Diagnose, nur eine Vermutung: Assemblies laufen parallel, die Integrationstests teilen Ports und Dateien.",
+      "evidence": "docs/plans/product-readiness-status.md#ein-unaufgeklaerter-fehlschlag-festgehalten-statt-weggewischt",
+      "owner": "unbesetzt",
+      "due": "vor M7/WP7.2 (externer Review)",
+      "mitigation": "Jeder kuenftige Solution-Lauf schreibt die volle Ausgabe in eine Datei, statt sie durch einen Filter zu schicken. Tritt der Fehlschlag wieder auf, ist der Name da."
+    },
+    {
+      "id": "BFR-F-0026",
+      "title": "Die Befunde aus M0-M3 sind nicht in diese Liste uebernommen",
+      "severity": "medium",
+      "status": "offen",
+      "source": "M7/WP7.1",
+      "detail": "Diese Liste beginnt bei M4, weil das Fortschrittsprotokoll ab dort durchnummeriert und mit Schweregrad fuehrt. Die frueheren Befunde sind in ihren eigenen Abschnitten als behoben dokumentiert, aber nicht hier. Solange das so ist, kann niemand aus dieser Datei allein sagen 'keine offenen Critical/High' — nur 'keine ab M4'.",
+      "evidence": "docs/plans/product-readiness-status.md",
+      "owner": "unbesetzt",
+      "due": "vor M7-Abschluss",
+      "mitigation": "Die Abschnitte 'Befunde aus M0' bis M3 durchgehen und uebernehmen. Bis dahin gilt die Abdeckungsangabe im Kopf dieser Datei als Vorbehalt."
+    }
+  ]
+}

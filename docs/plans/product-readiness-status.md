@@ -649,7 +649,7 @@ Anforderungen gehalten hat, ist eine Behauptung über eine Liste, die es nicht g
 
 | WP | Status | Nachweis | Nächster Schritt |
 |---|---|---|---|
-| 7.1 Feature Freeze und Finding-Liste | `angefangen` | Wächter gegen still abgeschaltete Tore: 4 Tests grün | Finding-Liste, Rückverfolgung, generierter Bericht |
+| 7.1 Feature Freeze und Finding-Liste | `angefangen` | 11 Tests grün: Wächter über die Tore (4), Finding-Liste mit 26 Befunden und ihren Regeln (5), generierter Bericht (2) | Rückverfolgung Anforderung → Paket → Test → Artefakt |
 | 7.2 Externer Security-Review | `nicht startbar` | – | braucht einen beauftragten externen Prüfer |
 | 7.3 Pilotrelease | `nicht startbar` | – | braucht drei getrennte Installationen und echte Betreiber |
 
@@ -673,9 +673,41 @@ gemeldet — sein einziger Fund war der Kommentar, der die Regel erklärt. Ein P
 über eine Regel bestraft, sorgt dafür, dass niemand mehr darüber schreibt; Kommentarzeilen sind
 jetzt ausgenommen, mit dem Fund als Begründung im Code.
 
-**Was in WP7.1 noch aussteht:** die Finding-Liste aus dem, was bereits aufgeschrieben ist; die
-Rückverfolgung Anforderung → Paket → **Testname** → Artefakt als maschinenlesbare Quelle; der
-daraus generierte Bericht. Die härteste Regel steht im Vertrag §1: Eine Zeile zählt nur, wenn der
+### Die Finding-Liste — und was sie über den RC sagt
+
+`docs/acceptance/findings.json` ist die Quelle, `findings.md` wird daraus erzeugt. **26 Befunde,
+23 behoben, 3 offen** — übernommen aus diesem Protokoll und dem CHANGELOG, nicht neu erfunden.
+
+**Kein offener Critical- oder High-Befund** — und dieser Satz steht nicht in einem Dokument,
+sondern in einem Test: `No_open_critical_or_high_finding_blocks_the_release_candidate`. Es gibt
+bewusst **kein Feld „akzeptiert"**. Wer einen solchen Befund für tragbar hält, ändert den
+Schweregrad und begründet das im Datensatz; dann steht die Entscheidung da, wo sie hingehört,
+statt in einem Ausnahmefeld zu verschwinden.
+
+Die drei offenen sind alle `medium` und tragen deshalb Owner, Termin und Mitigation — auch das
+erzwungen, nicht erbeten:
+
+| Id | Befund | Termin |
+|---|---|---|
+| BFR-F-0015 | Speicherwachstum unter Sättigung, 110 MB/min ohne Abflachen | vor M8/WP8.1 |
+| BFR-F-0025 | ein Solution-Fehlschlag, dessen Name verloren ging | vor M7/WP7.2 |
+| BFR-F-0026 | die Befunde aus M0–M3 sind nicht übernommen | vor M7-Abschluss |
+
+**Der dritte ist der unangenehmste, und er steht absichtlich drin.** Die Liste beginnt bei M4, weil
+das Protokoll ab dort durchnummeriert führt. Solange das so ist, kann niemand aus dieser Datei
+allein „keine offenen Critical/High" sagen — nur „keine ab M4". Die Abdeckungsangabe steht im Kopf
+der Datei, und ein Test besteht darauf, dass sie eine Begründung hat.
+
+**Die härteste Regel des Vertrags ist angewendet:** Ein Beleg, der wie ein Testname aussieht, muss
+einer sein. `Every_test_named_as_evidence_really_exists` hält jeden Beleg gegen die Suite — ein
+Verweis auf einen gelöschten Test ist schlimmer als gar keiner, weil er wie ein Nachweis aussieht.
+
+**Beide Wächter wurden gegengeprüft.** Ein Befund wurde testweise auf `high` gesetzt und ein Beleg
+auf einen erfundenen Testnamen: Beide Tests wurden rot, dann wurde zurückgesetzt. Ein Tor, das nie
+zugefallen ist, ist kein Tor.
+
+**Was in WP7.1 noch aussteht:** die Rückverfolgung Anforderung → Paket → **Testname** → Artefakt
+als maschinenlesbare Quelle samt generiertem Bericht. Die härteste Regel steht im Vertrag §1: Eine Zeile zählt nur, wenn der
 genannte Test wirklich existiert und wirklich läuft.
 
 ## Vorige Welle: M5 — Kompatibilität und Betriebsnachweise
