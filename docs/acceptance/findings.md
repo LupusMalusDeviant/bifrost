@@ -3,7 +3,7 @@
 > **Generiert aus `findings.json`.** Änderungen gehören in die Quelle, nicht hierher —
 > `FindingsReportTests` färbt den Lauf rot, sobald beides auseinanderläuft.
 
-**Offen:** 3 · **Behoben:** 23 · **Abdeckung ab:** M4
+**Offen:** 3 · **Behoben:** 24 · **Abdeckung ab:** M4
 
 Ab M4 fuehrt das Fortschrittsprotokoll die Befunde durchnummeriert und mit Schweregrad. Die Befunde aus M0-M3 sind in ihren eigenen Abschnitten als behoben dokumentiert, aber nicht hier uebernommen. Diese Luecke ist selbst ein Befund (BFR-F-0026) und keine stille Auslassung.
 
@@ -144,6 +144,12 @@ Unter der Haube ein Upsert, waehrend die Test-Attrappe wirklich nur anhaengte. E
 _Quelle: M6/WP6.2 · Beleg: `tests/Bifrost.Ui.E2E/Harness/PublishedGateway.cs`_
 
 Das Publish wurde uebersprungen, wenn die Executable schon existierte — vom vorigen Paket. Der neue Weg war rot, und die Ursache zeigte auf die Oberflaeche statt auf den Harness. Schlimmer waere der umgekehrte Fall gewesen: ein gruener Lauf gegen einen alten Stand.
+
+### BFR-F-0027 · Vier Betriebsoptionen standen in keiner Betriebsdokumentation (medium)
+
+_Quelle: M7/WP7.1, Gegenpruefung Changelog/Migration/Rollback · Beleg: `ChangelogMigrationRollbackTests.Every_environment_option_is_documented_where_an_operator_looks`_
+
+BIFROST_ALLOW_HOST_EXECUTION — die schaerfste Option des Produkts — stand nur im ADR und im Pflichtenheft, also dort, wo ein Betreiber nicht nachsieht. Dazu die drei Schalter der Approval-Benachrichtigung (URL, SECRET, ALLOW_PRIVATE) aus WP6.3, die nirgends in docs/ auftauchten. Eine sicherheitsrelevante Option, die nur im Code steht, wirkt trotzdem — und niemand weiss es.
 
 ### BFR-F-0003 · Falschpositiv in der Maskenerkennung (low)
 

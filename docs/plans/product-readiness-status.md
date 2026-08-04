@@ -649,7 +649,7 @@ Anforderungen gehalten hat, ist eine Behauptung über eine Liste, die es nicht g
 
 | WP | Status | Nachweis | Nächster Schritt |
 |---|---|---|---|
-| 7.1 Feature Freeze und Finding-Liste | `implementiert` | 19 Tests grün: Wächter über die Tore (4), Finding-Liste mit 26 Befunden (5+2), Rückverfolgung über **alle 72 Anforderungen** (6+2) | Changelog/Migration/Rollback gegenprüfen; dann Abnahme durch fremde Augen |
+| 7.1 Feature Freeze und Finding-Liste | `implementiert` | 23 Tests grün: Wächter über die Tore (4), Finding-Liste mit 27 Befunden (5+2), Rückverfolgung über **alle 72 Anforderungen** (6+2), Gegenprüfung Changelog/Migration/Rollback (4) | Abnahme durch fremde Augen |
 | 7.2 Externer Security-Review | `nicht startbar` | – | braucht einen beauftragten externen Prüfer |
 | 7.3 Pilotrelease | `nicht startbar` | – | braucht drei getrennte Installationen und echte Betreiber |
 
@@ -735,10 +735,39 @@ Startvorlagen (FR-P017), 72-Stunden-Soak (FR-P051), Diagnose bei Hängern (FR-P0
 öffentliche Roadmap (FR-P094). Die zwölf `teilweise` sind überwiegend Nachweise, die ein
 veröffentlichtes Artefakt oder fremde Zugangsdaten brauchen.
 
-**Was in WP7.1 noch aussteht:** der letzte Punkt des Pflichtenhefts — „Changelog, Migration und
-Rollback vollständig". Der Changelog wird geführt, Migrations- und Rollbackwege sind dokumentiert
-und getestet; eine ausdrückliche Gegenprüfung gegen diese Forderung hat aber noch niemand gemacht,
-und ohne sie steht hier keine Fertigmeldung. Die härteste Regel steht im Vertrag §1: Eine Zeile zählt nur, wenn der
+### Die Gegenprüfung Changelog, Migration, Rollback — und was sie gefunden hat
+
+Der letzte Punkt des Pflichtenhefts. Geprüft wurde nicht die Zusage, sondern der Baum dagegen.
+
+**Migrationen: sauber.** 16 je Anbieter, **namensgleich** auf SQLite und PostgreSQL, und jede hat
+ein `Down` mit Inhalt. Beides steht jetzt als Test da: Fehlt eine Migration auf PostgreSQL, bricht
+dort der Start — und zwar erst beim Betreiber, weil die Entwicklung auf SQLite läuft. Ein leeres
+`Down` ist kein Rückweg, sondern eine Einbahnstraße mit einer Methode davor.
+
+**Changelog: geführt.** Mechanisch prüfbar ist nur, dass der offene Abschnitt existiert, Rubriken
+hat und nicht aus drei Zeilen besteht — ob er das Richtige nennt, entscheidet ein Mensch. Was der
+Test verhindert, ist der Fall, in dem eine ganze Welle gar keinen Eintrag bekommen hat.
+
+**Und ein Fund, der es in sich hat: vier Betriebsoptionen standen in keiner
+Betriebsdokumentation.** `BIFROST_ALLOW_HOST_EXECUTION` — die schärfste Option des Produkts, sie
+erlaubt Upstream-Programmen den nativen Zugriff auf alles, was dem Dienstbenutzer offensteht —
+stand nur im ADR und im Pflichtenheft, also dort, wo ein Betreiber nicht nachsieht. Dazu die drei
+Schalter der Approval-Benachrichtigung aus WP6.3, darunter das **Signaturgeheimnis** und der
+ausdrückliche Weg an der SSRF-Prüfung vorbei.
+
+Alle vier sind jetzt in `docs/operations.md` und im englischen Spiegel dokumentiert, mit Default,
+Risiko und Empfehlung. Der Wächter dazu hält jede `BIFROST_*`-Option des Produktcodes gegen die
+Betriebsdokumente — ein ADR zählt dabei ausdrücklich **nicht**: Es ist eine Entscheidung, kein
+Handbuch.
+
+**Gegengeprobt, und die erste Probe war zu schwach.** Ich habe die Zeile aus der deutschen
+Dokumentation entfernt — der Test blieb grün, weil der englische Spiegel sie noch trug. Das ist
+richtiges Verhalten des Wächters und ein falscher Schluss meinerseits gewesen; erst das Entfernen
+aus beiden färbte den Lauf rot. Eine Gegenprobe, die grün bleibt, beweist nichts.
+
+Damit steht **FR-P091** („jede sicherheitsrelevante Option dokumentiert Default, Risiko und
+Empfehlung") auf `erfüllt` statt `teilweise` — und trägt jetzt einen Test statt einer Absicht.
+Offene Must-Anforderungen: **11** statt 12. Die härteste Regel steht im Vertrag §1: Eine Zeile zählt nur, wenn der
 genannte Test wirklich existiert und wirklich läuft.
 
 ## Vorige Welle: M5 — Kompatibilität und Betriebsnachweise

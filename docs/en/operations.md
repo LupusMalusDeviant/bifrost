@@ -156,6 +156,22 @@ the same secret is a rule you would misremember, and then you would be running w
 
 ---
 
+### Options that are not in the table above
+
+- `BIFROST_ALLOW_HOST_EXECUTION` (default *off*) — **the sharpest option in the product.** `true`
+  lets upstream programs run natively with the gateway's privileges; they can then read everything
+  that user can, including every agent's API keys and every other upstream's secrets. A fresh
+  instance defaults to `false` (ADR-0025 E2). Recommendation: leave it off and use container
+  isolation — a program's access to the machine's files appears in **no** log of this gateway.
+- `BIFROST_APPROVAL_WEBHOOK_URL` (default *unset*) — target for the notification about pending
+  approvals. Without a secret the gateway refuses to start with a target set: an unsigned
+  notification can be forged by anyone.
+- `BIFROST_APPROVAL_WEBHOOK_SECRET` (default *unset*) — signing secret for that notification, same
+  scheme as for inbound webhooks (ADR-0013). Required as soon as a target is set.
+- `BIFROST_APPROVAL_WEBHOOK_ALLOW_PRIVATE` (default *off*) — allows a target inside your own
+  network. Every target otherwise goes through the same SSRF check as a schema import; this switch
+  is the explicit way past it and belongs only where the target really is internal.
+
 ## TLS and reverse proxy
 
 The gateway terminates no TLS of its own. **Always put it behind a reverse proxy** (Caddy, nginx,

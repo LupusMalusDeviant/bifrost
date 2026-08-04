@@ -248,6 +248,15 @@
       "owner": "unbesetzt",
       "due": "vor M7-Abschluss",
       "mitigation": "Die Abschnitte 'Befunde aus M0' bis M3 durchgehen und uebernehmen. Bis dahin gilt die Abdeckungsangabe im Kopf dieser Datei als Vorbehalt."
+    },
+    {
+      "id": "BFR-F-0027",
+      "title": "Vier Betriebsoptionen standen in keiner Betriebsdokumentation",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M7/WP7.1, Gegenpruefung Changelog/Migration/Rollback",
+      "detail": "BIFROST_ALLOW_HOST_EXECUTION — die schaerfste Option des Produkts — stand nur im ADR und im Pflichtenheft, also dort, wo ein Betreiber nicht nachsieht. Dazu die drei Schalter der Approval-Benachrichtigung (URL, SECRET, ALLOW_PRIVATE) aus WP6.3, die nirgends in docs/ auftauchten. Eine sicherheitsrelevante Option, die nur im Code steht, wirkt trotzdem — und niemand weiss es.",
+      "evidence": "ChangelogMigrationRollbackTests.Every_environment_option_is_documented_where_an_operator_looks"
     }
   ]
 }

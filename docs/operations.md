@@ -285,6 +285,10 @@ Sicherung zurückholen.
 | `BIFROST_MCP_STATELESS` | `1` | `0`/`false` schaltet auf den Sitzungsbetrieb der alten Protokollrevision zurück (siehe [Protokollstand](#protokollstand-sessionlos-oder-mit-sitzung)) |
 | `BIFROST_MCP_LIST_TTL_SECONDS` | `60` | Wie lange ein Client die Werkzeug-, Resource- und Prompt-Listen für frisch halten darf. `0` = kein Hinweis |
 | `BIFROST_BACKUP_PASSPHRASE` | *(nicht gesetzt)* | Verschlüsselt die **automatischen** Sicherungen vor einer Migration. Ohne sie entstehen sie unverschlüsselt — mit ihr sind sie ohne die Passphrase wertlos (siehe [Backup](#backup)) |
+| `BIFROST_ALLOW_HOST_EXECUTION` | *(aus)* | **Die schärfste Option des Produkts.** `true` erlaubt es, Upstream-Programme nativ mit den Rechten des Gateways zu starten — sie lesen dann alles, was diesem Benutzer offensteht, einschließlich der API-Keys aller Agenten und der Secrets aller anderen Upstreams. Vorgabe für eine frische Instanz ist `false` (ADR-0025 E2). Empfehlung: aus lassen und Container-Isolation nutzen; ein Zugriff des Programms auf Dateien der Maschine erscheint in **keinem** Log dieses Gateways |
+| `BIFROST_APPROVAL_WEBHOOK_URL` | *(nicht gesetzt)* | Ziel für die Benachrichtigung über wartende Freigaben (siehe [Freigabe-Flows](#freigabe-flows-approval)). Ohne hinterlegtes Geheimnis startet der Gateway damit **nicht** — eine unsignierte Benachrichtigung kann jeder fälschen |
+| `BIFROST_APPROVAL_WEBHOOK_SECRET` | *(nicht gesetzt)* | Signaturgeheimnis derselben Benachrichtigung, dasselbe Verfahren wie bei eingehenden Webhooks (ADR-0013). Pflicht, sobald ein Ziel gesetzt ist |
+| `BIFROST_APPROVAL_WEBHOOK_ALLOW_PRIVATE` | *(aus)* | Erlaubt ein Ziel im **eigenen Netz**. Jedes Ziel geht sonst durch dieselbe SSRF-Prüfung wie ein Schemaimport; dieser Schalter ist der ausdrückliche Weg daran vorbei und gehört nur gesetzt, wenn das Ziel wirklich im eigenen Netz steht |
 
 ## Protokollstand: sessionlos oder mit Sitzung
 

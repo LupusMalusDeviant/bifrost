@@ -198,7 +198,7 @@
       "title": "Vor schemaändernden Upgrades wird ein recoverbares Backup erzeugt oder dessen bewusste Ablehnung verlangt.",
       "workPackage": "WP2.3",
       "status": "erfuellt",
-      "test": "PostgresPreMigrationBackupTests",
+      "test": "ChangelogMigrationRollbackTests",
       "artifact": "src/Bifrost.Persistence/DatabaseInitializer.cs"
     },
     {
@@ -647,10 +647,9 @@
       "level": "must",
       "title": "Jede sicherheitsrelevante Option dokumentiert Default, Risiko und Empfehlung.",
       "workPackage": "WP0.2",
-      "status": "teilweise",
-      "test": null,
-      "artifact": "docs/operations.md",
-      "note": "Die sicherheitsrelevanten Schalter sind mit Risiko und Empfehlung dokumentiert; eine vollstaendige Gegenpruefung Option fuer Option steht aus."
+      "status": "erfuellt",
+      "test": "ChangelogMigrationRollbackTests",
+      "artifact": "docs/operations.md"
     },
     {
       "id": "FR-P092",

@@ -25,6 +25,12 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
   dass die Security-Suite gelaufen wäre. Der Durchgang hat jetzt seine Korpustests, für Feldnamen
   und für Freitext. Zusätzlich ist die **Grenze** des Durchgangs als Test festgehalten: Ein Secret
   unter einem harmlosen Feldnamen bleibt stehen — er ist ein Sicherheitsnetz, kein Inhaltsscanner.
+- **Vier Betriebsoptionen standen in keiner Betriebsdokumentation.** `BIFROST_ALLOW_HOST_EXECUTION`
+  — die schärfste Option des Produkts — stand nur im ADR und im Pflichtenheft, also dort, wo ein
+  Betreiber nicht nachsieht; dazu die drei Schalter der Approval-Benachrichtigung
+  (`…_WEBHOOK_URL`, `…_WEBHOOK_SECRET`, `…_WEBHOOK_ALLOW_PRIVATE`). Alle vier stehen jetzt mit
+  Default, Risiko und Empfehlung in `docs/operations.md` und im englischen Spiegel; ein Wächter
+  hält künftig jede `BIFROST_*`-Option gegen die Betriebsdokumente.
 - **Toolargumente verschwanden bei chunked übertragenen Anfragen.** Der Invoke-Endpunkt las den
   Rumpf nur bei gesetztem `Content-Length`; bei `Transfer-Encoding: chunked` ist der `null`. Jeder
   Client, der die Länge nicht vorab berechnet — darunter `HttpClient.PostAsJsonAsync` von .NET —

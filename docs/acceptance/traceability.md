@@ -6,12 +6,12 @@
 Eine Zeile zählt nur, wenn der genannte Test wirklich existiert; ein Test in dieser Suite
 prüft genau das. **`offen` ist ein zulässiger Status — eine weggelassene Anforderung nicht.**
 
-**Anforderungen:** 72 · **Must:** 50 · **Must ohne "erfuellt":** 12
+**Anforderungen:** 72 · **Must:** 50 · **Must ohne "erfuellt":** 11
 
-**12 Must-Anforderungen sind noch nicht erfüllt.** Solange das so steht, ist der Release Candidate keiner — die Zeilen stehen unten mit Grund.
+**11 Must-Anforderungen sind noch nicht erfüllt.** Solange das so steht, ist der Release Candidate keiner — die Zeilen stehen unten mit Grund.
 
-- erfüllt 53
-- teilweise 12
+- erfüllt 54
+- teilweise 11
 - **offen** 7
 
 ## Must
@@ -35,7 +35,7 @@ prüft genau das. **`offen` ist ein zulässiger Status — eine weggelassene Anf
 | **FR-P021** Das Backup umfasst Datenbank, Key-Ring, aktive Paketartefakte und die für eine Wiederhe… | WP2.1 | erfüllt | `BackupInspectionTests` | `src/Bifrost.Core/Backup` |
 | **FR-P022** Backups mit Secrets können verschlüsselt und auf Integrität geprüft werden. | WP2.1 | erfüllt | `BackupInspectionTests` | `src/Bifrost.Core/Backup` |
 | **FR-P023** Restore ist auf einer leeren Installation und auf einer bestehenden Instanz mit explizi… | WP2.2 | erfüllt | `RestoreTests` | `src/Bifrost.Persistence/Backup/RestoreService.cs` |
-| **FR-P024** Vor schemaändernden Upgrades wird ein recoverbares Backup erzeugt oder dessen bewusste … | WP2.3 | erfüllt | `PostgresPreMigrationBackupTests` | `src/Bifrost.Persistence/DatabaseInitializer.cs` |
+| **FR-P024** Vor schemaändernden Upgrades wird ein recoverbares Backup erzeugt oder dessen bewusste … | WP2.3 | erfüllt | `ChangelogMigrationRollbackTests` | `src/Bifrost.Persistence/DatabaseInitializer.cs` |
 | **FR-P025** Parallele Instanzen dürfen nicht gleichzeitig dieselbe Migration ausführen. | WP2.3 | erfüllt | `MigrationSafetyTests` | `src/Bifrost.Persistence/DatabaseInitializer.cs` |
 | **FR-P026** Unvollständige Migrationen werden beim Start erkannt und mit einem sicheren Recovery-Hi… | WP2.3 | erfüllt | `MigrationSafetyTests` | `src/Bifrost.Persistence/DatabaseInitializer.cs` |
 | **FR-P027** Upgradepfade von mindestens drei Vorgängerversionen werden automatisiert geprüft. | WP2.6 | teilweise | `SqliteUpgradeMatrixTests` | `tests/Bifrost.Upgrade.Tests` |
@@ -66,7 +66,7 @@ prüft genau das. **`offen` ist ein zulässiger Status — eine weggelassene Anf
 | **FR-P071** Argumente, Ergebnisse und Secrets gelangen nie in Traces. | WP3.6 | erfüllt | `DiagnosticRedactionTests` | `src/Bifrost.Core/Audit` |
 | **FR-P072** Auditdaten können in JSONL und CSV gestreamt exportiert werden, ohne den Arbeitsspeiche… | WP6.2 | erfüllt | `AuditExportScaleTests` | `docs/operations.md` |
 | **FR-P090** Quickstart, Betrieb, Security und Troubleshooting stehen mindestens auf Deutsch und Eng… | WP0.2 | erfüllt | — | `docs/operations.md` |
-| **FR-P091** Jede sicherheitsrelevante Option dokumentiert Default, Risiko und Empfehlung. | WP0.2 | teilweise | — | `docs/operations.md` |
+| **FR-P091** Jede sicherheitsrelevante Option dokumentiert Default, Risiko und Empfehlung. | WP0.2 | erfüllt | `ChangelogMigrationRollbackTests` | `docs/operations.md` |
 | **FR-P092** CONTRIBUTING, Code of Conduct, Issue-/PR-Templates und lokale Verifikationsbefehle sind… | WP0.2 | **offen** | — | — |
 
 ## Should
@@ -130,7 +130,6 @@ prüft genau das. **`offen` ist ein zulässiger Status — eine weggelassene Anf
 - **FR-P085** (offen): Vier-Augen-Freigabe gibt es nicht. Einzige Could-Anforderung; nicht gebaut, nicht geplant.
 - **FR-P086** (erfuellt): Die dokumentierte Befehlsfolge ist der erste Test.
 - **FR-P090** (erfuellt): Deutsch vollstaendig, englischer Spiegel fuer Betrieb vorhanden.
-- **FR-P091** (teilweise): Die sicherheitsrelevanten Schalter sind mit Risiko und Empfehlung dokumentiert; eine vollstaendige Gegenpruefung Option fuer Option steht aus.
 - **FR-P092** (offen): CONTRIBUTING, Code of Conduct und Issue-/PR-Templates fehlen im Repository.
 - **FR-P093** (erfuellt): Das Beispiel ist klein, lauffaehig und laeuft im Testlauf mit.
 - **FR-P094** (offen): Ein oeffentliches Roadmap-Dokument mit der Unterscheidung zugesagt/geplant/experimentell gibt es nicht.
