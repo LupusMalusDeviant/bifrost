@@ -96,6 +96,26 @@ without a line in this table.
 > take `target/release`; a stale build there makes them **hang** rather than fail, which is a much
 > worse afternoon than a red test.
 
+### When a run hangs
+
+A hang used to end in a job timeout with nothing to look at. Now three things survive it:
+
+| What | Who writes it | Where |
+|---|---|---|
+| **Sequence** — which tests ran, and which one was still running | the test platform (`--blame-hang`) | `Sequence.xml` next to the results |
+| **Dump** — full memory image of the test host | the test platform | `*.dmp`, same place |
+| **Active child processes** — gateway instances and reference servers, with PID and start time | this repository (`HangWatchdog`) | `artifacts/hang/hang-*.txt` |
+
+The third one is the reason: a run here rarely hangs on itself, it hangs on a counterpart that
+stopped answering — and the dump does not tell you which one that was. The watchdog therefore writes
+**before** the platform kills the host, after ten minutes without a test change. CI pulls the plug
+at fifteen and uploads all three.
+
+```bash
+dotnet test Bifrost.slnx --blame-hang --blame-hang-timeout 15m --blame-hang-dump-type full
+BIFROST_HANG_TIMEOUT_SECONDS=60 dotnet test …   # shorten the watchdog while debugging one
+```
+
 The integration tests spawn reference MCP servers (`tests/Bifrost.TestServers/*`) as real stdio and
 HTTP processes. If a run is killed hard, one may survive and hold its port and its own executable —
 the next build then fails with "used by another process" for a reason two runs old. Check for stray

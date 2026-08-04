@@ -10,9 +10,9 @@ prüft genau das. **`offen` ist ein zulässiger Status — eine weggelassene Anf
 
 **10 Must-Anforderungen sind noch nicht erfüllt.** Solange das so steht, ist der Release Candidate keiner — die Zeilen stehen unten mit Grund.
 
-- erfüllt 55
+- erfüllt 56
 - teilweise 11
-- **offen** 6
+- **offen** 5
 
 ## Must
 
@@ -81,7 +81,7 @@ prüft genau das. **`offen` ist ein zulässiger Status — eine weggelassene Anf
 | **FR-P035** Die UI zeigt dieselben Diagnoseergebnisse wie die CLI und verwendet denselben Backenddi… | WP4.6 | erfüllt | `SupportBundleJourneyTests` | `src/Bifrost.Web/Components/Pages/Operations.razor` |
 | **FR-P036** Readiness unterscheidet zwischen lokalem Prozesszustand und tatsächlich nutzbaren Kerna… | WP2.4 | teilweise | `DiagnosticServiceTests` | `src/Bifrost.Server/Program.cs` |
 | **FR-P048** Secrets können über Datei-/Container-Secrets referenziert werden, ohne sie als Environm… | WP3.5 | erfüllt | `ConfigurationSecretExportTests` | `src/Bifrost.Core/Configuration` |
-| **FR-P056** Testläufe liefern bei Hängern automatisch Sequenz, Dump und aktive Kindprozessliste. | WP5.4 | **offen** | — | — |
+| **FR-P056** Testläufe liefern bei Hängern automatisch Sequenz, Dump und aktive Kindprozessliste. | WP5.4 | erfüllt | `HangReportTests` | `.github/workflows/ci.yml` |
 | **FR-P065** Kompatibilitätsabweichungen werden als bekannte Einschränkung mit Workaround dokumentiert. | WP5.1 | erfüllt | `MatrixValidatorNegativeTests` | `tests/compatibility/matrix.json` |
 | **FR-P073** Audit-Einträge können optional durch eine Hash-Kette gegen unbemerkte lokale Manipulati… | WP6.2 | erfüllt | `AuditChainTests` | `src/Bifrost.Abstractions/AuditChain.cs` |
 | **FR-P074** Signierte Webhooks können Approval- und Security-Ereignisse an externe Systeme melden. | WP6.3 | erfüllt | `ApprovalNotificationTests` | `src/Bifrost.Core/Approvals` |
@@ -117,7 +117,7 @@ prüft genau das. **`offen` ist ein zulässiger Status — eine weggelassene Anf
 - **FR-P036** (teilweise): Health und Readiness sind getrennt; die Unterscheidung "lokal bereit" gegen "Upstreams erreichbar" ist nicht eigens getestet.
 - **FR-P051** (offen): Der Harness traegt einen 72-Stunden-Lauf; gefahren sind sieben Minuten. Der Vertrag verweist den Langlauf auf M7/M8.
 - **FR-P054** (erfuellt): 18 Browserwege gegen eine veroeffentlichte Instanz ueber TLS.
-- **FR-P056** (offen): Bei einem Haenger liefert der Lauf keine Sequenz, keinen Dump und keine aktiven Vorgaenge. Nicht gebaut.
+- **FR-P056** (erfuellt): Sequenz und Speicherabzug liefert die Testplattform (--blame-hang, 15 Minuten). Die aktive Kindprozessliste schreibt ein eigener Waechter nach 10 Minuten ohne Testwechsel — also bevor der Abzug den Testhost beendet, denn danach leben die Kinder nicht mehr. Die CI sammelt alle drei als Artefakt ein.
 - **FR-P061** (offen): Geprueft ist der SDK-Client. Claude, Cursor, VS Code, Codex und MCP Inspector stehen in der Matrix als untested — sichtbar, aber ungeprueft.
 - **FR-P062** (teilweise): Der selbst betriebene Referenzanbieter (Keycloak) ist belegt. Der externe Anbieter fehlt; er braucht fremde Zugangsdaten.
 - **FR-P063** (teilweise): Ablauf und Refresh samt Rotation sind belegt. Widerruf, Issuer-/Audience-Fehler und Consent sind nicht eigens gefahren.

@@ -29,6 +29,12 @@
 
     <!-- WP5.3, Reverse-Proxy-Sprung: nginx als echter Prozess vor dem Gateway. Ein In-Process-Proxy
          waere kein Sprung — es ginge kein Paket ueber eine zweite Verbindung. -->
+    <!-- FR-P056: Haengt ein Lauf, entsteht ein Bericht mit Sequenz und aktiven
+         Kindprozessen. Verlinkt statt nachgebaut — vier Projekte starten echte Prozesse,
+         und vier Fassungen davon waeren vier Wahrheiten. -->
+    <Compile Include="..\Bifrost.TestServers\Common\HangReport.cs" Link="Harness\HangReport.cs" />
+    <Compile Include="..\Bifrost.TestServers\Common\HangWatchdog.cs" Link="Harness\HangWatchdog.cs" />
+    <Compile Include="..\Bifrost.TestServers\Common\UpstreamProcessLookup.cs" Link="Harness\UpstreamProcessLookup.cs" />
     <PackageReference Include="Testcontainers" />
     <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />

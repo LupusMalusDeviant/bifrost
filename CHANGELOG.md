@@ -105,6 +105,13 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
   - **Kein „Delete" im Sinne eines Abgleichs:** Ein Import entfernt nichts, was in der Nutzlast
     fehlt. Das wäre eine Synchronisierung, und die nimmt weg, was die Nutzlast nur nicht kennt.
 
+- **Ein hängender Testlauf hinterlässt jetzt Spuren** (FR-P056) — Sequenz und vollständigen
+  Speicherabzug von der Testplattform (`--blame-hang`, 15 Minuten) und, wichtiger, die **Liste der
+  aktiven Kindprozesse** mit Id und Startzeit von einem eigenen Wächter nach 10 Minuten ohne
+  Testwechsel. Die Reihenfolge der Fristen ist der Punkt: Der Abzug beendet den Testhost, danach
+  leben die Kinder nicht mehr. Ein Lauf hängt hier selten an sich selbst, sondern an einer
+  Gegenstelle — und die nennt erst diese Liste beim Namen. Die CI sammelt alle drei ein.
+
 - **Der Reverse-Proxy-Sprung ist gemessen** (M5/WP5.3) — ein echter nginx im Container vor dem
   Gateway, mit der Konfiguration aus der Betriebsdokumentation. Derselbe Lastlauf einmal direkt und
   einmal durch den Proxy: **rund 1,6 ms Anteil an der p95**, keine Fehler, NFR-01 hält auch über

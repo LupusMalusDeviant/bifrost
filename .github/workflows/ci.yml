@@ -77,7 +77,11 @@ jobs:
         # Ausgeschlossen ist bei den Soak-Tests nur die Klasse SoakRunTests, nicht das Projekt: Die
         # Auswertung (GrowthAnalysisTests) ist eine reine Rechnung ohne Gate und soll bei jedem PR
         # mitlaufen — sie ist der Prüfer, der über jeden Nachtlauf urteilt.
-        run: dotnet test --configuration Release --no-build --filter "FullyQualifiedName!~WasiRealHost&FullyQualifiedName!~Bifrost.Compatibility&FullyQualifiedName!~Bifrost.Performance&FullyQualifiedName!~SoakRunTests&FullyQualifiedName!~Bifrost.Ui.E2E&FullyQualifiedName!~Keycloak&FullyQualifiedName!~OAuthSaasSmoke" --collect:"XPlat Code Coverage" --results-directory ./coverage --logger "trx"
+        # FR-P056: Haengt der Lauf, schreibt die Plattform Sequence.xml und einen vollen
+        # Speicherabzug, statt nach dem Job-Timeout ohne Spur abzubrechen. Die Frist liegt
+        # UEBER der des eigenen Waechters (10 min) — der zaehlt vorher die Kindprozesse,
+        # und die leben nur, solange der Testhost noch da ist.
+        run: dotnet test --configuration Release --no-build --filter "FullyQualifiedName!~WasiRealHost&FullyQualifiedName!~Bifrost.Compatibility&FullyQualifiedName!~Bifrost.Performance&FullyQualifiedName!~SoakRunTests&FullyQualifiedName!~Bifrost.Ui.E2E&FullyQualifiedName!~Keycloak&FullyQualifiedName!~OAuthSaasSmoke" --collect:"XPlat Code Coverage" --results-directory ./coverage --logger "trx" --blame-hang --blame-hang-timeout 15m --blame-hang-dump-type full
 
       # Der Postgres-Nachweis läuft über Testcontainers und skippt, wenn kein Docker da ist.
       # Auf Ubuntu ist Docker vorhanden — ein Skip bedeutet dort also einen echten Fehler
@@ -87,6 +91,19 @@ jobs:
       # Skips der zuletzt geschriebenen Suite; acht uebersprungene Upgrade-Tests waeren unbemerkt
       # durchgegangen. Ohne LogFileName schreibt jede Assembly ihre eigene trx, und hier wird ueber
       # alle gezaehlt.
+      # Ohne diesen Schritt entstehen Sequenz, Abzug und Kindprozessliste — und verschwinden mit
+      # dem Runner. Ein Nachweis, den niemand abholt, ist keiner.
+      - name: Spuren eines Hängers einsammeln
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hang-${{ matrix.os }}
+          path: |
+            artifacts/hang/
+            coverage/**/*.dmp
+            coverage/**/Sequence.xml
+          if-no-files-found: ignore
+
       - name: Postgres-Nachweis muss auf Linux tatsächlich gelaufen sein
         if: matrix.os == 'ubuntu-latest'
         shell: bash

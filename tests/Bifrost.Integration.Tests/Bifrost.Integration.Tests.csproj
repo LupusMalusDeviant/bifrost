@@ -27,6 +27,11 @@
          Begruendung wie oben bei UpstreamProcessLookup. -->
     <Compile Include="..\Bifrost.Security.Tests\Infrastructure\SecretCorpus.cs"
              Link="Importing\SecretCorpus.cs" />
+    <!-- FR-P056: Haengt ein Lauf, entsteht ein Bericht mit Sequenz und aktiven
+         Kindprozessen. Verlinkt statt nachgebaut — vier Projekte starten echte Prozesse,
+         und vier Fassungen davon waeren vier Wahrheiten. -->
+    <Compile Include="..\Bifrost.TestServers\Common\HangReport.cs" Link="Harness\HangReport.cs" />
+    <Compile Include="..\Bifrost.TestServers\Common\HangWatchdog.cs" Link="Harness\HangWatchdog.cs" />
     <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Testcontainers.PostgreSql" />

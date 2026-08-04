@@ -262,6 +262,41 @@ ist vervollständigt, und ein fünfter Wächter hält sie gegen den Testcode.
 
 Damit steht **FR-P092** auf `erfüllt`. Offene Must-Anforderungen: **10** statt 11.
 
+### FR-P056: Was ein hängender Lauf hinterlässt
+
+Bis jetzt endete ein Hänger im Job-Timeout, und es blieb nichts übrig, woran man ihn hätte
+festmachen können. Drei Dinge überleben ihn jetzt:
+
+| Was | Wer schreibt es | Wo |
+|---|---|---|
+| **Sequenz** — welche Tests liefen, und welcher noch lief | die Testplattform (`--blame-hang`) | `Sequence.xml` |
+| **Dump** — vollständiges Speicherabbild des Testhosts | die Testplattform | `*.dmp` |
+| **Aktive Kindprozesse** — Gateway-Instanzen und Testserver mit Id und Startzeit | dieses Repository (`HangWatchdog`) | `artifacts/hang/hang-*.txt` |
+
+**Der dritte ist der Grund für die Arbeit.** Ein Lauf hängt hier selten an sich selbst, sondern an
+einer Gegenstelle, die nicht mehr antwortet — und der Speicherabzug sagt nicht, welche das war.
+
+**Die Reihenfolge der beiden Fristen ist die eigentliche Entscheidung.** Der eigene Wächter
+schreibt nach **10 Minuten**, die Plattform zieht den Abzug nach **15**. Andersherum wäre die
+Kindprozessliste wertlos: `--blame-hang` beendet den Testhost, und wer danach sucht, findet
+entweder nichts mehr oder Waisen ohne Bezug.
+
+Die Frist muss zugleich über dem längsten *legitimen* Test liegen — das ist der Chaoslauf mit rund
+sieben Minuten. Ein Test hält das fest, damit niemand sie später unter diesen Wert dreht und der
+Wächter anfängt, Berichte über gesunde Läufe zu schreiben.
+
+**Geprüft ohne echten Hänger.** Einen zu erzwingen hieße, die Suite zehn Minuten mutwillig zu
+blockieren. Geprüft wird stattdessen das, was dann geschrieben würde — mit einem **echten**
+Kindprozess, der wirklich läuft und im Bericht mit Id auftaucht. Dazu die Gegenprobe: Ohne
+Kindprozess sagt der Bericht das ausdrücklich, statt zu schweigen — der Unterschied entscheidet,
+wo man als Nächstes sucht.
+
+**Der Wächter meldet sich selbst an.** Ein Modulinitialisierer in der geteilten Datei; wer sie
+einbindet, hat ihn. Vier Projekte starten echte Prozesse, und vier Stellen zum Anmelden wären vier
+Stellen, an denen es beim fünften vergessen wird.
+
+Damit steht **FR-P056** auf `erfüllt`.
+
 ### Was von M5 offen bleibt — und warum es hier nicht zu schließen ist
 
 | Rest | Warum offen |

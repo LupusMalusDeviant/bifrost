@@ -445,10 +445,10 @@
       "level": "should",
       "title": "Testläufe liefern bei Hängern automatisch Sequenz, Dump und aktive Kindprozessliste.",
       "workPackage": "WP5.4",
-      "status": "offen",
-      "test": null,
-      "artifact": null,
-      "note": "Bei einem Haenger liefert der Lauf keine Sequenz, keinen Dump und keine aktiven Vorgaenge. Nicht gebaut."
+      "status": "erfuellt",
+      "test": "HangReportTests",
+      "artifact": ".github/workflows/ci.yml",
+      "note": "Sequenz und Speicherabzug liefert die Testplattform (--blame-hang, 15 Minuten). Die aktive Kindprozessliste schreibt ein eigener Waechter nach 10 Minuten ohne Testwechsel — also bevor der Abzug den Testhost beendet, denn danach leben die Kinder nicht mehr. Die CI sammelt alle drei als Artefakt ein."
     },
     {
       "id": "FR-P060",
