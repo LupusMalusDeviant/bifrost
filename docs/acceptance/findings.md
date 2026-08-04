@@ -3,7 +3,7 @@
 > **Generiert aus `findings.json`.** Änderungen gehören in die Quelle, nicht hierher —
 > `FindingsReportTests` färbt den Lauf rot, sobald beides auseinanderläuft.
 
-**Offen:** 3 · **Behoben:** 24 · **Abdeckung ab:** M4
+**Offen:** 3 · **Behoben:** 26 · **Abdeckung ab:** M4
 
 Ab M4 fuehrt das Fortschrittsprotokoll die Befunde durchnummeriert und mit Schweregrad. Die Befunde aus M0-M3 sind in ihren eigenen Abschnitten als behoben dokumentiert, aber nicht hier uebernommen. Diese Luecke ist selbst ein Befund (BFR-F-0026) und keine stille Auslassung.
 
@@ -150,6 +150,18 @@ Das Publish wurde uebersprungen, wenn die Executable schon existierte — vom vo
 _Quelle: M7/WP7.1, Gegenpruefung Changelog/Migration/Rollback · Beleg: `ChangelogMigrationRollbackTests.Every_environment_option_is_documented_where_an_operator_looks`_
 
 BIFROST_ALLOW_HOST_EXECUTION — die schaerfste Option des Produkts — stand nur im ADR und im Pflichtenheft, also dort, wo ein Betreiber nicht nachsieht. Dazu die drei Schalter der Approval-Benachrichtigung (URL, SECRET, ALLOW_PRIVATE) aus WP6.3, die nirgends in docs/ auftauchten. Eine sicherheitsrelevante Option, die nur im Code steht, wirkt trotzdem — und niemand weiss es.
+
+### BFR-F-0028 · Eine Zeile der Rueckverfolgung war schlicht falsch (medium)
+
+_Quelle: M7/WP7.1, beim Schreiben von CONTRIBUTING aufgefallen · Beleg: `DisabledGateTests.Every_gate_variable_is_named_in_the_contributing_guide`_
+
+FR-P092 stand auf 'offen' mit der Begruendung, CONTRIBUTING, Code of Conduct und die Vorlagen fehlten im Repository. Sie liegen unter .github/ und sind seit Langem da — gesucht wurde in der Wurzel. Die Zeile war damit nicht zu streng, sondern falsch, und eine falsche Zeile in einer Rueckverfolgung ist genau das, was sie verhindern soll. Korrigiert auf 'erfuellt' mit Beleg; der Fund steht hier, damit die Lehre nicht verschwindet: Eine Zuordnung aus dem Gedaechtnis ist keine Pruefung.
+
+### BFR-F-0029 · Die Tor-Tabelle im Beitragsleitfaden nannte drei von neun Toren (medium)
+
+_Quelle: M7/WP7.1 · Beleg: `DisabledGateTests.Every_gate_variable_is_named_in_the_contributing_guide`_
+
+CONTRIBUTING listete nur BIFROST_REQUIRE_POSTGRES, _CONTAINER und _WASI_HOST. Die sechs Tore aus M5 und M6 — Browserwege, Lastmessung, Soak, Kompatibilitaet, Grossmengen-Auditexport, Keycloak — fehlten. Wer das Repository auscheckt, liest keinen Workflow: Er faehrt die Nachweise nie und haelt einen uebersprungenen Test fuer einen bestandenen. Tabelle vervollstaendigt, ein Test haelt sie jetzt gegen den Testcode.
 
 ### BFR-F-0003 · Falschpositiv in der Maskenerkennung (low)
 

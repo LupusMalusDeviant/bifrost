@@ -74,6 +74,30 @@ public sealed class DisabledGateTests
     }
 
     /// <summary>
+    /// <b>Und jedes Tor steht im Beitragsleitfaden.</b>
+    /// <para>
+    /// Ein CI-Job allein reicht nicht: Wer das Repository zum ersten Mal auscheckt, liest keinen
+    /// Workflow, sondern <c>CONTRIBUTING</c>. Steht das Tor dort nicht, faehrt er den Nachweis nie
+    /// — und haelt einen uebersprungenen Test fuer einen bestandenen. Genau das war hier der Fall:
+    /// Die Tabelle nannte drei von neun Toren.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Every_gate_variable_is_named_in_the_contributing_guide()
+    {
+        var pattern = new Regex(@"BIFROST_(RUN|REQUIRE)_[A-Z0-9_]+", RegexOptions.Compiled);
+
+        var inTests = RepoTree.CSharpFiles("tests")
+            .SelectMany(file => pattern.Matches(file.Content).Select(m => m.Value))
+            .ToHashSet(StringComparer.Ordinal);
+
+        var guide = File.ReadAllText(Path.Combine(RepoTree.Root, ".github", "CONTRIBUTING.md"));
+
+        inTests.Where(gate => !guide.Contains(gate, StringComparison.Ordinal))
+            .Should().BeEmpty("wer das Repository auscheckt, liest CONTRIBUTING und keinen Workflow");
+    }
+
+    /// <summary>
     /// <b>Keine Unterdrückung ohne Begründung.</b> Ein <c>#pragma warning disable</c> ohne einen
     /// Satz daneben ist nicht überprüfbar: Der nächste Leser weiß nicht, ob die Regel hier falsch
     /// ist oder ob jemand es eilig hatte.

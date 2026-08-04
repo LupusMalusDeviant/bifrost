@@ -71,11 +71,26 @@ Some proofs need infrastructure and **skip** without it — deliberately, so a m
 or Rust does not fail the build. Set the matching variable to turn a skip into a failure, which is
 what CI does:
 
+There are two kinds. **`BIFROST_REQUIRE_*`** turns an existing skip into a failure — use it where
+the infrastructure *must* be there, which is what CI does. **`BIFROST_RUN_*`** switches on a proof
+that does not run by default because it is slow, needs a browser, or wants a machine nobody else is
+using.
+
 | Variable | Turns on | Needs |
 |---|---|---|
 | `BIFROST_REQUIRE_POSTGRES=1` | PostgreSQL persistence tests | Docker (Testcontainers) |
-| `BIFROST_REQUIRE_CONTAINER=1` | CLI container isolation against a live runtime | Docker in **Linux**-container mode |
+| `BIFROST_REQUIRE_CONTAINER=1` | container isolation and the reverse-proxy hop against a live runtime | Docker in **Linux**-container mode |
 | `BIFROST_REQUIRE_WASI_HOST=1` | WASI tests against the real Rust host | `cargo build --release` in `spikes/wasi-component-runtime` |
+| `BIFROST_REQUIRE_KEYCLOAK=1` | upstream OAuth against a real authorization server | Docker (Testcontainers) |
+| `BIFROST_RUN_E2E=1` | the 18 browser journeys against a **published** instance over TLS | Playwright browsers installed |
+| `BIFROST_RUN_BENCHMARK=1` | the load measurement and the reverse-proxy hop | a machine nobody else is using; Docker for the proxy |
+| `BIFROST_RUN_SOAK=1` | the soak and chaos run | time, and patience |
+| `BIFROST_RUN_COMPAT=1` | the SDK client probe of the compatibility matrix | – |
+| `BIFROST_RUN_AUDIT_SCALE=1` | the million-entry audit export proof | ~2 GB of disk, ~30 s |
+
+Every one of these is set by a CI job. That is not a courtesy — a gate nobody sets is a proof
+nobody runs, and `Bifrost.Governance.Tests` fails the build if a new one appears without a job and
+without a line in this table.
 
 > **Build the Rust release binary before running the .NET tests that need it.** The real-host tests
 > take `target/release`; a stale build there makes them **hang** rather than fail, which is a much

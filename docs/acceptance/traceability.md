@@ -6,13 +6,13 @@
 Eine Zeile zählt nur, wenn der genannte Test wirklich existiert; ein Test in dieser Suite
 prüft genau das. **`offen` ist ein zulässiger Status — eine weggelassene Anforderung nicht.**
 
-**Anforderungen:** 72 · **Must:** 50 · **Must ohne "erfuellt":** 11
+**Anforderungen:** 72 · **Must:** 50 · **Must ohne "erfuellt":** 10
 
-**11 Must-Anforderungen sind noch nicht erfüllt.** Solange das so steht, ist der Release Candidate keiner — die Zeilen stehen unten mit Grund.
+**10 Must-Anforderungen sind noch nicht erfüllt.** Solange das so steht, ist der Release Candidate keiner — die Zeilen stehen unten mit Grund.
 
-- erfüllt 54
+- erfüllt 55
 - teilweise 11
-- **offen** 7
+- **offen** 6
 
 ## Must
 
@@ -67,7 +67,7 @@ prüft genau das. **`offen` ist ein zulässiger Status — eine weggelassene Anf
 | **FR-P072** Auditdaten können in JSONL und CSV gestreamt exportiert werden, ohne den Arbeitsspeiche… | WP6.2 | erfüllt | `AuditExportScaleTests` | `docs/operations.md` |
 | **FR-P090** Quickstart, Betrieb, Security und Troubleshooting stehen mindestens auf Deutsch und Eng… | WP0.2 | erfüllt | — | `docs/operations.md` |
 | **FR-P091** Jede sicherheitsrelevante Option dokumentiert Default, Risiko und Empfehlung. | WP0.2 | erfüllt | `ChangelogMigrationRollbackTests` | `docs/operations.md` |
-| **FR-P092** CONTRIBUTING, Code of Conduct, Issue-/PR-Templates und lokale Verifikationsbefehle sind… | WP0.2 | **offen** | — | — |
+| **FR-P092** CONTRIBUTING, Code of Conduct, Issue-/PR-Templates und lokale Verifikationsbefehle sind… | WP0.2 | erfüllt | `DisabledGateTests` | `.github/CONTRIBUTING.md` |
 
 ## Should
 
@@ -130,7 +130,7 @@ prüft genau das. **`offen` ist ein zulässiger Status — eine weggelassene Anf
 - **FR-P085** (offen): Vier-Augen-Freigabe gibt es nicht. Einzige Could-Anforderung; nicht gebaut, nicht geplant.
 - **FR-P086** (erfuellt): Die dokumentierte Befehlsfolge ist der erste Test.
 - **FR-P090** (erfuellt): Deutsch vollstaendig, englischer Spiegel fuer Betrieb vorhanden.
-- **FR-P092** (offen): CONTRIBUTING, Code of Conduct und Issue-/PR-Templates fehlen im Repository.
+- **FR-P092** (erfuellt): CONTRIBUTING (298 Zeilen mit den Hausregeln), Code of Conduct, vier Issue-Vorlagen, PR-Vorlage und CODEOWNERS liegen unter .github/. Die lokalen Verifikationsbefehle stehen im Abschnitt "Build and test"; die Tabelle der Tore ist jetzt vollstaendig und wird von einem Test dagegen gehalten.
 - **FR-P093** (erfuellt): Das Beispiel ist klein, lauffaehig und laeuft im Testlauf mit.
 - **FR-P094** (offen): Ein oeffentliches Roadmap-Dokument mit der Unterscheidung zugesagt/geplant/experimentell gibt es nicht.
 

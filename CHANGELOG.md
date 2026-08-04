@@ -25,6 +25,11 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
   dass die Security-Suite gelaufen wäre. Der Durchgang hat jetzt seine Korpustests, für Feldnamen
   und für Freitext. Zusätzlich ist die **Grenze** des Durchgangs als Test festgehalten: Ein Secret
   unter einem harmlosen Feldnamen bleibt stehen — er ist ein Sicherheitsnetz, kein Inhaltsscanner.
+- **Die Tor-Tabelle im Beitragsleitfaden nannte drei von neun Toren.** Die sechs aus M5 und M6 —
+  Browserwege, Lastmessung, Soak, Kompatibilität, Großmengen-Auditexport, Keycloak — fehlten. Wer
+  das Repository auscheckt, liest keinen Workflow: Er fährt diese Nachweise nie und hält einen
+  übersprungenen Test für einen bestandenen. Tabelle vervollständigt; ein Wächter hält sie jetzt
+  gegen den Testcode.
 - **Vier Betriebsoptionen standen in keiner Betriebsdokumentation.** `BIFROST_ALLOW_HOST_EXECUTION`
   — die schärfste Option des Produkts — stand nur im ADR und im Pflichtenheft, also dort, wo ein
   Betreiber nicht nachsieht; dazu die drei Schalter der Approval-Benachrichtigung

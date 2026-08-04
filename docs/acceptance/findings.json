@@ -257,6 +257,24 @@
       "source": "M7/WP7.1, Gegenpruefung Changelog/Migration/Rollback",
       "detail": "BIFROST_ALLOW_HOST_EXECUTION — die schaerfste Option des Produkts — stand nur im ADR und im Pflichtenheft, also dort, wo ein Betreiber nicht nachsieht. Dazu die drei Schalter der Approval-Benachrichtigung (URL, SECRET, ALLOW_PRIVATE) aus WP6.3, die nirgends in docs/ auftauchten. Eine sicherheitsrelevante Option, die nur im Code steht, wirkt trotzdem — und niemand weiss es.",
       "evidence": "ChangelogMigrationRollbackTests.Every_environment_option_is_documented_where_an_operator_looks"
+    },
+    {
+      "id": "BFR-F-0028",
+      "title": "Eine Zeile der Rueckverfolgung war schlicht falsch",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M7/WP7.1, beim Schreiben von CONTRIBUTING aufgefallen",
+      "detail": "FR-P092 stand auf 'offen' mit der Begruendung, CONTRIBUTING, Code of Conduct und die Vorlagen fehlten im Repository. Sie liegen unter .github/ und sind seit Langem da — gesucht wurde in der Wurzel. Die Zeile war damit nicht zu streng, sondern falsch, und eine falsche Zeile in einer Rueckverfolgung ist genau das, was sie verhindern soll. Korrigiert auf 'erfuellt' mit Beleg; der Fund steht hier, damit die Lehre nicht verschwindet: Eine Zuordnung aus dem Gedaechtnis ist keine Pruefung.",
+      "evidence": "DisabledGateTests.Every_gate_variable_is_named_in_the_contributing_guide"
+    },
+    {
+      "id": "BFR-F-0029",
+      "title": "Die Tor-Tabelle im Beitragsleitfaden nannte drei von neun Toren",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M7/WP7.1",
+      "detail": "CONTRIBUTING listete nur BIFROST_REQUIRE_POSTGRES, _CONTAINER und _WASI_HOST. Die sechs Tore aus M5 und M6 — Browserwege, Lastmessung, Soak, Kompatibilitaet, Grossmengen-Auditexport, Keycloak — fehlten. Wer das Repository auscheckt, liest keinen Workflow: Er faehrt die Nachweise nie und haelt einen uebersprungenen Test fuer einen bestandenen. Tabelle vervollstaendigt, ein Test haelt sie jetzt gegen den Testcode.",
+      "evidence": "DisabledGateTests.Every_gate_variable_is_named_in_the_contributing_guide"
     }
   ]
 }

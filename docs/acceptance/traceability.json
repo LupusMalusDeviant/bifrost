@@ -656,10 +656,10 @@
       "level": "must",
       "title": "CONTRIBUTING, Code of Conduct, Issue-/PR-Templates und lokale Verifikationsbefehle sind vorhanden.",
       "workPackage": "WP0.2",
-      "status": "offen",
-      "test": null,
-      "artifact": null,
-      "note": "CONTRIBUTING, Code of Conduct und Issue-/PR-Templates fehlen im Repository."
+      "status": "erfuellt",
+      "test": "DisabledGateTests",
+      "artifact": ".github/CONTRIBUTING.md",
+      "note": "CONTRIBUTING (298 Zeilen mit den Hausregeln), Code of Conduct, vier Issue-Vorlagen, PR-Vorlage und CODEOWNERS liegen unter .github/. Die lokalen Verifikationsbefehle stehen im Abschnitt \"Build and test\"; die Tabelle der Tore ist jetzt vollstaendig und wird von einem Test dagegen gehalten."
     },
     {
       "id": "FR-P093",

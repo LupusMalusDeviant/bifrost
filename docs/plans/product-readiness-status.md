@@ -242,6 +242,26 @@ setzt; fehlt die Container-Runtime, wird mit Begründung übersprungen — auße
 auf ein **Verzeichnis**, nicht auf einen Dateinamen. Die erste Fassung legte die Konfiguration unter
 einem Zufallsnamen ab, und nginx suchte an der richtigen Stelle vergeblich.
 
+### Eine falsche Zeile in der eigenen Rückverfolgung
+
+**FR-P092 stand auf `offen` mit der Begründung, CONTRIBUTING, Code of Conduct und die Vorlagen
+fehlten im Repository.** Sie liegen unter `.github/` und sind seit Langem da — gesucht wurde in der
+Wurzel. Die Zeile war also nicht zu streng, sondern **falsch**, und eine falsche Zeile in einer
+Rückverfolgung ist genau das, was sie verhindern soll.
+
+Aufgefallen ist es beim Versuch, die Dateien zu schreiben. Der Fund steht als BFR-F-0028 in der
+Liste, damit die Lehre nicht verschwindet: **Eine Zuordnung aus dem Gedächtnis ist keine Prüfung.**
+Die übrigen sechs offenen Zeilen habe ich daraufhin gegengeprüft — für Roadmap (FR-P094) und
+Startvorlagen (FR-P017) gibt es wirklich nichts.
+
+**Und ein zweiter Fund im selben Zug:** Die Tor-Tabelle im Beitragsleitfaden nannte **drei von neun
+Toren**. Die sechs aus M5 und M6 — Browserwege, Lastmessung, Soak, Kompatibilität,
+Großmengen-Auditexport, Keycloak — fehlten. Wer das Repository auscheckt, liest keinen Workflow:
+Er fährt diese Nachweise nie und hält einen übersprungenen Test für einen bestandenen. Die Tabelle
+ist vervollständigt, und ein fünfter Wächter hält sie gegen den Testcode.
+
+Damit steht **FR-P092** auf `erfüllt`. Offene Must-Anforderungen: **10** statt 11.
+
 ### Was von M5 offen bleibt — und warum es hier nicht zu schließen ist
 
 | Rest | Warum offen |
@@ -649,7 +669,7 @@ Anforderungen gehalten hat, ist eine Behauptung über eine Liste, die es nicht g
 
 | WP | Status | Nachweis | Nächster Schritt |
 |---|---|---|---|
-| 7.1 Feature Freeze und Finding-Liste | `implementiert` | 23 Tests grün: Wächter über die Tore (4), Finding-Liste mit 27 Befunden (5+2), Rückverfolgung über **alle 72 Anforderungen** (6+2), Gegenprüfung Changelog/Migration/Rollback (4) | Abnahme durch fremde Augen |
+| 7.1 Feature Freeze und Finding-Liste | `implementiert` | 24 Tests grün: Wächter über die Tore (5), Finding-Liste mit 29 Befunden (5+2), Rückverfolgung über **alle 72 Anforderungen** (6+2), Gegenprüfung Changelog/Migration/Rollback (4) | Abnahme durch fremde Augen |
 | 7.2 Externer Security-Review | `nicht startbar` | – | braucht einen beauftragten externen Prüfer |
 | 7.3 Pilotrelease | `nicht startbar` | – | braucht drei getrennte Installationen und echte Betreiber |
 
