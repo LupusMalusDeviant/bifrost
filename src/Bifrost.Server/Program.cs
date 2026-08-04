@@ -545,7 +545,7 @@ if (adoptedLegacyVariables.Count > 0)
 if (app.Logger.IsEnabled(LogLevel.Information))
 {
     var instanceFile = InstanceIdentityFile.PathFor(dataDir);
-#pragma warning disable CA1848
+#pragma warning disable CA1848 // Genau einmal beim Start; ein LoggerMessage-Delegat braechte hier nichts.
     app.Logger.LogInformation("Instanz-Id {InstanceId} (aus {Path}).", instanceId, instanceFile);
 #pragma warning restore CA1848
 }
@@ -584,7 +584,7 @@ if (!app.Environment.IsDevelopment())
             .Get<IServerAddressesFeature>()?.Addresses ?? [];
         if (addresses.Count > 0 && addresses.All(a => a.StartsWith("http://", StringComparison.OrdinalIgnoreCase)))
         {
-#pragma warning disable CA1848
+#pragma warning disable CA1848 // Einmal beim Start, und nur im Fehlerfall — kein Hot Path.
             app.Logger.LogWarning(
                 "Der Gateway lauscht nur auf HTTP ({Addresses}). Das Sitzungs-Cookie der Web-UI ist " +
                 "'Secure' — steht davor kein TLS-Proxy, verwirft der Browser es und die Anmeldung " +

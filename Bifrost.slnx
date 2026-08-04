@@ -19,6 +19,7 @@
     <Project Path="tests/Bifrost.Security.Tests/Bifrost.Security.Tests.csproj" />
     <Project Path="tests/Bifrost.Upgrade.Tests/Bifrost.Upgrade.Tests.csproj" />
     <Project Path="tests/Bifrost.Performance.Tests/Bifrost.Performance.Tests.csproj" />
+    <Project Path="tests/Bifrost.Governance.Tests/Bifrost.Governance.Tests.csproj" />
     <Project Path="tests/Bifrost.Ui.E2E/Bifrost.Ui.E2E.Tests.csproj" />
     <Project Path="tests/Bifrost.Upstream.Tests/Bifrost.Upstream.Tests.csproj" />
   </Folder>

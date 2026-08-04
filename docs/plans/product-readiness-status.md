@@ -638,6 +638,46 @@ Befehlsfolge ist der erste Test. Wird die Dokumentation falsch, wird der Test ro
 ratlos. Dazu Gegenproben für verändertes Byte, fremden Herausgeber, fremde Vertragsversion, falsche
 Component-Signatur und den privaten Schlüssel, der in keiner Ausgabe erscheinen darf.
 
+## Laufender Meilenstein: M7 — Release Candidate
+
+Vertrag: [m7-release-candidate-contract.md](m7-release-candidate-contract.md).
+
+**Die Eintrittsbedingung ist formal nicht erfüllt** — der INDEX verlangt „alle 1.0-Musskriterien",
+und M5 hat drei benannte Reste. M7 beginnt trotzdem, und zwar mit **WP7.1**: Genau dieses Paket
+beantwortet die Frage, ob die Kriterien erfüllt sind. Ein Feature Freeze, den niemand gegen die
+Anforderungen gehalten hat, ist eine Behauptung über eine Liste, die es nicht gibt.
+
+| WP | Status | Nachweis | Nächster Schritt |
+|---|---|---|---|
+| 7.1 Feature Freeze und Finding-Liste | `angefangen` | Wächter gegen still abgeschaltete Tore: 4 Tests grün | Finding-Liste, Rückverfolgung, generierter Bericht |
+| 7.2 Externer Security-Review | `nicht startbar` | – | braucht einen beauftragten externen Prüfer |
+| 7.3 Pilotrelease | `nicht startbar` | – | braucht drei getrennte Installationen und echte Betreiber |
+
+### Der Wächter zuerst — weil er als Einziges sofort rot werden kann
+
+`tests/Bifrost.Governance.Tests` prüft **Regeln über dem Code**, nicht Code. Deshalb hat das Projekt
+bewusst keine Referenz auf das Produkt: Was hier geprüft wird, steht in Dateien und nicht in Typen.
+
+1. **Kein `[Fact(Skip=…)]`.** Ein Attribut-Skip läuft nie wieder an — es gibt keinen Lauf, der ihn
+   zurückholt, und keine Meldung, die daran erinnert. Er ist ein gelöschter Test, der wie ein
+   vorhandener aussieht. Bedingungen gehören in den Test (`Assert.SkipUnless`).
+2. **Jede Gate-Variable wird von einem CI-Job gesetzt** (M5-Vertrag §1.2, jetzt geprüft statt
+   eingehalten). Neun Tore im Testcode, neun in den Workflows.
+3. **Keine Unterdrückung ohne Begründung** — weder `#pragma warning disable` noch `NoWarn`.
+   Generierter Code ist ausgenommen: EF schreibt in jede Migrationsdatei ein Pragma ohne Kommentar,
+   und den von Hand nachzubearbeiten hieße, gegen den nächsten Generatorlauf zu arbeiten.
+
+**Zwei Funde, beide klein und beide behoben:** Zwei `#pragma warning disable CA1848` in
+`Program.cs` hatten keine Begründung. Und der Wächter hat sich beim allerersten Lauf selbst
+gemeldet — sein einziger Fund war der Kommentar, der die Regel erklärt. Ein Prüfer, der das Reden
+über eine Regel bestraft, sorgt dafür, dass niemand mehr darüber schreibt; Kommentarzeilen sind
+jetzt ausgenommen, mit dem Fund als Begründung im Code.
+
+**Was in WP7.1 noch aussteht:** die Finding-Liste aus dem, was bereits aufgeschrieben ist; die
+Rückverfolgung Anforderung → Paket → **Testname** → Artefakt als maschinenlesbare Quelle; der
+daraus generierte Bericht. Die härteste Regel steht im Vertrag §1: Eine Zeile zählt nur, wenn der
+genannte Test wirklich existiert und wirklich läuft.
+
 ## Vorige Welle: M5 — Kompatibilität und Betriebsnachweise
 
 **Nicht abgeschlossen.** Die benannten Reste sind Voraussetzung für M7 — nicht für M6. **Zwei davon

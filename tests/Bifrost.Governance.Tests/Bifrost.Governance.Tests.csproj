@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- xUnit v3: Testprojekte sind eigenstaendige Executables, der Runner laeuft im selben Prozess. -->
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Bifrost.Governance.Tests</RootNamespace>
+    <Description>M7/WP7.1: Waechter ueber die Regeln, nicht ueber den Code. Prueft, dass kein Tor
+      still abgeschaltet ist — keine Attribut-Skips, jede Gate-Variable von einem CI-Job gesetzt,
+      keine Unterdrueckung ohne Begruendung. Braucht bewusst keine Referenz auf das Produkt: Was
+      hier geprueft wird, steht in Dateien, nicht in Typen.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+  </ItemGroup>
+
+</Project>
