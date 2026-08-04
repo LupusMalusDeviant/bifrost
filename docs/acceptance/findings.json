@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "note": "Quelle der Wahrheit. Der lesbare Bericht wird daraus erzeugt und nie von Hand gepflegt. Uebernommen aus docs/plans/product-readiness-status.md und CHANGELOG.md — ein Fund, der einmal aufgeschrieben wurde, verschwindet nicht durch eine neue Liste.",
   "coverage": {
-    "from": "M4",
-    "reason": "Ab M4 fuehrt das Fortschrittsprotokoll die Befunde durchnummeriert und mit Schweregrad. Die Befunde aus M0-M3 sind in ihren eigenen Abschnitten als behoben dokumentiert, aber nicht hier uebernommen. Diese Luecke ist selbst ein Befund (BFR-F-0026) und keine stille Auslassung."
+    "from": "M0",
+    "reason": "Vollstaendig ab M0. Die Befunde aus M0-M3 sind am 2026-08-04 aus den jeweiligen Abschnitten des Fortschrittsprotokolls uebernommen worden (BFR-F-0026). Damit gilt die Aussage \"kein offener Critical- oder High-Befund\" fuer das ganze Programm und nicht mehr nur ab M4."
   },
   "findings": [
     {
@@ -229,25 +229,19 @@
       "id": "BFR-F-0025",
       "title": "Ein Solution-Lauf meldete einen Fehlschlag, dessen Name verloren ging",
       "severity": "medium",
-      "status": "offen",
+      "status": "behoben",
       "source": "M6/WP6.1",
-      "detail": "Ein Lauf ueber die ganze Solution meldete 443 statt 444 bestandene Integrationstests. Drei spaetere volle Laeufe und ein Lauf der Suite allein waren gruen. Welcher Test es war, ist nicht bekannt — der Ausgabefilter des Laufs hatte die Zeile mit dem Namen verworfen. Ohne Namen gibt es keine Diagnose, nur eine Vermutung: Assemblies laufen parallel, die Integrationstests teilen Ports und Dateien.",
-      "evidence": "docs/plans/product-readiness-status.md#ein-unaufgeklaerter-fehlschlag-festgehalten-statt-weggewischt",
-      "owner": "unbesetzt",
-      "due": "vor M7/WP7.2 (externer Review)",
-      "mitigation": "Jeder kuenftige Solution-Lauf schreibt die volle Ausgabe in eine Datei, statt sie durch einen Filter zu schicken. Tritt der Fehlschlag wieder auf, ist der Name da."
+      "detail": "Ein Lauf ueber die ganze Solution meldete 443 statt 444 bestandene Integrationstests. Drei spaetere volle Laeufe und ein Lauf der Suite allein waren gruen. Welcher Test es war, ist nicht bekannt — der Ausgabefilter des Laufs hatte die Zeile mit dem Namen verworfen. Ohne Namen gibt es keine Diagnose, nur eine Vermutung: Assemblies laufen parallel, die Integrationstests teilen Ports und Dateien. — Erledigt am 2026-08-04: .runsettings schreibt jetzt je Assembly eine trx nach TestResults/. Wer filtert, filtert nur noch die Bildschirmausgabe. Der urspruengliche Fehlschlag bleibt unaufgeklaert; wiederholt er sich, ist der Name da.",
+      "evidence": "docs/plans/product-readiness-status.md#ein-unaufgeklaerter-fehlschlag-festgehalten-statt-weggewischt"
     },
     {
       "id": "BFR-F-0026",
       "title": "Die Befunde aus M0-M3 sind nicht in diese Liste uebernommen",
       "severity": "medium",
-      "status": "offen",
+      "status": "behoben",
       "source": "M7/WP7.1",
-      "detail": "Diese Liste beginnt bei M4, weil das Fortschrittsprotokoll ab dort durchnummeriert und mit Schweregrad fuehrt. Die frueheren Befunde sind in ihren eigenen Abschnitten als behoben dokumentiert, aber nicht hier. Solange das so ist, kann niemand aus dieser Datei allein sagen 'keine offenen Critical/High' — nur 'keine ab M4'.",
-      "evidence": "docs/plans/product-readiness-status.md",
-      "owner": "unbesetzt",
-      "due": "vor M7-Abschluss",
-      "mitigation": "Die Abschnitte 'Befunde aus M0' bis M3 durchgehen und uebernehmen. Bis dahin gilt die Abdeckungsangabe im Kopf dieser Datei als Vorbehalt."
+      "detail": "Diese Liste beginnt bei M4, weil das Fortschrittsprotokoll ab dort durchnummeriert und mit Schweregrad fuehrt. Die frueheren Befunde sind in ihren eigenen Abschnitten als behoben dokumentiert, aber nicht hier. Solange das so ist, kann niemand aus dieser Datei allein sagen 'keine offenen Critical/High' — nur 'keine ab M4'. — Erledigt am 2026-08-04: Die Befunde aus M0-M3 stehen als BFR-F-0030 bis BFR-F-0045 in dieser Liste, die Abdeckungsangabe im Kopf ist auf M0 fortgeschrieben.",
+      "evidence": "docs/plans/product-readiness-status.md"
     },
     {
       "id": "BFR-F-0027",
@@ -275,6 +269,159 @@
       "source": "M7/WP7.1",
       "detail": "CONTRIBUTING listete nur BIFROST_REQUIRE_POSTGRES, _CONTAINER und _WASI_HOST. Die sechs Tore aus M5 und M6 — Browserwege, Lastmessung, Soak, Kompatibilitaet, Grossmengen-Auditexport, Keycloak — fehlten. Wer das Repository auscheckt, liest keinen Workflow: Er faehrt die Nachweise nie und haelt einen uebersprungenen Test fuer einen bestandenen. Tabelle vervollstaendigt, ein Test haelt sie jetzt gegen den Testcode.",
       "evidence": "DisabledGateTests.Every_gate_variable_is_named_in_the_contributing_guide"
+    },
+    {
+      "id": "BFR-F-0030",
+      "title": "Eine repo-weite Umbenennung verschob ein Gate, das niemand im Blick hatte",
+      "severity": "low",
+      "status": "behoben",
+      "source": "M0/WP0.1",
+      "detail": "cargo fmt --check wurde rot, weil die Kiste umbenannt wurde und der Import seitdem anders sortiert. Kein inhaltlicher Fehler, aber der Beleg dafuer, dass eine Textersetzung ueber das ganze Repository Tore verschiebt, an die dabei niemand denkt.",
+      "evidence": "docs/plans/product-readiness-status.md#befunde-aus-m0"
+    },
+    {
+      "id": "BFR-F-0031",
+      "title": "Drei Aussagen im README und in SECURITY.md widersprachen dem Ist-Stand",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M0/WP0.2",
+      "detail": "Die Image-Groesse stand mit \"< 300 MB\" im README, gemessen waren 315 MB; der Releasestatus war falsch beschrieben; SECURITY.md kannte die aktuelle Version nicht. Ein CHANGELOG gab es nicht. Eine Zusage, die niemand nachrechnet, wird zur Werbeaussage.",
+      "evidence": "docs/plans/product-readiness-status.md#befunde-aus-m0"
+    },
+    {
+      "id": "BFR-F-0032",
+      "title": "Ein Startpfad lag ausserhalb der Prozess-Hygiene",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M0/WP0.4",
+      "detail": "HttpConnectorIntegrationTests startete einen Prozess direkt statt ueber den Produktpfad. Ein hart abgebrochener Lauf liess ihn stehen; er hielt Port und Programmdatei, und der naechste Build scheiterte mit \"wird von einem anderen Prozess verwendet\" — mit einer Ursache zwei Laeufe frueher.",
+      "evidence": "ProcessLifecycleTests"
+    },
+    {
+      "id": "BFR-F-0033",
+      "title": "Bootstrap: bei zwei gleichzeitigen Einloesungen verloren beide",
+      "severity": "high",
+      "status": "behoben",
+      "source": "M1, erster echter Releaselauf, Befund 4",
+      "detail": "Produktfehler im Erstzugang. Zwei gleichzeitige Einloesungen desselben Setup-Tokens fuehrten dazu, dass keine von beiden zum Zug kam — die Instanz blieb ohne Zugang zurueck.",
+      "evidence": "BootstrapAccessTests"
+    },
+    {
+      "id": "BFR-F-0034",
+      "title": "Der WP0.4-Nachweis hatte unter Linux noch nie etwas geprueft",
+      "severity": "high",
+      "status": "behoben",
+      "source": "M1, erster echter Releaselauf, Befunde 5 und 6",
+      "detail": "Die Waisenerkennung zaehlte Prozessnamen ueber /proc/*/comm — dort sind sie auf 15 Zeichen gekuerzt. Ausgerechnet das Paket, dessen ganzer Sinn \"Nachweis statt Behauptung\" war, hat auf einer ganzen Plattform nichts geprueft und trotzdem gruen gemeldet. Er galt als belegt, weil er nur unter Windows gelaufen war.",
+      "evidence": "ProcessLifecycleTests"
+    },
+    {
+      "id": "BFR-F-0035",
+      "title": "Der Trockenlaufmodus der Lieferkette war selbst nie gelaufen",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M1, erster echter Releaselauf, Befund 7",
+      "detail": "Der Job supply-chain war im Trockenlauf immer rot. Ein Trockenlauf, den niemand fahren kann, ist kein Trockenlauf.",
+      "evidence": ".github/workflows/release.yml"
+    },
+    {
+      "id": "BFR-F-0036",
+      "title": "Das Release wurde angelegt, die Anhaenge fehlten",
+      "severity": "high",
+      "status": "behoben",
+      "source": "M1, erster echter Releaselauf, Befund 8",
+      "detail": "dist/* erfasste Unterverzeichnisse nicht wie erwartet. Das Release entstand, die Artefakte fehlten — genau die Zusage ohne Deckung, die der Job verhindern sollte. Beim Beheben kamen zwei Torposten dazu: leere Dateiliste bricht ab, doppelte Basisnamen brechen ab (gh haengt unter dem Basisnamen an, zwei gleichnamige Dateien ueberschrieben einander lautlos).",
+      "evidence": ".github/workflows/release.yml"
+    },
+    {
+      "id": "BFR-F-0037",
+      "title": "Drei Nachweise hingen am Planer statt am Produkt",
+      "severity": "low",
+      "status": "behoben",
+      "source": "M1, erster echter Releaselauf, Befunde 1-3 und 9",
+      "detail": "Ein erfundener Token im Negativkorpus blockierte den Push; die Secret-Baseline kannte zwei Werte nicht; ein Versionstest trug ein Literal und brach beim Versionssprung; der Nebenlaeufigkeitsnachweis des Backups mass den Planer.",
+      "evidence": "docs/plans/product-readiness-status.md#was-der-erste-lauf-gekostet-hat-neun-befunde"
+    },
+    {
+      "id": "BFR-F-0038",
+      "title": "Der Umbenennungs-Commit zog den Volume-Namen mit",
+      "severity": "high",
+      "status": "behoben",
+      "source": "M1/WP1.4, Pruefergebnis des Lead",
+      "detail": "docker-compose.yml wechselte von mcpmcp-data auf bifrost-data. Eine Bestandsinstallation bekaeme damit ein leeres Volume und meldete sich fehlerfrei als bereit — Datenverlust ohne jede Fehlermeldung. Beim Deploy auf Badwolf aufgefallen und dort umgangen; die Falle blieb im Repository. Der Umstiegsweg steht jetzt in docs/operations.md.",
+      "evidence": "docs/operations.md"
+    },
+    {
+      "id": "BFR-F-0039",
+      "title": "Der Standardweg der Installation ist bis zum ersten Releaselauf kaputt",
+      "severity": "medium",
+      "status": "offen",
+      "source": "M1/WP1.4",
+      "detail": "docker compose up -d zieht ein Image, das es noch nicht gibt. Das ist die vom Pflichtenheft verlangte Richtung, aber die Luecke schliesst erst der erste veroeffentlichte Tag: Der Vorgabewert der Version in docker-compose.yml und .env.example gehoert daran gekoppelt.",
+      "evidence": "docker-compose.yml",
+      "owner": "unbesetzt",
+      "due": "mit dem ersten veroeffentlichten Release (M1-Abnahme)",
+      "mitigation": "Bis dahin gilt der dokumentierte Weg ueber den lokalen Build; docs/operations.md nennt ihn. Kein Betreiber ausserhalb dieses Repositories ist betroffen, weil es noch kein veroeffentlichtes Image gibt."
+    },
+    {
+      "id": "BFR-F-0040",
+      "title": "MCP ueber HTTP war der einzige Transport ganz ohne Zielpruefung",
+      "severity": "high",
+      "status": "behoben",
+      "source": "M3/WP3.6, als roter Test abgeliefert",
+      "detail": "HttpTransportOptions trug kein AllowPrivateTargets, waehrend OpenAPI, OpenRPC und Upstream-OAuth es tragen. Ein Administrator, der http://169.254.169.254/... oder einen Verwaltungsport auf 127.0.0.1 eintrug, bekam genau den Abruf, den RemoteSpecFetcher fuer die anderen Transporte verhindert. Strukturelle Ursache: Die zentrale Pruefung war internal zu Bifrost.Upstream — eine zentrale Pruefung, die man nicht erreichen kann, ist keine.",
+      "evidence": "SsrfCentralFetcherTests"
+    },
+    {
+      "id": "BFR-F-0041",
+      "title": "Die Runtime-Diagnose verschwieg genau den Fall, fuer den sie da war",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M3/WP3.2, selbst gemeldet",
+      "detail": "ServerDiagnosticService zaehlte nur Config.Cli?.Isolation. Eine Instanz mit ausschliesslich stdio-Container-Upstreams meldete damit \"keine Runtime noetig\".",
+      "evidence": "RuntimeCheckTests"
+    },
+    {
+      "id": "BFR-F-0042",
+      "title": "release.yml rief Trivy mit einer Ignoredatei auf, die es nicht gibt",
+      "severity": "high",
+      "status": "behoben",
+      "source": "M3/WP3.5 — ein M1-Fehler, gefunden in M3",
+      "detail": "Die Action bricht bei fehlendem Ignorefile ab. Der allererste Releaselauf waere daran gescheitert, und zwar nicht an einem Scanergebnis, sondern an einem Pfad; die Dokumentation behauptete an der Stelle das Gegenteil. Zweiter Beleg fuer dasselbe Muster: Jedes Mal, wenn jemand genau hinsieht, findet er etwas, das erst ein echter Lauf gezeigt haette.",
+      "evidence": ".github/workflows/release.yml"
+    },
+    {
+      "id": "BFR-F-0043",
+      "title": "Ein Ein-Zeilen-Gate, das nie rot werden konnte",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M3/WP3.5",
+      "detail": "dotnet list package --vulnerable endet mit Exit 0, auch bei High-Funden. Die naheliegende Pruefung waere eine gewesen, die nie anschlaegt. Die Tabellenausgabe ist zudem lokalisiert (Schweregrad statt Severity) — ein grep haette hier zufaellig funktioniert.",
+      "evidence": ".github/workflows/security.yml"
+    },
+    {
+      "id": "BFR-F-0044",
+      "title": "wasmtime 47.0.2: zwei RUSTSEC-Meldungen in der WASI-Sandbox",
+      "severity": "low",
+      "status": "offen",
+      "source": "M3/WP3.5",
+      "detail": "RUSTSEC-2026-0222 und -0223, beide LOW und damit nicht blockierend — betroffen ist aber die Sandbox selbst. Empfehlung: mindestens 47.0.3.",
+      "evidence": "spikes/wasi-component-runtime/Cargo.toml",
+      "owner": "unbesetzt",
+      "due": "vor M8/WP8.1",
+      "mitigation": "Beide Meldungen sind LOW und betreffen Pfade, die dieser Gateway nicht nutzt (geprueft im Rahmen von WP3.5). Der Versionssprung ist ein Einzeiler und gehoert in den naechsten Abhaengigkeitslauf."
+    },
+    {
+      "id": "BFR-F-0045",
+      "title": "Der Nachweis fuer das Containerfilesystem-Gate fehlt",
+      "severity": "medium",
+      "status": "offen",
+      "source": "M3/WP3.5, ausdruecklich nicht als erfuellt gemeldet",
+      "detail": "Es gibt kein Release-Image, an dem sich zeigen liesse, dass das Gate scheitern kann. Ein Gate ohne Gegenprobe ist eine Behauptung.",
+      "evidence": ".github/workflows/release.yml",
+      "owner": "unbesetzt",
+      "due": "mit dem ersten veroeffentlichten Release (M1-Abnahme)",
+      "mitigation": "Das Gate ist im Workflow vorhanden und laeuft; ungeprueft ist nur, ob es rot werden kann. Der erste Releaselauf liefert das Image, an dem sich das zeigen laesst."
     }
   ]
 }

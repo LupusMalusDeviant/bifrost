@@ -119,7 +119,7 @@ prüft genau das. **`offen` ist ein zulässiger Status — eine weggelassene Anf
 - **FR-P054** (erfuellt): 18 Browserwege gegen eine veroeffentlichte Instanz ueber TLS.
 - **FR-P056** (erfuellt): Sequenz und Speicherabzug liefert die Testplattform (--blame-hang, 15 Minuten). Die aktive Kindprozessliste schreibt ein eigener Waechter nach 10 Minuten ohne Testwechsel — also bevor der Abzug den Testhost beendet, denn danach leben die Kinder nicht mehr. Die CI sammelt alle drei als Artefakt ein.
 - **FR-P061** (offen): Geprueft ist der SDK-Client. Claude, Cursor, VS Code, Codex und MCP Inspector stehen in der Matrix als untested — sichtbar, aber ungeprueft.
-- **FR-P062** (teilweise): Der selbst betriebene Referenzanbieter (Keycloak) ist belegt. Der externe Anbieter fehlt; er braucht fremde Zugangsdaten.
+- **FR-P062** (teilweise): Der selbst betriebene Referenzanbieter (Keycloak) ist belegt. Der externe Anbieter fehlt; er braucht fremde Zugangsdaten. Die Auftragsunterlage fuer den Pilotbetrieb nennt den externen Anbieter ausdruecklich als Rueckmeldung (docs/acceptance/pilot-checklist.md).
 - **FR-P063** (teilweise): Ablauf und Refresh samt Rotation sind belegt. Widerruf, Issuer-/Audience-Fehler und Consent sind nicht eigens gefahren.
 - **FR-P064** (erfuellt): Kestrel, TCP, TLS und ein echter nginx davor: rund 1,6 ms Anteil an der p95.
 - **FR-P070** (teilweise): Metrik- und Tracenamen sind dokumentiert; eine Versionierung der Namen als eigener Vertrag fehlt.

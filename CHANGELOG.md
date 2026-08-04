@@ -105,6 +105,13 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
   - **Kein „Delete" im Sinne eines Abgleichs:** Ein Import entfernt nichts, was in der Nutzlast
     fehlt. Das wäre eine Synchronisierung, und die nimmt weg, was die Nutzlast nur nicht kennt.
 
+- **Die Befunde des ganzen Programms stehen in einer Liste** (M7/WP7.1) — 45 Einträge ab M0,
+  41 behoben, 4 offen. Vorher begann die Liste bei M4, und die Aussage „kein offener Critical- oder
+  High-Befund" galt nur mit diesem Zusatz. Jetzt gilt sie ohne.
+- **Ein Testlauf verliert keinen Fehlschlagnamen mehr.** `.runsettings` schreibt je Assembly eine
+  `trx` — ausdrücklich ohne festen Dateinamen, weil genau daran der Skip-Wächter der CI einmal
+  gescheitert ist: Mit festem Namen überschreibt jede Assembly dieselbe Datei.
+
 - **Ein hängender Testlauf hinterlässt jetzt Spuren** (FR-P056) — Sequenz und vollständigen
   Speicherabzug von der Testplattform (`--blame-hang`, 15 Minuten) und, wichtiger, die **Liste der
   aktiven Kindprozesse** mit Id und Startzeit von einem eigenen Wächter nach 10 Minuten ohne

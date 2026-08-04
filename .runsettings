@@ -1,0 +1,41 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Wie ein Testlauf dieses Repositories protokolliert wird.
+
+  WARUM ES DIESE DATEI GIBT (BFR-F-0025):
+  Ein Solution-Lauf meldete einmal einen Fehlschlag, und der Name des Tests ging verloren — die
+  Ausgabe lief durch einen Filter, der die Zeile verwarf. Drei spaetere Laeufe waren gruen, und
+  ohne Namen blieb nur eine Vermutung. Die Mitigation lautete "kuenftig die volle Ausgabe
+  aufheben"; das ist eine Gewohnheit und kein Mechanismus.
+
+  Hier steht der Mechanismus: Jeder Lauf schreibt eine trx je Assembly nach TestResults/. Wer
+  filtert, filtert dann nur noch die Bildschirmausgabe — die Datei bleibt.
+
+  ANWENDUNG:
+    dotnet test Bifrost.slnx mit der Option "settings" auf diese Datei
+
+  Die CI setzt den trx-Logger ohnehin selbst; diese Datei ist fuer den Lauf auf dem eigenen
+  Rechner, wo genau das gern vergessen wird.
+-->
+<RunSettings>
+  <RunConfiguration>
+    <ResultsDirectory>TestResults</ResultsDirectory>
+
+    <!-- OHNE LogFileName. Ein fester Name laesst jede Assembly dieselbe Datei ueberschreiben —
+         genau der Befund BFR-F-0011, mit dem der Skip-Waechter der CI jahrelang nur eine einzige
+         Suite gezaehlt hat. -->
+  </RunConfiguration>
+
+  <LoggerRunSettings>
+    <Loggers>
+      <Logger friendlyName="trx" enabled="True" />
+
+      <!-- Die Konsolenausgabe bleibt knapp; was zaehlt, steht in der trx. -->
+      <Logger friendlyName="console" enabled="True">
+        <Configuration>
+          <Verbosity>minimal</Verbosity>
+        </Configuration>
+      </Logger>
+    </Loggers>
+  </LoggerRunSettings>
+</RunSettings>

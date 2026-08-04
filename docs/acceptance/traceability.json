@@ -477,7 +477,7 @@
       "status": "teilweise",
       "test": "UpstreamOAuthAgainstKeycloakTests",
       "artifact": "tests/Bifrost.Integration.Tests/OAuth",
-      "note": "Der selbst betriebene Referenzanbieter (Keycloak) ist belegt. Der externe Anbieter fehlt; er braucht fremde Zugangsdaten."
+      "note": "Der selbst betriebene Referenzanbieter (Keycloak) ist belegt. Der externe Anbieter fehlt; er braucht fremde Zugangsdaten. Die Auftragsunterlage fuer den Pilotbetrieb nennt den externen Anbieter ausdruecklich als Rueckmeldung (docs/acceptance/pilot-checklist.md)."
     },
     {
       "id": "FR-P063",

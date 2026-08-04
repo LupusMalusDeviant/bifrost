@@ -297,6 +297,54 @@ Stellen, an denen es beim fünften vergessen wird.
 
 Damit steht **FR-P056** auf `erfüllt`.
 
+### Die Finding-Liste gilt jetzt ab M0 — der Vorbehalt ist weg
+
+BFR-F-0026 ist geschlossen. **16 Befunde aus M0 bis M3** sind aus dem Protokoll übernommen
+(BFR-F-0030 bis BFR-F-0045), die Abdeckungsangabe steht auf `M0`. Damit sagt der RC-Wächter nicht
+mehr „keine offenen Critical/High ab M4", sondern **ohne Zusatz**.
+
+Die Übernahme hat nichts Neues aufgedeckt — alle sechzehn waren dokumentiert und behoben, bis auf
+drei, die als `offen` mit Owner, Termin und Mitigation eingetragen sind:
+
+| Id | Befund | Wartet auf |
+|---|---|---|
+| BFR-F-0039 | `docker compose up -d` zieht ein Image, das es nicht gibt | erstes veröffentlichtes Release |
+| BFR-F-0044 | wasmtime 47.0.2: zwei LOW-Meldungen in der WASI-Sandbox | nächsten Abhängigkeitslauf |
+| BFR-F-0045 | das Containerfilesystem-Gate hat keine Gegenprobe | erstes veröffentlichtes Release |
+
+**Zwei von dreien warten auf dasselbe.** Das ist derselbe Engpass wie bei sieben der zehn offenen
+Must-Anforderungen: M1 ist nicht abgenommen.
+
+### Der Fehlschlag ohne Namen hat jetzt einen Mechanismus statt einer Gewohnheit
+
+BFR-F-0025 lautete: Ein Solution-Lauf meldete einen Fehlschlag, und der Name ging verloren, weil
+die Ausgabe durch einen Filter lief. Die Mitigation hieß „künftig die volle Ausgabe aufheben" —
+eine Absicht.
+
+`.runsettings` schreibt jetzt **je Assembly eine `trx`** nach `TestResults/`. Wer filtert, filtert
+nur noch den Bildschirm; die Datei bleibt. Ausdrücklich **ohne** festen `LogFileName` — genau daran
+ist der Skip-Wächter der CI einmal gescheitert (BFR-F-0011), weil jede Assembly dieselbe Datei
+überschrieb.
+
+Der ursprüngliche Fehlschlag bleibt unaufgeklärt. Wiederholt er sich, ist der Name da.
+
+### WP7.2 und WP7.3: vorbereitet, nicht durchgeführt
+
+Beide Pakete sind Beschaffungen. Was hier entstehen konnte, ist die Unterlage, mit der sie
+beauftragt werden — und beide sagen als Erstes, was sie **nicht** sind.
+
+**Der Review-Scope** nennt Bezugscommit (bei Beauftragung einzutragen), die acht Bereiche aus dem
+Pflichtenheft mit ihrer jeweiligen Zusage, und die Unterlagen, die der Prüfer bekommt — **inklusive
+der offenen Befunde.** Ein Review, dem man die bekannten Schwächen verschweigt, prüft die falsche
+Hälfte. Dazu ein eigener Abschnitt: *Was wir selbst für die schwächste Stelle halten* — fünf
+Punkte, angeführt vom nie geprüften Releaseworkflow. Ein Prüfer soll seine Zeit nicht damit
+verbringen, das zu finden, was wir ohnehin wissen.
+
+**Die Pilotcheckliste** verlangt Backup **und** Restore, nicht nur das Erste — und der Restore gilt
+erst als bewiesen, wenn auf der zweiten Installation etwas läuft, nicht wenn er fehlerfrei endet.
+Zurückgemeldet wird von Hand: Telemetrie gibt es nicht, und der opt-in-Metrikpfad ist eine
+Produktentscheidung, kein Nebenprodukt dieses Pakets.
+
 ### Was von M5 offen bleibt — und warum es hier nicht zu schließen ist
 
 | Rest | Warum offen |
@@ -705,8 +753,8 @@ Anforderungen gehalten hat, ist eine Behauptung über eine Liste, die es nicht g
 | WP | Status | Nachweis | Nächster Schritt |
 |---|---|---|---|
 | 7.1 Feature Freeze und Finding-Liste | `implementiert` | 24 Tests grün: Wächter über die Tore (5), Finding-Liste mit 29 Befunden (5+2), Rückverfolgung über **alle 72 Anforderungen** (6+2), Gegenprüfung Changelog/Migration/Rollback (4) | Abnahme durch fremde Augen |
-| 7.2 Externer Security-Review | `nicht startbar` | – | braucht einen beauftragten externen Prüfer |
-| 7.3 Pilotrelease | `nicht startbar` | – | braucht drei getrennte Installationen und echte Betreiber |
+| 7.2 Externer Security-Review | `vorbereitet` | [security-review-scope.md](../acceptance/security-review-scope.md) — Scope, Bezugscommit, Unterlagen, und was wir selbst für die schwächste Stelle halten | braucht einen beauftragten externen Prüfer |
+| 7.3 Pilotrelease | `vorbereitet` | [pilot-checklist.md](../acceptance/pilot-checklist.md) — was ein Pilot installiert, ausführt und zurückmeldet | braucht drei getrennte Installationen und echte Betreiber |
 
 ### Der Wächter zuerst — weil er als Einziges sofort rot werden kann
 
