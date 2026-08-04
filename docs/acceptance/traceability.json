@@ -1,0 +1,686 @@
+{
+  "schemaVersion": 1,
+  "note": "Quelle der Wahrheit fuer WP7.1. Die Titel stammen aus dem Lastenheft und werden von dort gezogen, nicht abgetippt. Zuordnung, Status und Beleg sind die Arbeit dieses Pakets. Der lesbare Bericht wird erzeugt und nie von Hand gepflegt.",
+  "source": "docs/produktreife/BIFROST_Produktreife_01_Lastenheft.md",
+  "requirements": [
+    {
+      "id": "FR-P001",
+      "level": "must",
+      "title": "Jede veröffentlichte Gateway-Version wird als versioniertes OCI-Image für `linux/amd64` und `linux/arm64` bereitgestellt.",
+      "workPackage": "WP1.1",
+      "status": "teilweise",
+      "test": null,
+      "artifact": ".github/workflows/release.yml",
+      "note": "Multi-Arch-Image gebaut und lokal geraucht; der Nachweis am veroeffentlichten Image steht aus (M1 ist nicht abgenommen)."
+    },
+    {
+      "id": "FR-P002",
+      "level": "must",
+      "title": "Das Image wird mit unveränderlichem Digest, SBOM, Build-Provenance und überprüfbarer Signatur veröffentlicht.",
+      "workPackage": "WP1.2",
+      "status": "teilweise",
+      "test": null,
+      "artifact": ".github/workflows/release.yml",
+      "note": "Syft/Trivy/Cosign laufen containerisiert im Releaselauf. Ein Nachweis gegen ein wirklich veroeffentlichtes Image fehlt."
+    },
+    {
+      "id": "FR-P003",
+      "level": "must",
+      "title": "Die Gateway-CLI wird als eigenständiges Artefakt für Windows, Linux und macOS auf den relevanten x64-/ARM64-Plattformen veröffentlicht.",
+      "workPackage": "WP1.3",
+      "status": "erfuellt",
+      "test": "GatewayCliTests",
+      "artifact": "src/Bifrost.Cli"
+    },
+    {
+      "id": "FR-P004",
+      "level": "must",
+      "title": "Checksums und Signaturen aller Binärartefakte sind Teil des Releases.",
+      "workPackage": "WP1.2",
+      "status": "teilweise",
+      "test": null,
+      "artifact": ".github/workflows/release.yml",
+      "note": "Signatur- und Checksummenschritte sind Teil des Releaselaufs; geprueft ist der Lauf, nicht das Ergebnis am Artefakt."
+    },
+    {
+      "id": "FR-P005",
+      "level": "must",
+      "title": "Das Standard-Compose-Beispiel verwendet ein veröffentlichtes Image und löst keinen Source-Build aus.",
+      "workPackage": "WP1.4",
+      "status": "erfuellt",
+      "test": null,
+      "artifact": "docker-compose.yml",
+      "note": "Drei docker-compose-config-Laeufe gruen, Volume-Name nachgeprueft (Protokoll WP1.4)."
+    },
+    {
+      "id": "FR-P006",
+      "level": "must",
+      "title": "Source-Build und lokales Image-Build bleiben als expliziter Entwicklerpfad verfügbar.",
+      "workPackage": "WP1.4",
+      "status": "erfuellt",
+      "test": null,
+      "artifact": "README.md"
+    },
+    {
+      "id": "FR-P007",
+      "level": "must",
+      "title": "Release-Kanal und Semantik sind eindeutig: Pre-Releases werden als solche markiert; `latest` wird erst für stabile Releases verwendet.",
+      "workPackage": "WP1.5",
+      "status": "teilweise",
+      "test": null,
+      "artifact": ".github/workflows/release.yml",
+      "note": "Pre-Release-Semantik ist im Workflow abgebildet; ohne veroeffentlichte Kanaele nicht am Ergebnis geprueft."
+    },
+    {
+      "id": "FR-P008",
+      "level": "should",
+      "title": "Release Notes werden aus einem kuratierten Changelog erzeugt und nennen Breaking Changes, Datenmigrationen, Security-Auswirkungen und Rollback-Hinweise.",
+      "workPackage": "WP1.5",
+      "status": "teilweise",
+      "test": null,
+      "artifact": "CHANGELOG.md",
+      "note": "Der Changelog wird kuratiert gefuehrt; die Erzeugung der Release Notes daraus ist nicht automatisiert."
+    },
+    {
+      "id": "FR-P010",
+      "level": "must",
+      "title": "Der erste Start führt durch einen sicheren, einmaligen Bootstrap.",
+      "workPackage": "WP3.3",
+      "status": "erfuellt",
+      "test": "BootstrapAccessTests",
+      "artifact": "src/Bifrost.Server/Bootstrap"
+    },
+    {
+      "id": "FR-P011",
+      "level": "must",
+      "title": "Bootstrap-Credentials erscheinen nicht im normalen, dauerhaft gespeicherten Anwendungslog.",
+      "workPackage": "WP3.3",
+      "status": "erfuellt",
+      "test": "BootstrapAccessTests",
+      "artifact": "src/Bifrost.Server/Bootstrap/BootstrapHandoverFile.cs",
+      "note": "Das Token liegt in einer abgeschirmten Datei und nicht im Log; die Datei verschwindet nach dem Einloesen."
+    },
+    {
+      "id": "FR-P012",
+      "level": "must",
+      "title": "Ein geführter Setup-Prozess erstellt Admin, Betriebsmodus, ersten Upstream, erste Agentenidentität und ein passendes Client-Snippet.",
+      "workPackage": "WP4.4",
+      "status": "erfuellt",
+      "test": "SetupWizardJourneyTests",
+      "artifact": "src/Bifrost.Web/Components/Pages/SetupWizard.razor",
+      "note": "Browserweg gegen eine Instanz ohne jeden UI-Zugang, Token aus der Uebergabedatei."
+    },
+    {
+      "id": "FR-P013",
+      "level": "must",
+      "title": "Bestehende Konfigurationen aus Claude, Cursor, VS Code, Codex und generischem `mcp.json` können importiert und vor Aktivierung geprüft werden.",
+      "workPackage": "WP4.1",
+      "status": "erfuellt",
+      "test": "ProviderRecognitionTests",
+      "artifact": "src/Bifrost.Core/Importing"
+    },
+    {
+      "id": "FR-P014",
+      "level": "must",
+      "title": "Der Import zeigt Namenskollisionen, Secrets, Host-Ausführung und nicht unterstützte Felder explizit an.",
+      "workPackage": "WP4.2",
+      "status": "erfuellt",
+      "test": "ImportCliTests",
+      "artifact": "src/Bifrost.Core/Importing"
+    },
+    {
+      "id": "FR-P015",
+      "level": "must",
+      "title": "Importierte Secrets werden nie ungefragt im Klartext persistiert oder angezeigt.",
+      "workPackage": "WP4.2",
+      "status": "erfuellt",
+      "test": "SetupWizardLeakTests",
+      "artifact": "src/Bifrost.Core/Importing"
+    },
+    {
+      "id": "FR-P016",
+      "level": "should",
+      "title": "Die UI bietet einen reduzierten Basis-Modus und einen vollständigen Experten-Modus.",
+      "workPackage": "WP4.5",
+      "status": "erfuellt",
+      "test": "UiNavigationModelTests",
+      "artifact": "src/Bifrost.Web/UiNavigation.cs"
+    },
+    {
+      "id": "FR-P017",
+      "level": "should",
+      "title": "Für verbreitete Einsatzzwecke existieren validierte Startvorlagen.",
+      "workPackage": "WP4.5",
+      "status": "offen",
+      "test": null,
+      "artifact": null,
+      "note": "Validierte Startvorlagen fuer verbreitete Einsatzzwecke gibt es nicht. Nicht gebaut, nicht geplant."
+    },
+    {
+      "id": "FR-P020",
+      "level": "must",
+      "title": "Der Betreiber kann ein vollständiges, versioniertes Backup erzeugen.",
+      "workPackage": "WP2.1",
+      "status": "erfuellt",
+      "test": "BackupCreationTests",
+      "artifact": "src/Bifrost.Core/Backup"
+    },
+    {
+      "id": "FR-P021",
+      "level": "must",
+      "title": "Das Backup umfasst Datenbank, Key-Ring, aktive Paketartefakte und die für eine Wiederherstellung erforderlichen Metadaten.",
+      "workPackage": "WP2.1",
+      "status": "erfuellt",
+      "test": "BackupInspectionTests",
+      "artifact": "src/Bifrost.Core/Backup"
+    },
+    {
+      "id": "FR-P022",
+      "level": "must",
+      "title": "Backups mit Secrets können verschlüsselt und auf Integrität geprüft werden.",
+      "workPackage": "WP2.1",
+      "status": "erfuellt",
+      "test": "BackupInspectionTests",
+      "artifact": "src/Bifrost.Core/Backup"
+    },
+    {
+      "id": "FR-P023",
+      "level": "must",
+      "title": "Restore ist auf einer leeren Installation und auf einer bestehenden Instanz mit expliziter Konfliktbehandlung möglich.",
+      "workPackage": "WP2.2",
+      "status": "erfuellt",
+      "test": "RestoreTests",
+      "artifact": "src/Bifrost.Persistence/Backup/RestoreService.cs"
+    },
+    {
+      "id": "FR-P024",
+      "level": "must",
+      "title": "Vor schemaändernden Upgrades wird ein recoverbares Backup erzeugt oder dessen bewusste Ablehnung verlangt.",
+      "workPackage": "WP2.3",
+      "status": "erfuellt",
+      "test": "PostgresPreMigrationBackupTests",
+      "artifact": "src/Bifrost.Persistence/DatabaseInitializer.cs"
+    },
+    {
+      "id": "FR-P025",
+      "level": "must",
+      "title": "Parallele Instanzen dürfen nicht gleichzeitig dieselbe Migration ausführen.",
+      "workPackage": "WP2.3",
+      "status": "erfuellt",
+      "test": "MigrationSafetyTests",
+      "artifact": "src/Bifrost.Persistence/DatabaseInitializer.cs"
+    },
+    {
+      "id": "FR-P026",
+      "level": "must",
+      "title": "Unvollständige Migrationen werden beim Start erkannt und mit einem sicheren Recovery-Hinweis abgebrochen.",
+      "workPackage": "WP2.3",
+      "status": "erfuellt",
+      "test": "MigrationSafetyTests",
+      "artifact": "src/Bifrost.Persistence/DatabaseInitializer.cs",
+      "note": "BFR-DB-0101: Der Start verweigert den Schreibbetrieb bei offenem Migrationseintrag."
+    },
+    {
+      "id": "FR-P027",
+      "level": "must",
+      "title": "Upgradepfade von mindestens drei Vorgängerversionen werden automatisiert geprüft.",
+      "workPackage": "WP2.6",
+      "status": "teilweise",
+      "test": "SqliteUpgradeMatrixTests",
+      "artifact": "tests/Bifrost.Upgrade.Tests",
+      "note": "Die Matrix faehrt gegen selbst erzeugte Fixtures. Drei wirklich veroeffentlichte Vorgaengerversionen gibt es nicht, weil M1 nicht abgenommen ist."
+    },
+    {
+      "id": "FR-P028",
+      "level": "should",
+      "title": "Ein Konfigurationsexport ohne Secrets und ein verschlüsselter Vollständiger Export stehen getrennt zur Verfügung.",
+      "workPackage": "WP2.5",
+      "status": "erfuellt",
+      "test": "ConfigurationRoundtripTests",
+      "artifact": "src/Bifrost.Core/Configuration"
+    },
+    {
+      "id": "FR-P030",
+      "level": "must",
+      "title": "Ein `doctor`-Befehl prüft Datenverzeichnis, Berechtigungen, Datenbank, Migrationen, Key-Ring, Runtime, Ports und Basiskonfiguration.",
+      "workPackage": "WP2.4",
+      "status": "erfuellt",
+      "test": "DiagnosticServiceTests",
+      "artifact": "src/Bifrost.Core/Diagnostics"
+    },
+    {
+      "id": "FR-P031",
+      "level": "must",
+      "title": "Upstream-Diagnosen prüfen Prozessstart bzw. DNS/Netzwerk, SSRF-Entscheidung, Authentifizierung, MCP-Handshake, Protokollversion und Discovery.",
+      "workPackage": "WP2.4",
+      "status": "erfuellt",
+      "test": "UpstreamTimelineTests",
+      "artifact": "src/Bifrost.Core/Diagnostics"
+    },
+    {
+      "id": "FR-P032",
+      "level": "must",
+      "title": "Diagnoseausgaben enthalten keine Secrets.",
+      "workPackage": "WP2.4",
+      "status": "erfuellt",
+      "test": "DiagnosticRedactionTests",
+      "artifact": "src/Bifrost.Core/Diagnostics"
+    },
+    {
+      "id": "FR-P033",
+      "level": "must",
+      "title": "Jeder Fehler enthält einen stabilen maschinenlesbaren Code, eine verständliche Erklärung und möglichst eine nächste Handlung.",
+      "workPackage": "WP2.4",
+      "status": "erfuellt",
+      "test": "DiagnosticCodeTests",
+      "artifact": "src/Bifrost.Core/Diagnostics/DiagnosticCodes.cs"
+    },
+    {
+      "id": "FR-P034",
+      "level": "should",
+      "title": "Ein Support-Bundle kann redigierte Konfiguration, Versionsinformationen, Healthstatus und relevante Logs exportieren.",
+      "workPackage": "WP5.6",
+      "status": "erfuellt",
+      "test": "SupportBundleTests",
+      "artifact": "src/Bifrost.Core/Operations/SupportBundle"
+    },
+    {
+      "id": "FR-P035",
+      "level": "should",
+      "title": "Die UI zeigt dieselben Diagnoseergebnisse wie die CLI und verwendet denselben Backenddienst.",
+      "workPackage": "WP4.6",
+      "status": "erfuellt",
+      "test": "SupportBundleJourneyTests",
+      "artifact": "src/Bifrost.Web/Components/Pages/Operations.razor"
+    },
+    {
+      "id": "FR-P036",
+      "level": "should",
+      "title": "Readiness unterscheidet zwischen lokalem Prozesszustand und tatsächlich nutzbaren Kernabhängigkeiten.",
+      "workPackage": "WP2.4",
+      "status": "teilweise",
+      "test": "DiagnosticServiceTests",
+      "artifact": "src/Bifrost.Server/Program.cs",
+      "note": "Health und Readiness sind getrennt; die Unterscheidung \"lokal bereit\" gegen \"Upstreams erreichbar\" ist nicht eigens getestet."
+    },
+    {
+      "id": "FR-P040",
+      "level": "must",
+      "title": "Native stdio-/CLI-Ausführung im Hostmodus kann global deaktiviert werden.",
+      "workPackage": "WP3.1",
+      "status": "erfuellt",
+      "test": "HostExecutionArchitectureTests",
+      "artifact": "src/Bifrost.Core/Execution"
+    },
+    {
+      "id": "FR-P041",
+      "level": "must",
+      "title": "Neu angelegte native Upstreams verwenden standardmäßig Container- oder WASI-Isolation, sofern der gewählte Typ dies unterstützt.",
+      "workPackage": "WP3.1",
+      "status": "erfuellt",
+      "test": "HostExecutionCreationPathTests",
+      "artifact": "src/Bifrost.Core/Execution"
+    },
+    {
+      "id": "FR-P042",
+      "level": "must",
+      "title": "Hostmodus verlangt eine explizite Risikobestätigung und wird in UI, API und Audit klar gekennzeichnet.",
+      "workPackage": "WP3.1",
+      "status": "erfuellt",
+      "test": "HostExecutionAdoptionTests",
+      "artifact": "src/Bifrost.Core/Execution"
+    },
+    {
+      "id": "FR-P043",
+      "level": "must",
+      "title": "Container-Upstreams erhalten standardmäßig Limits für CPU, RAM, Prozesse, Output, Zeit und Dateisystemzugriff.",
+      "workPackage": "WP3.2",
+      "status": "erfuellt",
+      "test": "ContainerIsolationE2ETests",
+      "artifact": "src/Bifrost.Upstream"
+    },
+    {
+      "id": "FR-P044",
+      "level": "must",
+      "title": "Netzwerkzugriff von isolierten Upstreams ist default-deny und wird pro Upstream freigegeben.",
+      "workPackage": "WP3.2",
+      "status": "erfuellt",
+      "test": "ContainerIsolationE2ETests",
+      "artifact": "src/Bifrost.Upstream"
+    },
+    {
+      "id": "FR-P045",
+      "level": "must",
+      "title": "Der DataProtection-Key-Ring kann beim Setup ohne manuelle Kryptografiearbeit geschützt werden.",
+      "workPackage": "WP3.4",
+      "status": "erfuellt",
+      "test": "KeyRingCommandTests",
+      "artifact": "src/Bifrost.Server/KeyRing"
+    },
+    {
+      "id": "FR-P046",
+      "level": "must",
+      "title": "Ein ungeschützter Key-Ring ist dauerhaft sichtbar und über Diagnose/APIs maschinenlesbar erkennbar.",
+      "workPackage": "WP3.4",
+      "status": "erfuellt",
+      "test": "KeyRingCheckTests",
+      "artifact": "src/Bifrost.Core/Diagnostics/Checks"
+    },
+    {
+      "id": "FR-P047",
+      "level": "must",
+      "title": "Security-Scans für Quellcode, Container, NuGet und Cargo sind Release-Gates.",
+      "workPackage": "WP3.5",
+      "status": "erfuellt",
+      "test": null,
+      "artifact": ".github/workflows/security.yml"
+    },
+    {
+      "id": "FR-P048",
+      "level": "should",
+      "title": "Secrets können über Datei-/Container-Secrets referenziert werden, ohne sie als Environment-Wert in die Compose-Datei zu schreiben.",
+      "workPackage": "WP3.5",
+      "status": "erfuellt",
+      "test": "ConfigurationSecretExportTests",
+      "artifact": "src/Bifrost.Core/Configuration"
+    },
+    {
+      "id": "FR-P050",
+      "level": "must",
+      "title": "Abgebrochene Test- oder Gateway-Prozesse hinterlassen keine verwalteten Upstream-Kindprozesse.",
+      "workPackage": "WP5.4",
+      "status": "erfuellt",
+      "test": "OrphanDetectionTests",
+      "artifact": "tests/soak/Bifrost.Soak.Tests"
+    },
+    {
+      "id": "FR-P051",
+      "level": "must",
+      "title": "Ein automatisierter Soak-Test betreibt den Gateway mindestens 72 Stunden mit wechselnder Last und Upstream-Neustarts.",
+      "workPackage": "WP5.4",
+      "status": "offen",
+      "test": "SoakRunTests",
+      "artifact": "artifacts/soak",
+      "note": "Der Harness traegt einen 72-Stunden-Lauf; gefahren sind sieben Minuten. Der Vertrag verweist den Langlauf auf M7/M8."
+    },
+    {
+      "id": "FR-P052",
+      "level": "must",
+      "title": "Chaos-Szenarien umfassen Prozesskill, Upstream-Crash, langsame Antworten, Verbindungsabbruch, Datenbankunterbrechung und Neustart während laufender Calls.",
+      "workPackage": "WP5.4",
+      "status": "erfuellt",
+      "test": "SoakRunTests",
+      "artifact": "tests/soak/Bifrost.Soak.Tests/Harness/ChaosEngine.cs"
+    },
+    {
+      "id": "FR-P053",
+      "level": "must",
+      "title": "Der Gateway kommt nach hartem Prozessabbruch mit konsistenter Datenbank und erklärbarem Task-/Approval-Zustand wieder hoch.",
+      "workPackage": "WP5.4",
+      "status": "erfuellt",
+      "test": "SoakRunTests",
+      "artifact": "tests/soak/Bifrost.Soak.Tests"
+    },
+    {
+      "id": "FR-P054",
+      "level": "must",
+      "title": "UI-Kernpfade werden mit Browser-E2E-Tests geprüft.",
+      "workPackage": "WP5.5",
+      "status": "erfuellt",
+      "test": "ApprovalJourneyTests",
+      "artifact": "tests/Bifrost.Ui.E2E",
+      "note": "18 Browserwege gegen eine veroeffentlichte Instanz ueber TLS."
+    },
+    {
+      "id": "FR-P055",
+      "level": "must",
+      "title": "Kritische Security-Invarianten werden als Property-/Architekturtests geschützt.",
+      "workPackage": "WP5.5",
+      "status": "erfuellt",
+      "test": "HostExecutionArchitectureTests",
+      "artifact": "tests/Bifrost.Security.Tests"
+    },
+    {
+      "id": "FR-P056",
+      "level": "should",
+      "title": "Testläufe liefern bei Hängern automatisch Sequenz, Dump und aktive Kindprozessliste.",
+      "workPackage": "WP5.4",
+      "status": "offen",
+      "test": null,
+      "artifact": null,
+      "note": "Bei einem Haenger liefert der Lauf keine Sequenz, keinen Dump und keine aktiven Vorgaenge. Nicht gebaut."
+    },
+    {
+      "id": "FR-P060",
+      "level": "must",
+      "title": "Eine veröffentlichte Matrix nennt getestete Clientversionen und unterstützte Funktionen.",
+      "workPackage": "WP5.1",
+      "status": "erfuellt",
+      "test": "MatrixSchemaTests",
+      "artifact": "tests/compatibility/matrix.json"
+    },
+    {
+      "id": "FR-P061",
+      "level": "must",
+      "title": "Mindestens Claude, Cursor, VS Code, Codex und MCP Inspector werden regelmäßig gegen ein Referenzsetup geprüft.",
+      "workPackage": "WP5.1",
+      "status": "offen",
+      "test": "SdkClientCompatibilityTests",
+      "artifact": "docs/acceptance/compatibility.md",
+      "note": "Geprueft ist der SDK-Client. Claude, Cursor, VS Code, Codex und MCP Inspector stehen in der Matrix als untested — sichtbar, aber ungeprueft."
+    },
+    {
+      "id": "FR-P062",
+      "level": "must",
+      "title": "OAuth wird gegen mindestens einen selbst betriebenen Referenzanbieter und einen realen externen Dienst getestet.",
+      "workPackage": "WP5.2",
+      "status": "teilweise",
+      "test": "UpstreamOAuthAgainstKeycloakTests",
+      "artifact": "tests/Bifrost.Integration.Tests/OAuth",
+      "note": "Der selbst betriebene Referenzanbieter (Keycloak) ist belegt. Der externe Anbieter fehlt; er braucht fremde Zugangsdaten."
+    },
+    {
+      "id": "FR-P063",
+      "level": "must",
+      "title": "Tests umfassen Tokenablauf, Refresh, Widerruf, Issuer-/Audience-Fehler und Resource Indicators.",
+      "workPackage": "WP5.2",
+      "status": "teilweise",
+      "test": "UpstreamOAuthAgainstKeycloakTests",
+      "artifact": "tests/Bifrost.Integration.Tests/OAuth",
+      "note": "Ablauf und Refresh samt Rotation sind belegt. Widerruf, Issuer-/Audience-Fehler und Consent sind nicht eigens gefahren."
+    },
+    {
+      "id": "FR-P064",
+      "level": "must",
+      "title": "Netzwerkrealistische Tests laufen über Kestrel, TCP, TLS und einen Reverse Proxy.",
+      "workPackage": "WP5.3",
+      "status": "erfuellt",
+      "test": "ReverseProxyHopTests",
+      "artifact": "docs/acceptance/performance.md",
+      "note": "Kestrel, TCP, TLS und ein echter nginx davor: rund 1,6 ms Anteil an der p95."
+    },
+    {
+      "id": "FR-P065",
+      "level": "should",
+      "title": "Kompatibilitätsabweichungen werden als bekannte Einschränkung mit Workaround dokumentiert.",
+      "workPackage": "WP5.1",
+      "status": "erfuellt",
+      "test": "MatrixValidatorNegativeTests",
+      "artifact": "tests/compatibility/matrix.json"
+    },
+    {
+      "id": "FR-P070",
+      "level": "must",
+      "title": "Health-, Metrik- und Trace-Namen sind versioniert und dokumentiert.",
+      "workPackage": "WP3.6",
+      "status": "teilweise",
+      "test": null,
+      "artifact": "docs/operations.md",
+      "note": "Metrik- und Tracenamen sind dokumentiert; eine Versionierung der Namen als eigener Vertrag fehlt."
+    },
+    {
+      "id": "FR-P071",
+      "level": "must",
+      "title": "Argumente, Ergebnisse und Secrets gelangen nie in Traces.",
+      "workPackage": "WP3.6",
+      "status": "erfuellt",
+      "test": "DiagnosticRedactionTests",
+      "artifact": "src/Bifrost.Core/Audit"
+    },
+    {
+      "id": "FR-P072",
+      "level": "must",
+      "title": "Auditdaten können in JSONL und CSV gestreamt exportiert werden, ohne den Arbeitsspeicher proportional zur Datenmenge zu belasten.",
+      "workPackage": "WP6.2",
+      "status": "erfuellt",
+      "test": "AuditExportScaleTests",
+      "artifact": "docs/operations.md",
+      "note": "1 MB gehaltener Speicher bei 100 000 Zeilen, 0 MB bei 1 000 000."
+    },
+    {
+      "id": "FR-P073",
+      "level": "should",
+      "title": "Audit-Einträge können optional durch eine Hash-Kette gegen unbemerkte lokale Manipulation erschwert werden.",
+      "workPackage": "WP6.2",
+      "status": "erfuellt",
+      "test": "AuditChainTests",
+      "artifact": "src/Bifrost.Abstractions/AuditChain.cs"
+    },
+    {
+      "id": "FR-P074",
+      "level": "should",
+      "title": "Signierte Webhooks können Approval- und Security-Ereignisse an externe Systeme melden.",
+      "workPackage": "WP6.3",
+      "status": "erfuellt",
+      "test": "ApprovalNotificationTests",
+      "artifact": "src/Bifrost.Core/Approvals"
+    },
+    {
+      "id": "FR-P075",
+      "level": "should",
+      "title": "Ein redigiertes Support-Bundle ist klar vom vollständigen Auditexport getrennt.",
+      "workPackage": "WP5.6",
+      "status": "erfuellt",
+      "test": "SupportBundleTests",
+      "artifact": "docs/operations.md"
+    },
+    {
+      "id": "FR-P080",
+      "level": "should",
+      "title": "Versionierte Policy Packs bündeln RBAC, Profile, Approval-Regeln, Rate-Limits und Guard-Regeln.",
+      "workPackage": "WP6.1",
+      "status": "teilweise",
+      "test": "PolicyPackTests",
+      "artifact": "src/Bifrost.Core/Policy",
+      "note": "Packs buendeln Rollen und Profile. Approval-Regeln und Rate-Limits reisen als Teil derselben Nutzlast mit, sind aber nicht eigens belegt."
+    },
+    {
+      "id": "FR-P081",
+      "level": "should",
+      "title": "Vor Aktivierung eines Policy Packs wird ein Diff der Auswirkungen gezeigt.",
+      "workPackage": "WP6.1",
+      "status": "erfuellt",
+      "test": "PolicyPackApiTests",
+      "artifact": "src/Bifrost.Core/Policy/RightsProjection.cs",
+      "note": "Der Diff nennt jede Identitaet, die gewinnt, samt Wirkungsebene — nicht nur die geaenderte Rolle."
+    },
+    {
+      "id": "FR-P082",
+      "level": "should",
+      "title": "Das Token-Cockpit zeigt Schema-Kosten pro Server und Profil sowie tatsächlich genutzte gegenüber exponierten Tools.",
+      "workPackage": "WP6.4",
+      "status": "erfuellt",
+      "test": "UsageCockpitTests",
+      "artifact": "src/Bifrost.Core/Usage"
+    },
+    {
+      "id": "FR-P083",
+      "level": "should",
+      "title": "Das System schlägt ungenutzte Pinnings oder überbreite Profile vor, nimmt aber keine automatische sicherheitsrelevante Änderung vor.",
+      "workPackage": "WP6.4",
+      "status": "erfuellt",
+      "test": "UsageCockpitApiTests",
+      "artifact": "src/Bifrost.Core/Usage",
+      "note": "Das Cockpit schlaegt vor und aendert nichts; das ist als Test festgehalten."
+    },
+    {
+      "id": "FR-P084",
+      "level": "should",
+      "title": "Approval-Anfragen unterstützen Ablaufzeit, signierte Benachrichtigungen und Deep-Links.",
+      "workPackage": "WP6.3",
+      "status": "erfuellt",
+      "test": "ApprovalNotificationTests",
+      "artifact": "src/Bifrost.Core/Approvals"
+    },
+    {
+      "id": "FR-P085",
+      "level": "could",
+      "title": "Vier-Augen-Freigabe kann für ausgewählte Toolklassen verlangt werden.",
+      "workPackage": "WP6.3",
+      "status": "offen",
+      "test": null,
+      "artifact": null,
+      "note": "Vier-Augen-Freigabe gibt es nicht. Einzige Could-Anforderung; nicht gebaut, nicht geplant."
+    },
+    {
+      "id": "FR-P086",
+      "level": "should",
+      "title": "Ein Connector-Entwickler kann Pakete initialisieren, bauen, signieren, verifizieren und lokal testen.",
+      "workPackage": "WP6.5",
+      "status": "erfuellt",
+      "test": "ConnectorKitTests",
+      "artifact": "docs/connectors/developer-kit.md",
+      "note": "Die dokumentierte Befehlsfolge ist der erste Test."
+    },
+    {
+      "id": "FR-P090",
+      "level": "must",
+      "title": "Quickstart, Betrieb, Security und Troubleshooting stehen mindestens auf Deutsch und Englisch zur Verfügung.",
+      "workPackage": "WP0.2",
+      "status": "erfuellt",
+      "test": null,
+      "artifact": "docs/operations.md",
+      "note": "Deutsch vollstaendig, englischer Spiegel fuer Betrieb vorhanden."
+    },
+    {
+      "id": "FR-P091",
+      "level": "must",
+      "title": "Jede sicherheitsrelevante Option dokumentiert Default, Risiko und Empfehlung.",
+      "workPackage": "WP0.2",
+      "status": "teilweise",
+      "test": null,
+      "artifact": "docs/operations.md",
+      "note": "Die sicherheitsrelevanten Schalter sind mit Risiko und Empfehlung dokumentiert; eine vollstaendige Gegenpruefung Option fuer Option steht aus."
+    },
+    {
+      "id": "FR-P092",
+      "level": "must",
+      "title": "CONTRIBUTING, Code of Conduct, Issue-/PR-Templates und lokale Verifikationsbefehle sind vorhanden.",
+      "workPackage": "WP0.2",
+      "status": "offen",
+      "test": null,
+      "artifact": null,
+      "note": "CONTRIBUTING, Code of Conduct und Issue-/PR-Templates fehlen im Repository."
+    },
+    {
+      "id": "FR-P093",
+      "level": "should",
+      "title": "Architektur- und Connector-Beispiele sind klein, lauffähig und CI-geprüft.",
+      "workPackage": "WP4.7",
+      "status": "erfuellt",
+      "test": "ConnectorKitTests",
+      "artifact": "samples/counter-connector",
+      "note": "Das Beispiel ist klein, lauffaehig und laeuft im Testlauf mit."
+    },
+    {
+      "id": "FR-P094",
+      "level": "should",
+      "title": "Das öffentliche Roadmap-Dokument unterscheidet zugesagt, geplant, experimentell und bewusst nicht geplant.",
+      "workPackage": "WP4.7",
+      "status": "offen",
+      "test": null,
+      "artifact": null,
+      "note": "Ein oeffentliches Roadmap-Dokument mit der Unterscheidung zugesagt/geplant/experimentell gibt es nicht."
+    }
+  ]
+}

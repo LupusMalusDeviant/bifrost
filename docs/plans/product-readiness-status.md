@@ -649,7 +649,7 @@ Anforderungen gehalten hat, ist eine Behauptung über eine Liste, die es nicht g
 
 | WP | Status | Nachweis | Nächster Schritt |
 |---|---|---|---|
-| 7.1 Feature Freeze und Finding-Liste | `angefangen` | 11 Tests grün: Wächter über die Tore (4), Finding-Liste mit 26 Befunden und ihren Regeln (5), generierter Bericht (2) | Rückverfolgung Anforderung → Paket → Test → Artefakt |
+| 7.1 Feature Freeze und Finding-Liste | `implementiert` | 19 Tests grün: Wächter über die Tore (4), Finding-Liste mit 26 Befunden (5+2), Rückverfolgung über **alle 72 Anforderungen** (6+2) | Changelog/Migration/Rollback gegenprüfen; dann Abnahme durch fremde Augen |
 | 7.2 Externer Security-Review | `nicht startbar` | – | braucht einen beauftragten externen Prüfer |
 | 7.3 Pilotrelease | `nicht startbar` | – | braucht drei getrennte Installationen und echte Betreiber |
 
@@ -706,8 +706,39 @@ Verweis auf einen gelöschten Test ist schlimmer als gar keiner, weil er wie ein
 auf einen erfundenen Testnamen: Beide Tests wurden rot, dann wurde zurückgesetzt. Ein Tor, das nie
 zugefallen ist, ist kein Tor.
 
-**Was in WP7.1 noch aussteht:** die Rückverfolgung Anforderung → Paket → **Testname** → Artefakt
-als maschinenlesbare Quelle samt generiertem Bericht. Die härteste Regel steht im Vertrag §1: Eine Zeile zählt nur, wenn der
+### Die Rückverfolgung — und die Zahl, die jetzt feststeht
+
+`docs/acceptance/traceability.json` ist die Quelle, `traceability.md` wird daraus erzeugt. **Alle 72
+Anforderungen des Lastenhefts haben eine Zeile** — 50 Must, 21 Should, 1 Could.
+
+| | |
+|---|---|
+| erfüllt | 53 |
+| teilweise | 12 |
+| **offen** | 7 |
+
+**12 der 50 Must-Anforderungen sind nicht erfüllt.** Das ist die Zahl, um die es beim Release
+Candidate geht, und sie steht jetzt oben im Bericht statt in niemandes Kopf. Jede dieser Zeilen
+trägt einen Grund — auch das erzwingt ein Test, nicht eine Bitte.
+
+**Die Titel werden nicht abgetippt.** Sie stammen aus dem Lastenheft, und ein Test hält beide
+Richtungen gegeneinander: Wer dort eine Anforderung ergänzt, färbt den Lauf rot, bis sie hier eine
+Zeile hat; eine Zeile ohne Anforderung im Lastenheft ist erfunden und fällt genauso auf.
+
+**Die härteste Regel des Vertrags ist angewendet.** 56 der 72 Zeilen nennen einen Test, und
+`Every_named_test_really_exists` hält jeden Namen gegen die Suite. Gegengeprüft: Ein erfundener
+Testname färbt den Lauf rot, dann zurückgesetzt.
+
+Die sieben offenen Anforderungen sind keine Überraschungen, sondern die bekannten Lücken —
+Startvorlagen (FR-P017), 72-Stunden-Soak (FR-P051), Diagnose bei Hängern (FR-P056), reale Clients
+(FR-P061), Vier-Augen-Freigabe (FR-P085, die einzige Could), CONTRIBUTING und Templates (FR-P092),
+öffentliche Roadmap (FR-P094). Die zwölf `teilweise` sind überwiegend Nachweise, die ein
+veröffentlichtes Artefakt oder fremde Zugangsdaten brauchen.
+
+**Was in WP7.1 noch aussteht:** der letzte Punkt des Pflichtenhefts — „Changelog, Migration und
+Rollback vollständig". Der Changelog wird geführt, Migrations- und Rollbackwege sind dokumentiert
+und getestet; eine ausdrückliche Gegenprüfung gegen diese Forderung hat aber noch niemand gemacht,
+und ohne sie steht hier keine Fertigmeldung. Die härteste Regel steht im Vertrag §1: Eine Zeile zählt nur, wenn der
 genannte Test wirklich existiert und wirklich läuft.
 
 ## Vorige Welle: M5 — Kompatibilität und Betriebsnachweise
