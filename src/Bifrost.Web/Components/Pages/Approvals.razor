@@ -6,6 +6,7 @@
 @inject IAuditSink Audit
 @inject TimeProvider Time
 @inject AuthenticationStateProvider AuthState
+@inject IApprovalNotifier Notifier
 
 <h1>Freigaben</h1>
 <p class="muted">
@@ -27,14 +28,14 @@
                 <tbody>
                     @foreach (var r in _pending)
                     {
-                        <tr>
+                        <tr data-testid="approval-row" data-tool="@r.Tool.Value">
                             <td class="mono">@r.RequestedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)</td>
                             <td>@r.CallerDescription</td>
                             <td class="mono">@r.Tool.Value</td>
                             <td><pre class="mono" style="max-width:340px;white-space:pre-wrap">@(r.RedactedArguments?.GetRawText() ?? "—")</pre></td>
                             <td style="white-space:nowrap">
-                                <button class="btn-sm" @onclick="() => Decide(r.Id, true)">Freigeben</button>
-                                <button class="btn-sm btn-danger" @onclick="() => Decide(r.Id, false)">Ablehnen</button>
+                                <button data-testid="approval-grant" class="btn-sm" @onclick="() => Decide(r.Id, true)">Freigeben</button>
+                                <button data-testid="approval-deny" class="btn-sm btn-danger" @onclick="() => Decide(r.Id, false)">Ablehnen</button>
                             </td>
                         </tr>
                     }
@@ -116,6 +117,44 @@
         </div>
     </div>
 </AuthorizeView>
+
+@* WP6.3: Ob jemand von den wartenden Freigaben erfahren hat. Ein totes Ziel gehoert dorthin, wo
+   die Warteschlange steht — nicht in eine Logdatei. *@
+@if (Notifier.Status.Count > 0)
+{
+    <div class="card">
+        <h3 style="margin-top:0">Benachrichtigungen</h3>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Ziel</th><th>Freigabe</th><th>Stand</th><th>Versuche</th><th>Zuletzt</th><th>Grund</th></tr></thead>
+                <tbody>
+                    @foreach (var status in Notifier.Status.Take(20))
+                    {
+                        <tr data-testid="notification-row" data-state="@status.State">
+                            <td>@status.Target</td>
+                            <td class="mono">@status.ApprovalId.ToString()[..8]</td>
+                            <td>
+                                <span class="@(status.State switch
+                                {
+                                    ApprovalNotificationState.Delivered => "badge-ok",
+                                    ApprovalNotificationState.DeadLettered => "badge-err",
+                                    _ => "badge-warn",
+                                })">@status.State</span>
+                            </td>
+                            <td>@status.Attempts</td>
+                            <td class="muted">@(status.LastTriedAt?.ToString("HH:mm:ss") ?? "—")</td>
+                            <td class="muted">@(status.LastError ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <p class="muted" style="margin-bottom:0">
+            Eine Freigabe gilt, wenn sie entschieden wurde — nicht, wenn eine Benachrichtigung
+            ankam. Ein Ausfall hier hält die Warteschlange nicht auf.
+        </p>
+    </div>
+}
 
 @code {
     private IReadOnlyList<ApprovalRequest> _pending = [];

@@ -125,11 +125,136 @@ Aufwärmphase vor der Messung; Dauerlast über 30–60 s statt eines Stoßes; Me
 als Berichtswert; ein Lauf über echtes Kestrel/TCP; ein Upstream mit definierter künstlicher
 Latenz; und ein A/B zwischen `BIFROST_MCP_STATELESS=1` und `=0`.
 
+## Netzrealistische Messung (WP5.3, 2026-08-02)
+
+Die Abschnitte oben messen gegen einen **In-Memory-Host**. Diese Messung schließt die vier Lücken,
+die dort unter „Was diese Zahlen NICHT belegen" stehen: echter Serverprozess, echtes TCP, echte
+TLS-Terminierung, Dauerlast statt Stoß, getrennte Spans und ein A/B zwischen sessionlosem und
+Sitzungsbetrieb.
+
+| | |
+|---|---|
+| **Harness** | `NetworkRealisticBenchmarkTests` (`tests/Bifrost.Performance.Tests`) |
+| **Gateway** | eigener Prozess, Kestrel auf `127.0.0.1`, Zugang über `--issue-bootstrap-key` |
+| **Upstream** | `SlowServer`, angefordert 20 ms — abgezogen wird der **selbst gemessene** Span |
+| **Last** | 32 virtuelle Clients, 5 s Aufwärmen, 3 × 30 s Dauerlast je Szenario |
+| **Umfang** | ~92 000 Aufrufe je Szenario |
+| **Maschine** | Ryzen 7 9800X3D, 16 logische Prozessoren, Windows 11 (10.0.26200), .NET 10.0.4 |
+| **Artefakt** | `artifacts/perf/20260802-153519-d838e9.json` (nicht versioniert; CI lädt es als Artefakt hoch) |
+
+### Ergebnis — Median aus drei Läufen
+
+| Szenario | gesamt p50 | gesamt p95 | Upstream p50 | **Gateway p50** | **Gateway p95** | CPU | RSS | Fehler |
+|---|---|---|---|---|---|---|---|---|
+| sessionlos / TCP | 31,3 ms | 32,4 ms | 29,8 ms | **1,43 ms** | **2,18 ms** | 39 % eines Kerns | 488 MB | 0 |
+| Sitzung / TCP | 31,3 ms | 32,4 ms | 30,0 ms | **1,34 ms** | **1,98 ms** | 51 % | 549 MB | 0 |
+| sessionlos / TLS | 31,3 ms | 32,4 ms | 29,8 ms | **1,49 ms** | **2,22 ms** | 59 % | 497 MB | 0 |
+
+Die Streuung der drei Läufe je Szenario liegt bei der p95 des Gateway-Anteils zwischen 1,96 und
+2,63 ms — der erste Lauf ist jeweils der höchste, danach liegen die Werte eng beieinander.
+
+**NFR-01 (p95 ≤ 50 ms) hält auch über die echte Strecke, mit Faktor ~23 Reserve.**
+
+### Drei Ergebnisse, die vorher nicht zu haben waren
+
+1. **Der Gateway-Anteil ist klein und stabil.** 1,4 ms Median, 2,2 ms p95 — über TCP, über TLS und
+   in beiden Betriebsarten praktisch gleich. Was ein Aufruf kostet, bestimmt die Gegenstelle.
+2. **TLS kostet CPU, keine Latenz.** Gleiche Perzentile, aber ~50 % mehr CPU-Zeit (39 % → 59 % eines
+   Kerns) und deutlich mehr Handles. Für eine kleine VM ist das die relevantere Zahl.
+3. **Sessionlos und Sitzungsbetrieb nehmen sich in der Latenz nichts.** Der Sitzungsbetrieb liegt
+   sogar minimal darunter, kostet dafür mehr CPU und Arbeitsspeicher. Die Frage aus
+   [ADR-0023](../adr/0023-stateless-kern-und-mrtr.md) ist damit gemessen statt vermutet.
+
+### Der Fehler im ersten Lauf dieses Harness
+
+Der erste Durchgang meldete **11 ms Gateway-Overhead** — das Achtfache des heutigen Werts. Ursache
+war nicht das Produkt, sondern der Messstand: Er zog die **angeforderten** 20 ms Upstream-Zeit ab,
+während `Task.Delay(20)` unter Windows regelmäßig gut 31 ms dauert. Die Auflösung des Systemtimers
+erschien damit als Gateway-Anteil.
+
+Deshalb misst der Upstream seinen Span jetzt selbst (`sleep_measured`) und der Harness zieht die
+**gemessene** Zeit ab, je Aufruf. Die Lehre ist unangenehm allgemein: Ein abgezogener Fremdanteil,
+den niemand gemessen hat, ist eine Annahme — und sie fällt auf die Seite, auf der das eigene Produkt
+schlechter aussieht, oder eben besser.
+
+### Was auch diese Messung NICHT belegt
+
+- ~~**Keinen Reverse-Proxy-Sprung.**~~ **Nachgemessen am 2026-08-04** — siehe den Abschnitt unten.
+- **Keine Kapazitätsgrenze.** Der Lastlauf ist ein geschlossener Regelkreis mit fester
+  Nebenläufigkeit; der Durchsatz (~1020 Aufrufe/s) ergibt sich aus 32 Clients ÷ 31 ms Antwortzeit.
+  Was der Gateway trägt, sagen der Overhead je Aufruf und die CPU-Zeit.
+- **Keine kleine VM.** Gemessen wurde auf einer 16-Kern-Maschine. Die Referenz aus NFR-01 ist eine
+  4-Kern-VM; der limitierte Container aus dem Pflichtenheft steht aus.
+- **Keine GC-Kennzahlen.** Von außen sind CPU, Arbeitsspeicher, Threads und Handles zu haben —
+  Sammlungen je Generation nicht.
+- **Kein Linux.** Der Lauf ist Windows; der CI-Job `benchmark` fährt ihn auf `ubuntu-latest`.
+
+## Der Reverse-Proxy-Sprung (WP5.3, 2026-08-04)
+
+Die Messung oben terminiert TLS im Gateway selbst. Im Produktivaufbau steht davor ein nginx oder
+Traefik — eine zweite Verbindung, ein zweiter Prozess, ein zweites Mal Serialisieren. Was das
+kostet, stand bisher unter „Was auch diese Messung NICHT belegt". Jetzt steht es hier.
+
+| | |
+|---|---|
+| **Harness** | `ReverseProxyHopTests` (`tests/Bifrost.Performance.Tests`) |
+| **Proxy** | `nginx:1.27-alpine` als **Container**, mit der Konfiguration aus `docs/operations.md`: `Host` durchgereicht, `X-Forwarded-Proto: https`, `X-Forwarded-For`, `proxy_buffering off` |
+| **Gateway** | eigener Prozess, HTTP auf `127.0.0.1`, `BIFROST_TRUSTED_PROXIES=any` |
+| **Upstream** | `SlowServer`, angefordert 20 ms — abgezogen wird der selbst gemessene Span |
+| **Last** | 16 virtuelle Clients, 3 s Aufwärmen, 15 s Dauerlast je Weg, ~7 600 Aufrufe je Weg |
+| **Maschine** | Ryzen 7 9800X3D, Windows 11 (10.0.26200), Docker Desktop |
+
+### Ergebnis
+
+| Weg | gesamt p50 | gesamt p95 | Upstream p50 | **Gateway + Netz p50** | **p95** | Fehler |
+|---|---|---|---|---|---|---|
+| direkt | 31,5 ms | 32,2 ms | 30,3 ms | **1,12 ms** | **1,62 ms** | 0 |
+| über nginx | 31,3 ms | 32,5 ms | 28,6 ms | **2,70 ms** | **3,54 ms** | 0 |
+
+**Der Sprung kostet rund 1,6 ms an der p95** (zweiter Lauf: 1,69 ms; erster: 1,92 ms). Damit
+verdoppelt der Proxy den Anteil, den Gateway und Netz zusammen ausmachen — und dieser Anteil bleibt
+trotzdem klein gegenüber der Antwortzeit der Gegenstelle. **NFR-01 hält auch über die Strecke mit
+Proxy.**
+
+### Warum die Differenz gemessen wird und nicht der absolute Wert
+
+Derselbe Lastlauf geht einmal direkt und einmal durch den Proxy; die Differenz ist der Anteil des
+Proxy. Ein einzelner Proxy-Lauf für sich sagte nichts — die Fremdlatenz des Upstreams steckt in
+beiden Zahlen und ist um eine Größenordnung größer als das, was hier gesucht wird.
+
+Aus demselben Grund prüft der Test **keine feste Millisekundenschranke** für den Proxyanteil: Auf
+geteilter Hardware wäre das eine Wette. Geprüft wird die Größenordnung — der Proxy darf den
+Gateway-Anteil nicht um ein Vielfaches überschreiten — und dass kein einziger Aufruf scheitert.
+
+### Was auch dieser Lauf nicht belegt
+
+- **Kein TLS am Proxy.** Der Sprung läuft über HTTP; gemessen ist die zweite Verbindung, nicht die
+  TLS-Terminierung davor. Was TLS kostet, steht in der Messung darüber: CPU, keine Latenz.
+- **Kein Traefik, kein Caddy, kein Cloud-Loadbalancer.** Gemessen ist nginx mit der empfohlenen
+  Konfiguration. Ein Proxy, der puffert, verhält sich bei Server-Sent Events anders — deshalb steht
+  `proxy_buffering off` in der Empfehlung und in dieser Messung.
+- **Keine Kette.** `ForwardLimit = 1`: Der Gateway glaubt genau einem Absender. Ein Aufbau mit
+  zwei Proxies hintereinander ist weder gemessen noch vorgesehen.
+
 ## Wiederholen
 
 ```powershell
 $env:BIFROST_RUN_BENCHMARK = "1"
-dotnet test tests/Bifrost.Integration.Tests --filter "FullyQualifiedName~PerformanceBenchmark" `
+dotnet test tests/Bifrost.Performance.Tests --logger "console;verbosity=detailed"
+```
+
+Kürzer für einen Rauchtest — das Ergebnis wird dann als `"complete": false` markiert und taugt
+**nicht** für eine Abnahmeaussage:
+
+```powershell
+$env:BIFROST_PERF_DURATION_SECONDS = "8"; $env:BIFROST_PERF_RUNS = "1"
+```
+
+Die ältere In-Process-Messung liegt im selben Projekt:
+
+```powershell
+$env:BIFROST_RUN_BENCHMARK = "1"
+dotnet test tests/Bifrost.Performance.Tests --filter "FullyQualifiedName~PerformanceBenchmark" `
   --logger "console;verbosity=detailed"
 ```
 

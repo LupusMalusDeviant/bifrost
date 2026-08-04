@@ -1,4 +1,5 @@
 using Bifrost.Abstractions;
+using Bifrost.Abstractions.Operations;
 
 namespace Bifrost.Core.Configuration;
 
@@ -15,16 +16,6 @@ public sealed record SkillSnapshot(
     string? Description,
     string Content,
     SkillMetadata Metadata);
-
-/// <summary>Die instanzweiten Schalter, die der Export überträgt.</summary>
-public sealed record InstanceSettings(GuardOptions Guard, ApprovalEnforcement DefaultApprovalEnforcement)
-{
-    /// <summary>
-    /// Der Auslieferungszustand. Er ist der Maßstab für die Frage, ob auf der Zielinstanz jemand
-    /// eine eigene Entscheidung getroffen hat, die ein Import nicht überfahren darf.
-    /// </summary>
-    public static InstanceSettings Defaults { get; } = new(new GuardOptions(), ApprovalEnforcement.Queue);
-}
 
 /// <summary>
 /// Was diese Instanz hält, aber nicht exportierbar ist — als Zählstand, nicht als Inhalt.
@@ -78,12 +69,19 @@ public interface IConfigurationSnapshotSource
 }
 
 /// <summary>
-/// Schreib-Port des Imports. <b>Ausschließlich additiv</b> — es gibt bewusst keine Operation, die
-/// ein Objekt ersetzt oder entfernt, das nicht dieser Import selbst gerade angelegt hat.
+/// Schreib-Port des Imports.
+/// <para>
+/// <b>Additiv bis auf Rollen und Profile</b> (M6/WP6.1): Für die beiden gibt es <c>Save…</c> — sie
+/// legen an <em>oder</em> ersetzen anhand der Id. Der Name sagt das jetzt auch; vorher hieß die
+/// Operation <c>Add…</c> und ersetzte trotzdem, weil sie unter der Haube auf einem Upsert saß.
+/// Genau diese Sorte Halbwahrheit macht aus einem Import ein Überschreiben, das niemand geplant hat.
+/// </para>
 /// <para>
 /// Die <c>Remove…</c>-Methoden sind <b>keine</b> Löschfunktionen, sondern die Rücknahme eines
-/// gescheiterten Imports (siehe <see cref="ConfigurationExportService.ApplyImportAsync"/>). Sie
-/// werden nur mit Schlüsseln aufgerufen, die derselbe Vorgang unmittelbar zuvor angelegt hat.
+/// Imports (siehe <see cref="ConfigurationExportService.ApplyImportAsync"/> und
+/// <see cref="ConfigurationExportService.UndoImportAsync"/>). Sie werden nur mit Schlüsseln
+/// aufgerufen, die derselbe Vorgang zuvor <em>angelegt</em> hat — was er ersetzt hat, wird
+/// zurückgeschrieben und nicht entfernt.
 /// </para>
 /// <para>
 /// <b>Hinweis an die Verdrahtung (WP2.7):</b> <c>IAssetStore</c> hat heute keine Operation, die
@@ -98,11 +96,13 @@ public interface IConfigurationImportTarget
 
     Task RemoveUpstreamAsync(ServerId id, CancellationToken ct);
 
-    Task AddRoleAsync(Role role, CancellationToken ct);
+    /// <summary>Legt an oder ersetzt anhand von <see cref="Role.Id"/>.</summary>
+    Task SaveRoleAsync(Role role, CancellationToken ct);
 
     Task RemoveRoleAsync(RoleId id, CancellationToken ct);
 
-    Task AddProfileAsync(ToolProfile profile, CancellationToken ct);
+    /// <summary>Legt an oder ersetzt anhand von <see cref="ToolProfile.Id"/>.</summary>
+    Task SaveProfileAsync(ToolProfile profile, CancellationToken ct);
 
     Task RemoveProfileAsync(ProfileId id, CancellationToken ct);
 

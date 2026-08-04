@@ -57,6 +57,18 @@ public static class DiagnosticCodes
     /// </summary>
     public const string PostgresBackupToolVersion = "BFR-DB-0006";
 
+    /// <summary>
+    /// Ist das Audit-Log lückenlos — oder sind Ereignisse verlorengegangen? (ADR-0007)
+    /// <para>
+    /// Ein Audit-Ereignis kann auf zwei Wegen verschwinden: bei der Annahme, wenn der Channel unter
+    /// Last voll ist, und beim Schreiben, wenn die Datenbank den Batch dauerhaft ablehnt. Beides
+    /// stand bisher in je einer Logzeile und in keinem Bericht. Für ein Produkt, dessen erstes
+    /// Verkaufsargument ein lückenloses Audit-Log ist, ist die unangenehmste Möglichkeit genau die:
+    /// nicht der Aufruf schlägt fehl, sondern nur sein Nachweis.
+    /// </para>
+    /// </summary>
+    public const string AuditCompleteness = "BFR-DB-0007";
+
     // ── BFR-KEY: DataProtection-Key-Ring ────────────────────────────────────────────────────────
 
     /// <summary>Key-Ring-Verzeichnis vorhanden und nicht leer.</summary>
@@ -158,6 +170,7 @@ public static class DiagnosticCodes
         DatabasePendingMigrations,
         SqliteDatabaseFile,
         PostgresBackupToolVersion,
+        AuditCompleteness,
         KeyRingPresent,
         KeyRingUnprotected,
         KeyRingCertificate,

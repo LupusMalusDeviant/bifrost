@@ -3,16 +3,24 @@ using System.Diagnostics;
 using System.Globalization;
 using AwesomeAssertions;
 using Bifrost.Abstractions;
+using Bifrost.Integration.Tests;
+using Bifrost.Integration.Tests.Gateway;
 using ModelContextProtocol.Client;
 using Xunit;
 
-namespace Bifrost.Integration.Tests.Gateway;
+namespace Bifrost.Performance.Tests;
 
 /// <summary>
 /// WP8.3: formale NFR-01/02-Messung (20 Sessions, 100 In-Flight-Calls, 100-Tool-Katalog).
 /// Läuft **nicht** in der normalen Suite — CI-Runner sind keine Referenz-Hardware und würden nur
 /// Rauschen messen. Bewusst per Umgebungsvariable scharfgeschaltet:
 /// <c>$env:BIFROST_RUN_BENCHMARK=1; dotnet test --filter FullyQualifiedName~PerformanceBenchmark</c>
+/// <para>
+/// <b>Sie bleibt neben WP5.3 stehen, statt von ihm ersetzt zu werden.</b> Diese Messung fährt gegen
+/// den In-Process-Host und ist damit die Vergleichsgröße für alles, was vor dem 2026-08-02 gemessen
+/// wurde; <see cref="NetworkRealisticBenchmarkTests"/> misst die Strecke mit Prozess, TCP und TLS.
+/// Wer beide Zahlen nebeneinanderlegt, sieht, was die Netzstrecke kostet — genau dafür sind es zwei.
+/// </para>
 /// </summary>
 public sealed class PerformanceBenchmarkTests : IClassFixture<GatewayFixture>
 {

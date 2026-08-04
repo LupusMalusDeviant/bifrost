@@ -1,6 +1,7 @@
 using Bifrost.Abstractions;
 using Bifrost.Core.Diagnostics;
 using Bifrost.Persistence;
+using Bifrost.Persistence.Audit;
 using Bifrost.Persistence.Backup;
 
 using Microsoft.EntityFrameworkCore;
@@ -136,6 +137,34 @@ public sealed class PostgresBackupToolProbe : IPostgresBackupToolProbe
 
         var major = await PostgresTools.ReadMajorVersionAsync(toolset.DumpPath, ct).ConfigureAwait(false);
         return new PostgresBackupToolFacts(true, toolset.DumpPath, major);
+    }
+}
+
+/// <summary>
+/// Die Audit-Sonde für BFR-DB-0007 (Umsetzung von <see cref="IAuditDiagnosticProbe"/>).
+/// <para>
+/// Sie liest die Zähler, die die Senke ohnehin führt — keine zweite Buchführung. Das ist der Punkt:
+/// Die Zahlen gab es schon, sie standen nur in keinem Bericht.
+/// </para>
+/// </summary>
+public sealed class ChannelAuditDiagnosticProbe : IAuditDiagnosticProbe
+{
+    private readonly ChannelAuditSink _sink;
+
+    public ChannelAuditDiagnosticProbe(ChannelAuditSink sink)
+    {
+        ArgumentNullException.ThrowIfNull(sink);
+        _sink = sink;
+    }
+
+    public Task<AuditDiagnosticFacts> DescribeAsync(CancellationToken ct)
+    {
+        var loss = _sink.Loss;
+        return Task.FromResult(new AuditDiagnosticFacts(
+            loss.LostAtIntake,
+            loss.LostAfterWriteFailure,
+            loss.FirstLossAt,
+            _sink.Mode is AuditDeliveryMode.Compliance ? "compliance" : "best-effort"));
     }
 }
 

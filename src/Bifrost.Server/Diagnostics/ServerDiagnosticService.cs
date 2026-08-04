@@ -111,6 +111,7 @@ public sealed class ServerDiagnosticContextFactory
     private readonly IUpstreamConfigStore _upstreams;
     private readonly IDatabaseDiagnosticProbe _database;
     private readonly IUpstreamDiagnosticProbe _upstreamProbe;
+    private readonly IAuditDiagnosticProbe _auditProbe;
     private readonly HostExecutionCoordinator _hostExecution;
 
     public ServerDiagnosticContextFactory(
@@ -120,9 +121,12 @@ public sealed class ServerDiagnosticContextFactory
         IUpstreamConfigStore upstreams,
         IDatabaseDiagnosticProbe database,
         IUpstreamDiagnosticProbe upstreamProbe,
+        IAuditDiagnosticProbe auditProbe,
         HostExecutionCoordinator hostExecution)
     {
         ArgumentNullException.ThrowIfNull(hostExecution);
+        ArgumentNullException.ThrowIfNull(auditProbe);
+        _auditProbe = auditProbe;
         _hostExecution = hostExecution;
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
@@ -158,6 +162,9 @@ public sealed class ServerDiagnosticContextFactory
             ContainerRuntimeName = runtimeName,
             Database = _database,
             Upstreams = _upstreamProbe,
+            // BFR-DB-0007: Was die Audit-Senke an Verlusten gezählt hat, gehört in den Bericht —
+            // ein stiller Verlust ist genau das, was die Zusage "lückenloses Audit" bricht.
+            Audit = _auditProbe,
             // ADR-0024 E2: Ob der vorhandene pg_dump diesen Server sichern kann, ist ein Befund und
             // keine Überraschung für den Ernstfall (BFR-DB-0006). Die Sonde entsteht hier statt in
             // der Verdrahtung, weil sie ausser dem konfigurierten Werkzeugverzeichnis nichts

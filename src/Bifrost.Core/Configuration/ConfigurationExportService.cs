@@ -100,8 +100,12 @@ public sealed class ConfigurationExportService : IConfigurationExportService
     }
 
     [HostExecutionChecked(Note = "ueber PlanUpstreams")]
-    public async Task<ConfigurationImportPlan> PlanImportAsync(
+    public Task<ConfigurationImportPlan> PlanImportAsync(
         string payload, string? passphrase, CancellationToken ct)
+        => PlanImportAsync(payload, passphrase, ConfigurationImportMode.AddOnly, ct);
+
+    public async Task<ConfigurationImportPlan> PlanImportAsync(
+        string payload, string? passphrase, ConfigurationImportMode mode, CancellationToken ct)
     {
         var document = ParsePayload(payload, passphrase);
         var current = await _source.ReadAsync(ct).ConfigureAwait(false);
@@ -116,11 +120,18 @@ public sealed class ConfigurationExportService : IConfigurationExportService
         var unchanged = new List<string>();
         var conflicts = new List<string>();
         var missing = new List<string>();
+        var updates = new List<string>();
+
+        // Der vorige Inhalt der Objekte, die ersetzt werden — ohne ihn gibt es keinen Rueckweg.
+        var replacedRoles = new List<Role>();
+        var replacedProfiles = new List<ToolProfile>();
 
         var upstreams = PlanUpstreams(
             document, currentDocument, additions, unchanged, conflicts, _hostExecution);
-        var roles = PlanRoles(document, currentDocument, additions, unchanged, conflicts);
-        var profiles = PlanProfiles(document, currentDocument, additions, unchanged, conflicts);
+        var roles = PlanRoles(
+            document, currentDocument, additions, unchanged, conflicts, mode, updates, replacedRoles);
+        var profiles = PlanProfiles(
+            document, currentDocument, additions, unchanged, conflicts, mode, updates, replacedProfiles);
         var guardRules = PlanGuardRules(document, currentDocument, additions, unchanged, conflicts);
         var approvals = PlanApprovals(document, currentDocument, additions, unchanged, conflicts);
         var skills = PlanSkills(document, currentDocument, additions, unchanged, conflicts);
@@ -134,11 +145,12 @@ public sealed class ConfigurationExportService : IConfigurationExportService
             Conflicts: conflicts,
             MissingDependencies: missing,
             Unchanged: unchanged,
-            Token: PlanTokens.New());
+            Token: PlanTokens.New(),
+            Updates: updates);
 
         _prepared[plan.Token!] = new PreparedImport(
             upstreams, roles, profiles, guardRules, approvals, skills, settings, current.Settings,
-            _time.GetUtcNow());
+            replacedRoles, replacedProfiles, _time.GetUtcNow());
 
         return plan;
     }
@@ -153,7 +165,8 @@ public sealed class ConfigurationExportService : IConfigurationExportService
     /// treffen, was vorher da war.
     /// </para>
     /// </summary>
-    public async Task ApplyImportAsync(ConfigurationImportPlan plan, CancellationToken ct)
+    public async Task<ConfigurationImportUndo> ApplyImportAsync(
+        ConfigurationImportPlan plan, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(plan);
 
@@ -179,6 +192,11 @@ public sealed class ConfigurationExportService : IConfigurationExportService
                 + " Es wurde nichts geschrieben.");
         }
 
+        // Ersetzte Objekte sind an ihrer Id erkennbar — im Update-Modus bekommt eine Rolle aus der
+        // Nutzlast die Id der hiesigen, damit die Zuordnung Identität→Rolle nicht ins Leere zeigt.
+        var replacedRoleIds = prepared.ReplacedRoles.Select(r => r.Id).ToHashSet();
+        var replacedProfileIds = prepared.ReplacedProfiles.Select(p => p.Id).ToHashSet();
+
         var undo = new List<Func<CancellationToken, Task>>();
         try
         {
@@ -190,14 +208,21 @@ public sealed class ConfigurationExportService : IConfigurationExportService
 
             foreach (var role in prepared.Roles)
             {
-                await _target.AddRoleAsync(role, ct).ConfigureAwait(false);
-                undo.Add(token => _target.RemoveRoleAsync(role.Id, token));
+                await _target.SaveRoleAsync(role, ct).ConfigureAwait(false);
+
+                // Ein ersetztes Objekt darf die Rücknahme NICHT entfernen — sonst löscht ein
+                // gescheiterter Import eine Rolle, die vorher da war.
+                undo.Add(prepared.ReplacedRoles.FirstOrDefault(r => r.Id == role.Id) is { } previous
+                    ? token => _target.SaveRoleAsync(previous, token)
+                    : token => _target.RemoveRoleAsync(role.Id, token));
             }
 
             foreach (var profile in prepared.Profiles)
             {
-                await _target.AddProfileAsync(profile, ct).ConfigureAwait(false);
-                undo.Add(token => _target.RemoveProfileAsync(profile.Id, token));
+                await _target.SaveProfileAsync(profile, ct).ConfigureAwait(false);
+                undo.Add(prepared.ReplacedProfiles.FirstOrDefault(p => p.Id == profile.Id) is { } previous
+                    ? token => _target.SaveProfileAsync(previous, token)
+                    : token => _target.RemoveProfileAsync(profile.Id, token));
             }
 
             foreach (var rule in prepared.GuardRules)
@@ -235,6 +260,113 @@ public sealed class ConfigurationExportService : IConfigurationExportService
                     + string.Join("; ", failures);
 
             throw new ConfigurationImportException(message, ex);
+        }
+
+        return new ConfigurationImportUndo(
+            prepared.ReplacedRoles,
+            prepared.ReplacedProfiles,
+            [.. prepared.Roles.Where(r => !replacedRoleIds.Contains(r.Id)).Select(r => r.Id)],
+            [.. prepared.Profiles.Where(p => !replacedProfileIds.Contains(p.Id)).Select(p => p.Id)],
+            [.. prepared.Upstreams.Select(u => u.Id)],
+            [.. prepared.GuardRules.Select(r => r.Id)],
+            [.. prepared.Skills.Select(s => s.Id)],
+            [.. prepared.Approvals.Select(a => a.Tool)],
+            prepared.Settings is null ? null : prepared.PreviousSettings);
+    }
+
+    /// <summary>
+    /// Nimmt einen angewendeten Import zurück.
+    /// <para>
+    /// <b>Dieselbe Reihenfolge wie die Kompensation im Fehlerfall</b>, nur später: erst das
+    /// Ersetzte auf seinen vorigen Inhalt, dann das Angelegte weg. Getrennt geführt wird beides,
+    /// weil das Zusammenwerfen genau den Fehler ergäbe, den zu vermeiden der Zweck ist — eine
+    /// ersetzte Rolle zu <em>entfernen</em> statt sie zurückzusetzen.
+    /// </para>
+    /// </summary>
+    public async Task UndoImportAsync(ConfigurationImportUndo undo, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(undo);
+
+        var failures = new List<string>();
+
+        foreach (var role in undo.ReplacedRoles)
+        {
+            await TryAsync(() => _target.SaveRoleAsync(role, ct), $"Rolle '{role.Name}'", failures)
+                .ConfigureAwait(false);
+        }
+
+        foreach (var profile in undo.ReplacedProfiles)
+        {
+            await TryAsync(() => _target.SaveProfileAsync(profile, ct), $"Profil '{profile.Name}'", failures)
+                .ConfigureAwait(false);
+        }
+
+        foreach (var id in undo.CreatedRoles)
+        {
+            await TryAsync(() => _target.RemoveRoleAsync(id, ct), $"Rolle {id.Value:N}", failures)
+                .ConfigureAwait(false);
+        }
+
+        foreach (var id in undo.CreatedProfiles)
+        {
+            await TryAsync(() => _target.RemoveProfileAsync(id, ct), $"Profil {id.Value:N}", failures)
+                .ConfigureAwait(false);
+        }
+
+        foreach (var id in undo.CreatedUpstreams)
+        {
+            await TryAsync(() => _target.RemoveUpstreamAsync(id, ct), $"Upstream {id.Value:N}", failures)
+                .ConfigureAwait(false);
+        }
+
+        foreach (var id in undo.CreatedGuardRules)
+        {
+            await TryAsync(() => _target.RemoveGuardRuleAsync(id, ct), $"Guard-Regel '{id}'", failures)
+                .ConfigureAwait(false);
+        }
+
+        foreach (var id in undo.CreatedSkills)
+        {
+            await TryAsync(() => _target.RemoveSkillAsync(id, ct), $"Skill {id.Value:N}", failures)
+                .ConfigureAwait(false);
+        }
+
+        foreach (var tool in undo.SetApprovals)
+        {
+            await TryAsync(
+                    () => _target.SetApprovalAsync(tool, null, ct), $"Freigabe für '{tool.Value}'", failures)
+                .ConfigureAwait(false);
+        }
+
+        if (undo.PreviousSettings is { } settings)
+        {
+            await TryAsync(() => _target.ApplySettingsAsync(settings, ct), "Instanzeinstellungen", failures)
+                .ConfigureAwait(false);
+        }
+
+        if (failures.Count > 0)
+        {
+            throw new ConfigurationImportException(
+                "Die Rücknahme war unvollständig. Diese Objekte stehen weiterhin so, wie der Import "
+                + "sie hinterlassen hat, und müssen von Hand geprüft werden: "
+                + string.Join("; ", failures));
+        }
+    }
+
+    /// <summary>
+    /// Führt einen Rücknahmeschritt aus und merkt sich das Scheitern, statt abzubrechen: Der Rest
+    /// ist genauso zurückzunehmen, und ein verschluckter Fehler hinterlässt hier Rechte, von denen
+    /// niemand weiß.
+    /// </summary>
+    private static async Task TryAsync(Func<Task> step, string label, List<string> failures)
+    {
+        try
+        {
+            await step().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            failures.Add($"{label}: {ex.Message}");
         }
     }
 
@@ -449,12 +581,28 @@ public sealed class ConfigurationExportService : IConfigurationExportService
         return result;
     }
 
+    /// <summary>
+    /// <para>
+    /// <b>M6/WP6.1:</b> Im Modus <see cref="ConfigurationImportMode.Update"/> ist eine bestehende
+    /// Rolle kein Konflikt mehr, sondern eine Ersetzung — <b>unter der Bedingung</b>, dass ihr
+    /// voriger Inhalt mitgeschrieben wird. Genau daran hängt der Rückweg; ohne ihn wäre das
+    /// Ersetzen eine Einbahnstraße durch die Rechteverwaltung.
+    /// </para>
+    /// <para>
+    /// Die <b>Id der Zielinstanz gewinnt</b>. Ein Pack bringt eigene Guids mit; würde man sie
+    /// übernehmen, hinge jede Identität plötzlich an einer Rolle, die es unter ihrer alten Id nicht
+    /// mehr gibt — die Zuordnung Identität→Rolle läuft über die Id, nicht über den Namen.
+    /// </para>
+    /// </summary>
     private static List<Role> PlanRoles(
         ConfigurationExportDocument document,
         ConfigurationExportDocument current,
         List<string> additions,
         List<string> unchanged,
-        List<string> conflicts)
+        List<string> conflicts,
+        ConfigurationImportMode mode,
+        List<string> updates,
+        List<Role> replaced)
     {
         var byName = Index(current.Roles, r => r.Name);
         var byId = current.Roles.GroupBy(r => r.Id).ToDictionary(g => g.Key, g => g.First());
@@ -468,6 +616,12 @@ public sealed class ConfigurationExportService : IConfigurationExportService
                 {
                     unchanged.Add($"Rolle '{role.Name}': unverändert vorhanden, wird nicht erneut angelegt.");
                 }
+                else if (mode is ConfigurationImportMode.Update)
+                {
+                    replaced.Add(ConfigurationDocumentBuilder.ToDomain(existingById));
+                    result.Add(ConfigurationDocumentBuilder.ToDomain(role));
+                    updates.Add($"Rolle '{role.Name}' wird ersetzt.");
+                }
                 else
                 {
                     conflicts.Add(
@@ -478,11 +632,24 @@ public sealed class ConfigurationExportService : IConfigurationExportService
                 continue;
             }
 
-            if (byName.ContainsKey(role.Name))
+            if (byName.TryGetValue(role.Name, out var existingByName))
             {
-                conflicts.Add(
-                    $"Rolle '{role.Name}': Der Name ist auf der Zielinstanz bereits vergeben. "
-                    + "Sie wird nicht überschrieben.");
+                if (mode is ConfigurationImportMode.Update)
+                {
+                    replaced.Add(ConfigurationDocumentBuilder.ToDomain(existingByName));
+
+                    // Inhalt aus dem Pack, Id von hier: Sonst zeigen die Identitaeten dieser
+                    // Instanz auf eine Rolle, die es nicht mehr gibt.
+                    result.Add(ConfigurationDocumentBuilder.ToDomain(role with { Id = existingByName.Id }));
+                    updates.Add($"Rolle '{role.Name}' wird ersetzt.");
+                }
+                else
+                {
+                    conflicts.Add(
+                        $"Rolle '{role.Name}': Der Name ist auf der Zielinstanz bereits vergeben. "
+                        + "Sie wird nicht überschrieben.");
+                }
+
                 continue;
             }
 
@@ -493,12 +660,16 @@ public sealed class ConfigurationExportService : IConfigurationExportService
         return result;
     }
 
+    /// <summary>Dasselbe wie bei den Rollen — siehe <see cref="PlanRoles"/> für die Begründung.</summary>
     private static List<ToolProfile> PlanProfiles(
         ConfigurationExportDocument document,
         ConfigurationExportDocument current,
         List<string> additions,
         List<string> unchanged,
-        List<string> conflicts)
+        List<string> conflicts,
+        ConfigurationImportMode mode,
+        List<string> updates,
+        List<ToolProfile> replaced)
     {
         var byName = Index(current.Profiles, p => p.Name);
         var byId = current.Profiles.GroupBy(p => p.Id).ToDictionary(g => g.Key, g => g.First());
@@ -512,6 +683,12 @@ public sealed class ConfigurationExportService : IConfigurationExportService
                 {
                     unchanged.Add($"Profil '{profile.Name}': unverändert vorhanden, wird nicht erneut angelegt.");
                 }
+                else if (mode is ConfigurationImportMode.Update)
+                {
+                    replaced.Add(ConfigurationDocumentBuilder.ToDomain(existingById));
+                    result.Add(ConfigurationDocumentBuilder.ToDomain(profile));
+                    updates.Add($"Profil '{profile.Name}' wird ersetzt.");
+                }
                 else
                 {
                     conflicts.Add(
@@ -522,11 +699,21 @@ public sealed class ConfigurationExportService : IConfigurationExportService
                 continue;
             }
 
-            if (byName.ContainsKey(profile.Name))
+            if (byName.TryGetValue(profile.Name, out var existingByName))
             {
-                conflicts.Add(
-                    $"Profil '{profile.Name}': Der Name ist auf der Zielinstanz bereits vergeben. "
-                    + "Es wird nicht überschrieben.");
+                if (mode is ConfigurationImportMode.Update)
+                {
+                    replaced.Add(ConfigurationDocumentBuilder.ToDomain(existingByName));
+                    result.Add(ConfigurationDocumentBuilder.ToDomain(profile with { Id = existingByName.Id }));
+                    updates.Add($"Profil '{profile.Name}' wird ersetzt.");
+                }
+                else
+                {
+                    conflicts.Add(
+                        $"Profil '{profile.Name}': Der Name ist auf der Zielinstanz bereits vergeben. "
+                        + "Es wird nicht überschrieben.");
+                }
+
                 continue;
             }
 
@@ -771,6 +958,8 @@ public sealed class ConfigurationExportService : IConfigurationExportService
         IReadOnlyList<SkillSnapshot> Skills,
         InstanceSettings? Settings,
         InstanceSettings PreviousSettings,
+        IReadOnlyList<Role> ReplacedRoles,
+        IReadOnlyList<ToolProfile> ReplacedProfiles,
         DateTimeOffset CreatedAt);
 
     /// <summary>

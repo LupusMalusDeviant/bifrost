@@ -1127,6 +1127,183 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         (await store.GetAsync(server, ct)).Should().BeNull();
     }
 
+    // ── Auditexport und Integritätskette (M6/WP6.2) ─────────────────────────────────────────────
+
+    /// <summary>
+    /// <b>Der Cursor ist stabil, auch während geschrieben wird.</b>
+    /// <para>
+    /// Genau das kann eine Seitenabfrage nicht: Kommen zwischen Seite 1 und Seite 2 Zeilen dazu,
+    /// verschiebt sich alles — je nach Sortierrichtung fehlt etwas oder kommt doppelt. Der Test
+    /// schreibt deshalb <em>zwischen</em> den beiden Abrufen und prüft danach beides: keine Lücke
+    /// und keine Dopplung.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Audit_export_continues_after_the_cursor_even_when_more_was_written()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        await WriteAuditAsync(30, ct);
+
+        var export = new EfAuditExport(Factory);
+        var erste = await export
+            .StreamAsync(new AuditExportRequest(new AuditFilter(), Limit: 10), ct)
+            .ToListAsync(ct);
+
+        erste.Should().HaveCount(10);
+
+        // Nebenher wird geschrieben — beim Audit ist das der Normalfall, nicht die Ausnahme.
+        await WriteAuditAsync(15, ct);
+
+        var weitere = await export
+            .StreamAsync(new AuditExportRequest(new AuditFilter(), After: erste[^1].Sequence), ct)
+            .ToListAsync(ct);
+
+        var alle = erste.Concat(weitere).Select(e => e.Sequence).ToList();
+        alle.Should().OnlyHaveUniqueItems("kein Eintrag darf zweimal kommen");
+        alle.Should().BeInAscendingOrder();
+        alle.Should().HaveCount(45, "und keiner darf fehlen");
+    }
+
+    /// <summary>Ein Limit schneidet ab — aber sagt es über den Cursor, statt still zu enden.</summary>
+    [Fact]
+    public async Task Audit_export_respects_the_limit_and_leaves_a_usable_cursor()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        await WriteAuditAsync(5, ct);
+
+        var export = new EfAuditExport(Factory);
+        var teil = await export
+            .StreamAsync(new AuditExportRequest(new AuditFilter(), Limit: 3), ct)
+            .ToListAsync(ct);
+
+        teil.Should().HaveCount(3);
+        var rest = await export
+            .StreamAsync(new AuditExportRequest(new AuditFilter(), After: teil[^1].Sequence), ct)
+            .ToListAsync(ct);
+        rest.Should().HaveCount(2);
+    }
+
+    /// <summary>
+    /// Die Kette, wie sie der echte Schreibpfad legt — und wie der Prüfer sie liest. Ein Test nur
+    /// auf selbst gebauten Einträgen hätte belegt, dass die Rechnung stimmt, nicht dass sie
+    /// angewendet wird.
+    /// </summary>
+    [Fact]
+    public async Task The_chain_written_by_the_real_writer_verifies()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        await WriteAuditAsync(20, ct);
+
+        var report = await AuditChainVerifier.VerifyAsync(
+            new EfAuditExport(Factory).StreamAsync(new AuditExportRequest(new AuditFilter()), ct), ct);
+
+        report.IsIntact.Should().BeTrue();
+        report.Checked.Should().Be(20);
+        report.Unchained.Should().Be(0);
+    }
+
+    /// <summary>
+    /// <b>Der Test, um den es bei einer Integritätskette geht.</b> Jemand mit Datenbankzugriff
+    /// ändert eine Zeile — nicht über das Produkt, sondern direkt in der Ablage. Genau so sähe eine
+    /// Vertuschung aus, und genau das muss auffallen.
+    /// </summary>
+    [Fact]
+    public async Task A_row_changed_directly_in_the_database_is_found()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        await WriteAuditAsync(10, ct);
+
+        long manipuliert;
+        await using (var db = await Factory.CreateDbContextAsync(ct))
+        {
+            var row = await db.AuditEvents.OrderBy(r => r.Id).Skip(4).FirstAsync(ct);
+            manipuliert = row.Id;
+            row.Status = (int)InvocationStatus.Success;
+            row.Detail = "war schon immer so";
+            await db.SaveChangesAsync(ct);
+        }
+
+        var report = await AuditChainVerifier.VerifyAsync(
+            new EfAuditExport(Factory).StreamAsync(new AuditExportRequest(new AuditFilter()), ct), ct);
+
+        report.IsIntact.Should().BeFalse();
+        report.FirstBreak!.Sequence.Should().Be(manipuliert);
+        report.FirstBreak.Reason.Should().Contain("geändert");
+    }
+
+    /// <summary>
+    /// Und der zweite Weg, ein Log zu schönen: die Zeile ganz entfernen. Eine Prüfsumme je Zeile
+    /// fände das nicht — die verbliebenen Zeilen rechnen ja weiterhin für sich auf.
+    /// </summary>
+    [Fact]
+    public async Task A_row_deleted_directly_in_the_database_is_found()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        await WriteAuditAsync(10, ct);
+
+        await using (var db = await Factory.CreateDbContextAsync(ct))
+        {
+            var row = await db.AuditEvents.OrderBy(r => r.Id).Skip(3).FirstAsync(ct);
+            db.AuditEvents.Remove(row);
+            await db.SaveChangesAsync(ct);
+        }
+
+        var report = await AuditChainVerifier.VerifyAsync(
+            new EfAuditExport(Factory).StreamAsync(new AuditExportRequest(new AuditFilter()), ct), ct);
+
+        report.IsIntact.Should().BeFalse();
+        report.FirstBreak!.Reason.Should().Contain("fehlt");
+    }
+
+    /// <summary>
+    /// Schreibt <paramref name="count"/> Audit-Zeilen über den echten Schreibpfad und wartet, bis
+    /// sie in der Ablage stehen.
+    /// </summary>
+    private async Task WriteAuditAsync(int count, CancellationToken ct)
+    {
+        await using (var check = await Factory.CreateDbContextAsync(ct))
+        {
+            _auditBaseline = await check.AuditEvents.CountAsync(ct);
+        }
+
+        var sink = new ChannelAuditSink();
+        var writer = new AuditBatchWriter(sink, Factory, new PersistenceOptions
+        {
+            AuditFlushInterval = TimeSpan.FromMilliseconds(50),
+            AuditMaxBatchSize = 7,
+        });
+
+        using var cts = new CancellationTokenSource();
+        var run = writer.RunAsync(cts.Token);
+
+        for (var i = 0; i < count; i++)
+        {
+            sink.Record(new AuditEvent(
+                DateTimeOffset.UtcNow,
+                IdentityId.New(),
+                CallOrigin.Mcp,
+                AuditEventKind.ToolCall,
+                ServerId.New(),
+                "srv__do_thing",
+                InvocationStatus.Success,
+                JsonSerializer.SerializeToElement(new { n = i }),
+                RequestBytes: 10,
+                ResponseBytes: 20,
+                Duration: TimeSpan.FromMilliseconds(1)));
+        }
+
+        await WaitForRowCountAsync(_auditBaseline + count);
+        await cts.CancelAsync();
+        await run;
+    }
+
+    private int _auditBaseline;
+
     private async Task WaitForRowCountAsync(int expected, int timeoutMs = 30000)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -1146,4 +1323,22 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
 
     private static bool ContainsSubsequence(byte[] haystack, byte[] needle)
         => haystack.AsSpan().IndexOf(needle) >= 0;
+}
+
+/// <summary>
+/// Sammelt einen Datenstrom in eine Liste — <b>nur für Tests</b>. Im Produktivpfad wäre genau das
+/// die Materialisierung, die der Export vermeidet; hier sind die Mengen klein und benannt.
+/// </summary>
+internal static class AuditExportStreamExtensions
+{
+    public static async Task<List<T>> ToListAsync<T>(this IAsyncEnumerable<T> source, CancellationToken ct)
+    {
+        var items = new List<T>();
+        await foreach (var item in source.WithCancellation(ct).ConfigureAwait(false))
+        {
+            items.Add(item);
+        }
+
+        return items;
+    }
 }

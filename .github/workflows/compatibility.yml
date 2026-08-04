@@ -1,0 +1,61 @@
+# M5 / WP5.1 — Kompatibilitätsmatrix.
+#
+# Zwei Dinge laufen hier, und sie haben verschiedene Härtegrade:
+#
+#   1. Das Schema der Matrix und der daraus erzeugte Bericht. Das ist PR-Pflicht: Ohne diesen Lauf
+#      könnte eine Zeile ein 'pass' tragen, hinter dem kein Beleg steht.
+#   2. Der Probelauf des offiziellen SDK-Clients gegen einen echten Gateway-Host. Er hängt an
+#      BIFROST_RUN_COMPAT, und diese Variable wird HIER gesetzt — der M5-Vertrag §1.2 verlangt
+#      genau das, weil eine Gate-Variable, die niemand setzt, ein stiller Ausfall ist
+#      (siehe BIFROST_RUN_BENCHMARK, docs/acceptance/performance.md).
+#
+# Auf ubuntu-latest überspringt sich der Probelauf, solange es für 'linux' keine Matrixzeile gibt.
+# Das ist beabsichtigt sichtbar: Der Lauf meldet, was er beobachtet hat, und wer die Zeile aufnehmen
+# will, zeichnet sie einmal mit BIFROST_UPDATE_COMPAT_MATRIX=1 auf.
+name: compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: compatibility-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build (warnings are errors)
+        run: dotnet build tests/compatibility/Bifrost.Compatibility.Tests --configuration Release
+
+      - name: Matrix, Bericht und SDK-Probelauf
+        env:
+          BIFROST_RUN_COMPAT: "1"
+        run: dotnet test tests/compatibility/Bifrost.Compatibility.Tests --configuration Release --no-build --logger "trx;LogFileName=compatibility.trx" --results-directory ./compat-results
+
+      # Kein zusaetzlicher git-diff-Schritt: Die Drift zwischen Matrix und Bericht prueft
+      # ReportDriftTests im Lauf oben, und zwar durch Vergleich statt durch Neuschreiben. Ein
+      # zweiter Waechter fuer dieselbe Regel waere die dritte Fassung derselben Wahrheit.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: compatibility-${{ matrix.os }}
+          path: compat-results

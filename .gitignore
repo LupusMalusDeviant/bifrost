@@ -65,6 +65,10 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 
+# Testergebnisse der lokalen CI-Nachstellung. 'coverage*.json' unten deckt die Berichte ab, aber
+# nicht das Verzeichnis mit den trx-Dateien — und das gehoert genauso wenig ins Repository.
+coverage/
+
 # Tye
 .tye/
 

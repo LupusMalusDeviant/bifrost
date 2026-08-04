@@ -389,6 +389,371 @@ public class OperationsCliTests
 
     // ── Helfer ──────────────────────────────────────────────────────────────────────────────────
 
+    // ── support-bundle (WP5.6) ──────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Die Vorschau geht auf einen eigenen Endpunkt — und der Befehl ohne <c>--preview</c> erzeugt
+    /// wirklich. Ohne diesen Test koennte die Weiche vertauscht sein, und ein Betreiber haette ein
+    /// Archiv, wo er eine Vorschau erwartete.
+    /// </summary>
+    [Fact]
+    public async Task Support_bundle_preview_goes_to_the_preview_endpoint()
+    {
+        var handler = new RecordingHandler(_ => Json(HttpStatusCode.OK,
+            """
+            {"entries":[{"path":"version.json","category":"Version","bytes":120}],
+             "skippedCategories":[{"category":"Logs","reason":"kein Anwendungslog"}],
+             "estimatedBytes":120}
+            """));
+        var output = new StringWriter();
+
+        var exit = await RunAsync(handler, ["support-bundle", "--preview"], output: output);
+
+        exit.Should().Be(OperationsCli.Success);
+        handler.Requests.Single().RequestUri!.AbsolutePath
+            .Should().Be("/api/v1/operations/support-bundle/preview");
+        output.ToString().Should().Contain("version.json");
+
+        // Eine uebersprungene Kategorie steht in der Ausgabe, nicht nur im Manifest.
+        output.ToString().Should().Contain("Logs").And.Contain("kein Anwendungslog");
+    }
+
+    [Fact]
+    public async Task Support_bundle_creates_and_reports_checksum_and_masking()
+    {
+        var handler = new RecordingHandler(_ => Json(HttpStatusCode.OK,
+            """
+            {"archivePath":"/data/support/b.zip","sizeBytes":2048,
+             "sha256":"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+             "manifest":{"redaction":{"pass":"central-v1","redactedFields":3}},
+             "skipped":[]}
+            """));
+        var output = new StringWriter();
+
+        var exit = await RunAsync(
+            handler, ["support-bundle", "--out", "/data/support/b.zip", "--categories", "version,runtime"],
+            output: output);
+
+        exit.Should().Be(OperationsCli.Success);
+        handler.Requests.Single().RequestUri!.AbsolutePath.Should().Be("/api/v1/operations/support-bundle");
+        handler.Bodies.Single().Should().Contain("\"categories\":[\"version\",\"runtime\"]");
+        output.ToString().Should().Contain("abcdef012345").And.Contain("3 Feld(er)");
+
+        // Der Satz, der einem Empfaenger sagt, was NICHT drin ist.
+        output.ToString().Should().Contain("KEINE Auditinhalte");
+    }
+
+    [Fact]
+    public async Task Support_bundle_with_a_non_numeric_log_line_count_is_a_usage_error()
+    {
+        var handler = new RecordingHandler(_ => Json(HttpStatusCode.OK, "{}"));
+
+        var exit = await RunAsync(handler, ["support-bundle", "--log-lines", "viele"]);
+
+        exit.Should().Be(OperationsCli.UsageError);
+        handler.Requests.Should().BeEmpty("ein Bedienfehler faellt vor dem Netzaufruf auf");
+    }
+
+    [Fact]
+    public void The_usage_text_mentions_the_support_bundle()
+    {
+        OperationsCli.UsageText.Should().Contain("support-bundle");
+    }
+
+    // ── audit (WP6.2) ───────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Audit_export_passes_the_filter_through_instead_of_interpreting_it()
+    {
+        var handler = new RecordingHandler(_ => Text("{\"sequence\":1}\n{\"sequence\":2}\n"));
+        var output = new StringWriter();
+
+        var exit = await RunAsync(
+            handler,
+            ["audit", "export", "--format", "csv", "--tool", "github__", "--after", "42"],
+            output: output);
+
+        exit.Should().Be(OperationsCli.Success);
+        var uri = handler.Requests.Single().RequestUri!;
+        uri.AbsolutePath.Should().Be("/api/v1/audit/export");
+        uri.Query.Should().Contain("format=csv").And.Contain("tool=github__").And.Contain("after=42");
+    }
+
+    /// <summary>
+    /// Ohne <c>--out</c> gehen die Zeilen auf die Standardausgabe — damit der Export in eine Pipe
+    /// passt, ohne vorher irgendwo vollständig zu entstehen.
+    /// </summary>
+    [Fact]
+    public async Task Audit_export_without_a_target_writes_to_stdout()
+    {
+        var handler = new RecordingHandler(_ => Text("zeile-eins\nzeile-zwei\n"));
+        var output = new StringWriter();
+
+        await RunAsync(handler, ["audit", "export"], output: output);
+
+        output.ToString().Should().Contain("zeile-eins").And.Contain("zeile-zwei");
+    }
+
+    [Fact]
+    public async Task Audit_export_writes_the_file_and_says_how_big_it_got()
+    {
+        var handler = new RecordingHandler(_ => Text("a\nb\nc\n"));
+        var output = new StringWriter();
+        var target = Path.Combine(Path.GetTempPath(), $"bifrost-audit-{Guid.NewGuid():N}.jsonl");
+
+        try
+        {
+            var exit = await RunAsync(handler, ["audit", "export", "--out", target], output: output);
+
+            exit.Should().Be(OperationsCli.Success);
+            (await File.ReadAllTextAsync(target, TestContext.Current.CancellationToken))
+                .Should().Be("a\nb\nc\n");
+            output.ToString().Should().Contain("Bytes");
+        }
+        finally
+        {
+            File.Delete(target);
+        }
+    }
+
+    /// <summary>
+    /// Eine intakte Kette ist Erfolg. Der Bericht trägt trotzdem seine Grenzen — ein „kein Bruch
+    /// gefunden", das jemand für „nichts fehlt" hält, ist gefährlicher als gar keine Kette.
+    /// </summary>
+    [Fact]
+    public async Task Audit_verify_reports_an_intact_chain_with_its_limits()
+    {
+        var handler = new RecordingHandler(_ => Json(HttpStatusCode.OK, IntactChainJson));
+        var output = new StringWriter();
+
+        var exit = await RunAsync(handler, ["audit", "verify"], output: output);
+
+        exit.Should().Be(OperationsCli.Success);
+        output.ToString().Should().Contain("kein Bruch");
+        output.ToString().Should().Contain("Was diese Pruefung NICHT zeigt")
+            .And.Contain("uebernommenen Wirt");
+    }
+
+    /// <summary>
+    /// <b>Ein Bruch ist ein Befund, kein Programmfehler.</b> Er bekommt deshalb den Diagnose-Code
+    /// (4) und nicht den für „etwas ging schief" (1) — ein Skript soll beides unterscheiden können.
+    /// </summary>
+    [Fact]
+    public async Task A_broken_chain_ends_with_the_diagnostic_exit_code_and_names_the_line()
+    {
+        var handler = new RecordingHandler(_ => Json(HttpStatusCode.OK, BrokenChainJson));
+        var output = new StringWriter();
+
+        var exit = await RunAsync(handler, ["audit", "verify"], output: output);
+
+        exit.Should().Be(OperationsCli.DiagnosticFailure);
+        output.ToString().Should().Contain("BRUCH ab Zeile 4711").And.Contain("geaendert");
+    }
+
+    [Fact]
+    public void The_usage_text_mentions_the_audit_commands()
+    {
+        OperationsCli.UsageText.Should().Contain("audit export").And.Contain("audit verify");
+    }
+
+    private const string IntactChainJson =
+        """
+        {"checked":120,"unchained":3,"segments":[{"chainId":"11111111-1111-1111-1111-111111111111",
+          "firstSequence":4,"lastSequence":123,"count":120}],
+         "firstBreak":null,
+         "limits":["Die Kette ist kein Beweis fuer Vollstaendigkeit.",
+                   "Gegen einen uebernommenen Wirt schuetzt sie nicht."]}
+        """;
+
+    private const string BrokenChainJson =
+        """
+        {"checked":40,"unchained":0,"segments":[],
+         "firstBreak":{"sequence":4711,"chainId":"11111111-1111-1111-1111-111111111111",
+                       "reason":"Der Inhalt passt nicht zu seinem Kettenglied — geaendert."},
+         "limits":["Gegen einen uebernommenen Wirt schuetzt sie nicht."]}
+        """;
+
+    // ── policy (WP6.1) ──────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// <b>Der Kern des CLI-Adapters.</b> Nicht „3 Rechte hinzugefügt", sondern jede Identität mit
+    /// ihrer Wirkungsebene — sonst ist die Ausgabe eine Zahl, über die niemand entscheiden kann.
+    /// </summary>
+    [Fact]
+    public async Task Policy_plan_names_every_identity_that_gains()
+    {
+        var handler = new RecordingHandler(_ => Json(HttpStatusCode.OK, PlanJson));
+        var output = new StringWriter();
+
+        var exit = await RunAsync(handler, ["policy", "plan", PackFile()], output: output);
+
+        exit.Should().Be(OperationsCli.Success);
+        handler.Requests.Single().RequestUri!.AbsolutePath.Should().Be("/api/v1/operations/policy/plan");
+        output.ToString().Should().Contain("anna").And.Contain("bernd").And.Contain("alles");
+        output.ToString().Should().Contain("team-standard@1.0.0").And.Contain("Official");
+    }
+
+    [Fact]
+    public async Task Policy_plan_that_is_not_applicable_ends_with_its_own_exit_code()
+    {
+        var handler = new RecordingHandler(_ => Json(
+            HttpStatusCode.OK, PlanJson.Replace("\"canApply\": true", "\"canApply\": false", StringComparison.Ordinal)));
+        var output = new StringWriter();
+
+        var exit = await RunAsync(handler, ["policy", "plan", PackFile()], output: output);
+
+        exit.Should().Be(OperationsCli.ArchiveInvalid);
+        output.ToString().Should().Contain("Anwendbar: nein");
+    }
+
+    /// <summary>
+    /// Ohne Bestätigung wird nichts geschrieben — und der Beleg dafür ist, dass die zweite Anfrage
+    /// nie hinausgeht. Eine Prüfung nur auf den Exit-Code hätte einen Apply-Aufruf übersehen.
+    /// </summary>
+    [Fact]
+    public async Task Policy_apply_without_confirmation_writes_nothing()
+    {
+        var handler = new RecordingHandler(_ => Json(HttpStatusCode.OK, PlanJson));
+        var output = new StringWriter();
+
+        var exit = await RunAsync(
+            handler, ["policy", "apply", PackFile()], input: new StringReader("nein"), output: output);
+
+        exit.Should().Be(OperationsCli.TargetNotEmpty);
+        handler.Requests.Should().ContainSingle()
+            .Which.RequestUri!.AbsolutePath.Should().Be("/api/v1/operations/policy/plan");
+    }
+
+    /// <summary>
+    /// Die Rückfrage nennt die Zahl der zusätzlichen Berechtigungen. „Wirklich fortfahren?" ohne
+    /// diese Zahl ist eine Frage, auf die jeder ja sagt.
+    /// </summary>
+    [Fact]
+    public async Task Policy_apply_asks_with_the_number_of_additional_rights()
+    {
+        var handler = new RecordingHandler(_ => Json(HttpStatusCode.OK, PlanJson));
+        var output = new StringWriter();
+
+        await RunAsync(handler, ["policy", "apply", PackFile()], input: new StringReader("nein"), output: output);
+
+        output.ToString().Should().Contain("2 zusaetzliche Berechtigung(en)");
+    }
+
+    [Fact]
+    public async Task Policy_apply_carries_the_handle_from_the_plan_and_writes_the_way_back()
+    {
+        var handler = new RecordingHandler(request =>
+            request.RequestUri!.AbsolutePath.EndsWith("plan", StringComparison.Ordinal)
+                ? Json(HttpStatusCode.OK, PlanJson)
+                : Json(HttpStatusCode.OK, ApplicationJson));
+        var output = new StringWriter();
+        var undoFile = Path.Combine(Path.GetTempPath(), $"bifrost-undo-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            var exit = await RunAsync(
+                handler,
+                ["policy", "apply", PackFile(), "--yes", "--undo-out", undoFile],
+                output: output);
+
+            exit.Should().Be(OperationsCli.Success);
+            handler.Requests[1].RequestUri!.AbsolutePath.Should().Be("/api/v1/operations/policy/apply");
+            handler.Bodies[1].Should().Contain("handle-1", "ohne das Handle aus dem Plan gibt es keine Uebernahme");
+
+            File.Exists(undoFile).Should().BeTrue();
+            (await File.ReadAllTextAsync(undoFile, TestContext.Current.CancellationToken))
+                .Should().Contain("replacedRoles", "in der Datei steht der Rueckweg, nicht nur eine Quittung");
+            output.ToString().Should().Contain("policy revert");
+        }
+        finally
+        {
+            if (File.Exists(undoFile))
+            {
+                File.Delete(undoFile);
+            }
+        }
+    }
+
+    /// <summary>
+    /// <b>Ohne <c>--undo-out</c> ist der Rückweg weg</b> — er steht nur in der Antwort und wird
+    /// nirgends aufbewahrt. Da gehört eine Warnung hin und keine Beruhigung.
+    /// </summary>
+    [Fact]
+    public async Task Policy_apply_without_undo_out_says_the_way_back_is_gone()
+    {
+        var handler = new RecordingHandler(request =>
+            request.RequestUri!.AbsolutePath.EndsWith("plan", StringComparison.Ordinal)
+                ? Json(HttpStatusCode.OK, PlanJson)
+                : Json(HttpStatusCode.OK, ApplicationJson));
+        var output = new StringWriter();
+
+        var exit = await RunAsync(handler, ["policy", "apply", PackFile(), "--yes"], output: output);
+
+        exit.Should().Be(OperationsCli.Success);
+        output.ToString().Should().Contain("WARNUNG").And.Contain("Rueckweg");
+    }
+
+    [Fact]
+    public async Task Policy_revert_sends_the_saved_way_back()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.NoContent));
+        var output = new StringWriter();
+        var undoFile = Path.Combine(Path.GetTempPath(), $"bifrost-undo-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(undoFile, ApplicationJson, TestContext.Current.CancellationToken);
+
+        try
+        {
+            var exit = await RunAsync(handler, ["policy", "revert", undoFile], output: output);
+
+            exit.Should().Be(OperationsCli.Success);
+            handler.Requests.Single().RequestUri!.AbsolutePath.Should().Be("/api/v1/operations/policy/revert");
+            handler.Bodies.Single().Should().Contain("replacedRoles");
+            output.ToString().Should().Contain("zurueckgenommen");
+        }
+        finally
+        {
+            File.Delete(undoFile);
+        }
+    }
+
+    [Fact]
+    public void The_usage_text_mentions_the_policy_commands()
+    {
+        OperationsCli.UsageText.Should().Contain("policy plan").And.Contain("--undo-out");
+    }
+
+    /// <summary>Ein Pack-Dokument auf der Platte; der Inhalt prüft der Gateway, nicht die CLI.</summary>
+    private static string PackFile()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"bifrost-pack-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, """{"manifest":{},"payload":"{}","signatureBase64":"AA=="}""");
+        return path;
+    }
+
+    private const string PlanJson =
+        """
+        {"canApply": true,
+         "manifest":{"formatVersion":1,"id":"team-standard","version":"1.0.0",
+                     "publisherKeyId":"kid-1","description":"Standard","createdAt":"2026-08-02T12:00:00+00:00"},
+         "publisherKeyId":"kid-1","trustLevel":"Official","payloadHash":"abc123",
+         "rightsDelta":{"added":[{"identity":"anna","scope":"alles","action":"UseTool"},
+                                 {"identity":"bernd","scope":"alles","action":"UseTool"}],
+                        "removed":[{"identity":"anna","scope":"github__read","action":"UseTool"}]},
+         "additions":["Rolle 'pruefer' wird angelegt."],
+         "conflicts":[],"unchanged":[],"updates":["Rolle 'entwickler' wird ersetzt."],
+         "missingTools":[],"notes":[],"token":"handle-1"}
+        """;
+
+    private const string ApplicationJson =
+        """
+        {"id":"team-standard","version":"1.0.0","payloadHash":"abc123","snapshotBeforeApply":"{}",
+         "undo":{"replacedRoles":[{"id":{"value":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"},
+                                   "name":"entwickler","grants":[],"rateLimit":null}],
+                 "replacedProfiles":[],"createdRoles":[],"createdProfiles":[],
+                 "createdUpstreams":[],"createdGuardRules":[],"createdSkills":[],
+                 "setApprovals":[],"previousSettings":null}}
+        """;
+
     private static async Task<int> RunAsync(
         HttpMessageHandler handler,
         string[] command,
@@ -405,6 +770,12 @@ public class OperationsCliTests
             jsonOutput: false);
         return await cli.RunAsync(command, TestContext.Current.CancellationToken);
     }
+
+    /// <summary>Eine Antwort, die kein JSON-Dokument ist — der Export liefert Zeilen, kein Objekt.</summary>
+    private static HttpResponseMessage Text(string body) => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent(body, Encoding.UTF8, "application/x-ndjson"),
+    };
 
     private static HttpResponseMessage Json(HttpStatusCode status, string json) => new(status)
     {

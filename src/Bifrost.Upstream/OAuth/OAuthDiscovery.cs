@@ -240,11 +240,27 @@ public static class OAuthDiscovery
     private static async Task<JsonElement> FetchJsonAsync(
         Uri url, bool allowPrivateTargets, CancellationToken ct)
     {
-        // Dieselbe Zielprüfung wie bei den Schemaimporten: Auflösung aller Adressen, Abweisung von
-        // Loopback/privat/Link-Local, Weiterleitungen einzeln geprüft.
-        var body = await RemoteSpecFetcher.FetchAsync(
-                url, allowPrivateTargets, TimeSpan.FromSeconds(15), Fail, ct)
-            .ConfigureAwait(false);
+        string body;
+        try
+        {
+            // Dieselbe Zielprüfung wie bei den Schemaimporten: Auflösung aller Adressen, Abweisung
+            // von Loopback/privat/Link-Local, Weiterleitungen einzeln geprüft.
+            body = await RemoteSpecFetcher.FetchAsync(
+                    url, allowPrivateTargets, TimeSpan.FromSeconds(15), Fail, ct)
+                .ConfigureAwait(false);
+        }
+        catch (HttpRequestException exception)
+        {
+            // **Befund aus WP5.2.** Der Fetcher meldet einen HTTP-Fehlerstatus als
+            // HttpRequestException, die Kandidatenschleife in
+            // FetchAuthorizationServerMetadataAsync fing aber nur OAuthDiscoveryException. Damit
+            // brach die Suche beim ERSTEN 404 ab, und die beiden Ausweichpfade des Standards waren
+            // toter Code — gegen jeden Server, der die Metadaten nur unter
+            // '{issuer}/.well-known/openid-configuration' ausliefert (Keycloak unter anderen),
+            // scheiterte die Anbindung. Gefunden hat es der erste Lauf gegen ein echtes Keycloak.
+            throw new OAuthDiscoveryException($"'{url}' war nicht abrufbar: {exception.Message}");
+        }
+
         try
         {
             using var document = JsonDocument.Parse(body);

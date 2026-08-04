@@ -59,6 +59,11 @@ internal sealed class FakeDatabaseProbe(DatabaseDiagnosticFacts facts) : IDataba
     public Task<DatabaseDiagnosticFacts> DescribeAsync(CancellationToken ct) => Task.FromResult(facts);
 }
 
+internal sealed class FakeAuditProbe(AuditDiagnosticFacts facts) : IAuditDiagnosticProbe
+{
+    public Task<AuditDiagnosticFacts> DescribeAsync(CancellationToken ct) => Task.FromResult(facts);
+}
+
 internal sealed class FakeUpstreamProbe(params UpstreamDiagnosticFact[] facts) : IUpstreamDiagnosticProbe
 {
     public Task<IReadOnlyList<UpstreamDiagnosticFact>> DescribeAsync(CancellationToken ct)

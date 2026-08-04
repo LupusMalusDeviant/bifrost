@@ -1,0 +1,236 @@
+@page "/cockpit"
+@attribute [Authorize(Policy = UiPolicies.Admin)]
+@using Bifrost.Abstractions.Usage
+@inject IUsageCockpit UsageCockpit
+@inject IRbacManagement Rbac
+@inject TimeProvider Time
+
+<h1>Token-Cockpit</h1>
+<p class="muted">
+    Was ein Profil einem Agenten an Schema zumutet — und was davon wirklich benutzt wird (FR-15).
+    <strong>Diese Seite ändert nichts.</strong> Sie rechnet und simuliert; wer einen Vorschlag
+    übernimmt, tut das in der Profilverwaltung und sieht dort, was sich ändert.
+</p>
+
+<div class="card">
+    <div class="row">
+        <div style="flex:2">
+            <label>Identität</label>
+            <select data-testid="cockpit-identity" @bind="_identity">
+                <option value="">— wählen —</option>
+                @foreach (var identity in _identities)
+                {
+                    <option value="@identity.Id.Value">@identity.Name</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label>Zeitfenster (Tage)</label>
+            <input type="number" min="1" max="365" @bind="_days" />
+        </div>
+    </div>
+    <div class="toolbar" style="margin-top:1rem">
+        <button data-testid="cockpit-run" @onclick="Analyse" disabled="@(_busy || _identity is null or "")">
+            @(_busy ? "Rechnet …" : "Auswerten")
+        </button>
+        @if (_message is not null)
+        {
+            <span data-testid="cockpit-message" class="msg-err">@_message</span>
+        }
+    </div>
+</div>
+
+@if (_report is not null)
+{
+    <div class="card">
+        <h3 style="margin-top:0">Exposure</h3>
+        <p class="muted" style="margin-top:0">
+            @_report.ExposedTools Werkzeug(e) im Profil, zusammen
+            <strong>@_report.ExposedTokens.ToString("N0")</strong> geschätzte Tokens je Anfrage —
+            unabhängig davon, ob sie benutzt werden. Im Fenster
+            (@_report.Window.Duration.TotalDays.ToString("0") Tage):
+            <strong>@_report.TotalInvocations.ToString("N0")</strong> Aufrufe.
+        </p>
+
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th></th><th>Werkzeug</th><th>Tokens</th><th>Aufrufe</th><th>Zuletzt</th></tr></thead>
+                <tbody>
+                    @foreach (var tool in _report.Exposed)
+                    {
+                        <tr data-testid="cockpit-row" data-tool="@tool.Tool">
+                            <td>
+                                <input type="checkbox" checked="@_keep.Contains(tool.Tool)"
+                                       @onchange="e => Toggle(tool.Tool, e)" />
+                            </td>
+                            <td class="mono">@tool.Tool</td>
+                            <td>@tool.EstimatedSchemaTokens.ToString("N0")</td>
+                            <td>@tool.Invocations.ToString("N0")</td>
+                            @* "ungenutzt im Fenster" — nicht "unnoetig". Ein Werkzeug ohne Aufruf
+                               kann das sein, was einmal im Quartal den Betrieb rettet. *@
+                            <td class="muted">@(tool.LastUsed?.ToString("yyyy-MM-dd") ?? "ungenutzt im Fenster")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="toolbar" style="margin-top:1rem">
+            <button class="btn-ghost" data-testid="cockpit-simulate" @onclick="Simulate" disabled="@_busy">
+                Auswahl durchrechnen
+            </button>
+            <span class="muted">Angehakt = bleibt im Profil.</span>
+        </div>
+    </div>
+
+    @if (_report.UsedButNotExposed.Count > 0)
+    {
+        <div class="card">
+            <h3 style="margin-top:0">Benutzt, aber nicht im Profil</h3>
+            <p class="muted" style="margin-top:0">
+                Über den Lazy-Pfad erreicht (<span class="mono">search_tools</span>) — oder
+                inzwischen aus dem Katalog verschwunden.
+            </p>
+            <ul>
+                @foreach (var tool in _report.UsedButNotExposed)
+                {
+                    <li>
+                        <span class="mono">@tool.Tool</span> — @tool.Invocations.ToString("N0") Aufruf(e)
+                        @if (!tool.StillInCatalog)
+                        {
+                            <span class="badge-warn">nicht mehr im Katalog</span>
+                        }
+                    </li>
+                }
+            </ul>
+        </div>
+    }
+
+    @if (_report.Notes.Count > 0)
+    {
+        <div class="card">
+            <h3 style="margin-top:0">Grenzen dieser Auswertung</h3>
+            <ul class="muted">
+                @foreach (var note in _report.Notes)
+                {
+                    <li>@note</li>
+                }
+            </ul>
+        </div>
+    }
+}
+
+@if (_simulation is not null)
+{
+    <div class="card">
+        <h3 style="margin-top:0">Simulation</h3>
+        <p>
+            <strong data-testid="cockpit-saving">@_simulation.TokensSaved.ToString("N0")</strong> Tokens
+            gespart (@_simulation.TokensBefore.ToString("N0") → @_simulation.TokensAfter.ToString("N0")),
+            @_simulation.Removed.Count Werkzeug(e) entfernt.
+        </p>
+
+        @* Die Konsequenz steht neben der Einsparung, nicht darunter versteckt: Ein Cockpit, das nur
+           die Ersparnis zeigt, ist ein Verkaufsprospekt. *@
+        @if (_simulation.RemovedButUsed.Count > 0)
+        {
+            <div class="card-accent" style="padding:.75rem 1rem">
+                <strong>Davon im Fenster benutzt:</strong>
+                <ul style="margin-bottom:0">
+                    @foreach (var tool in _simulation.RemovedButUsed)
+                    {
+                        <li><span class="mono">@tool.Tool</span> — @tool.Invocations.ToString("N0") Aufruf(e)</li>
+                    }
+                </ul>
+            </div>
+        }
+        else
+        {
+            <p class="msg-ok">Keines der entfernten Werkzeuge wurde im Fenster benutzt.</p>
+        }
+
+        <p class="muted" style="margin-bottom:0">
+            Übernommen wird hier nichts — die Auswahl gilt erst, wenn sie in der Profilverwaltung
+            gespeichert wird.
+        </p>
+    </div>
+}
+
+@code {
+    private IReadOnlyList<Identity> _identities = [];
+    private string? _identity;
+    private int _days = 7;
+    private bool _busy;
+    private string? _message;
+    private UsageReport? _report;
+    private ProfileSimulation? _simulation;
+    private readonly HashSet<string> _keep = new(StringComparer.Ordinal);
+
+    protected override async Task OnInitializedAsync()
+        => _identities = await Rbac.ListIdentitiesAsync(CancellationToken.None);
+
+    private UsageWindow Window()
+    {
+        var to = Time.GetUtcNow();
+        return new UsageWindow(to.AddDays(-Math.Clamp(_days, 1, 365)), to);
+    }
+
+    private async Task Analyse()
+    {
+        _busy = true;
+        _message = null;
+        _simulation = null;
+        try
+        {
+            _report = await UsageCockpit.AnalyseAsync(new IdentityId(Guid.Parse(_identity!)), Window(), CancellationToken.None);
+
+            // Vorbelegung: alles bleibt. Der Betreiber nimmt weg, was er wegnehmen will — nicht
+            // umgekehrt. Eine vorgefüllte Streichliste waere ein Vorschlag, der wie eine
+            // Entscheidung aussieht.
+            _keep.Clear();
+            foreach (var tool in _report.Exposed)
+            {
+                _keep.Add(tool.Tool);
+            }
+        }
+        catch (Exception exception)
+        {
+            _message = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Toggle(string tool, ChangeEventArgs e)
+    {
+        if (e.Value is true)
+        {
+            _keep.Add(tool);
+        }
+        else
+        {
+            _keep.Remove(tool);
+        }
+    }
+
+    private async Task Simulate()
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            _simulation = await UsageCockpit.SimulateAsync(
+                new IdentityId(Guid.Parse(_identity!)), Window(), [.. _keep], CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            _message = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

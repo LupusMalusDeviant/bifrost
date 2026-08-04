@@ -93,14 +93,14 @@
 <div class="card">
     <h3 style="margin-top:0">Neues Profil</h3>
     <div class="row">
-        <div><label>Name</label><input @bind="_name" /></div>
-        <div style="flex:0; min-width:200px"><label><input type="checkbox" @bind="_lazy" /> Lazy-Meta-Tools aktiv</label></div>
+        <div><label>Name</label><input data-testid="profile-name" @bind="_name" /></div>
+        <div style="flex:0; min-width:200px"><label><input data-testid="profile-lazy" type="checkbox" @bind="_lazy" /> Lazy-Meta-Tools aktiv</label></div>
     </div>
     <label>Pinned-Tools (ein Namespaced-Name pro Zeile — voll sichtbar mit Schema)</label>
-    <textarea class="mono" rows="4" @bind="_pinned" placeholder="github__create_issue"></textarea>
+    <textarea data-testid="profile-pinned" class="mono" rows="4" @bind="_pinned" placeholder="github__create_issue"></textarea>
     <p class="muted" style="margin:.4rem 0">Vorschau: @EstimateFromInputs() Tokens</p>
     <div class="toolbar">
-        <button @onclick="Add">Profil anlegen</button>
+        <button data-testid="profile-add" @onclick="Add">Profil anlegen</button>
         @if (_msg is not null) { <span class="@(_ok ? "msg-ok" : "msg-err")">@_msg</span> }
     </div>
 </div>

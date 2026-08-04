@@ -129,7 +129,8 @@ the same secret is a rule you would misremember, and then you would be running w
 | `BIFROST_DATA_DIR` | `data` (`/data` in the container) | Directory for the SQLite database **and** the DataProtection key ring |
 | `BIFROST_DB_PROVIDER` | `sqlite` | `sqlite` or `postgres` |
 | `BIFROST_DB_CONNECTION` | `Data Source=<datadir>/bifrost.db` | Connection string (mandatory for Postgres) |
-| `BIFROST_AUDIT_MODE` | `best-effort` | `best-effort` drops under overload and counts the drops; `compliance` reports overload explicitly and retries DB failures with backpressure |
+| `BIFROST_SQLITE_JOURNAL_MODE` | `wal` | Journal mode of the SQLite file. `delete` is the way back to the classic rollback journal. An unknown value aborts startup |
+| `BIFROST_AUDIT_MODE` | `best-effort` | `best-effort` retries a failed batch three times, then drops it **and counts it** (finding `BFR-DB-0007`); `compliance` reports overload explicitly to the caller and retries DB failures indefinitely |
 | `BIFROST_AUDIT_RETENTION_DAYS` | `30` | Audit retention in days; older events are deleted daily (FR-25) |
 | `BIFROST_AUDIT_DEBUG_PAYLOADS` | *(off)* | `1`/`true` writes full response payloads to the audit log, redacted. Debug aid, not for continuous operation |
 | `BIFROST_BOOTSTRAP_TTL_MINUTES` | `60` | Lifetime of the setup token. An invalid value falls back to the default |
@@ -621,6 +622,44 @@ password file only the filename appears. The password appears nowhere, in any fo
 
 ---
 
+## Support bundle
+
+For the case where someone should help analyse a problem without getting access to the installation:
+
+```bash
+bifrost support-bundle --preview                 # first show what would go in
+bifrost support-bundle --out /data/support/b.zip # then create it
+bifrost support-bundle --categories version,diagnostics,runtime --log-lines 500
+```
+
+The same two steps exist in the UI under **Betrieb** and over the API
+(`POST /api/v1/operations/support-bundle/preview` and `POST /api/v1/operations/support-bundle`, both
+admin-only). The preview is **mandatory before creating** — a bundle whose contents you only see
+after writing it has already been written, and after that it leaves the house.
+
+**What is in it:** product version, configuration **without secret values** (the same path as the
+configuration export), the diagnostic report, the state of database and upstreams, the migration
+level and runtime facts (operating system, .NET, container yes/no, WASI host configured yes/no).
+Plus a `manifest.json` with a checksum per file — unencrypted and at the top of the archive, so a
+recipient can check what they have before opening it.
+
+**What is not in it, and cannot be switched on:** audit payload and credential material. There is no
+flag. Whoever needs audit data uses the audit export — that separation is the point.
+
+**The redaction pass.** Every document goes through one central pass that masks fields with
+secret-like names and values such as `Password=…`, `Bearer …` and credentials inside URLs. The
+manifest states **how often** it masked — not what. The pass is a safety net, not permission: it
+also covers the source that gets added tomorrow.
+
+**Logs.** The gateway writes its application log to standard output; if the bundle finds no log file
+in the data directory it says so as a skipped category and includes instructions instead
+(`docker compose logs`, `journalctl`). That output does **not** go through the redaction pass — read
+it before passing it on.
+
+Creating a bundle is an audited operation: who pulled one, and when, is in the log afterwards.
+
+---
+
 ## Configuration export and import
 
 A configuration export is **not a backup** (ADR-0024 E8): it does not restore the same instance, it
@@ -652,6 +691,54 @@ All operations endpoints (`/api/v1/operations/*`) require an identity with a **g
 same threshold as RBAC administration and package installation. Every writing operation is audited.
 
 ---
+
+## Policy packs
+
+A policy pack is a **signed configuration payload** — roles and profiles from someone this instance
+trusts. It is not a second import path: the payload is exactly what `bifrost config export`
+produces. What is new is the question of *who* it came from — and the answer to **who is allowed to
+do more afterwards**.
+
+```bash
+# Show what would happen — writes nothing:
+bifrost policy plan team-standard.pack.json
+
+# Apply. The rights diff always comes first; --yes skips the prompt, not the display.
+bifrost policy apply team-standard.pack.json --undo-out undo.json
+
+# And back:
+bifrost policy revert undo.json
+```
+
+**The rights diff is the point.** An object-level diff says "role `developer` changed". That reads
+harmlessly and may mean three agents may now write on every server. The plan and the UI therefore
+name **every identity** that gains, with its scope — and the removals next to them, because a pack
+can also take rights away unnoticed.
+
+**Roles are matched by name; the local id wins.** A pack is meant to be handed around, and guids
+differ per instance. When replacing, the content comes from the pack and the id stays local —
+otherwise the identity→role mapping points nowhere after the apply.
+
+**The way back exists only if you keep it.** It is part of the apply response and is **not** stored
+in the gateway:
+
+- CLI: `--undo-out <file>`. Without it the command warns — and then there is no way back.
+- UI (**Policy Packs**, admins only): the *revert* button is there as long as the page is open; the
+  text below it is meant to be saved.
+- API: `POST /api/v1/operations/policy/plan`, `…/apply`, `…/revert` — all admin-only; the apply is
+  audited with pack id, version and payload fingerprint.
+
+Reverting restores replaced roles and profiles to their **previous content** and removes what this
+apply created. It is explicitly not a point in time: if you edit the same role by hand afterwards,
+the revert overwrites that edit.
+
+**What a pack cannot do:** bring identities (the export contains none), remove objects it merely
+does not know about (that would be a sync), or be applied partially — a pack from a newer generation
+is refused rather than half-applied.
+
+**Publishers.** Signing covers manifest **and** payload with the same Ed25519 scheme as connector
+packages; the publisher must be in the trust store. A third-party pack is not rejected, but the plan
+says so — it changes the same rights as one of your own.
 
 ## Importing a foreign MCP configuration
 
@@ -740,6 +827,70 @@ These follow the table of the other `bifrost` commands, not the operations table
 
 ---
 
+## Audit export and integrity chain
+
+The view pages, the export **streams**. Both see the same data, but an export is a continuation, not
+an overview:
+
+```bash
+# Everything, as JSON Lines:
+bifrost audit export --out audit.jsonl
+
+# As CSV, filtered:
+bifrost audit export --format csv --from 2026-08-01T00:00:00Z --tool github__ --out audit.csv
+
+# Continue where the last export stopped:
+bifrost audit export --after 481523 --out more.jsonl
+
+# Re-compute the chain:
+bifrost audit verify
+```
+
+The same paths over the API (`GET /api/v1/audit/export`, `…/verify`, both admin-only) and in the UI
+under **Audit log** — there the export writes to a file on the machine running the gateway, not on
+the viewer's.
+
+**The cursor is a row number, not a page number.** Paging loses or duplicates entries as soon as
+something is written alongside — and with an audit log something always is. `--after <n>` takes the
+last row number you saw and returns only what came after it.
+
+**The export does not pull memory along.** Rows go one at a time from the database reader into the
+response. Measured against a one-million-entry fixture: **1 MB retained at 100,000 rows, 0 MB at
+1,000,000** — a constant, not a slope (FR-P072, CI job `audit-scale`).
+
+**JSONL or CSV.** JSONL carries everything, including redacted arguments as embedded JSON. CSV does
+**not** — they do not belong in a spreadsheet cell. In exchange CSV has a pinned column order and
+neutralises fields a spreadsheet would treat as a formula (`=`, `+`, `-`, `@`). An audit export that
+executes code when opened would be the inverse of its purpose.
+
+### The chain
+
+Every row now carries a SHA-256 over its predecessor **and** a canonical form of itself.
+`bifrost audit verify` re-computes that and names the **first** broken position with row number and
+reason — not "invalid".
+
+It finds: a field changed after the fact, a removed row, a reordering. Both are proven against the
+real store: one test changes a row directly in the database, another deletes one; both are caught.
+
+**What the chain does not show — and this is in its own output, not just here:**
+
+- It is **no proof of completeness**. Removing the last entries of a segment leaves no gap visible
+  from here.
+- **It does not protect against a compromised host.** Anyone who can write on that machine can
+  re-compute the chain; then it checks out again and says nothing.
+- A **segment** is one writer run. A restart begins a new one — a missing segment is not detectable
+  here. That cut is deliberate: a single continuous chain would assume exactly one writer, and two
+  instances on one database would then report tampering where there was none.
+- Only the full stream is checked. `verify` therefore accepts **no content filters**: every filtered
+  row would look like a deleted one.
+
+Rows from before the chain carry no links. They are counted and reported as "not covered" rather
+than silently passing as verified. Nothing is chained retroactively — a hash the instance computes
+for itself after the fact proves nothing.
+
+Exit codes for `audit verify`: `0` no break, `4` break found. A break is a finding, not a program
+error — a script should be able to tell them apart.
+
 ## Observability
 
 Every tool call is measured (FR-26) under the meter `Bifrost.Gateway`:
@@ -781,11 +932,23 @@ The difference between the two is the **gateway overhead** — exactly the quest
 The container healthcheck uses `dotnet Bifrost.Server.dll --healthcheck` (self-ping, since the slim
 runtime image has no `curl`). The container runs as non-root `app`.
 
-`best-effort` does not hold up tool calls when the audit pipeline is overloaded; drops are counted,
-reported in `/readyz` and logged at shutdown. `compliance` throws an explicit
-`AuditUnavailableException` on a full channel, marks readiness as not ready, and retries failed
-database batches — which can deliberately block shutdown or processing during a longer database
-outage. **For HA, a durable external spool/queue backend is still required before production use.**
+`best-effort` does not hold up tool calls when the audit pipeline is overloaded; drops are counted.
+A failed database batch is retried **three times** and only then given up on — counted as well.
+`compliance` throws an explicit `AuditUnavailableException` on a full channel, marks readiness as
+not ready, and **never** gives up on a failed database batch; the writer retries indefinitely —
+which can deliberately block shutdown or processing during a longer database outage. **For HA, a
+durable external spool/queue backend is still required before production use.**
+
+> **Why `best-effort` retries at all.** The contract is: a tool call must never fail or wait on the
+> audit log. It covers intake (`IAuditSink.Record`, an enqueue), not the write — that runs in a
+> background service and holds up no call. The most common cause of a failed batch is a write lock
+> someone else is holding, and that is gone on the second attempt. Retrying indefinitely would be
+> wrong, though: with a permanently broken database the buffer would fill up and the loss would
+> simply move to intake — deferred, not avoided.
+
+**Losses are visible, not merely counted.** `bifrost doctor` reports under `BFR-DB-0007` **how
+many** events were lost and **since when**, split by cause (dropped at intake / given up on write).
+A single loss is a **Fail** there — a promise whose breach shows up as a footnote is not a promise.
 
 `/readyz` returns `auditMode`, `auditHealthy` and `auditDropped`. Alert on `auditHealthy=false`,
 `auditDropped>0` and HTTP 503.
@@ -793,6 +956,35 @@ outage. **For HA, a durable external spool/queue backend is still required befor
 Audit retention defaults to 30 days with an hourly cleanup job (FR-25). On SQLite, retention is an
 **operational obligation** ([ADR-0007](../adr/0007-ef-core-mit-sqlite-default-postgres-optional.md))
 — very large logs (> ~10 GB) are a reason to move to PostgreSQL.
+
+---
+
+## SQLite in WAL mode
+
+Since v0.7 the gateway opens its SQLite file in **WAL mode** (`journal_mode=WAL`) and waits up to
+5 seconds for a held write lock (`busy_timeout=5000`). Without both, the database locked up as soon
+as the instance wrote its own audit log at the same time — the audit flush, audit retention and task
+expiry services all run permanently from the moment startup finishes.
+
+**For an existing installation this changes the data on disk.** `journal_mode` is a property of the
+*file*, not of the connection: the first start on v0.7 switches it permanently. Two more files then
+sit next to `bifrost.db`:
+
+| File | Meaning |
+|---|---|
+| `bifrost.db-wal` | The most recently committed transactions, not yet written back into the main file |
+| `bifrost.db-shm` | Shared memory of the participating connections; recreated as needed, never needs backing up |
+
+> **Copying the database file by hand without its `-wal` copies an older state** — and the copy does
+> not look any different. `bifrost backup` and `bifrost restore` are **not** affected: they have
+> always used SQLite's online backup API rather than copying the file (ADR-0024 E2). For anything
+> else: either all three files with the gateway stopped, or `bifrost backup`.
+
+**The way back.** `BIFROST_SQLITE_JOURNAL_MODE=delete` reverts to the classic rollback journal on
+the next start; the two companion files disappear. It exists for data directories where SQLite
+cannot create its shared memory — an NFS or SMB mount, for instance. It buys back the locking error
+that WAL fixes; on such a directory SQLite is not a viable operating mode anyway. An **unknown**
+value aborts the start instead of silently falling back to `wal`.
 
 ---
 

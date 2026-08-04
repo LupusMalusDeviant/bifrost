@@ -61,6 +61,28 @@ Zielinstanz inhaltsgleich schon vorliegen — etwa der mitgelieferte Guard-Regel
 Zugang noch Konflikt. Ohne diese Unterscheidung wäre auf einer vorbelegten Instanz **kein einziger
 Export je anwendbar** gewesen.
 
+### Nachtrag aus M6: der Import kann ersetzen — die Rücknahme steht auf neuem Grund
+
+Der Konfigurationsimport war **ausschließlich additiv**, und das war keine Bequemlichkeit, sondern
+die Begründung seiner Rücknahme: Was ein Vorgang nur angelegt hat, kann er gefahrlos wieder
+entfernen. WP6.1 (Policy Packs) brauchte den anderen Fall — dieselbe Rolle, andere Rechte — und der
+war damit nicht anwendbar.
+
+`ConfigurationImportMode.Update` ersetzt jetzt bestehende **Rollen und Profile**. `AddOnly` bleibt
+die Vorgabe und verhält sich unverändert; alles andere (Upstreams, Guard-Regeln, Freigaben, Skills)
+bleibt in beiden Modi additiv.
+
+**Die alte Begründung fällt damit weg und wird ersetzt, nicht ergänzt:** Der Vorgang schreibt den
+vorigen Inhalt der ersetzten Objekte mit und gibt ihn als `ConfigurationImportUndo` zurück.
+Zurückgenommen wird einzeln — Ersetztes wird zurückgeschrieben, Angelegtes entfernt. Wer die alte
+Rücknahme unverändert übernähme, löschte eine Rolle, die vorher da war.
+
+Die Id der Zielinstanz gewinnt: Inhalt aus der Nutzlast, Id von hier. Sonst zeigt die Zuordnung
+Identität→Rolle nach einem Import ins Leere.
+
+Belegt in `ConfigurationImportUpdateTests` (8 Tests, darunter der Fehlerfall mitten in der Übernahme)
+und `PolicyPackApiTests.The_undo_from_applying_really_takes_a_widened_role_back` am laufenden Gateway.
+
 ## 2. Backup-Manifest v1 (`manifest.json`)
 
 ```jsonc

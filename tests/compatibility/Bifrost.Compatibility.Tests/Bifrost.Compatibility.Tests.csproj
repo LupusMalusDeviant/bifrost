@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- xUnit v3: Testprojekte sind eigenstaendige Executables, der Runner laeuft im selben Prozess. -->
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Bifrost.Compatibility.Tests</RootNamespace>
+    <Description>WP5.1: Kompatibilitaetsmatrix. Prueft das Schema der Matrix, erzeugt den
+      veroeffentlichten Bericht daraus und faehrt den offiziellen SDK-Client gegen einen echten
+      Gateway-Host nach, damit jedes 'pass' in der Tabelle eine Zusicherung ist.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Bifrost.Server\Bifrost.Server.csproj" />
+    <ProjectReference Include="..\..\..\src\Bifrost.Persistence.Migrations.Sqlite\Bifrost.Persistence.Migrations.Sqlite.csproj" />
+    <!-- Nur Build-Reihenfolge: der TestServer wird als externer Prozess gestartet. -->
+    <ProjectReference Include="..\..\Bifrost.TestServers\EchoServer\Bifrost.TestServers.EchoServer.csproj" ReferenceOutputAssembly="false" />
+
+    <!-- Der Gateway-Harness wird verlinkt, nicht nachgebaut. Eine zweite Fassung waere eine zweite
+         Wahrheit darueber, wie ein Client sich anmeldet und was "der Gateway laeuft" heisst — und
+         die eine bekaeme irgendwann eine Korrektur, die die andere nicht kennt. Dieselbe
+         Begruendung wie bei UpstreamProcessLookup und SecretCorpus in Bifrost.Integration.Tests. -->
+    <Compile Include="..\..\Bifrost.Integration.Tests\Gateway\GatewayFixture.cs" Link="Harness\GatewayFixture.cs" />
+    <Compile Include="..\..\Bifrost.Integration.Tests\Gateway\CapturedLog.cs" Link="Harness\CapturedLog.cs" />
+    <Compile Include="..\..\Bifrost.Integration.Tests\IntegrationSupport.cs" Link="Harness\IntegrationSupport.cs" />
+    <Compile Include="..\..\Bifrost.Integration.Tests\TestPaths.cs" Link="Harness\TestPaths.cs" />
+
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+  </ItemGroup>
+
+</Project>

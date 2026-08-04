@@ -22,4 +22,17 @@ public sealed record PersistenceOptions
     public AuditDeliveryMode AuditMode { get; init; } = AuditDeliveryMode.BestEffort;
 
     public TimeSpan AuditRetryInterval { get; init; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Wie oft ein Audit-Batch im Modus <see cref="AuditDeliveryMode.BestEffort"/> geschrieben wird,
+    /// bevor er aufgegeben — und gezählt — wird. Im Modus
+    /// <see cref="AuditDeliveryMode.Compliance"/> ohne Bedeutung: Dort wird unbegrenzt wiederholt.
+    /// <para>
+    /// Der Wert ist bewusst klein. Er deckt den häufigen Fall ab (ein Schreib-Lock, den ein anderer
+    /// gerade hält) und nicht den seltenen (eine dauerhaft kaputte Datenbank) — für den ist
+    /// unbegrenztes Wiederholen die falsche Antwort, weil der Channel dann vollläuft und der Verlust
+    /// nur an eine andere Stelle wandert.
+    /// </para>
+    /// </summary>
+    public int AuditMaxWriteAttempts { get; init; } = 3;
 }

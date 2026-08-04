@@ -1,0 +1,83 @@
+# M5 / WP5.4 — Soak und Chaos.
+#
+# Zwei Läufe mit verschiedenen Zusagen:
+#
+#   soak-smoke   (PR)        — belegt, dass Last, Störungen, Erholung und das Aufräumen der
+#                              Upstream-Prozesse funktionieren. Sein Messfenster ist ZU KURZ für
+#                              eine Wachstumsaussage; das Ergebnis schreibt das auch so hinein.
+#   soak-nightly (nachts)    — vier Stunden, und damit der Lauf, der über Speicher-, Handle- und
+#                              Threadwachstum überhaupt urteilen darf.
+#
+# Der 72-Stunden-Lauf aus FR-P051 ist keins von beidem: Er gehört zum Release Candidate (M7) und
+# entsteht über BIFROST_SOAK_DURATION_SECONDS. Bis er gefahren wurde, gilt er als ausstehend —
+# nicht als bestanden (M5-Vertrag §10).
+name: soak
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: soak-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  soak-smoke:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build (warnings are errors)
+        run: dotnet build tests/soak/Bifrost.Soak.Tests --configuration Release
+
+      - name: Soak-Kurzlauf mit Störungen
+        env:
+          BIFROST_RUN_SOAK: smoke
+        run: dotnet test tests/soak/Bifrost.Soak.Tests --configuration Release --no-build --logger "console;verbosity=detailed"
+
+      # Auch bei Abbruch: Die Messreihe wird Zeile für Zeile geschrieben, gerade damit ein
+      # abgewürgter Lauf noch verwertbar ist. Ohne diesen Schritt wäre genau das umsonst.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: soak-smoke
+          path: artifacts/soak
+
+  soak-nightly:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # Vier Stunden Lauf plus Bau und Auswertung; der Job darf nicht vor dem Lauf ablaufen.
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build (warnings are errors)
+        run: dotnet build tests/soak/Bifrost.Soak.Tests --configuration Release
+
+      - name: Soak-Nachtlauf
+        env:
+          BIFROST_RUN_SOAK: long
+        run: dotnet test tests/soak/Bifrost.Soak.Tests --configuration Release --no-build --logger "console;verbosity=detailed"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: soak-nightly
+          path: artifacts/soak

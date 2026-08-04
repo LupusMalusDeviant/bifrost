@@ -171,6 +171,8 @@ public readonly record struct CapabilityId
 {
     public string Value { get; }
 
+    /// <summary>Siehe <see cref="NamespacedToolName"/> — dieselbe Falle, dieselbe Notwendigkeit.</summary>
+    [System.Text.Json.Serialization.JsonConstructor]
     public CapabilityId(string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);

@@ -20,6 +20,21 @@ public sealed partial class AuditBatchWriter
     private readonly TimeProvider _time;
     private readonly ILogger<AuditBatchWriter> _logger;
 
+    /// <summary>
+    /// Der Kettenabschnitt <b>dieses</b> Schreiberlaufs (M6/WP6.2, FR-P073).
+    /// <para>
+    /// <b>Warum je Lauf und nicht global:</b> Eine durchgehende Kette setzt genau einen Schreiber
+    /// voraus. Zwei Instanzen auf derselben Datenbank — oder ein Neustart — verschränkten ihre
+    /// Ketten, und der Prüfer meldete Manipulation, wo keine war. Ein falscher Alarm über
+    /// Manipulation ist schlimmer als keine Kette: Er entwertet den echten Fund.
+    /// </para>
+    /// </summary>
+    private readonly Guid _chainId = Guid.NewGuid();
+
+    private long _chainIndex;
+
+    private string _previousHash = AuditChain.Genesis;
+
     public AuditBatchWriter(
         ChannelAuditSink sink,
         IDbContextFactory<BifrostDbContext> factory,
@@ -94,6 +109,24 @@ public sealed partial class AuditBatchWriter
         }
     }
 
+    /// <summary>
+    /// Schreibt einen Batch — und gibt ihn im Modus <see cref="AuditDeliveryMode.BestEffort"/> erst
+    /// nach <see cref="PersistenceOptions.AuditMaxWriteAttempts"/> Versuchen auf.
+    /// <para>
+    /// <b>Warum überhaupt Versuche, wenn Best-Effort verwerfen darf:</b> Der Vertrag der Hot-Path-
+    /// Seite (<c>IAuditSink.Record</c>) verlangt, dass ein Tool-Aufruf nie am Audit scheitert oder
+    /// wartet. Diese Methode läuft aber nicht im Hot Path, sondern im Hintergrunddienst — sie hält
+    /// keinen einzigen Aufruf auf. Der Verzicht auf jeden zweiten Versuch war deshalb nie durch den
+    /// Vertrag gedeckt, sondern nur bequem: Der häufigste Grund für einen Fehlschlag ist ein
+    /// vorübergehend gesperrter Schreib-Lock, und der ist beim zweiten Anlauf weg.
+    /// </para>
+    /// <para>
+    /// <b>Und warum nicht unbegrenzt:</b> Das ist der Compliance-Modus. Unbegrenzt heißt bei einer
+    /// dauerhaft kaputten Datenbank, dass der Channel vollläuft und die Verluste stattdessen bei der
+    /// Annahme entstehen — verschoben, nicht vermieden. Best-Effort gibt darum irgendwann auf,
+    /// <b>zählt aber jedes aufgegebene Ereignis</b> (BFR-DB-0007).
+    /// </para>
+    /// </summary>
     private async Task WriteBatchAsync(List<AuditEvent> batch, CancellationToken ct)
     {
         if (batch.Count == 0)
@@ -101,12 +134,19 @@ public sealed partial class AuditBatchWriter
             return;
         }
 
+        // Die Kette entsteht EINMAL je Batch, nicht je Versuch: Ein zweiter Anlauf nach einem
+        // gesperrten Schreib-Lock darf nicht dieselben Ereignisse ein zweites Mal einhängen —
+        // sonst zählte der Abschnitt Positionen hoch, die nie in der Ablage landen, und der Prüfer
+        // meldete Lücken, wo nur ein Wiederholungsversuch war.
+        var rows = Chain(batch);
+
+        var attempt = 0;
         while (true)
         {
             try
             {
                 await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
-                db.AuditEvents.AddRange(batch.Select(ToRow));
+                db.AuditEvents.AddRange(rows);
                 await db.SaveChangesAsync(ct).ConfigureAwait(false);
                 _sink.ReportPersistenceSuccess();
                 return;
@@ -117,16 +157,45 @@ public sealed partial class AuditBatchWriter
             }
             catch (Exception ex)
             {
+                attempt++;
                 _sink.ReportPersistenceFailure();
-                Log.BatchWriteFailed(_logger, ex, batch.Count, _options.AuditMode.ToString());
-                if (_options.AuditMode == AuditDeliveryMode.BestEffort)
+                Log.BatchWriteFailed(_logger, ex, batch.Count, _options.AuditMode.ToString(), attempt);
+
+                if (_options.AuditMode == AuditDeliveryMode.BestEffort
+                    && attempt >= _options.AuditMaxWriteAttempts)
                 {
+                    // Ab hier ist das Log nachweislich lückenhaft. Die Zahl geht in die
+                    // Verlustauskunft der Senke und von dort in den Diagnosebericht — ein Verwerfen
+                    // ohne Spur gibt es nicht mehr.
+                    _sink.ReportBatchDiscarded(batch.Count);
+                    Log.BatchDiscarded(_logger, batch.Count, attempt, _sink.UnwrittenCount);
                     return;
                 }
 
                 await Task.Delay(_options.AuditRetryInterval, _time, ct).ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>
+    /// Hängt einen Batch an die Kette dieses Laufs. Läuft im Hintergrunddienst — der Hot Path
+    /// (<c>IAuditSink.Record</c>) sieht davon nichts und wartet auf nichts.
+    /// </summary>
+    private List<AuditEventRow> Chain(List<AuditEvent> batch)
+    {
+        var rows = new List<AuditEventRow>(batch.Count);
+        foreach (var evt in batch)
+        {
+            var row = ToRow(evt);
+            row.ChainId = _chainId;
+            row.ChainIndex = _chainIndex++;
+            row.PreviousHash = _previousHash;
+            row.EntryHash = AuditChain.Link(_previousHash, evt);
+            _previousHash = row.EntryHash;
+            rows.Add(row);
+        }
+
+        return rows;
     }
 
     internal static AuditEventRow ToRow(AuditEvent evt) => new()
@@ -168,9 +237,17 @@ public sealed partial class AuditBatchWriter
     private static partial class Log
     {
         [LoggerMessage(Level = LogLevel.Error,
-            Message = "Audit-Batch mit {Count} Ereignissen konnte nicht persistiert werden (Modus {Mode}).")]
+            Message = "Audit-Batch mit {Count} Ereignissen konnte nicht persistiert werden "
+                + "(Modus {Mode}, Versuch {Attempt}).")]
         public static partial void BatchWriteFailed(
-            ILogger logger, Exception ex, int count, string mode);
+            ILogger logger, Exception ex, int count, string mode, int attempt);
+
+        [LoggerMessage(Level = LogLevel.Critical,
+            Message = "Audit-Batch mit {Count} Ereignissen nach {Attempts} Versuchen aufgegeben — "
+                + "diese Ereignisse fehlen im Log dauerhaft. Ungeschrieben insgesamt: {Total} "
+                + "(siehe Diagnosecode BFR-DB-0007).")]
+        public static partial void BatchDiscarded(
+            ILogger logger, int count, int attempts, long total);
 
         [LoggerMessage(Level = LogLevel.Warning,
             Message = "Audit-Channel war voll: {Count} Ereignisse wurden verworfen (Kapazität erhöhen oder DB-Last prüfen).")]

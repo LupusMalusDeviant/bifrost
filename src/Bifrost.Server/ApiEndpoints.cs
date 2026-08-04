@@ -1,6 +1,10 @@
 ﻿using System.Text.Json;
 using Bifrost.Abstractions;
 using Bifrost.Abstractions.Operations;
+using Bifrost.Abstractions.Usage;
+using System.Text;
+using Bifrost.Core.Audit;
+using Bifrost.Core.Policy;
 using Bifrost.Core.Capabilities;
 using Bifrost.Core.Configuration;
 using Bifrost.Core.Upstreams;
@@ -83,11 +87,7 @@ internal static class ApiEndpoints
         api.MapPost("/tools/{name}/invoke", async (
             string name, HttpContext ctx, IToolInvoker invoker, CancellationToken ct) =>
         {
-            JsonElement args = default;
-            if (ctx.Request.ContentLength > 0)
-            {
-                args = await JsonSerializer.DeserializeAsync<JsonElement>(ctx.Request.Body, cancellationToken: ct);
-            }
+            var args = await ReadArgumentsAsync(ctx, ct);
 
             var result = await invoker.InvokeAsync(
                 new ToolInvocationRequest(Identity(ctx), CallOrigin.Rest, new NamespacedToolName(name), args, null), ct);
@@ -122,11 +122,7 @@ internal static class ApiEndpoints
                 return Results.NotFound(new { error = new { gatewayCode = "not-found", message = $"Capability '{id}' existiert nicht." } });
             }
 
-            JsonElement args = default;
-            if (ctx.Request.ContentLength > 0)
-            {
-                args = await JsonSerializer.DeserializeAsync<JsonElement>(ctx.Request.Body, cancellationToken: ct);
-            }
+            var args = await ReadArgumentsAsync(ctx, ct);
 
             var result = await invoker.InvokeAsync(
                 new ToolInvocationRequest(Identity(ctx), CallOrigin.Rest, entry.Name, args, null), ct);
@@ -413,11 +409,74 @@ internal static class ApiEndpoints
             return Results.Ok(result);
         }).AddEndpointFilter(RequireAdminAsync);
 
+        // ── Auditexport und Integritätskette (WP6.2) ─────────────────────────
+        // Der Export streamt: Die Antwort geht Zeile für Zeile hinaus, waehrend gelesen wird. Ein
+        // Endpunkt, der erst eine Liste baut, faellt genau dort aus, wo ein Auditexport gebraucht
+        // wird — bei einem grossen, alten Log.
+        api.MapGet("/audit/export", (
+            HttpContext ctx, IAuditExport export,
+            string? format, long? after, int? limit,
+            DateTimeOffset? from, DateTimeOffset? to, Guid? caller, Guid? server, string? tool,
+            InvocationStatus? status, AuditEventKind? kind, CallOrigin? origin,
+            CancellationToken ct) =>
+        {
+            // Gross-/Kleinschreibung ist hier keine Aussage: 'jsonl' in einer URL ist dasselbe wie
+            // 'Jsonl'. Die Standardbindung von Enums ist case-sensitiv und haette ein
+            // '?format=jsonl' mit 400 abgewiesen — ein Fehler ohne Grund.
+            if (!Enum.TryParse<AuditExportFormat>(format, ignoreCase: true, out var chosen)
+                && !string.IsNullOrEmpty(format))
+            {
+                return OperationsError(
+                    StatusCodes.Status400BadRequest, OperationsErrorCode.Usage,
+                    $"Unbekanntes Format '{format}'. Möglich sind: jsonl, csv.");
+            }
+            var request = new AuditExportRequest(
+                new AuditFilter(
+                    From: from,
+                    To: to,
+                    Caller: caller is { } c ? new IdentityId(c) : null,
+                    Server: server is { } s ? new ServerId(s) : null,
+                    ToolPrefix: tool,
+                    Status: status,
+                    Kind: kind,
+                    Origin: origin),
+                After: after,
+                Limit: limit is { } l && l > 0 ? l : null);
+
+            ctx.Response.ContentType = AuditExportWriter.ContentType(chosen);
+            ctx.Response.Headers.ContentDisposition =
+                $"attachment; filename=bifrost-audit.{AuditExportWriter.FileExtension(chosen)}";
+
+            return Results.Stream(
+                stream => WriteExportAsync(stream, export, request, chosen, ct),
+                AuditExportWriter.ContentType(chosen));
+        }).AddEndpointFilter(RequireAdminAsync);
+
+        // Die Pruefung nimmt AUSDRUECKLICH keine Inhaltsfilter entgegen — nur einen Bereich von
+        // Zeilennummern. Ueber einen gefilterten Ausschnitt laesst sich ueber die Kette nichts
+        // sagen: Jede herausgefilterte Zeile saehe aus wie eine geloeschte.
+        api.MapGet("/audit/verify", async (
+            IAuditExport export, long? after, int? limit, CancellationToken ct) =>
+        {
+            var report = await AuditChainVerifier.VerifyAsync(
+                export.StreamAsync(
+                    new AuditExportRequest(new AuditFilter(), after, limit is { } l && l > 0 ? l : null), ct),
+                ct);
+
+            return Results.Ok(report);
+        }).AddEndpointFilter(RequireAdminAsync);
+
         // ── Management: Freigabe-Queue (FR-32) ───────────────────────────────
         var approvals = api.MapGroup("/approvals").AddEndpointFilter(RequireAdminAsync);
 
         approvals.MapGet("/", async (ApprovalState? state, IApprovalStore store, CancellationToken ct) =>
             Results.Ok(await store.ListAsync(state, ct)));
+
+        // ── Zustellstatus der Benachrichtigungen (WP6.3) ─────────────────────
+        // Ein totes Ziel wird hier sichtbar, statt in einer Logzeile zu verschwinden, die niemand
+        // liest. Bewusst neben der Warteschlange: Wer die Freigaben ansieht, sieht auch, ob jemand
+        // davon erfahren hat.
+        approvals.MapGet("/notifications", (IApprovalNotifier notifier) => Results.Ok(notifier.Status));
 
         approvals.MapPost("/{id:guid}/decide", async (
             Guid id, bool approved, HttpContext ctx, IApprovalStore store, IAuditSink audit,
@@ -618,6 +677,96 @@ internal static class ApiEndpoints
     /// </summary>
     private static void MapOperations(RouteGroupBuilder api)
     {
+        // ── Policy Packs (WP6.1) ─────────────────────────────────────────────
+        // Zwei Schritte, und die Reihenfolge ist der Sinn der Sache: Erst der Plan mit dem
+        // Rechte-Diff, dann die Uebernahme — und die geht nur mit dem Handle aus dem Plan. Wer
+        // nicht plant, bekommt kein Handle; damit gibt es keine stille Rechteausweitung.
+        var policy = api.MapGroup("/policy").AddEndpointFilter(RequireAdminAsync);
+
+        policy.MapPost("/plan", async (
+            PolicyPackDocument body, PolicyPackPlanner planner, CancellationToken ct) =>
+        {
+            try
+            {
+                return Results.Ok(await planner.PlanAsync(body.Pack, ct));
+            }
+            catch (PolicyPackException exception)
+            {
+                return OperationsError(
+                    StatusCodes.Status400BadRequest, OperationsErrorCode.Usage, exception.Message);
+            }
+        });
+
+        policy.MapPost("/apply", async (
+            PolicyPackPlan body, HttpContext ctx, PolicyPackPlanner planner, IAuditSink audit,
+            TimeProvider time, CancellationToken ct) =>
+        {
+            try
+            {
+                var applied = await planner.ApplyAsync(body, ct);
+
+                // Wer wann welches Pack uebernommen hat — samt Fingerabdruck der Nutzlast. Eine
+                // Rechteaenderung ohne Spur waere die eine, die niemand mehr zuordnen kann.
+                AuditManagement(audit, time, ctx, AuditEventKind.RbacChanged, null,
+                    $"policy-pack-applied:{applied.Id}@{applied.Version}:{applied.PayloadHash[..12]}");
+
+                return Results.Ok(applied);
+            }
+            catch (PolicyPackException exception)
+            {
+                return OperationsError(
+                    StatusCodes.Status400BadRequest, OperationsErrorCode.Usage, exception.Message);
+            }
+        });
+
+        // Der Rueckweg. Er nimmt das Ergebnis der Uebernahme entgegen — dort steht, was wirklich
+        // passiert ist. Eine Ruecknahme "auf den Stand von gestern" gibt es hier bewusst nicht:
+        // Die wuerde auch anfassen, was mit dem Pack nie zu tun hatte.
+        policy.MapPost("/revert", async (
+            PolicyPackApplication body, HttpContext ctx, PolicyPackPlanner planner, IAuditSink audit,
+            TimeProvider time, CancellationToken ct) =>
+        {
+            try
+            {
+                await planner.RevertAsync(body, ct);
+                AuditManagement(audit, time, ctx, AuditEventKind.RbacChanged, null,
+                    $"policy-pack-reverted:{body.Id}@{body.Version}");
+                return Results.NoContent();
+            }
+            catch (ConfigurationImportException exception)
+            {
+                // Eine unvollstaendige Ruecknahme ist kein Erfolg mit Fussnote. Was stehen blieb,
+                // steht in der Nachricht — dort, wo jemand es liest.
+                return OperationsError(
+                    StatusCodes.Status409Conflict, OperationsErrorCode.Conflict, exception.Message);
+            }
+        });
+
+        // ── Token-Cockpit (WP6.4) ────────────────────────────────────────────
+        // Admin-only: Die Auswertung nennt, was eine fremde Identitaet benutzt hat. Das ist eine
+        // Verwaltungssicht, keine Selbstauskunft — und ein Cockpit, das jeder ueber jeden abfragen
+        // kann, waere eine Nutzungsueberwachung durch die Hintertuer.
+        var usage = api.MapGroup("/usage").AddEndpointFilter(RequireAdminAsync);
+
+        usage.MapGet("/{identity:guid}", async (
+            Guid identity, int? days, IUsageCockpit cockpit, TimeProvider time, CancellationToken ct) =>
+        {
+            var report = await cockpit.AnalyseAsync(new IdentityId(identity), Window(time, days), ct);
+            return Results.Ok(report);
+        });
+
+        usage.MapPost("/{identity:guid}/simulate", async (
+            Guid identity, SimulationRequest body, int? days, IUsageCockpit cockpit, TimeProvider time,
+            CancellationToken ct) =>
+        {
+            var simulation = await cockpit.SimulateAsync(
+                new IdentityId(identity), Window(time, days), body.Tools ?? [], ct);
+
+            // Bewusst nur gerechnet: Uebernommen wird ein Vorschlag ueber die Profilverwaltung,
+            // wo sichtbar ist, was sich aendert (Pflichtenheft WP6.4).
+            return Results.Ok(simulation);
+        });
+
         var operations = api.MapGroup("/operations").AddEndpointFilter(RequireAdminAsync);
 
         // ── Sicherung ────────────────────────────────────────────────────────
@@ -650,6 +799,45 @@ internal static class ApiEndpoints
             {
                 return OperationsError(
                     StatusCodes.Status501NotImplemented, OperationsErrorCode.Unsupported, exception.Message);
+            }
+            catch (Exception exception) when (exception is ArgumentException or IOException)
+            {
+                return OperationsError(
+                    StatusCodes.Status400BadRequest, OperationsErrorCode.Usage, exception.Message);
+            }
+        });
+
+        // ── Support-Bundle (WP5.6) ───────────────────────────────────────────
+        // Zwei Endpunkte, und die Reihenfolge ist Vertrag: Ein Bundle, dessen Inhalt man erst nach
+        // dem Schreiben sieht, ist bereits geschrieben — und danach verlaesst es das Haus.
+        operations.MapPost("/support-bundle/preview", async (
+            SupportBundleApiRequest? body, ISupportBundleService bundles, CancellationToken ct) =>
+        {
+            var preview = await bundles.PreviewAsync(ToRequest(body), ct);
+            return Results.Ok(preview);
+        });
+
+        operations.MapPost("/support-bundle", async (
+            SupportBundleApiRequest? body, HttpContext ctx, ISupportBundleService bundles,
+            IAuditSink audit, TimeProvider time, CancellationToken ct) =>
+        {
+            try
+            {
+                var result = await bundles.CreateAsync(ToRequest(body), ct);
+
+                // Ein Archiv, das die Installation verlaesst, ist ein Vorgang und kein Abruf:
+                // Wer es wann erzeugt hat, steht danach im Audit.
+                AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null,
+                    $"support-bundle-created:{result.Manifest.InstanceId}:{result.Sha256[..12]}");
+
+                return Results.Ok(new
+                {
+                    archivePath = result.ArchivePath,
+                    sizeBytes = result.Bytes,
+                    sha256 = result.Sha256,
+                    manifest = result.Manifest,
+                    skipped = result.SkippedCategories,
+                });
             }
             catch (Exception exception) when (exception is ArgumentException or IOException)
             {
@@ -1406,10 +1594,123 @@ internal static class ApiEndpoints
     private static IResult Error(int statusCode, ToolInvocationResult result)
         => Results.Json(new { status = result.Status.ToString(), error = result.ErrorMessage }, statusCode: statusCode);
 
+    /// <summary>
+    /// Liest die Toolargumente aus dem Rumpf.
+    /// <para>
+    /// <b>Befund aus WP5.5.</b> Vorher stand hier <c>if (ctx.Request.ContentLength > 0)</c> — und
+    /// das ist bei einer <c>Transfer-Encoding: chunked</c>-Anfrage <c>null</c>. Jeder Client, der
+    /// die Länge nicht vorab berechnet (darunter <c>HttpClient.PostAsJsonAsync</c> von .NET
+    /// selbst), verlor damit seine Argumente <b>still</b>: Der Aufruf lief mit leeren Argumenten
+    /// weiter und scheiterte an der Schemaprüfung mit „Pflichtfeld fehlt" — ein Fehler, der auf die
+    /// falsche Stelle zeigt. Mit <c>curl -d</c> war nie etwas zu sehen, weil curl die Länge setzt.
+    /// </para>
+    /// <para>
+    /// Ein <b>leerer</b> Rumpf bleibt zulässig (Werkzeuge ohne Argumente); ein <b>unlesbarer</b>
+    /// wird nicht stillschweigend zu „keine Argumente" — er fliegt als <see cref="JsonException"/>
+    /// weiter und wird zur Absage, statt einen Aufruf auf geratenen Daten auszulösen.
+    /// </para>
+    /// </summary>
+    private static async Task<JsonElement> ReadArgumentsAsync(HttpContext ctx, CancellationToken ct)
+    {
+        if (ctx.Request.ContentLength == 0)
+        {
+            return default;
+        }
+
+        using var buffer = new MemoryStream();
+        await ctx.Request.Body.CopyToAsync(buffer, ct).ConfigureAwait(false);
+        if (buffer.Length == 0)
+        {
+            return default;
+        }
+
+        buffer.Position = 0;
+        return await JsonSerializer.DeserializeAsync<JsonElement>(buffer, cancellationToken: ct)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Schreibt den Export in die Antwort — <b>eine Zeile nach der anderen</b>.
+    /// <para>
+    /// Der Puffer wird regelmäßig geleert: Ohne das sammelt der Antwortpuffer die Zeilen, und die
+    /// Zusage „streamt" wäre auf halbem Weg wieder aufgegeben.
+    /// </para>
+    /// </summary>
+    private static async Task WriteExportAsync(
+        Stream stream, IAuditExport export, AuditExportRequest request, AuditExportFormat format,
+        CancellationToken ct)
+    {
+        await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true);
+
+        if (AuditExportWriter.Header(format) is { } header)
+        {
+            await writer.WriteLineAsync(header).ConfigureAwait(false);
+        }
+
+        var since = 0;
+        await foreach (var entry in export.StreamAsync(request, ct).ConfigureAwait(false))
+        {
+            await writer.WriteLineAsync(AuditExportWriter.Line(entry, format)).ConfigureAwait(false);
+
+            if (++since >= 256)
+            {
+                await writer.FlushAsync(ct).ConfigureAwait(false);
+                since = 0;
+            }
+        }
+
+        await writer.FlushAsync(ct).ConfigureAwait(false);
+    }
+
     internal static void AuditManagement(
         IAuditSink audit, TimeProvider time, HttpContext ctx, AuditEventKind kind, ServerId? server, string subject)
         => audit.Record(new AuditEvent(
             time.GetUtcNow(), Identity(ctx), CallOrigin.Rest, kind, server, subject, null, null, null, null, null));
+
+    /// <summary>
+    /// Kategorien als Text, damit ein Skript sie schreiben kann, ohne die Zahlwerte des Enums zu
+    /// kennen — und damit ein Tippfehler eine Fehlermeldung ergibt statt einer stillen Auswahl.
+    /// </summary>
+    private sealed record SupportBundleApiRequest(
+        IReadOnlyList<string>? Categories, int? LogTailLines, string? OutputPath);
+
+    private static SupportBundleRequest ToRequest(SupportBundleApiRequest? body)
+    {
+        if (body is null)
+        {
+            return new SupportBundleRequest();
+        }
+
+        HashSet<SupportBundleCategory>? categories = null;
+        if (body.Categories is { Count: > 0 })
+        {
+            categories = [];
+            foreach (var name in body.Categories)
+            {
+                if (!Enum.TryParse<SupportBundleCategory>(name, ignoreCase: true, out var category))
+                {
+                    throw new ArgumentException(
+                        $"Unbekannte Kategorie '{name}'. Erlaubt: "
+                        + string.Join(", ", Enum.GetNames<SupportBundleCategory>()).ToLowerInvariant());
+                }
+
+                categories.Add(category);
+            }
+        }
+
+        return new SupportBundleRequest(categories, body.LogTailLines ?? 200, body.OutputPath);
+    }
+
+    private sealed record PolicyPackDocument(string Pack);
+
+    private sealed record SimulationRequest(IReadOnlyList<string>? Tools);
+
+    /// <summary>Vorgabe sieben Tage — lang genug fuer einen Arbeitsrhythmus, kurz genug fuer eine Aussage.</summary>
+    private static UsageWindow Window(TimeProvider time, int? days)
+    {
+        var to = time.GetUtcNow();
+        return new UsageWindow(to.AddDays(-Math.Clamp(days ?? 7, 1, 365)), to);
+    }
 
     private sealed record EnabledRequest(bool Enabled);
 

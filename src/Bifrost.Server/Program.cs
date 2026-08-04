@@ -121,8 +121,13 @@ var keyRing = builder.Services.AddDataProtection()
 // den Start und nicht den ersten Tool-Aufruf.
 builder.Services.AddBifrostKeyRing(keyRing, builder.Configuration, dataDir);
 
+// ADR-0007 setzt WAL voraus; bis v0.6 lief SQLite ohne. Der Wert ist eine Eigenschaft der DATEI:
+// Eine bestehende Instanz stellt beim ersten Start dauerhaft um (docs/operations.md, Rückweg
+// 'delete'). Ein unbekannter Wert bricht den Start ab statt still auf die Vorgabe zu fallen.
+var journalMode = BifrostDbOptions.ParseJournalMode(
+    builder.Configuration["BIFROST_SQLITE_JOURNAL_MODE"]);
 builder.Services.AddDbContextFactory<BifrostDbContext>(options =>
-    options.UseBifrostDatabase(dbProvider, connectionString));
+    options.UseBifrostDatabase(dbProvider, connectionString, journalMode));
 builder.Services.AddSingleton<DatabaseInitializer>();
 // FR-25: Aufbewahrungsdauer ist Betriebsentscheidung (Plattenbedarf vs. Nachvollziehbarkeit),
 // darf also nicht im Code festgenagelt sein. Ungültige/fehlende Angabe fällt auf den Default zurück.
@@ -237,6 +242,9 @@ builder.Services.AddSingleton<ChannelAuditSink>(sp =>
 builder.Services.AddSingleton<IAuditSink>(sp => sp.GetRequiredService<ChannelAuditSink>());
 builder.Services.AddSingleton<AuditBatchWriter>();
 builder.Services.AddSingleton<IAuditQuery, EfAuditQuery>();
+
+// WP6.2: Der Export ist eine eigene Leseseite — die Ansicht blaettert, der Export streamt.
+builder.Services.AddSingleton<IAuditExport, EfAuditExport>();
 builder.Services.AddSingleton<AuditRetentionJob>();
 // ── Guardrail: Secret-Erkennung (ADR-0011) ───────────────────────────────────
 builder.Services.AddSingleton(new GuardOptions
@@ -301,8 +309,12 @@ builder.Services.AddSingleton<ITaskStore>(sp => new TaskStore(
     sp.GetRequiredService<IDbContextFactory<BifrostDbContext>>(), sp.GetRequiredService<TimeProvider>()));
 // Die Freigabe-Queue geht darin auf (ADR-0019, Entscheidung 1): IApprovalStore bleibt als Vertrag
 // fuer Invoker, REST und UI, laeuft aber auf der Task-Tabelle. Eine Tabelle, eine Liste.
-builder.Services.AddSingleton<IApprovalStore>(sp => new TaskBackedApprovalStore(
-    sp.GetRequiredService<ITaskStore>(), sp.GetRequiredService<TimeProvider>()));
+// WP6.3: Der Speicher bekommt einen Mantel, der nach dem Anlegen die Ziele unterrichtet. Bewusst
+// ein Mantel: Eine Benachrichtigung ist eine Nebenwirkung, die niemand braucht, damit eine Freigabe
+// gilt — sie darf den Weg dorthin nicht kreuzen (M6-Vertrag §4).
+builder.Services.AddSingleton<IApprovalStore>(sp => new Bifrost.Core.Approvals.NotifyingApprovalStore(
+    new TaskBackedApprovalStore(sp.GetRequiredService<ITaskStore>(), sp.GetRequiredService<TimeProvider>()),
+    sp.GetRequiredService<IApprovalNotifier>()));
 builder.Services.AddSingleton<ApprovalToTaskMigration>(sp => new ApprovalToTaskMigration(
     sp.GetRequiredService<IDbContextFactory<BifrostDbContext>>()));
 builder.Services.AddSingleton<TaskExpiryJob>(sp => new TaskExpiryJob(

@@ -61,21 +61,44 @@ jobs:
         # Alle WasiRealHost*-Tests brauchen das gebaute Rust-Binary und laufen deshalb im Job
         # wasi-component-spike (dort mit BIFROST_REQUIRE_WASI_HOST=1, also ohne Skip-Option).
         # Hier ausgeschlossen statt übersprungen: sonst reißt das Skip-Gate unten.
-        run: dotnet test --configuration Release --no-build --filter "FullyQualifiedName!~WasiRealHost" --collect:"XPlat Code Coverage" --results-directory ./coverage --logger "trx;LogFileName=results.trx"
+        #
+        # Dieselbe Begründung für Bifrost.Compatibility.Tests (M5/WP5.1): Der Probelauf hängt an
+        # BIFROST_RUN_COMPAT und würde hier als zweiter Skip das Gate reißen. Er hat einen eigenen
+        # Workflow (compatibility.yml), der die Variable setzt — genau die Bedingung aus dem
+        # M5-Vertrag §1.2, dass jede Gate-Variable von einem Job auch gesetzt wird.
+        #
+        # Bifrost.Performance.Tests hängt komplett an Gate-Variablen und läuft in eigenen Jobs:
+        # die Lastmessung an BIFROST_RUN_BENCHMARK im Job 'benchmark', der Grossmengen-
+        # Nachweis des Auditexports an BIFROST_RUN_AUDIT_SCALE im Job 'audit-scale'; die Soak-Läufe hängen an BIFROST_RUN_SOAK und laufen in soak.yml; die
+        # Browserwege hängen an BIFROST_RUN_E2E, brauchen einen installierten Browser und laufen in
+        # e2e.yml; die OAuth-Wege brauchen einen Keycloak-Container bzw. Zugangsdaten eines externen
+        # Anbieters und laufen in oauth.yml. Hier wären es achtzehn weitere Skips.
+        #
+        # Ausgeschlossen ist bei den Soak-Tests nur die Klasse SoakRunTests, nicht das Projekt: Die
+        # Auswertung (GrowthAnalysisTests) ist eine reine Rechnung ohne Gate und soll bei jedem PR
+        # mitlaufen — sie ist der Prüfer, der über jeden Nachtlauf urteilt.
+        run: dotnet test --configuration Release --no-build --filter "FullyQualifiedName!~WasiRealHost&FullyQualifiedName!~Bifrost.Compatibility&FullyQualifiedName!~Bifrost.Performance&FullyQualifiedName!~SoakRunTests&FullyQualifiedName!~Bifrost.Ui.E2E&FullyQualifiedName!~Keycloak&FullyQualifiedName!~OAuthSaasSmoke" --collect:"XPlat Code Coverage" --results-directory ./coverage --logger "trx"
 
       # Der Postgres-Nachweis läuft über Testcontainers und skippt, wenn kein Docker da ist.
       # Auf Ubuntu ist Docker vorhanden — ein Skip bedeutet dort also einen echten Fehler
       # (Image-Pull, Connection-String, Migration) und darf nicht als grün durchgehen.
+      # BEFUND aus dem M5-Audit: Der Schritt las 'coverage/results.trx' — und mit festem
+      # LogFileName ueberschreibt JEDE Testassembly dieselbe Datei. Gezaehlt wurden damit nur die
+      # Skips der zuletzt geschriebenen Suite; acht uebersprungene Upgrade-Tests waeren unbemerkt
+      # durchgegangen. Ohne LogFileName schreibt jede Assembly ihre eigene trx, und hier wird ueber
+      # alle gezaehlt.
       - name: Postgres-Nachweis muss auf Linux tatsächlich gelaufen sein
         if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
-          SKIPPED=$(grep -o 'outcome="NotExecuted"' coverage/results.trx | wc -l)
+          TRX=$(find coverage -name '*.trx')
+          echo "Ergebnisdateien: $(echo "$TRX" | wc -l)"
+          SKIPPED=$(grep -o 'outcome="NotExecuted"' $TRX | wc -l)
           echo "Übersprungene Tests: $SKIPPED"
           # Erlaubt ist genau der Benchmark, der bewusst einen eigenen Job hat.
           if [ "$SKIPPED" -gt 1 ]; then
             echo "::error::$SKIPPED Tests übersprungen — erwartet war höchstens der Benchmark. Postgres-Nachweis vermutlich still ausgefallen."
-            grep -o 'testName="[^"]*"[^>]*outcome="NotExecuted"' coverage/results.trx || true
+            grep -o 'testName="[^"]*"[^>]*outcome="NotExecuted"' $TRX || true
             exit 1
           fi
 
@@ -106,6 +129,30 @@ jobs:
           name: coverage-${{ matrix.os }}
           path: coverage
 
+  audit-scale:
+    # M6/WP6.2, FR-P072: Der Export muss eine Million Auditzeilen ausliefern, OHNE den
+    # Arbeitsspeicher linear mitzuziehen. Anders als der Lasttest ist das keine Frage der
+    # Referenz-Hardware — gemessen wird gehaltener Speicher, und der ist auf jedem Runner dieselbe
+    # Aussage. Deshalb laeuft der Nachweis bei jedem Push und nicht nur nachts.
+    #
+    # Und er hat einen eigenen Job, weil BIFROST_RUN_AUDIT_SCALE sonst eine Gate-Variable waere,
+    # die niemand setzt (M5-Vertrag §1.2).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Auditexport gegen eine Million Zeilen
+        env:
+          BIFROST_RUN_AUDIT_SCALE: "1"
+        run: >
+          dotnet test tests/Bifrost.Performance.Tests --configuration Release
+          --filter "FullyQualifiedName~AuditExportScale"
+          --logger "console;verbosity=detailed"
+
   benchmark:
     # NFR-01/02: Der Lasttest assertiert die Schwellen (p95 ≤ 50 ms, tools/list p95 ≤ 200 ms).
     # Geteilte Runner sind keine Referenz-Hardware, deshalb kein Gate auf jedem Push — aber er
@@ -119,10 +166,21 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # WP5.3: Der gesamte Messstand liegt jetzt in einem Projekt — die In-Process-Messung
+      # (NFR-01/02) und die netzrealistische Messung ueber Prozess, TCP und TLS. Kein Filter mehr:
+      # Was in diesem Projekt liegt, ist Messung und soll hier laufen.
       - name: Run load benchmark
         env:
           BIFROST_RUN_BENCHMARK: "1"
-        run: dotnet test tests/Bifrost.Integration.Tests --configuration Release --filter "FullyQualifiedName~PerformanceBenchmarkTests" --logger "console;verbosity=detailed"
+        run: dotnet test tests/Bifrost.Performance.Tests --configuration Release --logger "console;verbosity=detailed"
+
+      # Das Ergebnis ist trendfaehiges JSON (M5-Vertrag §4). Ohne Artefakt waere jede Messung nach
+      # dem Lauf verschwunden, und "ist es langsamer geworden?" bliebe eine Erinnerungsfrage.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: perf-results
+          path: artifacts/perf
 
   wasi-component-spike:
     strategy:

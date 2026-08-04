@@ -167,6 +167,784 @@ Zwei Punkte gehen als Entscheidung an den Lead bzw. weiter:
    zwei Quellen desselben Secrets wäre eine Regel, die man im Zweifel falsch erinnert.
    `docker-compose.yml` führt den zweiten Secret-Block jetzt.
 
+### WP5.5 abgeschlossen: die fünf offenen Wege — und zwei Produktfehler, die dabei auffielen
+
+Gefahren wird gegen eine **veröffentlichte** Instanz über TLS, mit dem ausgelieferten
+Anmeldeformular. Kein Weg mogelt sich an der Anmeldung vorbei (M5-Vertrag §8).
+
+| Weg | Was er belegt |
+|---|---|
+| **Freigabe** (2 Wege) | Ein scharfgestelltes Werkzeug wird abgewiesen, erscheint in der Warteschlange, läuft **erst nach dem Klick** — und eine Ablehnung lässt es abgewiesen. |
+| **Rolle/Profil** | Rolle, Identität, Profil und Schlüssel über die Formulare; danach fragt ein echter Agent mit dem echten Schlüssel, und **das Profil bestimmt, was er sieht**. |
+| **Backup/Restore** (2 Wege) | Die Sicherung entsteht, das Archiv wird geöffnet und sein Manifest gelesen. Und: Die Wiederherstellung wird dort **nicht angeboten** — geprüft über alle Schaltflächen der Seite, nicht über eine Vermutung. |
+| **Tool-Pin** | Ein Upstream ändert die Beschreibung seines Werkzeugs; es ist danach **weder sichtbar noch aufrufbar**, bis jemand die neue Fassung annimmt. |
+| **Erstsetup** (2 Wege) | Eine Instanz **ohne jeden UI-Zugang**, das Setup-Token aus der Übergabedatei, Zugang über das Formular — und ein falsches Token legt keinen an. |
+
+**Der wichtigste Satz zur Bauweise:** Jeder dieser Wege prüft die **Wirkung**, nicht die Anzeige.
+Beim Profil ist der Beleg die Werkzeugliste eines echten Agenten, beim Backup das geöffnete Archiv,
+beim Tool-Pin die Abwesenheit des Werkzeugs, beim Erstsetup eine geschützte Seite ohne zweite
+Anmeldung. Eine Seite, die „erledigt" meldet, ist kein Beleg dafür, dass etwas erledigt ist.
+
+**Produktfehler 1 — Argumente verschwanden bei chunked-Übertragung.** Der Invoke-Endpunkt las den
+Rumpf nur bei gesetztem `Content-Length`. Bei `Transfer-Encoding: chunked` ist der `null` — und
+damit verlor **jeder** Client, der die Länge nicht vorab berechnet, seine Argumente **still**;
+darunter `HttpClient.PostAsJsonAsync` von .NET selbst. Der Aufruf lief mit leeren Argumenten weiter
+und scheiterte an der Schemaprüfung mit „Pflichtfeld fehlt" — ein Fehler, der auf die falsche Stelle
+zeigt. Der bestehende Integrationstest hieß `Rest_invoke_roundtrip_works_like_curl` und tat genau
+das: Er setzte die Länge, wie curl es tut. Behoben, mit einem eigenen Gegentest ohne
+`Content-Length`.
+
+**Produktfehler 2 — der Browser-Harness lief gegen eine alte Veröffentlichung.** Er übersprang das
+Publish, wenn die Executable schon existierte. Gefunden über WP6.2, hier noch einmal bestätigt:
+Der Harness vergleicht jetzt den Zeitstempel der Veröffentlichung gegen den jüngsten Quellstand.
+
+**Drei Funde in den eigenen Wegen** (keine Produktfehler, aber Fallen für den nächsten):
+
+1. **Der Wizard legt seine Sitzung erst nach dem ersten Rendern an** — er liest die Kennung aus
+   einem Cookie und braucht dafür einen Browser. Ein Klick davor läuft ins Leere; der Wizard sagt
+   dann „Bitte eine Betriebsart wählen", und der Weg scheitert drei Schritte später an einem
+   Formular, das nie erschienen war. Der Weg wartet jetzt, bis die Wahl **angekommen** ist.
+2. **Die Übergabedatei ist ein Zettel für Menschen**, kein nacktes Token: Frist, Anleitung, Hinweis
+   auf das Löschen. Wer sie im Ganzen einreicht, bekommt eine Absage — und die sieht aus wie ein
+   abgelehntes Token.
+3. **Der EchoServer konnte seine Definition nicht ändern.** Ohne einen Upstream, der das wirklich
+   tut, ließe sich der Rug-Pull-Schutz nur an Attrappen zeigen — und eine Attrappe belegt nicht,
+   dass der Vergleich im Betrieb anschlägt. Er hat jetzt eine zweite Fassung desselben Werkzeugs,
+   umschaltbar über die Umgebung.
+
+**Was dafür an der Oberfläche dazukam:** Test-Hooks (`data-testid`) auf Rollen-, Profil-, Freigabe-
+und Sicherungsformularen. Zwei Felder binden jetzt auf `oninput` statt auf das Vorgabe-Ereignis —
+sonst gilt ein eingetippter Pfad erst beim Verlassen des Feldes, und der Knopf daneben bleibt
+gesperrt, obwohl etwas dasteht.
+
+### Der Reverse-Proxy-Sprung: 1,6 ms, gemessen statt geschätzt
+
+Ein **echter nginx in einem Container** vor dem Gateway, mit genau der Konfiguration, die
+`docs/operations.md` empfiehlt. Ein vorgeschalteter Handler im selben Prozess wäre kein Sprung: Es
+ginge kein Paket über eine zweite Verbindung, und genau die ist die Frage.
+
+| Weg | Gateway + Netz p50 | p95 |
+|---|---|---|
+| direkt | 1,12 ms | 1,62 ms |
+| über nginx | 2,70 ms | 3,54 ms |
+
+**Gemessen wird die Differenz, nicht der absolute Wert.** Derselbe Lastlauf geht einmal direkt und
+einmal durch den Proxy; die Fremdlatenz des Upstreams (~30 ms) steckt in beiden Zahlen und ist um
+eine Größenordnung größer als das, was gesucht wird. Aus demselben Grund prüft der Test **keine
+feste Millisekundenschranke** — auf geteilter Hardware wäre das eine Wette. Geprüft wird die
+Größenordnung und dass kein einziger Aufruf scheitert.
+
+**Kein neues Tor.** Der Lauf hängt an `BIFROST_RUN_BENCHMARK`, das der CI-Job `benchmark` ohnehin
+setzt; fehlt die Container-Runtime, wird mit Begründung übersprungen — außer
+`BIFROST_REQUIRE_CONTAINER` ist gesetzt, dann ist ein Skip ein Ausfall des Nachweises.
+
+**Ein Fund am Messstand, kein Produktfehler:** Die Zuordnung einer Datei in einen Container zielt
+auf ein **Verzeichnis**, nicht auf einen Dateinamen. Die erste Fassung legte die Konfiguration unter
+einem Zufallsnamen ab, und nginx suchte an der richtigen Stelle vergeblich.
+
+### Was von M5 offen bleibt — und warum es hier nicht zu schließen ist
+
+| Rest | Warum offen |
+|---|---|
+| Externer OAuth-Anbieter (5.2) | Braucht Zugangsdaten eines echten Anbieters. Gegen Keycloak ist der Weg belegt; ein zweiter Anbieter ist eine Beschaffung, keine Programmierarbeit. |
+| ~~Reverse-Proxy-Sprung (5.3)~~ | **Erledigt am 2026-08-04.** nginx als Container vor dem Gateway, dieselbe Last einmal direkt und einmal durch den Proxy: **1,6 ms Anteil an der p95**, keine Fehler. Siehe [performance.md](../acceptance/performance.md). |
+| 72-Stunden-Soak (5.4) | Braucht 72 Stunden. Der Vertrag verweist ihn selbst auf M7. |
+| Reale Clients in der Matrix (5.1) | Braucht installierte Fremdsoftware (Claude Desktop, Cursor, …). Die Matrix führt sie als `untested` — sichtbar, nicht weggelassen. |
+| Linux-/Kleine-VM-Läufe | Eine Frage der CI-Matrix und der Hardware, nicht des Codes. |
+
+## Laufender Meilenstein: M6 — Differenzierung
+
+Vertrag: [m6-differentiation-contract.md](m6-differentiation-contract.md). **Kein 1.0-Blocker** —
+kollidiert ein Paket hier mit einem M5-Rest, gewinnt der M5-Rest.
+
+| WP | Status | Nachweis | Nächster Schritt |
+|---|---|---|---|
+| 6.1 Versionierte Policy Packs | `implementiert` | 37 Tests grün (10 Pack, 8 Importweg, 4 Wertetypen, 6 API, 8 CLI, 1 Browserweg) — darunter der **Rückweg am laufenden Gateway** und ein Test, der eine naive Rücknahme rot färbt | Abnahme durch fremde Augen |
+| 6.2 Auditexport und Integritätskette | `implementiert` | 46 Tests grün (26 Kern, 5 Persistenz — je auf SQLite **und** PostgreSQL gefahren, 5 API, 6 CLI, 2 Browserwege, 2 Grossmengen-Nachweise): **1 MB bei 100 000 Zeilen, 0 MB bei 1 000 000** | Abnahme durch fremde Augen |
+| 6.3 Approval-Benachrichtigungen | `implementiert` | 8 Kerntests grün; Zustellung nachweislich vom Entscheidungsweg getrennt | SMTP, Eskalation, Diagnosecheck |
+| 6.4 Nutzungsbasiertes Token-Cockpit | `implementiert` | 13 Tests (10 Kern, 3 API) grün; Simulation lässt das Profil nachweislich unberührt | Abnahme durch fremde Augen |
+| 6.5 Connector Developer Kit | `implementiert` | 10 Tests grün; die dokumentierte Befehlsfolge **ist** der erste Test | Abnahme durch fremde Augen |
+
+### WP6.1 — der Unterschied zwischen „Rolle geändert" und „drei Agenten dürfen mehr"
+
+Ein Policy Pack ist hier eine **Konfigurationsnutzlast mit Namen und Signatur** — kein zweiter
+Importweg. Die Objektebene beantwortet der vorhandene Weg aus M2 (Plan, Konflikte, Handle), die
+Vertrauensfrage der vorhandene Publisher-Trust-Store aus ADR-0016, und signiert wird mit demselben
+Ed25519-Verifizierer wie ein Connector-Paket.
+
+**Neu ist genau eine Sache: der Rechte-Diff.** Ein Diff auf Objektebene sagt „Rolle `entwickler`
+hat sich geändert". Das liest sich harmlos und kann bedeuten, dass drei Agenten ab sofort auf jedem
+Server schreiben dürfen. Der Plan nennt deshalb **jede Identität**, die gewinnt, samt Wirkungsebene
+— und die Wegnahmen daneben, weil ein Pack auch unbemerkt Rechte entziehen kann.
+
+**Ein Befund aus dem Bau:** Der Konfigurationsexport enthält Rollen, aber **keine Identitäten**. Ein
+Pack bringt also Rollen mit, keine Menschen — die Zuordnung bleibt lokal. Der Diff verrechnet
+folglich die Rollen des Packs mit der hiesigen Zuordnung, und Rollen werden über den **Namen**
+zugeordnet, nicht über die Id: Ein Pack ist zum Weitergeben gedacht, und Guids sind auf jeder
+Instanz andere.
+
+**Belegt** (10 Kerntests): Signatur über Manifest **und** Nutzlast (ein getauschtes Manifest bricht
+sie), entzogener Herausgeber trägt nicht mehr, ein Pack aus einer neueren Generation wird nicht
+teilweise angewendet, der Diff nennt beide betroffenen Identitäten und keine unbeteiligte, eine vom
+Pack ausgelassene Rolle erscheint als Wegnahme, ein globaler Grant steht als „alles" da statt als
+leere Zelle.
+
+**Die Adapter, zweiter Schritt:** Der REST-Weg steht — `POST /api/v1/policy/plan` und `…/apply`,
+admin-only, die Übernahme auditiert mit Pack-Kennung, Version und Nutzlast-Fingerabdruck. Vier
+Integrationstests am laufenden Gateway halten fest, was zählt: Der Plan nennt die gewinnende
+Identität namentlich, **und die Rolle in der Datenbank ist danach unverändert** — planen ändert
+nichts. Dazu: ein Pack von einem unbekannten Herausgeber wird abgewiesen, eine Übernahme ohne Handle
+ebenso, und ein Nicht-Administrator sieht keinen Plan (er nennt fremde Identitäten samt Rechten).
+
+**Ein Fund im eigenen Test:** Der erste Lauf scheiterte daran, dass mein Test seine *eigene* Antwort
+nicht lesen konnte — der Server schreibt Enums als Text, die Testoptionen kannten den Konverter
+nicht. Das sah aus wie ein Fehler im Endpunkt und war einer im Test.
+
+### Der Rollback-Nachweis fiel negativ aus — zweimal, und wurde dann aufgelöst
+
+Der Auftrag war, den Rückweg zu belegen. Belegt war zunächst das Gegenteil, und zwar an zwei
+Stellen. Der Befund steht hier unverändert; was daraus wurde, steht darunter.
+
+**1. Ein Policy Pack kann keine bestehende Rolle ändern.** Der Importweg aus M2 **legt nur an**; eine
+Rolle, deren Name schon vergeben ist, ist dort ein Konflikt. Das ist dort richtig und ausdrücklich
+begründet — die Rücknahme dieses Weges entfernt genau das, was er Sekunden zuvor angelegt hat, und
+darf deshalb nichts Bestehendes anfassen. Für Policy Packs heißt es aber: **Der interessante Fall —
+dieselbe Rolle, andere Rechte — ist heute nicht anwendbar.** `CanApply` ist dann `false`, mit
+benanntem Konflikt.
+
+**Mein eigener Test hat das zuerst nicht bemerkt.** Er prüfte den Rechte-Diff und das Handle, nie
+die Anwendbarkeit. Jetzt steht beides da.
+
+**2. Die Momentaufnahme vor der Übernahme ist kein Rollback.** Spielt man sie über denselben
+Importweg wieder ein, bleibt eine neu angelegte Rolle **bestehen** — weil der Import nichts entfernt.
+Der Test hält genau das fest. Das Feld heißt deshalb nicht mehr `RollbackPayload`, sondern
+`SnapshotBeforeApply`, mit der Grenze in der Beschreibung.
+
+**Was daraus folgt — eine Produktentscheidung, keine Nacharbeit.** „Atomare Aktivierung und
+Rollback" (Pflichtenheft WP6.1) verlangt ein Importverfahren, das **aktualisieren und entfernen**
+kann, mitsamt Kompensation für beides. Das ist ein Eingriff in den M2-Vertrag und gehört vor die
+Umsetzung, nicht hinein. Drei Wege stehen offen: den Importweg um Update/Delete erweitern (und seine
+Rücknahme neu begründen), Policy Packs auf „nur neue Objekte" beschränken (dann ist die Hälfte des
+Nutzens weg), oder Rollback über Backup/Restore lösen (Wartungsmoment nötig, ADR-0024 E5).
+
+WP6.1 stand deshalb auf **`blockiert`** statt `teilweise`: Was gebaut war, trug; was fehlte, war
+keine Fleißarbeit, sondern eine Entscheidung.
+
+### Die Entscheidung: der Importweg kann jetzt ersetzen — und begründet seine Rücknahme neu
+
+Gewählt wurde der erste der drei Wege. Der Importweg hat einen **Modus** bekommen:
+`AddOnly` bleibt die Vorgabe und verhält sich unverändert, `Update` ersetzt bestehende **Rollen und
+Profile**. Ausdrücklich nur diese beiden: Upstreams, Guard-Regeln, Freigaben und Skills bleiben
+additiv. Ein Modus, der alles ersetzt, wäre eine Synchronisierung — und die nimmt auch weg, was die
+Nutzlast nur nicht kennt.
+
+**Die alte Begründung der Rücknahme fällt weg, und das ist der Kern.** Sie lautete: „Jede Rücknahme
+entfernt genau das, was der Vorgang Sekunden zuvor angelegt hat, und kann nichts treffen, was vorher
+da war." Sobald ersetzt wird, stimmt das nicht mehr. Die neue Begründung ist eine andere Sache und
+kein Zusatz zur alten: **Der Vorgang schreibt den vorigen Inhalt mit** und gibt ihn als
+`ConfigurationImportUndo` zurück — den vorigen Stand der ersetzten Objekte und die Kennungen der
+angelegten. Zurückgenommen wird daraus einzeln: Ersetztes wird **zurückgeschrieben**, Angelegtes
+**entfernt**. Wer die alte Rücknahme unverändert übernommen hätte, würde eine ersetzte Rolle löschen
+— und damit jeder Identität, die an ihr hängt, sämtliche Rechte entziehen. Genau dafür gibt es einen
+Test, der eine solche Umsetzung rot färbt
+(`ConfigurationImportUpdateTests.Taking_back_an_import_restores_a_replaced_role_instead_of_deleting_it`).
+
+**Die Id der Zielinstanz gewinnt.** Ein Pack bringt eigene Guids mit; übernähme man sie, hinge jede
+Identität an einer Rolle, die es unter ihrer alten Id nicht mehr gibt — die Zuordnung
+Identität→Rolle läuft über die Id, nicht über den Namen. Der Inhalt kommt aus dem Pack, die Id bleibt
+hiesig.
+
+**Der Rollback-Nachweis fällt jetzt positiv aus** — am laufenden Gateway, über `POST
+/api/v1/policy/revert`: Eine bestehende Rolle wird durch ein Pack auf „alles" erweitert, danach
+zurückgenommen, und sie steht wieder mit ihrem engen Recht **und derselben Id** da
+(`PolicyPackApiTests.The_undo_from_applying_really_takes_a_widened_role_back`). Die Momentaufnahme
+bleibt daneben stehen und bleibt ausdrücklich **kein** Rollback — der Test, der das belegt, bleibt
+ebenfalls stehen.
+
+**Ein Halbwahrheit im Schreib-Port, nebenbei behoben:** Die Operation hieß `AddRoleAsync` und saß
+unter der Haube längst auf einem Upsert — sie ersetzte also, obwohl der Name das Gegenteil sagte.
+Die Test-Attrappe hängte dagegen wirklich nur an. Ein Test hätte damit „ersetzt" gemeldet, wo im
+Betrieb zwei Rollen desselben Namens entstanden wären. Beide heißen jetzt `SaveRoleAsync` /
+`SaveProfileAsync`, und die Attrappe verhält sich wie die echte Ablage.
+
+### Ein Produktfehler, gefunden über den Rückweg: `NamespacedToolName` überlebte kein JSON
+
+Der Ende-zu-Ende-Test des Rückwegs schlug fehl, obwohl der Kern grün war. Ursache war keine
+Kleinigkeit im Test:
+
+**System.Text.Json nimmt bei Structs den impliziten parameterlosen Konstruktor.** `NamespacedToolName`
+und `CapabilityId` sind `readonly record struct`s mit einer `Value`-Eigenschaft **ohne Setter** —
+beim Lesen blieb der Wert also `null`. Ohne Ausnahme, ohne Meldung. Positionale `record struct`s wie
+`ServerId` sind nicht betroffen; deshalb fiel es nie auf.
+
+**Die Wirkung ist eine Rechteausweitung.** Ein Grant mit `Scope.Tool = "github__read"` wird beim
+Lesen zu einem Grant **ohne** Werkzeugeinschränkung. Aus „darf genau dieses eine Werkzeug" wird
+„darf alles" — die Einschränkung verschwindet lautlos in die falsche Richtung. Betroffen ist jeder
+JSON-Weg, der eine Berechtigung trägt, nicht nur der neue Rückweg.
+
+Behoben mit `[JsonConstructor]` an beiden Konstruktoren (das Drahtformat bleibt unverändert), belegt
+in `ValueTypeJsonTests` — vier Tests, darunter einer, der den Schaden benennt statt nur den nackten
+Wertetyp zu prüfen, und einer, der festhält, dass positionale Wertetypen nie betroffen waren.
+
+### Die Adapter, dritter Schritt: CLI und Oberfläche
+
+**CLI** — `bifrost policy plan|apply|revert`. Zwei Dinge sind darin nicht verhandelbar und deshalb
+je durch einen Test festgenagelt:
+
+- **`--yes` überspringt die Rückfrage, nicht die Anzeige.** Der Rechte-Diff steht immer da, jede
+  zusätzliche Berechtigung einzeln mit Identität und Wirkungsebene. Die Rückfrage nennt ihre
+  **Zahl** — „Wirklich fortfahren?" ohne diese Zahl ist eine Frage, auf die jeder ja sagt.
+- **Ohne `--undo-out` steht dort eine Warnung**, keine Beruhigung: Der Rückweg lebt nur in der
+  Antwort und wird nirgends aufbewahrt.
+
+Belegt in `OperationsCliTests` (8 Tests). Der schärfste prüft nicht den Exit-Code, sondern dass
+**die zweite Anfrage nie hinausgeht**: Ohne Bestätigung wird nichts geschrieben, und eine Prüfung
+nur auf den Rückgabewert hätte einen Apply-Aufruf übersehen.
+
+**Oberfläche** — Seite `/policy`, Admin, in der Feinsteuerung neben Rollen und Profilen. Der
+Rechte-Diff steht **ganz oben**, vor allen Objektlisten: Wer nur den Anfang liest, soll die
+Rechteausweitung sehen und nicht die Herausgeberbeschreibung. Der Übernehmen-Knopf bleibt gesperrt,
+bis jemand ausdrücklich bestätigt, den Zuwachs gesehen zu haben — ohne diese Sperre wäre die
+Anzeige Dekoration.
+
+Belegt durch einen Browserweg (`PolicyJourneyTests`, gated über `BIFROST_RUN_E2E=1`), der den ganzen
+Bogen fährt: Rolle und Identität anlegen, Herausgeber pinnen, Pack einfügen, prüfen — die Identität
+steht namentlich mit „alles" auf der Seite —, Knopf gesperrt, bestätigen, übernehmen, **in der
+Datenbank nachsehen**, zurücknehmen, **wieder nachsehen**. Der Beweis kommt aus der Ablage, nicht
+aus der Anzeige.
+
+**Ein Fund dabei:** Die Verwaltungs-API gibt Rollen als **Datenbankzeile** zurück, nicht in der
+Vertragsform — die Grants stehen als eingebettetes JSON in PascalCase darin. Mein erster Testentwurf
+las die Vertragsform und war rot. Der Test liest jetzt, was wirklich da steht, und sagt im Kommentar
+warum.
+
+**Offen und benannt — zwei Grenzen, absichtlich gezogen:**
+
+1. **Der allgemeine Konfigurationsimport über die API bleibt `AddOnly`.** Der Modus ist dort nicht
+   erreichbar. Ihn zu öffnen hieße, `POST /config/import/apply` müsste den Rückweg
+   zurückgeben statt `204` — eine Änderung an einer bestehenden Schnittstelle, die zu dieser
+   Entscheidung nicht gehört. Der Motor kann es; der Adapter gibt es nicht frei.
+2. **Es gibt kein „Delete" im Sinne eines Abgleichs.** Ein Import entfernt nichts, was in der
+   Nutzlast fehlt — das wäre eine Synchronisierung, und die nimmt weg, was die Nutzlast nur nicht
+   kennt. Entfernt wird ausschließlich im Rückweg, und dort nur, was **dieser** Vorgang angelegt hat.
+
+Der Rückweg wird als Teil der Übernahme-Antwort zurückgegeben und muss vom Aufrufer aufbewahrt
+werden — `--undo-out` in der CLI, das Textfeld auf der Seite. **Eine Ablage der Rückwege im Gateway
+gibt es nicht**; das wäre eine eigene Entscheidung (Aufbewahrungsfrist, Sichtbarkeit, Verfall) und
+steht aus. Beide Adapter sagen das an der Stelle, an der es zählt, statt es zu verschweigen.
+
+### Ein unaufgeklärter Fehlschlag, festgehalten statt weggewischt
+
+Ein Solution-Lauf meldete **einen** Fehlschlag in `Bifrost.Integration.Tests` (443 statt 444). Zwei
+weitere volle Läufe danach und ein Lauf der Suite allein waren grün. **Welcher Test es war, ist
+nicht bekannt** — mein eigener Ausgabefilter hatte die Zeile mit dem Namen verworfen, und ohne
+Namen gibt es keine Diagnose, nur eine Vermutung (Assemblies laufen im Solution-Lauf parallel; die
+Integrationstests teilen sich Ports und Dateien).
+
+Das steht hier, weil „lief beim zweiten Mal durch" keine Aussage über die Ursache ist. Wer den
+nächsten Lauf fährt, sollte die volle Ausgabe aufheben — genau das war hier der Fehler.
+
+### WP6.2 — der Export streamt, und die Kette sagt, was sie nicht kann
+
+Der Blocker aus dem Vertrag (§3: „wartet, bis die Persistenz-Welle gelandet ist") ist aufgelöst —
+die Verlustsichtbarkeit liegt im Baum und ist über `BFR-DB-0007` verdrahtet; am Audit-Schreibpfad
+arbeitet nichts mehr parallel.
+
+**Der Cursor ist eine Zeilennummer, keine Seitenzahl.** `Skip(n).Take(m)` setzt voraus, dass sich
+die Menge zwischen zwei Seiten nicht ändert. Beim Audit ändert sie sich immer — nebenher wird
+geschrieben. Der Test dazu schreibt deshalb *zwischen* den beiden Abrufen und prüft danach beides:
+keine Lücke und keine Dopplung.
+
+**Gelesen wird in Blöcken, nicht mit einem offenen Leser über alles.** Der Speicherbedarf wäre so
+oder so beschränkt; entscheidend ist die Sperre. Ein Leser, der über eine Million Zeilen offen
+bleibt, hält auf SQLite eine Lesetransaktion — und die steht dem Audit-Schreiber im Weg, der nach
+ADR-0007 nie warten soll.
+
+**Der Nachweis aus dem Vertrag, mit zwei Größen statt einer.** Ein einzelner Millionen-Lauf, der
+durchgeht, belegt nur, dass der Rechner groß genug war; „nicht linear" ist eine Aussage über das
+Verhältnis. Gemessen wird der **gehaltene** Speicher (mit erzwungener Sammlung), nicht die Summe
+aller Zuweisungen: **1 MB bei 100 000 Zeilen, 0 MB bei 1 000 000**. Der erste Entwurf maß ohne
+erzwungene Sammlung und kam auf 12 MB gegen 49 MB — eine Zahl, die nur zeigt, wann der GC zuletzt
+lief, und die gegen eine Schranke von 52 MB in der CI geflattert hätte.
+
+### Die Kette: ein Abschnitt je Schreiberlauf, und der Anspruch steht in der Ausgabe
+
+Verkettet wird über eine kanonische Fassung — feste Feldfolge, invariantes Zahlen- und Zeitformat,
+ein eigener Marker für „Feld fehlt" gegenüber „Feld ist leer". Ohne diese Unterscheidung hätten
+zwei verschiedene Ereignisse denselben Hash, und genau darauf zielte ein Fälscher.
+
+**Zwei Prüfungen, und beide werden gebraucht:** Der Eintrag wird gegen seinen eigenen gespeicherten
+Vorgängerhash nachgerechnet — das findet ein geändertes Feld. Und der gespeicherte Vorgängerhash
+wird gegen den tatsächlichen Vorgänger gehalten — das findet eine entfernte oder umsortierte Zeile.
+Nur die erste Prüfung wäre eine Prüfsumme je Zeile; wer eine Zeile löscht, käme damit durch. Belegt
+ist beides **gegen die echte Ablage**: Ein Test ändert eine Zeile direkt in der Datenbank, ein
+zweiter löscht eine.
+
+**Ein Abschnitt je Schreiberlauf, nicht eine globale Kette.** Eine durchgehende Kette setzt genau
+einen Schreiber voraus. Zwei Instanzen auf derselben Datenbank — oder ein Neustart — verschränkten
+ihre Ketten, und der Prüfer meldete Manipulation, wo keine war. **Ein falscher Alarm über
+Manipulation ist schlimmer als keine Kette:** Er entwertet den echten Fund. Der Preis steht
+daneben: Dass ein ganzer Abschnitt fehlt, ist von hier aus nicht erkennbar.
+
+Der Prüfer trägt seine Grenzen **in der Antwort**, nicht nur in der Dokumentation (Vertragspflicht
+aus §3) — und ein Test hält das fest. Er nimmt außerdem **keine Inhaltsfilter** an: Über einen
+gefilterten Ausschnitt lässt sich über die Kette nichts sagen, jede herausgefilterte Zeile sähe aus
+wie eine gelöschte.
+
+Zeilen aus der Zeit vor der Kette tragen keine Glieder. Sie werden gezählt und als „nicht gedeckt"
+ausgewiesen. **Nachträglich verkettet wird nichts** — ein Hash, den die Instanz sich selbst
+nachträglich ausrechnet, belegt nichts.
+
+### Eine Vertragsabweichung, benannt statt stillschweigend
+
+Der M6-Vertrag §3 verortet die Kanonisierung in `Bifrost.Core/Audit/**`. Sie liegt jetzt in
+`Bifrost.Abstractions`. Grund: Der Schreibpfad liegt in der Persistenz, der Prüfer im Kern — beide
+brauchen dieselbe Rechnung. Sie im Kern zu lassen hieße, die Persistenz auf den Kern zeigen zu
+lassen, also eine neue Kante im Abhängigkeitsgraphen für eine einzige statische Klasse. Der Vertrag
+sagt selbst, die Kanonisierung sei Teil des Vertrags; dann steht sie auch in der Vertragsassembly.
+Der Verifizierer bleibt im Kern, wie vorgesehen.
+
+### Drei Funde aus dem Bau
+
+**1. Zeitstempel liegen als UTC-Ticks in der Ablage, nicht als Text.** Meine Grossmengen-Fixture
+schrieb sie roh als ISO-8601 und bekam Jahr 1 zurück — die Kette meldete prompt „nach dem Schreiben
+geändert". Der Fehler lag in der Fixture, nicht im Produkt; aber er zeigt, dass die Prüfung
+anschlägt.
+
+**2. `?format=jsonl` wurde mit 400 abgewiesen.** Die Standardbindung von Enums an Query-Parameter
+ist case-sensitiv. Das ist ein Produktfehler, kein Testproblem, und ist behoben — Gross- und
+Kleinschreibung ist in einer URL keine Aussage.
+
+**3. Der Browser-Harness lief gegen eine alte Veröffentlichung.** Er übersprang das Publish, weil
+die Executable schon existierte — vom vorigen Paket. Der neue Weg war rot, und die Ursache zeigte
+auf die Oberfläche statt auf den Harness. **Schlimmer wäre der umgekehrte Fall gewesen:** ein
+grüner Lauf gegen einen alten Stand. Der Harness vergleicht jetzt den Zeitstempel der
+Veröffentlichung gegen den jüngsten Quellstand unter `src/`.
+
+Nebenbei: Der Zielpfad im Export-Formular bindet auf `oninput` statt auf das Vorgabe-Ereignis —
+sonst gilt der Pfad erst, wenn das Feld den Fokus verliert, und der Knopf daneben bleibt gesperrt,
+obwohl etwas dasteht.
+
+### WP6.3 — der wichtigste Test ist der, in dem nichts zugestellt wird
+
+Der Zusteller hängt am **vorhandenen** signierten Webhook (ADR-0013): Dieselbe HMAC-Berechnung, mit
+der der Gateway eingehende Rufe prüft, signiert jetzt die ausgehenden. Ein Empfänger verifiziert
+also mit der Beschreibung, die er ohnehin hat — und der Test prüft die Signatur mit genau dem
+Verifizierer des Produkts, statt mit einem nachgebauten.
+
+Angeschlossen wird über einen **Mantel** um `IApprovalStore`, nicht über eine Änderung daran: Eine
+Benachrichtigung ist eine Nebenwirkung, die niemand braucht, damit eine Freigabe gilt. Wer sie in
+den Speicher schriebe, hätte zwei Aufgaben in einer Klasse — und der Tag, an dem ein Zustellfehler
+eine Freigabe verhindert, wäre nur eine Frage der Zeit.
+
+**Die DoD als Test:** Das Ziel wirft bei jedem Versuch, und die Freigabe entsteht trotzdem sofort.
+Ohne diesen Fall wäre „Zustellung getrennt von Entscheidung" eine Absicht.
+
+**Drei Entscheidungen:**
+
+- **Die Nutzlast trägt keine Argumente** — auch keine redigierten. Sie geht an ein fremdes System,
+  oft in einen Chat; was dort steht, steht dauerhaft dort. Mit geht ein Deep-Link, und wer ihn
+  öffnet, steht vor der Anmeldung.
+- **Ein totes Ziel wird sichtbar**, nicht still: Nach dem letzten Versuch steht der Vorgang als
+  Dead-Letter in der API und in der Oberfläche neben der Warteschlange.
+- **Eine abgelaufene Anfrage wird nicht zugestellt** — wer sie liest, kann nichts mehr entscheiden.
+  Der Vorgang bleibt trotzdem mit Grund stehen.
+
+**Ein Fund im eigenen Test:** Der Rückversuch wartet auf der *übergebenen* Uhr. Das ist im Betrieb
+richtig und machte den ersten Testlauf blind — er sah aus, als würde gar nicht wiederholt, weil die
+gestellte Uhr nicht weiterlief. Der Test stellt sie jetzt selbst vor.
+
+**Der Befund, den ein fremder Wächter fand:** `SsrfCentralFetcherTests` wurde rot — der Zusteller
+baute sich einen eigenen Client und rief die vom Betreiber genannte Adresse **ungeprüft**. Genau die
+Stelle, an der ein Gateway zum Werkzeug wird, um interne Dienste zu erreichen (Cloud-Metadaten,
+Admin-Port auf Loopback, Nachbar im Firmennetz). Die naheliegende Ausrede — „die Adresse kommt aus
+der Konfiguration" — ist die, die dieser Test nicht akzeptiert, und er hat recht: Eine Adresse wird
+einmal gesetzt und danach von niemandem mehr angesehen. Derselbe Test hatte dieselbe Lücke laut
+seiner Ausnahmeliste schon einmal bei der OAuth-Sonde gefunden.
+
+Behoben wurde sie auf dem produktüblichen Weg statt mit einem Eintrag in der Ausnahmeliste: Ein
+`SsrfGuardingHandler` schickt jedes Ziel durch dieselbe zentrale Prüfung wie ein Schemaimport, und
+`BIFROST_APPROVAL_WEBHOOK_ALLOW_PRIVATE` ist der ausdrückliche Schalter für ein Ziel im eigenen Netz
+— dieselbe Bauform wie bei OAuth-Upstreams. Nebenwirkung: Weiterleitungen werden nicht mehr verfolgt;
+ein 302 hätte Signatur und Deep-Link an eine nie geprüfte Adresse getragen.
+
+**Offen und benannt:** SMTP (im Pflichtenheft optional), Eskalation nach Ablauf, und ein
+Diagnosecheck für tote Ziele — Letzterer würde `DiagnosticCodes.cs` anfassen, das die Persistenz-Welle
+offen hat (M6-Vertrag §7).
+
+### WP6.4 — die Zahl, die nichts bedeutet, wäre die Summe
+
+Das Cockpit stellt zwei Größen nebeneinander, die man leicht verrechnet: **Exposure** ist, was ein
+Profil einem Agenten an Schema zumutet — jede Anfrage, unabhängig von der Nutzung. **Invocation**
+ist, was davon im Fenster wirklich aufgerufen wurde. Die Grundlage lag bereits:
+`CatalogEntry.EstimatedSchemaTokens` trägt seit FR-15 den Kommentar „für das Cockpit".
+
+**Es ändert nichts** — und das ist als Test festgehalten, nicht als Vorsatz: Nach einer Simulation
+steht das Profil am laufenden Gateway unverändert da.
+
+**Drei Entscheidungen, die im Code stehen:**
+
+- **„ungenutzt im Fenster", nie „unnötig".** Ein Werkzeug ohne Aufruf kann das sein, was einmal im
+  Quartal den Betrieb rettet. Die Oberfläche schreibt den Zeitbezug in dieselbe Zelle.
+- **Die Konsequenz steht neben der Einsparung.** Die Simulation nennt nicht nur die gesparten
+  Tokens, sondern die entfernten Werkzeuge, **die benutzt wurden** — ein Cockpit, das nur die
+  Ersparnis zeigt, ist ein Verkaufsprospekt. Das ist die DoD dieses Pakets.
+- **Grenzen vor der Rechnung.** Auditseiten, Listenlänge und Fensterlänge sind gedeckelt, und jede
+  gezogene Grenze steht im Ergebnis: Ein abgeschnittener Auditlauf meldet seine Zahlen ausdrücklich
+  als Untergrenzen.
+
+Zwei Fälle, die sonst still verschwänden: ein Werkzeug, das über den Lazy-Pfad benutzt wird, ohne im
+Profil zu stehen (sonst sähe ein sparsames Profil aus, als arbeite niemand) — und eines, das es
+nicht mehr gibt, aber im Fenster benutzt wurde (sonst sähe eine Instanz nach einem Upstream-Verlust
+aus wie eine, in der nie etwas benutzt wurde).
+
+**Der Befund: die Seite war nicht erreichbar.** Nach dreizehn grünen eigenen Tests fiel im Lauf über
+alle Suiten `UiNavigationModelTests.Every_authorized_page_appears_in_the_navigation` um — die
+Cockpit-Seite existierte, war autorisiert, hatte eine Route und stand in keinem Menü. Inhaltlich
+dieselbe Klasse wie der Blazor-Ausfall aus WP5.5: gebaut und kommt trotzdem nicht an. Derselbe
+Wächter hat dann gleich die Einordnung korrigiert — ein `Parent` zeigt in dieser Liste auf einen
+Abschnitt **derselben** Seite, nicht auf eine eigene.
+
+Das ist der **dritte** vorhandene Wächter in dieser Sitzung, der eigene Arbeit gefangen hat (nach
+dem Redaktionskorpus und dem Skip-Gate). Alle drei stammen von jemand anderem. Die Regel aus §1 des
+M6-Vertrags — „eine Fertigmeldung zählt die Suite, nicht die eigenen Tests" — hat sich damit zum
+dritten Mal als die richtige erwiesen, und zum zweiten Mal daran, dass sie beinahe wieder gebrochen
+worden wäre.
+
+### WP6.5 — drei eigene Fehler, alle vom eigenen Lauf gefunden
+
+Das Kit ist ein eigenes Werkzeug (`bifrost-connector`), kein Befehl in `bifrost`: Die Gateway-CLI
+hält bewusst keine Projektreferenz, das Kit braucht `Bifrost.Core` — beides in einer Datei hieße,
+eine der beiden Entscheidungen aufzugeben. Der Vertrag ist entsprechend berichtigt.
+
+**Drei Befunde aus dem eigenen Bau, alle behoben:**
+
+1. **Der erste Ende-zu-Ende-Lauf scheiterte an der DoD selbst.** Ein WASI-Paket deklariert eine
+   abgetrennte Signatur der Component; mein `build` überließ sie dem Entwickler, und die Probe
+   lehnte zu Recht ab. Genau diese Reibung soll das Kit beseitigen — wer den Schlüssel hat, kann
+   auch die Component signieren. `build` erzeugt sie jetzt mit.
+2. **Meine „Probe" prüfte zweimal dasselbe.** Schema und Vertragsversion prüft der Leser des
+   Produkts längst; meine Zusatzprüfung konnte nie greifen — toter Code, der Gründlichkeit
+   vortäuscht. Er ist weg. Was `test` jetzt wirklich hinzufügt: die **abgetrennte Signatur des
+   Einstiegspunkts**, die der Paketleser nicht prüft und die sonst erst der WASI-Host auf dem
+   Rechner des Betreibers ablehnt.
+3. **Ein vertippter Schalter mit Wert wurde stillschweigend geschluckt.** `--ausgabe paket.mcpkg`
+   sah für den Parser aus wie ein gültiges Paar; der Aufrufer hätte sein Paket an einem Ort
+   bekommen, den er nicht gemeint hat. Jede Unterbefehlsebene nennt jetzt ihre erlaubten Schalter,
+   und die Prüfung steht **vor** der Arbeit statt dahinter.
+
+**Der Nachweis:** `docs/connectors/developer-kit.md` beschreibt vier Befehle — und genau diese
+Befehlsfolge ist der erste Test. Wird die Dokumentation falsch, wird der Test rot statt der Leser
+ratlos. Dazu Gegenproben für verändertes Byte, fremden Herausgeber, fremde Vertragsversion, falsche
+Component-Signatur und den privaten Schlüssel, der in keiner Ausgabe erscheinen darf.
+
+## Vorige Welle: M5 — Kompatibilität und Betriebsnachweise
+
+**Nicht abgeschlossen.** Die benannten Reste sind Voraussetzung für M7 — nicht für M6. **Zwei davon
+sind erledigt:** die fünf offenen Browserwege und der Reverse-Proxy-Sprung (beide unten). Offen
+bleiben externer OAuth-Anbieter, 72-Stunden-Soak und reale Clients in der Matrix; alle drei brauchen
+etwas, das hier nicht herstellbar ist — fremde Zugangsdaten, 72 Stunden oder installierte
+Fremdsoftware.
+
+Vertrag: [m5-compatibility-contract.md](m5-compatibility-contract.md) (Stand 2026-08-02). M5 baut
+fast keinen Produktcode, sondern Nachweise; entsprechend regelt der Vertrag Artefakte, Formate und
+die Frage, wann ein Ergebnis als Beleg zählt.
+
+| WP | Status | Nachweis | Nächster Schritt |
+|---|---|---|---|
+| 5.1 Client-Kompatibilitätsharness | `teilweise` | Schema, Bericht und SDK-Probelauf laufen (13 Tests grün, lokal Windows) | reale Clients aufnehmen, Linux-Zeile in CI aufzeichnen |
+| 5.2 Reale OAuth-Testumgebungen | `teilweise` | 6 Tests gegen ein echtes Keycloak grün (19 s), ein Produktfehler dabei gefunden und behoben; Rotation nach dem Audit wirklich belegt | externer Anbieter, Widerruf, Ablauf, Consent |
+| 5.3 Netzwerkrealistischer Performanceharness | `teilweise` | vollständiger Lauf (3 × 30 s × 3 Szenarien, ~92 000 Aufrufe je Szenario) **plus der Reverse-Proxy-Sprung: 1,6 ms an der p95 über echtes nginx** | kleine VM, Linux-Lauf |
+| 5.4 Soak- und Chaos-Harness | `teilweise` | 7-Minuten-Chaoslauf grün (103 036 Aufrufe, 8 Störungen, keine Waisen); Gegenproben für Fehlerpfad **und** Waisen-Detektor | Nachtlauf, 72-h-Lauf (M7), Befund unten |
+| 5.5 Browser-E2E | `implementiert` | **18 Wege grün** in Chromium gegen eine veröffentlichte Instanz über TLS (1 m 42 s); die fünf offenen Wege sind gefahren und haben zwei Produktfehler gefunden | Firefox/WebKit im Nachtlauf; Abnahme durch fremde Augen |
+| 5.6 Releasecandidate-Support-Bundle | `implementiert` | 19 Tests (8 Kern, 4 API, 4 CLI, 3 Korpus) plus ein Browserweg; Canary-Korpus taucht in keinem Archiv auf | zweite Abnahme durch fremde Augen |
+
+### Audit gegen den Code (2026-08-02)
+
+Geprüft wurde nicht die Fertigmeldung, sondern der Code dagegen: Vertrag gegen Umsetzung, Behauptung
+gegen Lauf, und die Frage, ob ein Test überhaupt rot werden kann. Zehn Befunde, alle behoben.
+
+**1. Schwer: Ein vorhandener Wächter war rot, und die Fertigmeldung kam trotzdem.**
+`RedactionCorpusTests.A_new_redactor_forces_a_decision_about_the_corpus` prüft, dass **jede** Stelle,
+die maskiert, gegen den Negativkorpus läuft — genau der Wächter, den es gibt, weil ein siebter
+Transport einmal vergessen wurde. WP5.6 hat einen neuen Redigierer eingeführt, der Wächter fiel um,
+und ich habe die Security-Suite nach dem Einbau **nie laufen lassen**. Die Meldung „14 Tests grün"
+war wahr und meinte die selbst geschriebenen.
+
+Behoben: zwei echte Korpustests für `SupportBundleRedactor` (Feldnamen und Freitext) plus der
+Inventareintrag. Die Lehre gehört nicht in den Code, sondern in die Arbeitsweise — **eine
+Fertigmeldung zählt die Suite, nicht die eigenen Tests.**
+
+**2. Mittel: Die Grenze des Maskierungslaufs klang nach mehr, als sie ist.** „Kein Korpuswert im
+Bundle" stimmte, weil die Quellen ihre Secrets unter secret-artigen Feldnamen führen. Ein Wert unter
+einem harmlosen Namen und ohne erkennbare Form bleibt stehen. Das ist die richtige Bauweise — der
+Durchgang ist ein Netz, kein Inhaltsscanner —, war aber nirgends als Aussage festgehalten. Jetzt
+steht sie als Test da, mitsamt der Folge: Wer eine neue Quelle anschließt, darf sich auf den
+Durchgang nicht verlassen.
+
+**3. Mittel: Die Browserwege prüften ein Debug-Publish.** `dotnet publish` ohne `-c` nimmt immer
+Debug — auch wenn die CI in Release baut und testet. Die Wege hätten also unbemerkt ein anderes
+Artefakt geprüft als das ausgelieferte. Behoben; das Verzeichnis trägt die Konfiguration jetzt im
+Namen, sonst würde ein alter Stand wiederverwendet.
+
+**4. Mittel: Der Waisen-Detektor hatte keine Gegenprobe.** „Keine verwaisten Prozesse" beruhte auf
+einem Prüfer, der in jedem Lauf eine leere Liste meldete — von einem kaputten nicht zu
+unterscheiden. Jetzt bekommt er einen echten Nachzügler vorgesetzt und muss ihn benennen.
+
+**5. Mittel: „rotates" bewies keine Rotation.** Der Test prüfte, dass ein neues Refresh-Token
+zurückkommt — nicht, dass das alte danach wertlos ist. Ohne das läge nach jeder Erneuerung ein
+weiterer gültiger Schlüssel herum. Das Realm setzt jetzt `revokeRefreshToken`, und der Test versucht
+die Wiederverwendung ausdrücklich.
+
+**6.–8. Leicht: Vertrag gegen Code, dreimal auseinander.** Der E2E-Job hieß `chromium` statt
+`ui-e2e` (an einem Jobnamen hängt eine Branch-Protection-Regel) — Code angepasst. §2 schrieb
+„Vorschau ist Pflicht", der Dienst erzwingt sie nicht — Text korrigiert, mit der Begründung, warum
+ein Handle wie beim Restore hier das falsche Mittel wäre. §7 nannte eine `docker-compose.oauth.yml`,
+gebaut wurde ein Testcontainer — Zeile berichtigt.
+
+**9.–10. Leicht: Zwei ungeprüfte Wege im Support-Bundle.** Die Kategorie `Logs` war nur in ihrer
+*abwesenden* Form geprüft, und der Vorgabepfad ohne `--out` gar nicht. Beide haben jetzt einen Test;
+der Logtest prüft zugleich, dass Freitext beschnitten **und** maskiert wird.
+
+**Der Lauf nach den Korrekturen** — solutionweit mit exakt dem Filter der Hauptpipeline:
+**1 836 bestanden, 0 Fehler, 9 übersprungen** (Cli 53, Soak 7, Core 1 031, Security 132, Upstream
+144, Upgrade 44/8 übersprungen, Integration 425/1 übersprungen). Die gegateten Suiten getrennt:
+Kompatibilität 12+1, Perf 3+3, Soak 7+2, Browserwege 7, Keycloak 6.
+
+### Nachtrag: der CI-Nachbau — und zwei weitere Befunde
+
+Statt zu pushen wurde der Job **lokal nachgestellt**: Release-Build, exakt der Filter der
+Hauptpipeline, `BIFROST_REQUIRE_POSTGRES=1` und `BIFROST_REQUIRE_CONTAINER=1`, Zählung aus derselben
+`trx`.
+
+**11. Der Skip-Wächter zählte nur eine einzige Assembly.** Der Lauf schrieb
+`--logger "trx;LogFileName=results.trx"` — und mit festem Dateinamen **überschreibt jede
+Testassembly dieselbe Datei**. Nachgesehen: Die Datei enthielt 426 Ergebnisse, alle aus
+`Bifrost.Integration.Tests`; die sechs anderen Suiten waren verschwunden. Das Gate, dessen einziger
+Zweck es ist, stille Skips zu verhindern, las also die Skips **einer** Suite. Acht übersprungene
+Upgrade-Tests wären unbemerkt durchgegangen. Behoben: eigene `trx` je Assembly, Zählung über alle.
+
+**12. Mein eigener Waisen-Test war nicht laufplan-fest.** Er verlangte „genau ein neuer Prozess" —
+im Lauf über die ganze Solution starten andere Suiten gleichzeitig eigene Testserver. Allein grün,
+im Verbund rot. Jetzt prüft er, dass **sein** Nachzügler benannt wird, nicht dass er der einzige ist.
+
+**Die Antwort auf die eigentliche Frage:** Mit den scharfen Variablen bleiben **null übersprungene
+Tests** — die neun, die lokal ohne sie stehen bleiben, laufen dann wirklich. Das Gate hält also
+nicht, weil es nachsichtig ist, sondern weil nichts mehr übersprungen wird.
+
+**Was dabei rot wurde und warum es nicht das Gate betrifft:** zehn Fehlschläge (acht Upgrade, zwei
+Integration), alle aus derselben Familie — sie brauchen `pg_dump`/`pg_restore` auf dem Wirt, und
+dieser Windows-Rechner hat sie nicht. Die CI installiert `postgresql-client` in einem eigenen
+Schritt. **Belegt ist damit nichts**, erklärt schon: Der Nachbau kann die Gate-Arithmetik zeigen,
+nicht den Linux-Lauf ersetzen.
+
+**Die Gegenprobe zum Wächter selbst.** Nach der Korrektur schreibt der Lauf zehn Ergebnisdateien
+statt einer, und die Zählung über alle ergibt **neun** übersprungene Tests — dort, wo die alte
+Fassung **einen** sah. Der Wächter misst jetzt das, was er behauptet: In dieser lokalen Umgebung
+(ohne `pg_dump`, ohne die scharfen Variablen) würde er anschlagen; mit ihnen sind es null. Beides
+ist richtig, und vorher war beides unsichtbar.
+
+Der Solution-Lauf nach allen Korrekturen: **1 836 bestanden, 0 Fehler** — der Waisen-Test hält jetzt
+auch im Verbund.
+
+**Was weiterhin aussteht:** Der echte CI-Lauf. Er verlangt einen Push, und im Arbeitsbaum liegt
+neben M5 die unfertige Persistenz-Welle — teils in denselben Dateien. Diese Entscheidung gehört dem
+Product Owner; sie ist getroffen worden: **kein Push**, der Nachweis bleibt ausstehend, bis die
+Persistenz-Welle landet. Lokal bleiben
+neun übersprungene Tests stehen (acht Upgrade-, ein Integrationsfall), die in der CI durch
+`BIFROST_REQUIRE_POSTGRES` und `BIFROST_REQUIRE_CONTAINER` scharf werden. Der Nachweis dafür entsteht
+erst im ersten CI-Lauf — bis dahin ist er offen, nicht erbracht.
+
+### WP5.1 — was steht und was ausdrücklich nicht
+
+Die Matrix in `tests/compatibility/matrix.json` ist die Quelle; `docs/acceptance/compatibility.md`
+wird daraus **erzeugt**, und ein Test hält fest, dass beide nicht auseinanderlaufen. Der Validator
+lässt kein `pass` ohne Beleg zu und kein Platzhalterfeld mit Beleg — acht Negativfälle prüfen, dass
+er dabei wirklich rot wird (Vertrag §1.1).
+
+Der Probelauf fährt das offizielle C#-SDK gegen den echten Gateway-Host und prüft **die Matrix
+gegen die Wirklichkeit**, statt sie fortzuschreiben: Jedes `pass` in der veröffentlichten Tabelle
+ist damit eine Zusicherung, die rot wird, wenn sie nicht mehr stimmt. Gegenprobe gemacht: Ein
+falsch gesetztes `oauth: pass` lässt den Lauf fehlschlagen.
+
+**Der veröffentlichte Stand ist heute 51 von 56 Zellen ungeprüft.** Belegt sind `tools`,
+`resources`, `prompts` und `skills` für das SDK auf Windows; `listChanged` steht auf `unsupported`,
+weil die ausgehandelten Serverfähigkeiten es seit ADR-0023 nicht mehr anbieten. Alle sechs
+Pflichtclients aus FR-P061 stehen als Platzhalter drin — sichtbar ungeprüft, statt zu fehlen.
+
+Nicht belegt und im Bericht so benannt: kein TCP, kein TLS, kein Reverse Proxy (der Probelauf
+nutzt den In-Process-Host — Netzstrecke ist WP5.3), keine Linux-Zeile, keine Handprotokolle.
+
+### WP5.3 — der Messstand hat zuerst sich selbst widerlegt
+
+Der Harness startet den Gateway als **eigenen Prozess** hinter Kestrel, holt sich den Zugang über
+`--issue-bootstrap-key` (also den Weg eines Betreibers ohne Oberfläche), legt den Upstream über die
+REST-API an und fährt Dauerlast über TCP, wahlweise mit TLS. Gemessen wird der Median aus drei
+Läufen; ein kürzerer Lauf schreibt sich selbst als `"complete": false` ins Artefakt und taugt damit
+nicht für eine Abnahmeaussage.
+
+**Der erste Durchgang meldete 11 ms Gateway-Overhead — das Achtfache des heutigen Werts.** Die
+Ursache lag im Messstand: Er zog die *angeforderten* 20 ms Upstream-Zeit ab, während
+`Task.Delay(20)` unter Windows regelmäßig gut 31 ms dauert. Die Timerauflösung erschien als
+Gateway-Anteil. Der Upstream misst seinen Span jetzt selbst und der Harness zieht die gemessene
+Zeit je Aufruf ab.
+
+Belegt ist damit: p50 1,4 ms und p95 2,2 ms Gateway-Overhead, über TCP wie über TLS, in beiden
+Betriebsarten, bei null Fehlern in ~92 000 Aufrufen je Szenario. TLS kostet ~50 % mehr CPU und
+keine Latenz. Offen bleiben der Reverse-Proxy-Sprung, die kleine VM als Referenz, GC-Kennzahlen und
+der Linux-Lauf — alle vier stehen im Abnahmedokument als nicht belegt.
+
+### WP5.4 — der Harness urteilt jetzt auch darüber, wann er nicht urteilen darf
+
+Der Soak fährt eine deterministische Lastmischung (Liste, Lesen, Schreiben, Skill, Audit; feste
+Saat) gegen einen echten Gateway-Prozess und stört ihn periodisch: Upstream hart abschießen,
+Upstream mitten im Aufruf abstürzen lassen, Verbindung ab- und wieder anschalten. Die Messreihe
+läuft **Zeile für Zeile** in `artifacts/soak/<run-id>/metrics.jsonl` — das hat sich sofort bezahlt
+gemacht: Ein Lauf, der am Ende an einem Abbruchfehler starb, hinterließ trotzdem 42 auswertbare
+Messpunkte.
+
+**Stand des Nachweises** (7 Minuten, 242 Aufrufe/s, 8 Störungen): 103 036 erfolgreiche und 4 087
+gescheiterte Aufrufe — Letztere sind die Störungen, ohne sie hätte das Chaos nicht gewirkt. Handles
+692 → 702, Threads 48 → 45, Kindprozesse konstant 2, **keine verwaisten Prozesse**, und nach der
+letzten Störung bedient der Gateway wieder. Die Gegenprobe mit eingebautem Fehler (jeder
+Schreibaufruf zerlegt seinen Upstream) meldet 50 922 Fehlschläge mit Begründung, während Lesen und
+Listen weiterlaufen.
+
+**Zwei Korrekturen am Harness, beide durch den ersten Lauf ausgelöst:**
+
+1. **Ein Fenster von 25 Sekunden ergibt kein Urteil mehr.** Der erste Lauf rechnete daraus eine
+   Steigung von 285 MB *pro Minute* hoch und meldete trotzdem „kein Wachstum" — gerettet allein von
+   der zweiten Bedingung, und zwar knapp. Unter fünf Minuten Messfenster sagt die Auswertung jetzt
+   ausdrücklich „keine Aussage", und ein Lauf, der als Betriebsnachweis gilt, muss ein Urteil
+   hergeben.
+2. **Der Soak hat Wartezeit zwischen den Aufrufen bekommen.** Ohne sie liefen 3 500 Aufrufe je
+   Sekunde — das ist Sättigung, nicht Dauerbetrieb. Für die Sättigungsgrenze gibt es WP5.3.
+
+### Befund aus WP5.4: Speicherwachstum unter Sättigung
+
+Der erste Lauf **ohne** Wartezeit (~3 500 Aufrufe/s) zeigte über 6,7 Minuten ein stetiges Wachstum:
+RSS 615 → 1 485 MB, Private Bytes 544 → 1 399 MB, rund **110 MB je Minute und ohne Abflachen**,
+während Handles (815 → 851) und Threads (67 → 58) flach blieben. Beim realistischen Lauf mit 242
+Aufrufen/s bleiben davon 213 → 289 MB über sechs Minuten übrig — nicht als ungebremst gewertet,
+aber auch nicht abgeflacht.
+
+Das ist ein **Befund, keine Diagnose**: Flache Handles bei wachsendem Speicher passen auf einen
+Rückstau (Verdacht: Audit-Pfad) genauso wie auf eine Server-GC, die ohne Speicherdruck nicht
+aufräumt. Nach der Regel dieser Welle wird er gemeldet und bekommt ein eigenes Paket; das
+Testprojekt repariert keinen Produktionscode (M5-Vertrag §7). Der Beleg liegt in
+`artifacts/soak/20260802-155800-load-and-chaos/metrics.jsonl`.
+
+Wer ihn aufnimmt, hat mit dem Nachtlauf das Werkzeug: Vier Stunden bei realistischer Rate
+entscheiden, ob die Kurve abflacht oder nicht.
+
+### WP5.5 — der Browsertest hat zuerst das Startlayout widerlegt
+
+Sechs Wege laufen gegen eine **veröffentlichte** Instanz über TLS, mit echter Datenbank und echtem
+Anmeldeformular: falsches Passwort wird abgewiesen, Anmelden und Abmelden, geschützte Seite ohne
+Sitzung, die Oberfläche wird tatsächlich interaktiv, ein Server wird über das Formular angeschlossen
+und meldet `Healthy`, und ein Kommando, das es nicht gibt, wird als Fehler angezeigt. Zusammen
+34 Sekunden.
+
+**Der Fund beim ersten Lauf:** Gegen `bin/Debug` liefert der Server `_framework/blazor.web.js` mit
+Status 200 und **null Bytes** aus. Der Blazor-Circuit startet dann nie — die Seiten werden weiter
+serverseitig gerendert und sehen benutzbar aus, aber kein Knopf tut etwas. Das ist derselbe
+Ausfall wie im ersten echten Betrieb (Badwolf, 2026-07-29), diesmal aber **kein Produktfehler**: Das
+Veröffentlichungsergebnis enthält die Datei mit 200 KB. Die Konsequenz gehört trotzdem
+festgehalten — ein Browsertest gegen das Entwicklungslayout hätte die halbe Oberfläche für kaputt
+erklärt und nichts über das Ausgelieferte gesagt. Der Harness veröffentlicht deshalb einmal je Lauf
+und fährt gegen dieses Ergebnis; `InteractivityJourneyTests` hält die Bedingung im Browser fest,
+während `BlazorScriptDeliveryTests` sie weiterhin im Bauergebnis prüft.
+
+**Beobachtung ohne Änderung:** Die Serverliste lädt ihre Zustände beim Öffnen und nach einer
+Aktion, einen Ticker gibt es nicht. Direkt nach dem Anschließen steht dort `Starting`, und erst ein
+Neuladen zeigt `Healthy`. Der Weg bildet das ab, wie ein Betreiber es täte; geändert wurde an der
+Oberfläche nichts (M5-Vertrag §7).
+
+**Test-IDs:** fünf Stück, alle additiv in `Servers.razor` — die Formularfelder tragen weder `id`
+noch Beschriftungsbezug, und Platzhaltertexte sind Text, den jemand jederzeit umformuliert. Die
+Anmeldung braucht keine: `#username`, `#password` und der Absendeknopf reichen.
+
+**Offen:** Freigabe, Tool-Pin-Änderung, Rolle/Profil, Keyausgabe, Backup/Restorestatus und das
+Erstsetup. Sie stehen in der WP-Tabelle als offen, nicht als „läuft schon".
+
+### WP5.6 — das einzige Paket dieser Welle mit Produktionscode
+
+Der Vertrag aus §2 liegt jetzt als `src/Bifrost.Abstractions/Support.cs`, der Dienst in
+`src/Bifrost.Core/Operations/SupportBundle/`. CLI, REST und Oberfläche sind **Adapter** darauf; die
+Frage, was in ein Bundle darf, wird genau einmal beantwortet.
+
+**Die Entscheidungen, die im Code stehen und nicht nur im Vertrag:**
+
+- **Auditinhalte und Credentialmaterial sind keine Kategorie.** Nicht abschaltbar, nicht per Flag —
+  ein Test hält das Enum daran fest, damit es niemand versehentlich aufweicht.
+- **Vorschau vor Erzeugung**, in allen drei Adaptern. In der Oberfläche ist der Erzeugen-Knopf ohne
+  Vorschau gesperrt, und der Browserweg prüft genau das.
+- **Ein zentraler Maskierungslauf** statt Vertrauen in die Quellen. Die Quellen sind für sich schon
+  zurückhaltend — genau darauf beruht die Gefahr: Jede neue Quelle erbt diese Annahme, ohne sie zu
+  prüfen. Der Durchgang am Ausgang gilt auch für die Quelle, die morgen dazukommt.
+- **Die Feldnamenliste ist dieselbe wie in der Audit-Redaktion**, verlinkt statt kopiert.
+
+**Der Nachweis** ist der Negativkorpus aus `SecretCorpus`: Er steckt in der Konfiguration, in einer
+Diagnose-Sonde, in einer Verbindungszeichenfolge und — im Integrationstest — in der Umgebung eines
+echten Upstreams. In keinem erzeugten Archiv taucht der Marker auf. Dazu: Prüfsummen im Manifest
+gegen die Dateien im Archiv, admin-only, Auditeintrag, und ein Browserweg, der das Archiv nach dem
+Erzeugen öffnet und durchsucht.
+
+**Was ehrlich fehlt:** Die Kategorie `Logs` liefert auf einer Installation ohne Logdatei kein
+Dokument, sondern eine Anleitung — der Gateway schreibt auf die Standardausgabe, und die gehört dem
+Prozessverwalter. Das steht als übersprungene Kategorie im Bundle, in der Vorschau und in der
+Oberfläche. Ein Bundle ohne Logs soll nicht aussehen wie eine Installation ohne Vorfälle.
+
+### WP5.2 — der erste Lauf gegen ein echtes Keycloak hat einen Produktfehler gefunden
+
+**Der Befund.** Die Suche nach den Metadaten eines Authorization Servers probiert drei
+Standardpfade der Reihe nach. Ein HTTP-Fehlerstatus kam aber als `HttpRequestException` aus dem
+Fetcher, während die Kandidatenschleife nur `OAuthDiscoveryException` abfing — sie brach beim
+**ersten 404** ab. Die beiden Ausweichpfade waren damit toter Code, und gegen jeden Server, der
+seine Metadaten nur unter `{issuer}/.well-known/openid-configuration` ausliefert (Keycloak unter
+anderen), scheiterte die Anbindung.
+
+Kein Test hätte das finden können: Alle bisherigen OAuth-Tests liefen gegen Nachbauten, und ein
+Nachbau antwortet auf dem Pfad, den man beim Schreiben im Kopf hatte. Behoben in
+`OAuthDiscovery.FetchJsonAsync` — der Abruffehler wird jetzt zum Kandidatenfehler, womit die
+Schleife tut, wofür sie geschrieben wurde. Das ist die eine Produktänderung, die WP5.2 vorsieht:
+Findings dürfen der OAuth-Owner beheben.
+
+**Belegt ist jetzt** (6 Tests, 16 Sekunden, Container inklusive): Discovery gegen einen fremden
+Server, Autorisierungsanfrage mit PKCE S256 und `resource`-Indikator, Anmeldung, Einlösung,
+Erneuerung. Dazu drei Gegenproben — ein falscher `code_verifier` wird abgewiesen, ein fremder
+Antwort-Issuer entwertet den Vorgang, und Klartext-Discovery bleibt ohne `AllowPrivateTargets`
+verboten.
+
+**Zwei Dinge am Harness sind erwähnenswert**, weil sie wie Abkürzungen aussehen und keine sind:
+Der Test meldet sich über das echte Anmeldeformular an (Formular holen, POST, Weiterleitung lesen)
+statt über die Admin-API — der abgekürzte Weg überspränge genau den Teil, der in der Praxis bricht.
+Und die Sitzungscookies übernimmt der Harness von Hand, weil Keycloak sie mit `Secure` setzt und ein
+.NET-Client sie über HTTP nicht zurückschickt. Beides betrifft den Browser-Ersatz, nicht den
+Gateway.
+
+**Offen:** der Lauf gegen einen externen, gehosteten Anbieter (Job eingerichtet, meldet ohne
+Zugangsdaten ausdrücklich „nicht gelaufen"), Widerruf, Ablauf (die Uhr des Validators lässt zwei
+Minuten Toleranz — ein Ablauftest kostet mehr Wartezeit als ein PR verträgt) und der Gateway als
+Resource Server gegen echte Token: Dessen Metadatenabruf besteht auf HTTPS, und dafür müsste dem
+Testzertifikat maschinenweit vertraut werden.
+
+### Änderungen außerhalb der WP-Zonen (Lead)
+
+1. **`ci.yml` schließt `Bifrost.Compatibility.Tests`, `Bifrost.Performance.Tests` und
+   `SoakRunTests` aus dem Solutionlauf aus.** Alle drei hängen an einer Gate-Variable, und das
+   dortige Skip-Gate erlaubt genau einen übersprungenen Test — ohne den Ausschluss wäre die
+   Hauptpipeline allein durch das Hinzufügen der Projekte rot geworden. Die Läufe gehören in
+   `compatibility.yml`, `soak.yml` und den `benchmark`-Job, und alle drei setzen ihre Variable auch
+   (M5-Vertrag §1.2). Ausgeschlossen ist beim Soak nur die Lauf-Klasse: Die Auswertung
+   (`GrowthAnalysisTests`) ist eine reine Rechnung und läuft bei jedem PR mit — sie ist der Prüfer,
+   der über jeden Nachtlauf urteilt.
+2. **Der `benchmark`-Job zeigt jetzt auf `tests/Bifrost.Performance.Tests`** und lädt
+   `artifacts/perf` als CI-Artefakt hoch. Ohne Artefakt wäre jede Messung nach dem Lauf verschwunden.
+3. **`SlowServer` hat ein zweites Werkzeug bekommen** (`sleep_measured`), das die tatsächlich
+   verbrauchte Zeit zurückgibt. `sleep` bleibt unverändert — ein bestehender Test prüft dessen
+   Wortlaut, und eine Änderung daran wäre eine Nebenwirkung dieser Welle gewesen.
+
 ## Laufender Meilenstein: M4 — Onboarding und Bedienbarkeit
 
 Vertrag in `src/Bifrost.Abstractions/Importing.cs`. Die Einfrierung der ersten Welle ist

@@ -88,6 +88,10 @@ public class SsrfCentralFetcherTests
             "Sonde durch OAuthDiscovery.EnsureTargetAllowedAsync geprueft — DIESER Test hat die "
             + "fehlende Pruefung gefunden: Die Sonde ging ungeprueft gegen die vom Betreiber "
             + "genannte Adresse, drei Zeilen bevor derselbe Schalter an die Discovery ging",
+        ["src/Bifrost.Server/Operations/SsrfGuardingHandler.cs"] =
+            "prueft JEDES Ziel mit OAuthDiscovery.EnsureTargetAllowedAsync, bevor die Verbindung "
+            + "steht — DIESER Test hat die Luecke gefunden: Die Freigabe-Benachrichtigung (WP6.3) "
+            + "rief die vom Betreiber genannte Adresse zuerst ungeprueft",
         ["src/Bifrost.Server/Program.cs"] =
             "--healthcheck gegen die eigene, fest verdrahtete Adresse — kein dynamisches Ziel",
         ["src/Bifrost.Cli/Program.cs"] =

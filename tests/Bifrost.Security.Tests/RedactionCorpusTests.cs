@@ -6,6 +6,7 @@ using Bifrost.Abstractions.Operations;
 using Bifrost.Core.Audit;
 using Bifrost.Core.Configuration;
 using Bifrost.Core.Diagnostics;
+using Bifrost.Core.Operations.SupportBundle;
 using Bifrost.Core.Upstreams;
 using Bifrost.Security.Tests.Infrastructure;
 using Xunit;
@@ -300,6 +301,70 @@ public class RedactionCorpusTests
             "die Meldung soll lesbar bleiben — sonst hilft sie niemandem bei der Fehlersuche");
     }
 
+    // ───────────────────────── Support-Bundle (WP5.6) ─────────────────────────
+
+    /// <summary>
+    /// Der zentrale Durchgang des Support-Bundles gegen den Korpus. Das Archiv verlaesst die
+    /// Installation — was hier durchkommt, liegt danach in einem Ticketanhang.
+    /// </summary>
+    [Fact]
+    public void The_support_bundle_pass_masks_every_corpus_value_in_a_secret_field()
+    {
+        var document = new Dictionary<string, object>(StringComparer.Ordinal);
+        for (var i = 0; i < SecretCorpus.All.Count; i++)
+        {
+            // Unter Feldnamen, wie sie in Konfiguration, Diagnose und Zustandsangaben vorkommen.
+            document[$"token{i}"] = SecretCorpus.All[i];
+        }
+
+        var plain = JsonSerializer.Serialize(document);
+        SecretCorpus.FirstLeakIn(plain).Should().NotBeNull("sonst prueft der Vergleich nichts");
+
+        var masked = new SupportBundleRedactor().RedactJson(plain);
+
+        SecretCorpus.FirstLeakIn(masked).Should().BeNull(
+            "ein Korpuswert im Support-Bundle ist ein Leck in einem Archiv, das weitergegeben wird");
+    }
+
+    /// <summary>
+    /// Dieselbe Pruefung fuer Freitext: Verbindungszeichenfolgen und Kopfzeilen tragen ihr
+    /// Geheimnis im <em>Wert</em>, nicht im Feldnamen.
+    /// </summary>
+    [Fact]
+    public void The_support_bundle_pass_masks_credentials_inside_plain_text()
+    {
+        var redactor = new SupportBundleRedactor();
+
+        var masked = redactor.RedactText(
+            $"Host=db;Username=bifrost;Password={SecretCorpus.ConnectionString}" + Environment.NewLine
+            + $"Authorization: Bearer {SecretCorpus.OAuthToken}" + Environment.NewLine
+            + $"upstream: https://agent:{SecretCorpus.HttpHeader}@example.invalid/mcp");
+
+        SecretCorpus.FirstLeakIn(masked).Should().BeNull();
+    }
+
+    /// <summary>
+    /// <b>Und die Grenze desselben Durchgangs, ausdruecklich festgehalten.</b> Ein Geheimnis unter
+    /// einem harmlosen Feldnamen und ohne erkennbare Form bleibt stehen — der Durchgang ist ein
+    /// Sicherheitsnetz, kein Inhaltsscanner. Deshalb haengt die Zusicherung des Bundles zuerst
+    /// daran, dass seine Quellen keine Secretwerte ausgeben (Konfigurationsexport ohne Secrets,
+    /// Diagnose nur mit sicheren Angaben) — und erst danach an dieser Maskierung.
+    /// <para>
+    /// Der Test steht hier, damit diese Grenze eine gepruefte Aussage ist und keine Annahme: Wer
+    /// eine neue Quelle anschliesst, darf sich auf den Durchgang nicht verlassen.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void A_secret_under_a_harmless_name_survives_the_pass_and_that_is_the_known_limit()
+    {
+        var masked = new SupportBundleRedactor().RedactJson(
+            JsonSerializer.Serialize(new Dictionary<string, string> { ["notiz"] = SecretCorpus.ToolArgument }));
+
+        SecretCorpus.FirstLeakIn(masked).Should().NotBeNull(
+            "diese Grenze ist bekannt und der Grund, warum die Quellen des Bundles nichts "
+            + "Geheimes ausgeben duerfen");
+    }
+
     /// <summary>
     /// <b>Der Waechter ueber die Redigierer selbst.</b> Jede Stelle, die etwas maskiert, ist ein
     /// Ausgabeweg — und jeder Ausgabeweg muss gegen den Korpus laufen. Kommt ein Redigierer dazu,
@@ -326,6 +391,12 @@ public class RedactionCorpusTests
             // eine Ausgabe auf, die NICHT dort entsteht: die Fehlermeldung eines fremden Prozesses
             // oder Dienstes beim Verbindungstest. Sein Korpustest steht unten.
             "Bifrost.Server.Importing.ImportValueScrubber",
+            // WP5.6: Der zentrale Durchgang des Support-Bundles. Sein Korpustest steht unten.
+            "Bifrost.Core.Operations.SupportBundle.SupportBundleRedactor",
+            // Kein Redigierer, sondern die Zahl im Manifest: wie oft maskiert wurde. Sie faellt nur
+            // wegen ihres Namens in dieses Netz — dieselbe Ausnahme wie bei den beiden Regelzeilen
+            // darueber.
+            "Bifrost.Abstractions.Operations.SupportBundleRedaction",
         };
 
         var redactors = BifrostAssemblies.AllTypes()

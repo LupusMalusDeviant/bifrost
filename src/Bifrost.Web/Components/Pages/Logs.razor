@@ -1,6 +1,8 @@
 @page "/logs"
 @attribute [Authorize(Policy = UiPolicies.Authenticated)]
+@using Bifrost.Core.Audit
 @inject IAuditQuery AuditQuery
+@inject IAuditExport AuditExport
 @inject IRbacManagement RbacMgmt
 @inject IUpstreamSupervisor Supervisor
 @inject IJSRuntime JS
@@ -97,8 +99,96 @@
     }
 </div>
 
+@* ── Export und Kette (WP6.2) ────────────────────────────────────────────────────────────────
+   Beides ist Verwaltung und steht deshalb hinter der Admin-Rolle, waehrend die Ansicht selbst
+   jedem Angemeldeten offensteht: Wer sein eigenes Handeln nachlesen darf, darf deshalb noch
+   lange nicht das ganze Log ausleiten. *@
+<AuthorizeView Policy="@UiPolicies.Admin">
+    <div class="card">
+        <h3 style="margin-top:0">Export</h3>
+        <p class="muted" style="margin-top:0">
+            Schreibt <strong>den aktuellen Filter</strong> als Datei — auf dem Rechner, auf dem der
+            Gateway läuft, nicht auf diesem hier. Die Zeilen gehen einzeln hinaus; auch ein Log mit
+            Millionen Einträgen zieht dabei keinen Arbeitsspeicher mit.
+        </p>
+        <div class="row">
+            <div style="flex:2">
+                <label>Zieldatei auf dem Gateway</label>
+                @* oninput statt des Vorgabe-Ereignisses: Sonst gilt der Pfad erst, wenn das Feld
+                   den Fokus verliert — der Knopf daneben bliebe gesperrt, obwohl etwas dasteht. *@
+                <input data-testid="audit-export-path" @bind="_exportPath" @bind:event="oninput"
+                       placeholder="/data/exports/audit.jsonl" />
+            </div>
+            <div>
+                <label>Format</label>
+                <select data-testid="audit-export-format" @bind="_exportFormat">
+                    <option value="Jsonl">JSONL</option>
+                    <option value="Csv">CSV</option>
+                </select>
+            </div>
+        </div>
+        <p class="muted" style="margin-top:.5rem">
+            CSV trägt die maskierten Argumente <strong>nicht</strong> — sie sind JSON und gehören
+            nicht in eine Tabellenzelle. Wer sie braucht, nimmt JSONL.
+        </p>
+        <div class="toolbar" style="margin-top:1rem">
+            <button data-testid="audit-export-run" @onclick="Export"
+                    disabled="@(_busy || string.IsNullOrWhiteSpace(_exportPath))">
+                @(_busy ? "Schreibt …" : "Exportieren")
+            </button>
+            <button class="btn-ghost" data-testid="audit-verify-run" @onclick="Verify" disabled="@_busy">
+                Kette prüfen
+            </button>
+            @if (_message is not null)
+            {
+                <span data-testid="audit-message" class="@(_failed ? "msg-err" : "msg-ok")">@_message</span>
+            }
+        </div>
+    </div>
+
+    @if (_chain is not null)
+    {
+        <div class="card">
+            <h3 style="margin-top:0">Integritätskette</h3>
+            <p data-testid="audit-chain-result" class="@(_chain.IsIntact ? "msg-ok" : "msg-err")">
+                @if (_chain.FirstBreak is { } broken)
+                {
+                    <text>Bruch ab Zeile @broken.Sequence: @broken.Reason</text>
+                }
+                else
+                {
+                    <text>Kein Bruch gefunden — @_chain.Checked verkettete Einträge in
+                    @_chain.Segments.Count Abschnitt(en).</text>
+                }
+            </p>
+
+            @if (_chain.Unchained > 0)
+            {
+                <p class="muted">
+                    @_chain.Unchained Eintrag/Einträge ohne Kettenglied — aus der Zeit vor der Kette.
+                    Sie sind kein Befund, aber auch nicht gedeckt.
+                </p>
+            }
+
+            @* Die Grenzen stehen NEBEN dem Ergebnis, nicht in einer Fußnote: Ein „kein Bruch
+               gefunden", das jemand für „nichts fehlt" hält, ist gefährlicher als keine Kette. *@
+            <h4>Was diese Prüfung nicht zeigt</h4>
+            <ul class="muted" data-testid="audit-chain-limits">
+                @foreach (var limit in _chain.Limits)
+                {
+                    <li>@limit</li>
+                }
+            </ul>
+        </div>
+    }
+</AuthorizeView>
+
 @code {
     private string _tool = "", _status = "", _origin = "", _caller = "", _server = "";
+    private string _exportPath = "", _exportFormat = "Jsonl";
+    private bool _busy, _failed;
+    private string? _message;
+    private AuditChainReport? _chain;
     private int _hours = 24, _page = 1;
     private PagedResult<AuditEvent> _result = new([], 0, 1, 50);
     private IReadOnlyList<Identity> _identities = [];
@@ -129,6 +219,75 @@
         Origin: Enum.TryParse<CallOrigin>(_origin, out var o) ? o : null,
         Page: page,
         PageSize: pageSize);
+
+    /// <summary>
+    /// Schreibt den Export — Zeile für Zeile in die Datei. Der Umweg über eine Zeichenkette oder
+    /// eine Liste wäre genau die Materialisierung, die dieser Weg vermeiden soll.
+    /// </summary>
+    private async Task Export()
+    {
+        _busy = true;
+        _message = null;
+        _failed = false;
+        try
+        {
+            var format = Enum.Parse<AuditExportFormat>(_exportFormat);
+            var written = 0L;
+
+            await using (var file = File.Create(Path.GetFullPath(_exportPath)))
+            await using (var writer = new StreamWriter(file))
+            {
+                if (AuditExportWriter.Header(format) is { } header)
+                {
+                    await writer.WriteLineAsync(header);
+                }
+
+                await foreach (var entry in AuditExport.StreamAsync(
+                    new AuditExportRequest(BuildFilter(1, 1)), CancellationToken.None))
+                {
+                    await writer.WriteLineAsync(AuditExportWriter.Line(entry, format));
+                    written++;
+                }
+            }
+
+            _message = $"{written:N0} Zeile(n) nach '{Path.GetFullPath(_exportPath)}' geschrieben.";
+        }
+        catch (Exception exception)
+        {
+            _failed = true;
+            _message = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>
+    /// Prüft die Kette — <b>ohne den Filter der Ansicht</b>. Über einen gefilterten Ausschnitt lässt
+    /// sich über die Kette nichts sagen: Jede herausgefilterte Zeile sähe aus wie eine gelöschte.
+    /// </summary>
+    private async Task Verify()
+    {
+        _busy = true;
+        _message = null;
+        _failed = false;
+        try
+        {
+            _chain = await AuditChainVerifier.VerifyAsync(
+                AuditExport.StreamAsync(new AuditExportRequest(new AuditFilter()), CancellationToken.None),
+                CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            _failed = true;
+            _message = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
 
     private static RenderFragment StatusBadge(InvocationStatus? status) => builder =>
     {

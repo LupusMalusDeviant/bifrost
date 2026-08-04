@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -174,6 +175,47 @@ public sealed class RestFacadeTests : IClassFixture<GatewayFixture>
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
         payload.GetProperty("content").GetProperty("content")[0].GetProperty("text").GetString()
             .Should().Be("Echo: per REST", "WP5-DoD: curl-Roundtrip gegen EchoServer-Tool");
+    }
+
+    /// <summary>
+    /// <b>Der Gegenfall zu „works like curl" — und der Befund, der ihn nötig gemacht hat.</b>
+    /// <para>
+    /// Der Endpunkt las den Rumpf nur bei gesetztem <c>Content-Length</c>. Bei
+    /// <c>Transfer-Encoding: chunked</c> ist der <c>null</c>, und damit verlor <b>jeder</b> Client,
+    /// der die Länge nicht vorab berechnet, seine Argumente still — darunter
+    /// <c>HttpClient.PostAsJsonAsync</c> von .NET selbst. Der Aufruf lief mit leeren Argumenten
+    /// weiter und scheiterte an der Schemaprüfung mit „Pflichtfeld fehlt": ein Fehler, der auf die
+    /// falsche Stelle zeigt.
+    /// </para>
+    /// <para>
+    /// Gefunden hat ihn der Browserweg zur Freigabe (WP5.5), nicht dieser Test — der hieß
+    /// <c>works_like_curl</c> und tat genau das: Er setzte die Länge, wie curl es tut.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Rest_invoke_also_works_for_a_client_that_sends_no_content_length()
+    {
+        await _gw.AddEchoUpstreamAsync("rest-chunked");
+        var (_, apiKey) = await _gw.SeedAdminAsync("chunked-admin");
+        using var client = CreateApiClient(apiKey);
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, "/api/v1/tools/rest-chunked__echo/invoke")
+        {
+            Content = new StreamContent(
+                new MemoryStream(Encoding.UTF8.GetBytes("""{"message":"ohne Laenge"}"""))),
+        };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        request.Content.Headers.ContentLength = null;
+        request.Headers.TransferEncodingChunked = true;
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK,
+            "ohne Content-Length dürfen die Argumente nicht verschwinden");
+        (await response.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("content").GetProperty("content")[0].GetProperty("text").GetString()
+            .Should().Be("Echo: ohne Laenge");
     }
 
     [Fact]

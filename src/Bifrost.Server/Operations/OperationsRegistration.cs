@@ -4,12 +4,18 @@ using Bifrost.Abstractions.Operations;
 using Bifrost.Core.Configuration;
 using Bifrost.Core.Diagnostics;
 using Bifrost.Core.Diagnostics.Upstreams;
+using Bifrost.Core.Operations.SupportBundle;
+using Bifrost.Core.Approvals;
+using Bifrost.Core.Policy;
+using Bifrost.Core.Usage;
+using Bifrost.Abstractions.Usage;
 using Bifrost.Persistence;
 using Bifrost.Persistence.Backup;
 using Bifrost.Persistence.Startup;
 using Bifrost.Server.Diagnostics;
 
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 
 namespace Bifrost.Server.Operations;
 
@@ -76,6 +82,9 @@ public static class OperationsRegistration
         // ── Diagnose (WP2.4) mit den Sonden, die nur der Serverprozess bedienen kann ────────────
         services.AddSingleton<IDatabaseDiagnosticProbe, EfDatabaseDiagnosticProbe>();
         services.AddSingleton<IUpstreamDiagnosticProbe, SupervisorUpstreamDiagnosticProbe>();
+        // BFR-DB-0007: Ohne diese Zeile meldet der Check "keine Auskunft" statt "lückenlos" — ein
+        // Verlust bliebe unsichtbar, und genau das war der Befund.
+        services.AddSingleton<IAuditDiagnosticProbe, ChannelAuditDiagnosticProbe>();
         services.AddSingleton<ServerDiagnosticContextFactory>();
         services.AddSingleton<IDiagnosticService, ServerDiagnosticService>();
 
@@ -100,6 +109,51 @@ public static class OperationsRegistration
         services.AddSingleton<IConfigurationExportService>(sp => new ConfigurationExportService(
             sp.GetRequiredService<IConfigurationSnapshotSource>(),
             sp.GetRequiredService<IConfigurationImportTarget>(),
+            sp.GetRequiredService<TimeProvider>()));
+
+        // ── Support-Bundle (WP5.6) ─────────────────────────────────────────────────────────────
+        // Der Dienst sammelt aus Diagnose und Konfigurationsexport — also aus Wegen, die es schon
+        // gibt. Was nur der Serverprozess weiss (Instanzkennung, Migrationsstand, Laufzeit),
+        // beantwortet der Port; entschieden wird im Kern.
+        services.AddSingleton<ISupportBundleEnvironment>(sp => new ServerSupportBundleEnvironment(
+            sp.GetRequiredService<IDbContextFactory<BifrostDbContext>>(),
+            sp.GetRequiredService<IUpstreamSupervisor>(),
+            dataDirectory,
+            databaseProvider));
+        services.AddSingleton<ISupportBundleService>(sp => new SupportBundleService(
+            sp.GetRequiredService<IDiagnosticService>(),
+            sp.GetRequiredService<IConfigurationExportService>(),
+            sp.GetRequiredService<ISupportBundleEnvironment>(),
+            sp.GetRequiredService<TimeProvider>()));
+
+        // ── Approval-Benachrichtigungen (WP6.3) ────────────────────────────────────────────────
+        // Die Ziele kommen aus der Konfiguration und nicht aus der Datenbank: Diese Welle legt
+        // keine Migration an, und ein Ziel ist Betriebsumgebung, kein Bestand. Ohne Adresse
+        // entsteht ein Zusteller ohne Ziele — er tut dann nichts, und das ist der Normalfall.
+        services.AddSingleton<IApprovalNotifier>(sp => new ApprovalNotificationDispatcher(
+            ApprovalNotificationSettings.FromConfiguration(sp.GetRequiredService<IConfiguration>()),
+            new HttpMessageInvoker(new SsrfGuardingHandler(
+                sp.GetRequiredService<IConfiguration>()[ApprovalNotificationSettings.AllowPrivateKey]
+                    is "1" or "true")),
+            sp.GetRequiredService<TimeProvider>(),
+            sp.GetRequiredService<ILogger<ApprovalNotificationDispatcher>>()));
+
+        // ── Policy Packs (WP6.1) ───────────────────────────────────────────────────────────────
+        // Der Planer baut nichts nach: Objektebene ueber den Konfigurationsimport aus M2,
+        // Vertrauensfrage ueber den Publisher-Trust-Store aus ADR-0016. Neu ist allein der
+        // Rechte-Diff.
+        services.AddSingleton(sp => new PolicyPackPlanner(
+            sp.GetRequiredService<IConfigurationExportService>(),
+            sp.GetRequiredService<IRbacManagement>(),
+            sp.GetRequiredService<IToolCatalog>(),
+            sp.GetRequiredService<IPublisherTrustStore>()));
+
+        // ── Token-Cockpit (WP6.4) ──────────────────────────────────────────────────────────────
+        // Es rechnet aus Katalog und Audit — und aendert nichts. Deshalb steht hier auch nichts
+        // ueber Profile: Wer einen Vorschlag uebernimmt, tut das ueber die Profilverwaltung.
+        services.AddSingleton<IUsageCockpit>(sp => new UsageCockpit(
+            sp.GetRequiredService<IToolCatalog>(),
+            sp.GetRequiredService<IAuditQuery>(),
             sp.GetRequiredService<TimeProvider>()));
 
         return services;

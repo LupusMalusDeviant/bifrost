@@ -396,6 +396,84 @@ public sealed class PostgresBackupToolVersionCheck : IDiagnosticCheck
     }
 }
 
+/// <summary>
+/// BFR-DB-0007 — <b>ist das Audit-Log lückenlos?</b> (ADR-0007)
+/// <para>
+/// Der Anlass ist der teuerste denkbare Ausfall dieses Produkts: nicht ein fehlgeschlagener Aufruf,
+/// sondern ein gelungener <i>ohne Nachweis</i>. Bis v0.6 verwarf der Batch-Writer im Modus
+/// <c>best-effort</c> einen nicht schreibbaren Batch nach einer Logzeile, und die Zähler der Senke
+/// standen in keinem Bericht. Wer das Log ansah, sah keine Lücke — er sah eine kürzere Liste.
+/// </para>
+/// <para>
+/// <b>Dieser Check beschönigt nicht.</b> Ein einziger Verlust ist ein <c>Fail</c> und keine Warnung:
+/// Die Zusage lautet „lückenlos", und eine Zusage, deren Bruch als Randnotiz erscheint, ist keine.
+/// Ohne verdrahtete Sonde meldet er <c>Skipped</c> — „keine Auskunft" ist nicht „nichts verloren".
+/// </para>
+/// </summary>
+public sealed class AuditCompletenessCheck : IDiagnosticCheck
+{
+    public string Code => DiagnosticCodes.AuditCompleteness;
+
+    public DiagnosticScope Scope => DiagnosticScope.Database;
+
+    // Reines Ablesen von Zählern im Arbeitsspeicher.
+    public TimeSpan Timeout => TimeSpan.FromSeconds(2);
+
+    public async Task<DiagnosticCheck> RunAsync(DiagnosticContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        if (context.Audit is null)
+        {
+            return CheckOutcome.Skipped(
+                Code,
+                "Keine Audit-Sonde verdrahtet. Ob Ereignisse verlorengingen, ist damit "
+                + "unbeantwortet — dieser Befund entsteht nur im laufenden Serverprozess.");
+        }
+
+        var facts = await context.Audit.DescribeAsync(ct).ConfigureAwait(false);
+        if (facts.Total == 0)
+        {
+            return CheckOutcome.Pass(
+                Code,
+                "Seit dem Start ist kein Audit-Ereignis verlorengegangen.",
+                CheckOutcome.Details(
+                    ("modus", facts.Mode),
+                    ("verloren_gesamt", DetailFormat.Count(0))));
+        }
+
+        var details = CheckOutcome.Details(
+            ("modus", facts.Mode),
+            ("verloren_gesamt", DetailFormat.Long(facts.Total)),
+            ("verworfen_bei_annahme", DetailFormat.Long(facts.LostAtIntake)),
+            ("aufgegeben_beim_schreiben", DetailFormat.Long(facts.LostAfterWriteFailure)),
+            ("erster_verlust", facts.FirstLossAt is { } first
+                ? first.ToString("O", CultureInfo.InvariantCulture)
+                : "nicht vermerkt"));
+
+        var since = facts.FirstLossAt is { } at
+            ? $" Der erste Verlust datiert auf {at.ToString("u", CultureInfo.InvariantCulture)}; ab "
+                + "diesem Zeitpunkt ist das Log nicht mehr vollständig."
+            : string.Empty;
+
+        return CheckOutcome.Fail(
+            Code,
+            $"{facts.Total.ToString(CultureInfo.InvariantCulture)} Audit-Ereignis(se) sind "
+            + $"verlorengegangen — {facts.LostAtIntake.ToString(CultureInfo.InvariantCulture)} bei "
+            + $"der Annahme (Puffer voll), "
+            + $"{facts.LostAfterWriteFailure.ToString(CultureInfo.InvariantCulture)} beim Schreiben "
+            + $"(Batch aufgegeben).{since}",
+            "Verluste bei der Annahme heissen Überlast: Der Batch-Writer kommt nicht nach — "
+            + "Datenbank-Durchsatz prüfen (bei SQLite die Platte, sonst auf PostgreSQL wechseln). "
+            + "Verluste beim Schreiben heissen, die Datenbank hat den Batch mehrfach abgelehnt — "
+            + $"den Serverlog um {(facts.FirstLossAt is { } t ? t.ToString("u", CultureInfo.InvariantCulture) : "den Zeitpunkt")} "
+            + "nach der Ursache durchsehen (siehe BFR-DB-0002). Wo Lückenlosigkeit zugesichert ist, "
+            + "gehört die Instanz auf BIFROST_AUDIT_MODE=compliance — dort wird unbegrenzt "
+            + "wiederholt und Überlast dem Aufrufer gemeldet, statt sie zu verschweigen.",
+            details);
+    }
+}
+
 internal static class DatabaseCheckSupport
 {
     public static DiagnosticCheck NoProbe(string code) => CheckOutcome.Skipped(

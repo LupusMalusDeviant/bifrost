@@ -1,4 +1,5 @@
 using Bifrost.Abstractions;
+using Bifrost.Abstractions.Operations;
 using Bifrost.Core.Configuration;
 
 namespace Bifrost.Core.Tests.Configuration;
@@ -80,9 +81,15 @@ internal sealed class FakeInstance : IConfigurationSnapshotSource, IConfiguratio
         return Task.CompletedTask;
     }
 
-    public Task AddRoleAsync(Role role, CancellationToken ct)
+    /// <summary>
+    /// Upsert anhand der Id — <b>wie der echte Port</b> (<c>IRbacManagement.UpsertRoleAsync</c>).
+    /// Vorher hängte die Attrappe nur an; damit hätte ein Test „ersetzt" gemeldet, wo im Betrieb
+    /// zwei Rollen desselben Namens entstanden wären.
+    /// </summary>
+    public Task SaveRoleAsync(Role role, CancellationToken ct)
     {
         Guard(role.Name);
+        Roles.RemoveAll(r => r.Id == role.Id);
         Roles.Add(role);
         Writes++;
         return Task.CompletedTask;
@@ -95,9 +102,11 @@ internal sealed class FakeInstance : IConfigurationSnapshotSource, IConfiguratio
         return Task.CompletedTask;
     }
 
-    public Task AddProfileAsync(ToolProfile profile, CancellationToken ct)
+    /// <summary>Upsert anhand der Id — siehe <see cref="SaveRoleAsync"/>.</summary>
+    public Task SaveProfileAsync(ToolProfile profile, CancellationToken ct)
     {
         Guard(profile.Name);
+        Profiles.RemoveAll(p => p.Id == profile.Id);
         Profiles.Add(profile);
         Writes++;
         return Task.CompletedTask;

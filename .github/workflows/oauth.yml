@@ -1,0 +1,86 @@
+# M5 / WP5.2 — OAuth gegen echte Gegenstellen.
+#
+# oauth-local läuft bei jedem PR gegen ein Keycloak im Container. BIFROST_REQUIRE_KEYCLOAK=1 macht
+# einen nicht startbaren Container zum Fehler statt zum stillen Überspringen — dieselbe Regel wie
+# bei PostgreSQL, und dieselbe Begründung: Auf einem Linux-Runner ist Docker da, ein Skip wäre dort
+# ein Ausfall des Nachweises.
+#
+# oauth-saas-smoke ist der Lauf gegen einen echten externen Anbieter. Er ist NICHT PR-Pflicht: Seine
+# Zugangsdaten stehen Fork-PRs nicht zur Verfügung, und ein Ausfall beim Anbieter darf keinen PR
+# blockieren. Solange keine Zugangsdaten hinterlegt sind, sagt der Job das ausdrücklich — ein grüner
+# Lauf ohne Konfiguration wäre die Behauptung, es sei geprüft worden.
+name: oauth
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: oauth-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  oauth-local:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build (warnings are errors)
+        run: dotnet build tests/Bifrost.Integration.Tests --configuration Release
+
+      # Das Image vorher holen, damit der Pull nicht in die Wartezeit des Containers fällt.
+      - name: Keycloak-Image holen
+        run: docker pull quay.io/keycloak/keycloak:26.0
+
+      - name: OAuth-Wege gegen Keycloak
+        env:
+          BIFROST_REQUIRE_KEYCLOAK: "1"
+        run: dotnet test tests/Bifrost.Integration.Tests --configuration Release --no-build --filter "FullyQualifiedName~Keycloak" --logger "console;verbosity=detailed"
+
+  oauth-saas-smoke:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Sind Zugangsdaten hinterlegt?
+        id: check
+        env:
+          ISSUER: ${{ secrets.OAUTH_SMOKE_ISSUER }}
+        run: |
+          if [ -z "$ISSUER" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "### OAuth-SaaS-Smoke NICHT gelaufen" >> "$GITHUB_STEP_SUMMARY"
+            echo "Es sind keine Zugangsdaten hinterlegt (Secret \`OAUTH_SMOKE_ISSUER\`)." >> "$GITHUB_STEP_SUMMARY"
+            echo "Der Nachweis gegen einen externen Anbieter steht damit weiterhin AUS." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::OAuth-SaaS-Smoke uebersprungen — keine Zugangsdaten hinterlegt."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-dotnet@v6
+        if: steps.check.outputs.configured == 'true'
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Smoke gegen den externen Anbieter
+        if: steps.check.outputs.configured == 'true'
+        env:
+          BIFROST_OAUTH_SMOKE_ISSUER: ${{ secrets.OAUTH_SMOKE_ISSUER }}
+          BIFROST_OAUTH_SMOKE_CLIENT_ID: ${{ secrets.OAUTH_SMOKE_CLIENT_ID }}
+          BIFROST_OAUTH_SMOKE_CLIENT_SECRET: ${{ secrets.OAUTH_SMOKE_CLIENT_SECRET }}
+        run: dotnet test tests/Bifrost.Integration.Tests --configuration Release --filter "FullyQualifiedName~OAuthSaasSmoke" --logger "console;verbosity=detailed"

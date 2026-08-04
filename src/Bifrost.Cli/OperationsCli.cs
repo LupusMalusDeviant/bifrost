@@ -40,6 +40,13 @@ public sealed class OperationsCli
 
     private const string Base = "api/v1/operations";
 
+    /// <summary>
+    /// Auditexport und Kettenprüfung liegen <b>neben der Auditansicht</b> (<c>api/v1/audit</c>) und
+    /// nicht unter den Betriebsbefehlen: Es ist dieselbe Sache in einer anderen Ausgabeform, und
+    /// eine zweite Adresse für dieselbe Sache lässt jeden raten, welche die richtige ist.
+    /// </summary>
+    private const string AuditBase = "api/v1/audit";
+
     private static readonly JsonSerializerOptions PrettyJson = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
@@ -68,7 +75,9 @@ public sealed class OperationsCli
     public static bool Handles(IReadOnlyList<string> args)
     {
         ArgumentNullException.ThrowIfNull(args);
-        return args.Count > 0 && args[0] is "backup" or "restore" or "doctor" or "config" or "db";
+        return args.Count > 0
+            && args[0] is "backup" or "restore" or "doctor" or "config" or "db" or "support-bundle"
+                or "policy" or "audit";
     }
 
     public const string UsageText =
@@ -83,12 +92,31 @@ public sealed class OperationsCli
           bifrost doctor [--scope configuration,database,keyring,network,runtime,upstreams]
           bifrost config export [--include-secrets] [--out <pfad>] [--passphrase-env <VAR>]
           bifrost config import <datei> [--dry-run] [--passphrase-env <VAR>]
+          bifrost audit export [--format jsonl|csv] [--out <pfad>] [--after <n>] [--limit <n>]
+                               [--from <zeit>] [--to <zeit>] [--tool <praefix>] [--kind <art>]
+                               [--status <status>] [--origin <herkunft>] [--caller <id>]
+                               [--server <id>]
+          bifrost audit verify [--after <n>] [--limit <n>]
+          bifrost policy plan <pack-datei>
+          bifrost policy apply <pack-datei> [--yes] [--undo-out <pfad>]
+          bifrost policy revert <rueckweg-datei>
           bifrost db unblock
+          bifrost support-bundle [--out <pfad>] [--categories version,configuration,diagnostics,
+                                 health,logs,migrations,runtime] [--log-lines <n>] [--preview]
 
         Pfade von backup/restore gelten auf dem Rechner, auf dem der Gateway laeuft.
         Eine Passphrase wird NIE als Argument entgegengenommen — sie stuende in der Prozessliste
         und in der Shell-Historie. Nur Umgebungsvariable oder Eingabe ohne Echo.
         Ein Vollbackup enthaelt den Key-Ring und ist so schuetzenswert wie die Instanz selbst.
+
+        'audit export' streamt: Die Zeilen gehen durch, ohne dass irgendwo die ganze Menge
+        entsteht — weder im Gateway noch hier. Ohne --out gehen sie auf die Standardausgabe.
+        'audit verify' rechnet die Integritaetskette nach und nennt die ERSTE gebrochene Stelle.
+        Was die Kette nicht zeigt, steht in ihrer eigenen Ausgabe.
+
+        'policy apply' zeigt IMMER zuerst, wer danach mehr darf, und fragt nach. --yes ueberspringt
+        die Frage, nicht die Anzeige. Der Rueckweg entsteht nur mit --undo-out: Ohne die Datei ist
+        die Uebernahme danach nicht mehr zurueckzunehmen.
         """;
 
     public async Task<int> RunAsync(IReadOnlyList<string> args, CancellationToken ct)
@@ -107,7 +135,13 @@ public sealed class OperationsCli
                 ["config", "export", .. var options] => await ConfigExportAsync(options, ct),
                 ["config", "import", var file, .. var options]
                     => await ConfigImportAsync(file, options, ct),
+                ["audit", "export", .. var options] => await AuditExportAsync(options, ct),
+                ["audit", "verify", .. var options] => await AuditVerifyAsync(options, ct),
+                ["policy", "plan", var pack] => await PolicyPlanAsync(pack, ct),
+                ["policy", "apply", var pack, .. var options] => await PolicyApplyAsync(pack, options, ct),
+                ["policy", "revert", var undoFile] => await PolicyRevertAsync(undoFile, ct),
                 ["db", "unblock"] => await UnblockAsync(ct),
+                ["support-bundle", .. var options] => await SupportBundleAsync(options, ct),
                 _ => await UsageAsync("Unbekannter Betriebsbefehl."),
             };
         }
@@ -171,6 +205,99 @@ public sealed class OperationsCli
             + Environment.NewLine
             + json.GetProperty("hinweis").GetString());
         return Success;
+    }
+
+    /// <summary>
+    /// Erzeugt ein weitergabefaehiges Bundle — oder zeigt mit <c>--preview</c> erst einmal, was
+    /// hineinkaeme. Der Vorschauweg ist kein Komfort: Ein Archiv, dessen Inhalt man erst nach dem
+    /// Schreiben sieht, ist bereits geschrieben.
+    /// </summary>
+    private async Task<int> SupportBundleAsync(IReadOnlyList<string> options, CancellationToken ct)
+    {
+        var parsed = new CliOptions(options);
+        var preview = parsed.Flag("--preview");
+        var categories = parsed.Value("--categories");
+        var logLines = parsed.Value("--log-lines");
+        var target = parsed.Value("--out");
+        parsed.EnsureNoRest();
+
+        if (logLines is not null && !int.TryParse(logLines, CultureInfo.InvariantCulture, out _))
+        {
+            throw new ArgumentException("--log-lines verlangt eine Zahl.");
+        }
+
+        var body = new
+        {
+            categories = categories?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            logTailLines = logLines is null ? (int?)null : int.Parse(logLines, CultureInfo.InvariantCulture),
+            outputPath = target,
+        };
+
+        var route = preview ? $"{Base}/support-bundle/preview" : $"{Base}/support-bundle";
+        var (status, json) = await SendAsync(HttpMethod.Post, route, body, ct);
+        if (status is not HttpStatusCode.OK)
+        {
+            return await FailAsync(status, json);
+        }
+
+        await WriteAsync(json, () => preview ? DescribePreview(json) : DescribeBundle(json));
+        return Success;
+    }
+
+    private static string DescribePreview(JsonElement json)
+    {
+        var text = new StringBuilder();
+        text.AppendLine(CultureInfo.InvariantCulture,
+            $"Vorschau: {json.GetProperty("entries").GetArrayLength()} Dokument(e), "
+            + $"{json.GetProperty("estimatedBytes").GetInt64().ToString("N0", CultureInfo.InvariantCulture)} Bytes roh");
+
+        foreach (var entry in json.GetProperty("entries").EnumerateArray())
+        {
+            text.AppendLine(CultureInfo.InvariantCulture,
+                $"  {entry.GetProperty("path").GetString(),-28} {entry.GetProperty("category").GetString()}");
+        }
+
+        return text.Append(DescribeSkips(json)).ToString().TrimEnd();
+    }
+
+    private static string DescribeBundle(JsonElement json)
+    {
+        var text = new StringBuilder();
+        text.AppendLine(CultureInfo.InvariantCulture, $"Bundle:   {json.GetProperty("archivePath").GetString()}");
+        text.AppendLine(CultureInfo.InvariantCulture,
+            $"Groesse:  {json.GetProperty("sizeBytes").GetInt64().ToString("N0", CultureInfo.InvariantCulture)} Bytes");
+        text.AppendLine(CultureInfo.InvariantCulture, $"SHA-256:  {json.GetProperty("sha256").GetString()}");
+        text.AppendLine(CultureInfo.InvariantCulture,
+            $"Maskiert: {json.GetProperty("manifest").GetProperty("redaction").GetProperty("redactedFields").GetInt32()} Feld(er)");
+        text.AppendLine(
+            "Enthaelt KEINE Auditinhalte und kein Credentialmaterial — das ist Absicht, nicht Zufall.");
+        return text.Append(DescribeSkips(json)).ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Uebersprungene Kategorien stehen in der Ausgabe, nicht nur im Manifest: Ein Bundle ohne Logs
+    /// soll nicht aussehen wie eine Installation ohne Vorfaelle.
+    /// </summary>
+    private static string DescribeSkips(JsonElement json)
+    {
+        var property = json.TryGetProperty("skipped", out var skipped)
+            ? skipped
+            : json.TryGetProperty("skippedCategories", out var alternative) ? alternative : default;
+
+        if (property.ValueKind is not JsonValueKind.Array || property.GetArrayLength() == 0)
+        {
+            return string.Empty;
+        }
+
+        var text = new StringBuilder("Uebersprungen:");
+        text.AppendLine();
+        foreach (var skip in property.EnumerateArray())
+        {
+            text.AppendLine(CultureInfo.InvariantCulture,
+                $"  {skip.GetProperty("category").GetString()}: {skip.GetProperty("reason").GetString()}");
+        }
+
+        return text.ToString();
     }
 
     private async Task<int> BackupVerifyAsync(
@@ -363,6 +490,287 @@ public sealed class OperationsCli
         return Success;
     }
 
+    // ── Auditexport und Kette (WP6.2) ───────────────────────────────────────────────────────────
+
+    /// <summary>Filteroptionen der CLI auf die Abfrageparameter des Endpunkts.</summary>
+    private static readonly (string Option, string Query)[] AuditFilterOptions =
+    [
+        ("--from", "from"), ("--to", "to"), ("--caller", "caller"), ("--server", "server"),
+        ("--tool", "tool"), ("--status", "status"), ("--kind", "kind"), ("--origin", "origin"),
+        ("--after", "after"), ("--limit", "limit"),
+    ];
+
+    /// <summary>
+    /// Exportiert das Auditlog — <b>durchgereicht, nicht gesammelt</b>.
+    /// <para>
+    /// Die Antwort wird gelesen, sobald die Kopfzeilen da sind, und direkt in die Zieldatei kopiert.
+    /// Ein Export, den die CLI erst vollständig in den Arbeitsspeicher holt, hätte die Zusage des
+    /// Gateways auf dem letzten Meter wieder aufgegeben — und zwar auf dem Rechner des Betreibers.
+    /// </para>
+    /// <para>
+    /// <b>Werte werden nicht hier ausgelegt.</b> Zeitangaben, Arten und Herkünfte gehen so hinaus,
+    /// wie sie eingegeben wurden; über ihre Gültigkeit entscheidet der Gateway. Eine zweite
+    /// Auslegung in der CLI wäre eine zweite Wahrheit, und die falsche wäre die hier.
+    /// </para>
+    /// </summary>
+    private async Task<int> AuditExportAsync(IReadOnlyList<string> options, CancellationToken ct)
+    {
+        var parsed = new CliOptions(options);
+        var format = parsed.Value("--format") ?? "jsonl";
+        var outPath = parsed.Value("--out");
+        var query = new List<string> { "format=" + Uri.EscapeDataString(format) };
+
+        foreach (var (option, name) in AuditFilterOptions)
+        {
+            if (parsed.Value(option) is { } value)
+            {
+                query.Add($"{name}={Uri.EscapeDataString(value)}");
+            }
+        }
+
+        parsed.EnsureNoRest();
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get, $"{AuditBase}/export?" + string.Join('&', query));
+        using var response = await _client
+            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
+            .ConfigureAwait(false);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            await _error.WriteLineAsync(body);
+            return response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                ? UsageError
+                : UnexpectedError;
+        }
+
+        await using var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+
+        if (outPath is null)
+        {
+            using var reader = new StreamReader(source);
+            while (await reader.ReadLineAsync(ct).ConfigureAwait(false) is { } line)
+            {
+                await _output.WriteLineAsync(line).ConfigureAwait(false);
+            }
+
+            return Success;
+        }
+
+        var target = Path.GetFullPath(outPath);
+        await using (var file = File.Create(target))
+        {
+            await source.CopyToAsync(file, ct).ConfigureAwait(false);
+        }
+
+        await _output.WriteLineAsync(
+            $"Auditexport nach '{target}' geschrieben ({new FileInfo(target).Length:N0} Bytes).");
+        return Success;
+    }
+
+    /// <summary>
+    /// Rechnet die Integritätskette nach. Ein Bruch ist <b>kein</b> Programmfehler, sondern ein
+    /// Befund — er bekommt deshalb den Diagnose-Exit-Code und nicht den für „etwas ging schief".
+    /// </summary>
+    private async Task<int> AuditVerifyAsync(IReadOnlyList<string> options, CancellationToken ct)
+    {
+        var parsed = new CliOptions(options);
+        var query = new List<string>();
+        foreach (var option in (string[])["--after", "--limit"])
+        {
+            if (parsed.Value(option) is { } value)
+            {
+                query.Add($"{option[2..]}={Uri.EscapeDataString(value)}");
+            }
+        }
+
+        parsed.EnsureNoRest();
+
+        var path = $"{AuditBase}/verify" + (query.Count > 0 ? "?" + string.Join('&', query) : string.Empty);
+        var (status, report) = await SendAsync(HttpMethod.Get, path, null, ct);
+        if (status is not HttpStatusCode.OK)
+        {
+            return await FailAsync(status, report);
+        }
+
+        await _output.WriteLineAsync(_jsonOutput ? JsonSerializer.Serialize(report) : DescribeChain(report));
+        return report.GetProperty("firstBreak").ValueKind is JsonValueKind.Null
+            ? Success
+            : DiagnosticFailure;
+    }
+
+    /// <summary>
+    /// Der Kettenbericht im Klartext — <b>samt seiner Grenzen</b>. Die stehen nicht am Rand: Ein
+    /// „Kette intakt", das jemand für „nichts fehlt" hält, ist gefährlicher als gar keine Kette.
+    /// </summary>
+    private static string DescribeChain(JsonElement report)
+    {
+        var text = new StringBuilder();
+        var broken = report.GetProperty("firstBreak");
+
+        text.Append("Geprueft: ").Append(report.GetProperty("checked").GetInt64())
+            .AppendLine(" verkettete Eintraege");
+
+        if (report.GetProperty("unchained").GetInt64() is > 0 and var unchained)
+        {
+            text.Append("Ohne Kettenglied: ").Append(unchained)
+                .AppendLine(" (aus der Zeit vor der Kette — nicht gedeckt)");
+        }
+
+        text.Append("Abschnitte: ").AppendLine(
+            report.GetProperty("segments").GetArrayLength().ToString(CultureInfo.InvariantCulture));
+
+        if (broken.ValueKind is JsonValueKind.Null)
+        {
+            text.AppendLine("Ergebnis: kein Bruch gefunden.");
+        }
+        else
+        {
+            text.Append("BRUCH ab Zeile ").Append(broken.GetProperty("sequence").GetInt64())
+                .Append(": ").AppendLine(broken.GetProperty("reason").GetString());
+        }
+
+        text.AppendLine().AppendLine("Was diese Pruefung NICHT zeigt:");
+        text.Append(Bullets(report, "limits"));
+        return text.ToString().TrimEnd();
+    }
+
+    // ── Policy Packs (WP6.1) ────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Zeigt, was ein Pack täte — <b>und wer danach mehr darf</b>. Schreibt nichts.
+    /// <para>
+    /// Ein Plan, der nicht anwendbar ist, endet mit Code 5, wie beim Konfigurationsimport: Für ein
+    /// Skript ist „geprüft und abgelehnt" etwas anderes als „gelaufen".
+    /// </para>
+    /// </summary>
+    private async Task<int> PolicyPlanAsync(string packFile, CancellationToken ct)
+    {
+        var (status, plan) = await PlanPackAsync(packFile, ct);
+        if (status is not HttpStatusCode.OK)
+        {
+            return await FailAsync(status, plan);
+        }
+
+        await _output.WriteLineAsync(_jsonOutput ? JsonSerializer.Serialize(plan) : DescribePack(plan));
+        return plan.GetProperty("canApply").GetBoolean() ? Success : ArchiveInvalid;
+    }
+
+    /// <summary>
+    /// Übernimmt ein Pack — planen, <b>zeigen</b>, fragen, anwenden.
+    /// <para>
+    /// <b>Die Anzeige ist nicht überspringbar.</b> <c>--yes</c> überspringt die Rückfrage, nicht den
+    /// Rechte-Diff: Eine Übernahme, bei der niemand gesehen hat, wer danach mehr darf, ist genau
+    /// die stille Rechteausweitung, gegen die dieses Paket gebaut ist.
+    /// </para>
+    /// <para>
+    /// <b>Der Rückweg entsteht nur mit <c>--undo-out</c>.</b> Er steht in der Antwort der Übernahme
+    /// und wird nirgends aufbewahrt; ohne die Datei ist er nach dem Befehl weg. Deshalb steht ohne
+    /// <c>--undo-out</c> eine Warnung da und keine Beruhigung.
+    /// </para>
+    /// </summary>
+    private async Task<int> PolicyApplyAsync(
+        string packFile, IReadOnlyList<string> options, CancellationToken ct)
+    {
+        var parsed = new CliOptions(options);
+        var confirmed = parsed.Flag("--yes");
+        var undoOut = parsed.Value("--undo-out");
+        parsed.EnsureNoRest();
+
+        var (planStatus, plan) = await PlanPackAsync(packFile, ct);
+        if (planStatus is not HttpStatusCode.OK)
+        {
+            return await FailAsync(planStatus, plan);
+        }
+
+        await _output.WriteLineAsync(_jsonOutput ? JsonSerializer.Serialize(plan) : DescribePack(plan));
+
+        if (!plan.GetProperty("canApply").GetBoolean())
+        {
+            return ArchiveInvalid;
+        }
+
+        if (!confirmed && !await ConfirmPackAsync(plan, ct))
+        {
+            await _error.WriteLineAsync("Abgebrochen: Es wurde nichts geschrieben.");
+            return TargetNotEmpty;
+        }
+
+        var (applyStatus, application) = await SendAsync(HttpMethod.Post, $"{Base}/policy/apply", plan, ct);
+        if (applyStatus is not HttpStatusCode.OK)
+        {
+            return await FailAsync(applyStatus, application);
+        }
+
+        if (undoOut is { } target)
+        {
+            await File.WriteAllTextAsync(
+                Path.GetFullPath(target), JsonSerializer.Serialize(application, PrettyJson), ct);
+        }
+
+        await WriteAsync(application, () =>
+            $"Uebernommen: {application.GetProperty("id").GetString()}"
+            + $"@{application.GetProperty("version").GetString()}"
+            + Environment.NewLine
+            + (undoOut is null
+                ? "WARNUNG: Ohne --undo-out ist der Rueckweg dieses Vorgangs nicht mehr verfuegbar."
+                : $"Rueckweg nach '{Path.GetFullPath(undoOut)}' geschrieben — "
+                    + "'bifrost policy revert <datei>' nimmt die Uebernahme zurueck."));
+        return Success;
+    }
+
+    /// <summary>
+    /// Nimmt eine Übernahme zurück — mit der Datei aus <c>--undo-out</c>, nicht mit einem Stand von
+    /// gestern: Ein ganzer Stand fasst auch an, was mit dem Pack nie zu tun hatte.
+    /// </summary>
+    private async Task<int> PolicyRevertAsync(string undoFile, CancellationToken ct)
+    {
+        var body = JsonSerializer.Deserialize<JsonElement>(
+            await File.ReadAllTextAsync(Path.GetFullPath(undoFile), ct));
+
+        var (status, result) = await SendAsync(HttpMethod.Post, $"{Base}/policy/revert", body, ct);
+        if (status is not (HttpStatusCode.NoContent or HttpStatusCode.OK))
+        {
+            return await FailAsync(status, result);
+        }
+
+        await _output.WriteLineAsync("Uebernahme zurueckgenommen.");
+        return Success;
+    }
+
+    private async Task<(HttpStatusCode Status, JsonElement Body)> PlanPackAsync(
+        string packFile, CancellationToken ct)
+    {
+        var pack = packFile == "-"
+            ? await _input.ReadToEndAsync(ct)
+            : await File.ReadAllTextAsync(Path.GetFullPath(packFile), ct);
+
+        return await SendAsync(HttpMethod.Post, $"{Base}/policy/plan", new { pack }, ct);
+    }
+
+    /// <summary>
+    /// Die Rückfrage nennt die <b>Zahl</b> der zusätzlichen Berechtigungen. „Wirklich fortfahren?"
+    /// ohne diese Zahl ist eine Frage, auf die jeder ja sagt.
+    /// </summary>
+    private async Task<bool> ConfirmPackAsync(JsonElement plan, CancellationToken ct)
+    {
+        var added = CountOf(plan, "rightsDelta", "added");
+        await _output.WriteLineAsync(added == 0
+            ? "Dieses Pack gibt keiner Identitaet zusaetzliche Rechte. Zum Fortfahren 'uebernehmen' eingeben:"
+            : $"Dieses Pack gibt {added} zusaetzliche Berechtigung(en) — sie stehen oben einzeln. "
+                + "Zum Fortfahren 'uebernehmen' eingeben:");
+        var answer = await _input.ReadLineAsync(ct);
+        return string.Equals(answer?.Trim(), "uebernehmen", StringComparison.Ordinal);
+    }
+
+    private static int CountOf(JsonElement parent, string property, string child)
+        => parent.TryGetProperty(property, out var value)
+            && value.TryGetProperty(child, out var array)
+            && array.ValueKind is JsonValueKind.Array
+                ? array.GetArrayLength()
+                : 0;
+
     // ── Recovery ────────────────────────────────────────────────────────────────────────────────
 
     private async Task<int> UnblockAsync(CancellationToken ct)
@@ -425,6 +833,64 @@ public sealed class OperationsCli
 
         return text.ToString().TrimEnd();
     }
+
+    /// <summary>
+    /// Der Plan eines Policy Packs im Klartext.
+    /// <para>
+    /// <b>Der Rechte-Diff steht oben, nicht unten.</b> Wer eine Ausgabe abschneidet oder nur den
+    /// Anfang liest, soll die Rechteausweitung sehen und nicht die Herausgeberbeschreibung. Und
+    /// jede zusätzliche Berechtigung steht <b>einzeln</b> da, mit Identität und Wirkungsebene —
+    /// „3 Rechte hinzugefügt" ist keine Aussage, über die jemand entscheiden kann.
+    /// </para>
+    /// </summary>
+    private static string DescribePack(JsonElement plan)
+    {
+        var text = new StringBuilder();
+        var manifest = plan.GetProperty("manifest");
+        text.Append("Pack: ").Append(manifest.GetProperty("id").GetString())
+            .Append('@').AppendLine(manifest.GetProperty("version").GetString());
+        text.Append("Herausgeber: ").Append(plan.GetProperty("publisherKeyId").GetString())
+            .Append(" (").Append(plan.GetProperty("trustLevel").GetString()).AppendLine(")");
+
+        var added = Rights(plan, "added");
+        text.AppendLine(added.Length > 0
+            ? "Zusaetzliche Rechte:" + Environment.NewLine + added
+            : "Zusaetzliche Rechte: keine.");
+
+        var removed = Rights(plan, "removed");
+        if (removed.Length > 0)
+        {
+            text.AppendLine("Entzogene Rechte:").AppendLine(removed);
+        }
+
+        foreach (var (property, label) in ((string, string)[])
+                 [("updates", "Wird ersetzt"), ("additions", "Neu"), ("unchanged", "Unveraendert"),
+                  ("conflicts", "Konflikte"), ("missingTools", "Hier unbekannte Werkzeuge"),
+                  ("notes", "Hinweise")])
+        {
+            var lines = Bullets(plan, property);
+            if (lines.Length > 0)
+            {
+                text.AppendLine(label + ":").AppendLine(lines);
+            }
+        }
+
+        text.Append("Anwendbar: ").Append(plan.GetProperty("canApply").GetBoolean() ? "ja" : "nein");
+        return text.ToString().TrimEnd();
+    }
+
+    /// <summary>Ein Recht je Zeile: <c>identitaet: Wirkung auf Ebene</c>.</summary>
+    private static string Rights(JsonElement plan, string property)
+        => plan.TryGetProperty("rightsDelta", out var delta)
+            && delta.TryGetProperty(property, out var array)
+            && array.ValueKind is JsonValueKind.Array
+                ? string.Join(
+                    Environment.NewLine,
+                    array.EnumerateArray().Select(entry =>
+                        "  - " + entry.GetProperty("identity").GetString()
+                        + ": " + entry.GetProperty("action").GetString()
+                        + " auf " + entry.GetProperty("scope").GetString()))
+                : string.Empty;
 
     private static string DescribeReport(JsonElement report)
     {

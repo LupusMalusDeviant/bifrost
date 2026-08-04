@@ -3,6 +3,7 @@
 @attribute [Authorize(Policy = UiPolicies.Admin)]
 @inject IDiagnosticService Diagnostics
 @inject IBackupService Backups
+@inject ISupportBundleService SupportBundles
 @inject IAuditSink Audit
 @inject TimeProvider Time
 @inject AuthenticationStateProvider AuthState
@@ -68,7 +69,8 @@
     <div class="row">
         <div>
             <label>Zielpfad</label>
-            <input @bind="_target" placeholder="data/backups/bifrost-2026-07-31.zip" />
+            <input data-testid="backup-path" @bind="_target" @bind:event="oninput"
+                   placeholder="data/backups/bifrost-2026-07-31.zip" />
         </div>
         <div>
             <label>Passphrase (leer = unverschlüsselt)</label>
@@ -76,18 +78,20 @@
         </div>
     </div>
     <div class="pill-list" style="margin-top:.6rem">
-        <label class="pill"><input type="checkbox" @bind="_database" /> Datenbank</label>
-        <label class="pill"><input type="checkbox" @bind="_keyRing" /> Key-Ring</label>
+        <label class="pill"><input data-testid="backup-database" type="checkbox" @bind="_database" /> Datenbank</label>
+        <label class="pill"><input data-testid="backup-keyring" type="checkbox" @bind="_keyRing" /> Key-Ring</label>
         <label class="pill"><input type="checkbox" @bind="_packages" /> Connector-Pakete</label>
         <label class="pill"><input type="checkbox" @bind="_config" /> Instanzkonfiguration</label>
     </div>
     <div class="toolbar" style="margin-top:.75rem">
         @* Eine Sicherung zerstört nichts — sie legt aber ein Geheimnis auf die Platte. Deshalb die
            Rückfrage an derselben Stelle wie bei den zerstörenden Aktionen. *@
-        <ConfirmButton Label="Sicherung anlegen" What="@_target" OnConfirmed="CreateBackup" />
+        <span data-testid="backup-confirm">
+            <ConfirmButton Label="Sicherung anlegen" What="@_target" OnConfirmed="CreateBackup" />
+        </span>
         @if (_message is not null)
         {
-            <span class="@(_ok ? "msg-ok" : "msg-err")">@_message</span>
+            <span data-testid="backup-message" class="@(_ok ? "msg-ok" : "msg-err")">@_message</span>
         }
     </div>
     @if (_lastArchive is not null)
@@ -95,6 +99,80 @@
         <div class="card-accent" style="margin-top:.75rem;padding:.75rem 1rem">
             <div class="mono">@_lastArchive</div>
             <div class="muted" style="margin-top:.3rem">@_lastHint</div>
+        </div>
+    }
+</div>
+
+@* WP5.6: Der Weg, auf dem ein Pilot etwas zum Analysieren mitschicken kann, ohne Vollzugriff zu
+   geben. Vorschau zuerst — ein Archiv, dessen Inhalt man erst nach dem Schreiben sieht, ist bereits
+   geschrieben, und danach verlaesst es das Haus. *@
+<div class="card">
+    <h3 style="margin-top:0">Support-Bundle</h3>
+    <p class="muted" style="margin-top:0">
+        Versionen, Konfiguration ohne Secretwerte, Diagnose, Zustand, Migrationsstand und
+        Laufzeitangaben — jedes Dokument geht durch einen zentralen Maskierungslauf.
+        <strong>Keine Auditinhalte und kein Credentialmaterial</strong>, auch nicht auf Wunsch:
+        Der vollständige Auditexport bleibt davon getrennt (FR-P075).
+    </p>
+    <div class="row">
+        <div style="flex:3">
+            <label>Zielpfad (auf dem Rechner des Gateways; leer = Datenverzeichnis)</label>
+            <input data-testid="bundle-path" @bind="_bundlePath" placeholder="/data/support/bundle.zip" />
+        </div>
+        <div>
+            <label>Logzeilen</label>
+            <input type="number" min="1" max="10000" @bind="_bundleLogLines" />
+        </div>
+    </div>
+    <div class="toolbar" style="margin-top:1rem">
+        <button class="btn-ghost" data-testid="bundle-preview" @onclick="PreviewBundle" disabled="@_bundleBusy">
+            Vorschau
+        </button>
+        <button data-testid="bundle-create" @onclick="CreateBundle" disabled="@(_bundleBusy || _bundlePreview is null)">
+            Bundle erzeugen
+        </button>
+        @if (_bundleMessage is not null)
+        {
+            <span data-testid="bundle-message" class="@(_bundleOk ? "msg-ok" : "msg-err")">@_bundleMessage</span>
+        }
+    </div>
+
+    @if (_bundlePreview is not null)
+    {
+        <div class="table-wrap" style="margin-top:.75rem">
+            <table>
+                <thead><tr><th>Datei</th><th>Kategorie</th><th>Bytes</th></tr></thead>
+                <tbody>
+                    @foreach (var entry in _bundlePreview.Entries)
+                    {
+                        <tr>
+                            <td class="mono">@entry.Path</td>
+                            <td>@entry.Category</td>
+                            <td>@entry.Bytes.ToString("N0")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @* Was fehlt, steht sichtbar da: Ein Bundle ohne Logs soll nicht aussehen wie eine
+           Installation ohne Vorfaelle. *@
+        @if (_bundlePreview.SkippedCategories.Count > 0)
+        {
+            <ul class="muted" style="margin-top:.5rem">
+                @foreach (var skip in _bundlePreview.SkippedCategories)
+                {
+                    <li><strong>@skip.Category:</strong> @skip.Reason</li>
+                }
+            </ul>
+        }
+    }
+
+    @if (_lastBundle is not null)
+    {
+        <div class="card-accent" style="margin-top:.75rem;padding:.75rem 1rem">
+            <div class="mono">@_lastBundle</div>
+            <div class="muted" style="margin-top:.3rem">@_lastBundleHint</div>
         </div>
     }
 </div>
@@ -143,6 +221,72 @@
 
     private async Task<string> UserAsync()
         => (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "?";
+
+    // ── Support-Bundle (WP5.6) ──────────────────────────────────────────────
+    private string _bundlePath = "";
+    private int _bundleLogLines = 200;
+    private bool _bundleBusy, _bundleOk;
+    private string? _bundleMessage, _lastBundle, _lastBundleHint;
+    private SupportBundlePreview? _bundlePreview;
+
+    private SupportBundleRequest BundleRequest() => new(
+        Categories: null,
+        LogTailLines: Math.Clamp(_bundleLogLines, 1, 10000),
+        OutputPath: string.IsNullOrWhiteSpace(_bundlePath) ? null : _bundlePath.Trim());
+
+    private async Task PreviewBundle()
+    {
+        _bundleBusy = true;
+        _bundleMessage = null;
+        try
+        {
+            _bundlePreview = await SupportBundles.PreviewAsync(BundleRequest(), CancellationToken.None);
+            _bundleOk = true;
+            _bundleMessage = $"{_bundlePreview.Entries.Count} Dokument(e), "
+                + $"{_bundlePreview.EstimatedBytes.ToString("N0")} Bytes roh.";
+        }
+        catch (Exception exception)
+        {
+            _bundleOk = false;
+            _bundleMessage = exception.Message;
+        }
+        finally
+        {
+            _bundleBusy = false;
+        }
+    }
+
+    private async Task CreateBundle()
+    {
+        _bundleBusy = true;
+        _bundleMessage = null;
+        try
+        {
+            var result = await SupportBundles.CreateAsync(BundleRequest(), CancellationToken.None);
+            _lastBundle = result.ArchivePath;
+            _lastBundleHint = $"{result.Bytes.ToString("N0")} Bytes · SHA-256 {result.Sha256[..12]}… · "
+                + $"{result.Manifest.Redaction.RedactedFields} Feld(er) maskiert. "
+                + "Vor dem Weitergeben trotzdem hineinsehen — das Archiv ist Text.";
+            _bundleOk = true;
+            _bundleMessage = "Bundle erzeugt.";
+
+            // Derselbe Vorgang wie im REST-Weg: Wer ein Archiv erzeugt, das die Installation
+            // verlaesst, steht danach im Audit.
+            Audit.Record(new AuditEvent(
+                Time.GetUtcNow(), null, CallOrigin.Ui, AuditEventKind.ConfigChanged, null,
+                $"support-bundle-created:{result.Manifest.InstanceId}:{result.Sha256[..12]}",
+                null, null, null, null, null, null, $"Support-Bundle durch {await UserAsync()}"));
+        }
+        catch (Exception exception)
+        {
+            _bundleOk = false;
+            _bundleMessage = exception.Message;
+        }
+        finally
+        {
+            _bundleBusy = false;
+        }
+    }
 
     private BackupSections Sections()
     {

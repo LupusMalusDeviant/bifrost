@@ -102,6 +102,12 @@ public sealed class BifrostDbContext : DbContext
             e.HasIndex(r => r.ServerId);
             e.HasIndex(r => r.Tool);
             e.HasIndex(r => r.Status);
+
+            // Der Prüfer liest je Abschnitt in Positionsfolge — ohne diesen Index wäre das auf
+            // einem großen Log ein voller Tabellenscan je Abschnitt.
+            e.HasIndex(r => new { r.ChainId, r.ChainIndex });
+            e.Property(r => r.PreviousHash).HasMaxLength(64);
+            e.Property(r => r.EntryHash).HasMaxLength(64);
         });
 
         modelBuilder.Entity<UiUserRow>(e =>
@@ -398,6 +404,21 @@ public sealed class AuditEventRow
 
     /// <summary>Verbindet Ereignisse derselben Invocation (ADR-0019).</summary>
     public Guid? CorrelationId { get; set; }
+
+    /// <summary>
+    /// Der Kettenabschnitt dieses Eintrags (M6/WP6.2, FR-P073) — ein Abschnitt je Schreiberlauf.
+    /// <c>null</c> bei Zeilen aus der Zeit vor der Kette.
+    /// </summary>
+    public Guid? ChainId { get; set; }
+
+    /// <summary>Position im Abschnitt, bei 0 beginnend. Eine Lücke hier ist eine fehlende Zeile.</summary>
+    public long? ChainIndex { get; set; }
+
+    /// <summary>Der Hash des Vorgängers; beim ersten Eintrag eines Abschnitts <c>AuditChain.Genesis</c>.</summary>
+    public string? PreviousHash { get; set; }
+
+    /// <summary>SHA-256 über Vorgängerhash und kanonischer Fassung dieses Eintrags.</summary>
+    public string? EntryHash { get; set; }
 }
 
 public sealed class UiUserRow

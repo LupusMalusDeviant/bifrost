@@ -201,6 +201,12 @@ namespace Bifrost.Persistence.Migrations.Postgres.Migrations
                     b.Property<string>("CallerRoles")
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("ChainId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("ChainIndex")
+                        .HasColumnType("bigint");
+
                     b.Property<Guid?>("CorrelationId")
                         .HasColumnType("uuid");
 
@@ -210,11 +216,19 @@ namespace Bifrost.Persistence.Migrations.Postgres.Migrations
                     b.Property<double?>("DurationMs")
                         .HasColumnType("double precision");
 
+                    b.Property<string>("EntryHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<int>("Kind")
                         .HasColumnType("integer");
 
                     b.Property<int>("Origin")
                         .HasColumnType("integer");
+
+                    b.Property<string>("PreviousHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<string>("RedactedArgumentsJson")
                         .HasColumnType("text");
@@ -251,6 +265,8 @@ namespace Bifrost.Persistence.Migrations.Postgres.Migrations
                     b.HasIndex("Timestamp");
 
                     b.HasIndex("Tool");
+
+                    b.HasIndex("ChainId", "ChainIndex");
 
                     b.ToTable("AuditEvents");
                 });

@@ -194,6 +194,12 @@ namespace Bifrost.Persistence.Migrations.Sqlite.Migrations
                     b.Property<string>("CallerRoles")
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("ChainId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("ChainIndex")
+                        .HasColumnType("INTEGER");
+
                     b.Property<Guid?>("CorrelationId")
                         .HasColumnType("TEXT");
 
@@ -203,11 +209,19 @@ namespace Bifrost.Persistence.Migrations.Sqlite.Migrations
                     b.Property<double?>("DurationMs")
                         .HasColumnType("REAL");
 
+                    b.Property<string>("EntryHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("Kind")
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("Origin")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("PreviousHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("RedactedArgumentsJson")
                         .HasColumnType("TEXT");
@@ -244,6 +258,8 @@ namespace Bifrost.Persistence.Migrations.Sqlite.Migrations
                     b.HasIndex("Timestamp");
 
                     b.HasIndex("Tool");
+
+                    b.HasIndex("ChainId", "ChainIndex");
 
                     b.ToTable("AuditEvents");
                 });

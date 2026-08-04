@@ -1,0 +1,17 @@
+{
+  "schema": "bifrost.connector.v1",
+  "id": "counter-connector",
+  "version": "0.1.0",
+  "contractVersion": "1",
+  "publisherKeyId": "wird-beim-bauen-aus-dem-schluessel-gesetzt",
+  "displayName": "Counter (Beispielconnector)",
+  "transport": "Wasi",
+  "entryPoint": "payload/connector.wasm",
+  "signaturePath": "payload/connector.wasm.sig",
+  "payloads": [],
+  "platforms": [
+    "linux-x64",
+    "win-x64"
+  ],
+  "description": "Ein Zaehler als WASI-Component — das kleinste vollstaendige Beispiel: ohne Grants, ohne Netz, ohne Dateizugriff."
+}

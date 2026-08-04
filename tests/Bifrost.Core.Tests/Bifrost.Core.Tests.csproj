@@ -10,6 +10,12 @@
     <!-- Backup/Restore (WP2.1/2.2) liegt in Bifrost.Persistence; die Tests dazu brauchen den echten
          Dienst und eine echte SQLite-Datei, nicht eine Nachbildung. -->
     <ProjectReference Include="..\..\src\Bifrost.Persistence\Bifrost.Persistence.csproj" />
+    <!-- Der Negativkorpus, verlinkt statt kopiert (WP5.6): Er ist die Liste der Werte, die in
+         KEINER Ausgabe auftauchen duerfen — jetzt auch nicht im Support-Bundle. Eine zweite Fassung
+         waere eine zweite Liste, und die eine bekaeme irgendwann einen Eintrag, den die andere
+         nicht kennt. Dieselbe Begruendung wie in Bifrost.Integration.Tests. -->
+    <Compile Include="..\Bifrost.Security.Tests\Infrastructure\SecretCorpus.cs"
+             Link="Operations\SecretCorpus.cs" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio" />

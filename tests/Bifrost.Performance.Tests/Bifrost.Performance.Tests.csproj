@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- xUnit v3: Testprojekte sind eigenstaendige Executables, der Runner laeuft im selben Prozess. -->
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Bifrost.Performance.Tests</RootNamespace>
+    <Description>WP5.3: Lastmessung. Die netzrealistische Messung startet den Gateway als eigenen
+      Prozess hinter Kestrel (TCP, optional TLS), faehrt Dauerlast gegen einen Upstream mit
+      definierter Antwortzeit und trennt Gateway- von Fremdanteil. Die aeltere In-Process-Messung
+      (NFR-01/02) bleibt als Vergleichsgroesse daneben stehen.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Bifrost.Server wird gebraucht, weil der Harness die gebaute Server-Executable startet —
+         und wegen der Typen fuer die Upstream-Anlage ueber die REST-API. -->
+    <ProjectReference Include="..\..\src\Bifrost.Server\Bifrost.Server.csproj" />
+    <ProjectReference Include="..\..\src\Bifrost.Persistence.Migrations.Sqlite\Bifrost.Persistence.Migrations.Sqlite.csproj" />
+    <!-- Nur Build-Reihenfolge: die TestServer werden als externe Prozesse gestartet. -->
+    <ProjectReference Include="..\Bifrost.TestServers\SlowServer\Bifrost.TestServers.SlowServer.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Bifrost.TestServers\BulkServer\Bifrost.TestServers.BulkServer.csproj" ReferenceOutputAssembly="false" />
+
+    <!-- Der In-Process-Harness der NFR-01/02-Messung wird verlinkt, nicht nachgebaut: Eine zweite
+         Fassung von GatewayFixture waere eine zweite Wahrheit darueber, wie ein Client sich
+         anmeldet. Dieselbe Begruendung wie in Bifrost.Compatibility.Tests. -->
+    <Compile Include="..\Bifrost.Integration.Tests\Gateway\GatewayFixture.cs" Link="Harness\GatewayFixture.cs" />
+    <Compile Include="..\Bifrost.Integration.Tests\Gateway\CapturedLog.cs" Link="Harness\CapturedLog.cs" />
+    <Compile Include="..\Bifrost.Integration.Tests\IntegrationSupport.cs" Link="Harness\IntegrationSupport.cs" />
+    <Compile Include="..\Bifrost.Integration.Tests\TestPaths.cs" Link="Harness\TestPaths.cs" />
+
+    <!-- WP5.3, Reverse-Proxy-Sprung: nginx als echter Prozess vor dem Gateway. Ein In-Process-Proxy
+         waere kein Sprung — es ginge kein Paket ueber eine zweite Verbindung. -->
+    <PackageReference Include="Testcontainers" />
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+  </ItemGroup>
+
+</Project>

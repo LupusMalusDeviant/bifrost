@@ -1,0 +1,236 @@
+@page "/policy"
+@using System.Text.Json
+@using Bifrost.Core.Policy
+@attribute [Authorize(Policy = UiPolicies.Admin)]
+@inject PolicyPackPlanner Planner
+
+<h1>Policy Packs</h1>
+<p class="muted">
+    Ein Pack ist eine <strong>signierte Konfigurationsnutzlast</strong> — Rollen und Profile von
+    jemandem, dem diese Instanz vertraut. Bevor hier irgendetwas gilt, steht auf dieser Seite,
+    <strong>wer danach mehr darf</strong>: namentlich, je Identität und Wirkungsebene. Ein Diff auf
+    Objektebene sagte „eine Rolle geändert" — das kann bedeuten, dass drei Agenten ab sofort auf
+    jedem Server schreiben dürfen.
+</p>
+
+<div class="card">
+    <label for="policy-pack">Pack-Dokument (JSON)</label>
+    <textarea id="policy-pack" data-testid="policy-pack" rows="6" style="width:100%;font-family:monospace"
+              @bind="_document" @bind:event="oninput" placeholder='{"manifest":{…},"payload":"…","signatureBase64":"…"}'></textarea>
+    <div class="toolbar" style="margin-top:1rem">
+        <button data-testid="policy-plan" @onclick="Plan" disabled="@(_busy || string.IsNullOrWhiteSpace(_document))">
+            @(_busy ? "Prüft …" : "Prüfen")
+        </button>
+        @if (_message is not null)
+        {
+            <span data-testid="policy-message" class="msg-err">@_message</span>
+        }
+    </div>
+</div>
+
+@if (_plan is not null)
+{
+    <div class="card">
+        <h3 style="margin-top:0">
+            @_plan.Manifest.Id<span class="muted">@("@")@_plan.Manifest.Version</span>
+        </h3>
+        <p class="muted" style="margin-top:0">
+            @_plan.Manifest.Description — Herausgeber <span class="mono">@_plan.PublisherKeyId</span>
+            <span class="badge">@_plan.TrustLevel</span>
+        </p>
+
+        @* Der Rechte-Diff steht GANZ OBEN und vor allen Objektlisten. Wer nur den Anfang liest,
+           soll die Rechteausweitung sehen und nicht die Herausgeberbeschreibung. *@
+        <h4>Wer danach mehr darf</h4>
+        @if (_plan.RightsDelta.Added.Count == 0)
+        {
+            <p data-testid="policy-added-none" class="msg-ok">
+                Keine Identität gewinnt durch dieses Pack ein Recht.
+            </p>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Identität</th><th>Wirkung</th><th>Ebene</th></tr></thead>
+                    <tbody>
+                        @foreach (var entry in _plan.RightsDelta.Added)
+                        {
+                            <tr data-testid="policy-right-added">
+                                <td>@entry.Identity</td>
+                                <td>@entry.Action</td>
+                                <td class="mono">@entry.Scope</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        @* Wegnahmen stehen daneben, nicht darunter versteckt: Ein Pack, das versehentlich eine
+           Rolle auslässt, entzieht sonst unbemerkt Rechte. *@
+        @if (_plan.RightsDelta.Removed.Count > 0)
+        {
+            <h4>Was wegfiele</h4>
+            <ul data-testid="policy-removed">
+                @foreach (var entry in _plan.RightsDelta.Removed)
+                {
+                    <li>@entry.Identity: @entry.Action auf <span class="mono">@entry.Scope</span></li>
+                }
+            </ul>
+        }
+
+        @foreach (var (label, items) in Sections())
+        {
+            @if (items.Count > 0)
+            {
+                <h4>@label</h4>
+                <ul>
+                    @foreach (var item in items)
+                    {
+                        <li>@item</li>
+                    }
+                </ul>
+            }
+        }
+
+        <div class="toolbar" style="margin-top:1rem">
+            @if (_plan.CanApply)
+            {
+                <label>
+                    <input type="checkbox" data-testid="policy-confirm" @bind="_confirmed" />
+                    @(_plan.RightsDelta.Added.Count == 0
+                        ? "Ich habe den Plan gesehen und übernehme ihn."
+                        : $"Ich habe die {_plan.RightsDelta.Added.Count} zusätzliche(n) Berechtigung(en) oben gesehen.")
+                </label>
+                <button data-testid="policy-apply" @onclick="Apply" disabled="@(_busy || !_confirmed)">
+                    Übernehmen
+                </button>
+            }
+            else
+            {
+                <span data-testid="policy-blocked" class="msg-err">
+                    Nicht anwendbar. Ein Pack wird nie teilweise übernommen — erst die Konflikte
+                    auflösen, dann neu prüfen.
+                </span>
+            }
+        </div>
+    </div>
+}
+
+@if (_application is not null)
+{
+    <div class="card">
+        <h3 style="margin-top:0">Übernommen</h3>
+        <p data-testid="policy-applied">
+            @_application.Id<span class="muted">@("@")@_application.Version</span> —
+            Fingerabdruck <span class="mono">@_application.PayloadHash[..12]</span>
+        </p>
+
+        <div class="toolbar">
+            <button class="btn-ghost" data-testid="policy-revert" @onclick="Revert" disabled="@_busy">
+                Zurücknehmen
+            </button>
+            <span class="muted">
+                Setzt die ersetzten Rollen und Profile auf ihren vorigen Inhalt zurück und entfernt,
+                was diese Übernahme angelegt hat.
+            </span>
+        </div>
+
+        @* Der Rückweg lebt nur in dieser Seite. Das ist eine Grenze und wird als solche benannt —
+           eine Seite, die schweigt, lässt den Betreiber glauben, es gäbe immer einen Weg zurück. *@
+        <p class="msg-err" style="margin-top:1rem">
+            <strong>Der Rückweg lebt nur, solange diese Seite offen ist.</strong> Er wird im Gateway
+            nicht aufbewahrt. Wer später zurückgehen können will, sichert den folgenden Text — oder
+            nimmt <span class="mono">bifrost policy apply --undo-out &lt;datei&gt;</span>.
+        </p>
+        <textarea data-testid="policy-undo" rows="4" readonly
+                  style="width:100%;font-family:monospace">@UndoJson()</textarea>
+    </div>
+}
+
+@code {
+    private string? _document;
+    private bool _busy;
+    private bool _confirmed;
+    private string? _message;
+    private PolicyPackPlan? _plan;
+    private PolicyPackApplication? _application;
+
+    private IEnumerable<(string Label, IReadOnlyList<string> Items)> Sections()
+    {
+        yield return ("Wird ersetzt", _plan!.Updates);
+        yield return ("Wird angelegt", _plan.Additions);
+        yield return ("Unverändert vorhanden", _plan.Unchanged);
+        yield return ("Konflikte", _plan.Conflicts);
+        yield return ("Hier unbekannte Werkzeuge", _plan.MissingTools);
+        yield return ("Hinweise", _plan.Notes);
+    }
+
+    private string UndoJson()
+        => JsonSerializer.Serialize(_application, new JsonSerializerOptions { WriteIndented = false });
+
+    private async Task Plan()
+    {
+        _busy = true;
+        _message = null;
+        _plan = null;
+        _application = null;
+        _confirmed = false;
+        try
+        {
+            _plan = await Planner.PlanAsync(_document!, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            _message = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task Apply()
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            _application = await Planner.ApplyAsync(_plan!, CancellationToken.None);
+
+            // Das Handle ist verbraucht. Den Plan stehen zu lassen hiesse, einen Knopf anzubieten,
+            // der beim zweiten Druck nur noch eine Fehlermeldung erzeugt.
+            _plan = null;
+            _confirmed = false;
+        }
+        catch (Exception exception)
+        {
+            _message = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task Revert()
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            await Planner.RevertAsync(_application!, CancellationToken.None);
+            _application = null;
+            _message = "Übernahme zurückgenommen.";
+        }
+        catch (Exception exception)
+        {
+            _message = exception.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

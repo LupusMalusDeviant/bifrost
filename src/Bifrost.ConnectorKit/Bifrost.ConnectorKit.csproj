@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>bifrost-connector</AssemblyName>
+    <RootNamespace>Bifrost.ConnectorKit</RootNamespace>
+    <Description>Connector Developer Kit (M6/WP6.5): Pakete fuer B.I.F.R.O.S.T bauen, signieren
+      und pruefen — ohne laufendes Gateway.</Description>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>bifrost-connector</ToolCommandName>
+    <PackageId>Bifrost.ConnectorKit</PackageId>
+  </PropertyGroup>
+
+  <!--
+    Warum ein eigenes Programm und nicht ein Befehl in 'bifrost'.
+
+    Die Gateway-CLI ist der oeffentliche HTTP-Client und haelt bewusst KEINE Projektreferenz — sie
+    dupliziert dafuer sogar Exitcode-Konstanten (siehe OperationsCli). Das Kit braucht dagegen
+    Bifrost.Core, weil es genau dessen Paketbauer und -leser benutzen soll, statt das Format ein
+    zweites Mal zu kennen. Beides in einer Datei hiesse, eine der beiden Entscheidungen aufzugeben.
+
+    Getrennt bleibt ausserdem sauber, wer was mitschleppt: Ein Betreiber, der nur Werkzeuge
+    aufruft, braucht keinen Signierer; ein Connector-Entwickler braucht keinen HTTP-Client.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\Bifrost.Core\Bifrost.Core.csproj" />
+    <!-- Ed25519 signieren und pruefen; .NET 10 bringt die Kurve nicht oeffentlich mit. -->
+    <PackageReference Include="BouncyCastle.Cryptography" />
+    <!-- Die Tests rufen die Befehle direkt auf statt den Prozess zu starten: Ein Exitcode ist
+         derselbe, die Fehlermeldung bleibt lesbar, und der Lauf braucht keine gebaute Executable. -->
+    <InternalsVisibleTo Include="Bifrost.ConnectorKit.Tests" />
+  </ItemGroup>
+
+</Project>

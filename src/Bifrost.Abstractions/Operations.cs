@@ -219,21 +219,139 @@ public sealed record ConfigurationExport(
 /// Undurchsichtiges Handle auf die vorgemerkte Nutzlast. Siehe <see cref="RestorePlan.Token"/> —
 /// dieselbe Begründung, dieselbe Wirkung.
 /// </param>
+/// <param name="Updates">
+/// Objekte, die <b>ersetzt</b> würden (nur im Update-Modus). Bewusst eine eigene Liste neben den
+/// Zugängen: „wird angelegt" und „wird überschrieben" sind für einen Betreiber zwei verschiedene
+/// Sätze, und der zweite ist der, bei dem man hinsieht.
+/// </param>
 public sealed record ConfigurationImportPlan(
     bool CanApply,
     IReadOnlyList<string> Additions,
     IReadOnlyList<string> Conflicts,
     IReadOnlyList<string> MissingDependencies,
     IReadOnlyList<string>? Unchanged = null,
-    string? Token = null);
+    string? Token = null,
+    IReadOnlyList<string>? Updates = null);
+
+/// <summary>
+/// Die instanzweiten Schalter, die der Export überträgt.
+/// <para>
+/// Liegt hier und nicht im Kern, weil der Rückweg eines Imports sie tragen muss
+/// (<see cref="ConfigurationImportUndo.PreviousSettings"/>) — und der ist Teil des Vertrags.
+/// </para>
+/// </summary>
+public sealed record InstanceSettings(GuardOptions Guard, ApprovalEnforcement DefaultApprovalEnforcement)
+{
+    /// <summary>
+    /// Der Auslieferungszustand. Er ist der Maßstab für die Frage, ob auf der Zielinstanz jemand
+    /// eine eigene Entscheidung getroffen hat, die ein Import nicht überfahren darf.
+    /// </summary>
+    public static InstanceSettings Defaults { get; } = new(new GuardOptions(), ApprovalEnforcement.Queue);
+}
+
+/// <summary>
+/// Wie ein Import mit Objekten umgeht, die es auf der Zielinstanz schon gibt.
+/// <para>
+/// <b><see cref="AddOnly"/> ist und bleibt die Vorgabe.</b> Auf ihr beruhte die Zusage, mit der
+/// dieser Weg gebaut wurde: Jede Rücknahme entfernt genau das, was der Vorgang Sekunden zuvor
+/// angelegt hat, und kann nichts treffen, was vorher da war. Wer diese Zusage aufgibt, muss die
+/// Rücknahme neu begründen — genau das leistet <see cref="ConfigurationImportUndo"/>.
+/// </para>
+/// </summary>
+public enum ConfigurationImportMode
+{
+    /// <summary>Bestehendes ist ein Konflikt. Der Import legt nur an.</summary>
+    AddOnly = 0,
+
+    /// <summary>
+    /// Bestehende <b>Rollen und Profile</b> werden ersetzt, statt zu kollidieren (M6/WP6.1). Der
+    /// vorige Inhalt wird dabei mitgeschrieben; ohne ihn wäre das Ersetzen eine Einbahnstraße durch
+    /// die Rechteverwaltung.
+    /// <para>
+    /// Ausdrücklich <b>nur</b> Rollen und Profile: Upstreams, Guard-Regeln, Freigaben und Skills
+    /// bleiben additiv. Ein Modus, der alles ersetzt, wäre eine Synchronisierung — und die nimmt
+    /// auch weg, was die Nutzlast nur nicht kennt.
+    /// </para>
+    /// </summary>
+    Update = 1,
+}
+
+/// <param name="ReplacedRoles">Rollen in ihrem Zustand <b>vor</b> der Übernahme.</param>
+/// <param name="ReplacedProfiles">Profile in ihrem Zustand <b>vor</b> der Übernahme.</param>
+/// <param name="CreatedRoles">Rollen, die dieser Vorgang angelegt hat — der Rückweg entfernt sie.</param>
+/// <param name="CreatedProfiles">Profile, die dieser Vorgang angelegt hat.</param>
+/// <param name="CreatedUpstreams">
+/// Angelegte Upstreams — nur die Kennung, nicht die Konfiguration: In der stehen Zugangsdaten, und
+/// zum Entfernen braucht es sie nicht.
+/// </param>
+/// <param name="CreatedGuardRules">Angelegte Guard-Regeln.</param>
+/// <param name="CreatedSkills">Angelegte Skills.</param>
+/// <param name="SetApprovals">
+/// Werkzeuge, für die dieser Vorgang eine Freigabepflicht gesetzt hat. Der Rückweg nimmt die
+/// Markierung zurück — das ist deckungsgleich mit dem Zustand davor, <b>weil</b> der Plan bereits
+/// gesetzte Freigaben nicht anfasst.
+/// </param>
+/// <param name="PreviousSettings">
+/// Die Instanzeinstellungen von vorher, falls der Import welche geschrieben hat; sonst <c>null</c>.
+/// </param>
+/// <summary>
+/// Der Rückweg <b>eines bestimmten Imports</b> — abgeleitet aus dem, was er wirklich getan hat.
+/// <para>
+/// Bewusst nicht „der Stand von vorher": Eine ganze Momentaufnahme wieder einzuspielen entfernt
+/// nichts, was inzwischen dazugekommen ist, und fasst Objekte an, die mit diesem Vorgang nie zu tun
+/// hatten. Dieser Rückweg berührt genau die Objekte, die der Import berührt hat — und nur die.
+/// </para>
+/// <para>
+/// <b>Was er nicht kann:</b> Er ist kein Zeitpunkt. Wer nach dem Import dieselbe Rolle von Hand
+/// ändert, dessen Änderung wird von der Rücknahme überschrieben — die Rücknahme schreibt den Stand
+/// zurück, den <em>dieser Import</em> vorgefunden hat.
+/// </para>
+/// </summary>
+public sealed record ConfigurationImportUndo(
+    IReadOnlyList<Role> ReplacedRoles,
+    IReadOnlyList<ToolProfile> ReplacedProfiles,
+    IReadOnlyList<RoleId> CreatedRoles,
+    IReadOnlyList<ProfileId> CreatedProfiles,
+    IReadOnlyList<ServerId> CreatedUpstreams,
+    IReadOnlyList<string> CreatedGuardRules,
+    IReadOnlyList<AssetId> CreatedSkills,
+    IReadOnlyList<NamespacedToolName> SetApprovals,
+    InstanceSettings? PreviousSettings)
+{
+    public static ConfigurationImportUndo Nothing { get; } = new([], [], [], [], [], [], [], [], null);
+
+    public bool IsEmpty =>
+        ReplacedRoles.Count == 0 && ReplacedProfiles.Count == 0
+        && CreatedRoles.Count == 0 && CreatedProfiles.Count == 0
+        && CreatedUpstreams.Count == 0 && CreatedGuardRules.Count == 0
+        && CreatedSkills.Count == 0 && SetApprovals.Count == 0
+        && PreviousSettings is null;
+}
 
 public interface IConfigurationExportService
 {
     Task<ConfigurationExport> ExportAsync(ConfigurationExportRequest request, CancellationToken ct);
 
+    /// <summary>Plant additiv — die Vorgabe seit M2.</summary>
     Task<ConfigurationImportPlan> PlanImportAsync(string payload, string? passphrase, CancellationToken ct);
 
-    Task ApplyImportAsync(ConfigurationImportPlan plan, CancellationToken ct);
+    /// <summary>Wie oben, aber mit ausdrücklichem Umgang mit Bestehendem (M6/WP6.1).</summary>
+    Task<ConfigurationImportPlan> PlanImportAsync(
+        string payload, string? passphrase, ConfigurationImportMode mode, CancellationToken ct);
+
+    /// <summary>
+    /// Wendet an und liefert den Rückweg <b>dieses</b> Vorgangs: bei
+    /// <see cref="ConfigurationImportMode.AddOnly"/> die angelegten Objekte, bei
+    /// <see cref="ConfigurationImportMode.Update"/> zusätzlich den vorigen Inhalt der ersetzten.
+    /// </summary>
+    Task<ConfigurationImportUndo> ApplyImportAsync(ConfigurationImportPlan plan, CancellationToken ct);
+
+    /// <summary>
+    /// Nimmt einen angewendeten Import zurück: setzt Ersetztes auf den vorigen Inhalt und entfernt
+    /// Angelegtes. Scheitert etwas dabei, wird der Rest trotzdem zurückgenommen und der Rückstand
+    /// benannt — ein verschluckter Fehler hinterlässt hier Rechte, von denen niemand weiß.
+    /// </summary>
+    Task UndoImportAsync(ConfigurationImportUndo undo, CancellationToken ct);
 }
 
 /// <summary>

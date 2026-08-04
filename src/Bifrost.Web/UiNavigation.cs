@@ -137,6 +137,14 @@ public static class UiNavigation
         new("/packages#publishers", "Herausgeber & Stufen", UiPolicies.Admin, UiNavSection.Advanced, Parent: "/packages"),
         new("/guardrails", "Guardrails", UiPolicies.Admin, UiNavSection.Advanced),
         new("/profiles", "Profile & Token", UiPolicies.Admin, UiNavSection.Advanced),
+        // WP6.4: Das Cockpit steht neben den Profilen — es rechnet ueber genau das, was dort
+        // eingestellt wird, und aendert selbst nichts. KEIN Untereintrag: Ein Parent zeigt in
+        // dieser Liste auf einen Abschnitt DERSELBEN Seite (siehe /packages#grants), und das
+        // Cockpit ist eine eigene. Der Wächter hat mich genau darauf gestossen.
+        new("/cockpit", "Token-Cockpit", UiPolicies.Admin, UiNavSection.Advanced),
+        // WP6.1: Policy Packs stehen neben Rollen und Profilen, weil sie genau die aendern — und
+        // in der Feinsteuerung, weil ein Pack nichts ist, was man taeglich anfasst.
+        new("/policy", "Policy Packs", UiPolicies.Admin, UiNavSection.Advanced),
         new("/servers#erweitert", "Tool-Pins & OAuth", UiPolicies.Operator, UiNavSection.Advanced, Parent: "/servers"),
         new("/tasks", "Vorgänge", UiPolicies.Operator, UiNavSection.Advanced),
         new("/assets", "Skills & Assets", UiPolicies.Admin, UiNavSection.Advanced),

@@ -15,7 +15,15 @@ public sealed class RedactionService : IRedactionService
 {
     public const string Mask = "***";
 
-    private static readonly string[] DefaultPatterns =
+    /// <summary>
+    /// Die Feldnamen, die als Secret gelten (Teilstring, ohne Gross-/Kleinschreibung).
+    /// <para>
+    /// Oeffentlich, weil der Support-Bundle-Durchgang (WP5.6) dieselbe Liste braucht. Eine zweite
+    /// Fassung waeren zwei Wahrheiten darueber, was ein Secret ist — und die eine bekaeme
+    /// irgendwann einen Eintrag, den die andere nicht kennt.
+    /// </para>
+    /// </summary>
+    public static readonly string[] DefaultPatterns =
     [
         "password", "passwort", "token", "secret", "key", "authorization", "credential", "apikey",
     ];

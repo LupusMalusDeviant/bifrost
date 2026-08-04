@@ -118,6 +118,39 @@ public sealed record PostgresBackupToolFacts(
     string? DumpPath = null,
     int? ClientMajorVersion = null);
 
+/// <summary>
+/// Ist dem Audit-Log zu trauen? (BFR-DB-0007)
+/// <para>
+/// <b>Warum eine Sonde:</b> Die Zähler leben in der Audit-Senke, und die steht in
+/// Bifrost.Persistence — Bifrost.Core kennt sie nicht. Ohne verdrahtete Sonde meldet der Check
+/// <c>Skipped</c> mit Begründung; „keine Auskunft" ist ausdrücklich <b>kein</b> „nichts verloren".
+/// </para>
+/// </summary>
+public interface IAuditDiagnosticProbe
+{
+    Task<AuditDiagnosticFacts> DescribeAsync(CancellationToken ct);
+}
+
+/// <param name="LostAtIntake">
+/// Verworfen, weil der Puffer voll war — der Schreiber kam unter Last nicht nach.
+/// </param>
+/// <param name="LostAfterWriteFailure">
+/// Angenommen, aber nie geschrieben: Der Batch wurde nach allen Versuchen aufgegeben. Die Ursache
+/// liegt bei der Datenbank, nicht bei der Last.
+/// </param>
+/// <param name="FirstLossAt">
+/// Ab wann dem Log nicht mehr zu trauen ist. <c>null</c>, solange nichts verlorenging.
+/// </param>
+/// <param name="Mode">Die eingestellte Zustellart (<c>best-effort</c> oder <c>compliance</c>).</param>
+public sealed record AuditDiagnosticFacts(
+    long LostAtIntake,
+    long LostAfterWriteFailure,
+    DateTimeOffset? FirstLossAt,
+    string Mode)
+{
+    public long Total => LostAtIntake + LostAfterWriteFailure;
+}
+
 /// <summary>Zustände der Upstreams — kennt nur der laufende Serverprozess (WP2.7).</summary>
 public interface IUpstreamDiagnosticProbe
 {
@@ -291,6 +324,8 @@ public sealed class SystemProcessProbe : IProcessProbe
 internal static class DetailFormat
 {
     public static string Count(int value) => value.ToString(CultureInfo.InvariantCulture);
+
+    public static string Long(long value) => value.ToString(CultureInfo.InvariantCulture);
 
     public static string YesNo(bool value) => value ? "ja" : "nein";
 }

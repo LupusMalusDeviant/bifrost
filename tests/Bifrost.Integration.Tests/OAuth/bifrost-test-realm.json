@@ -1,0 +1,58 @@
+{
+  "realm": "bifrost-test",
+  "enabled": true,
+  "sslRequired": "none",
+  "accessTokenLifespan": 300,
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+  "registrationAllowed": false,
+  "clients": [
+    {
+      "clientId": "bifrost-gateway",
+      "name": "B.I.F.R.O.S.T Gateway (Test)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "gateway-test-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://127.0.0.1:8099/oauth/callback", "http://127.0.0.1:8099/*"],
+      "webOrigins": ["+"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "client.use.lightweight.access.token.enabled": "false"
+      },
+      "fullScopeAllowed": true
+    },
+    {
+      "clientId": "fremder-dienst",
+      "name": "Ein anderer Dienst (Test)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "fremder-test-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true
+    }
+  ],
+  "users": [
+    {
+      "username": "pilot",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Pilot",
+      "lastName": "Betrieb",
+      "email": "pilot@example.invalid",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "pilot-test-passwort",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["default-roles-bifrost-test"]
+    }
+  ]
+}

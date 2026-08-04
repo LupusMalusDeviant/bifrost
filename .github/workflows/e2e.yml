@@ -1,0 +1,104 @@
+# M5 / WP5.5 — Browser-E2E.
+#
+# Chromium ist PR-Pflicht: Die Wege hier (Anmeldung, Server anschließen, interaktive Oberfläche)
+# sollen eine Regression aufhalten, bevor sie ausgeliefert wird. Firefox und WebKit laufen nachts —
+# sie fangen Darstellungs- und Ereignisunterschiede, aber ein PR soll nicht an ihnen hängen.
+#
+# Die Läufe fahren gegen das VERÖFFENTLICHTE Ergebnis, nicht gegen bin/: Im Entwicklungslayout
+# kommt '_framework/blazor.web.js' mit Status 200 und null Bytes, der Blazor-Circuit startet nie und
+# die Oberfläche ist tot, während sie benutzbar aussieht. Genau dieser Ausfall ist im ersten echten
+# Betrieb passiert. Den Publish-Schritt macht der Harness selbst.
+name: e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Der Name steht so im M5-Vertrag §6 — an ihm haengt eine Branch-Protection-Regel.
+  ui-e2e:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build (warnings are errors)
+        run: dotnet build tests/Bifrost.Ui.E2E --configuration Release
+
+      # Der Browser ist ~180 MB und ändert sich nur mit der Playwright-Version — der Schlüssel hängt
+      # deshalb an der Datei, in der diese Version steht.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+
+      - name: Browser bereitstellen
+        run: pwsh tests/Bifrost.Ui.E2E/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+
+      - name: Browserwege
+        env:
+          BIFROST_RUN_E2E: "1"
+          BIFROST_E2E_BROWSER: chromium
+        run: dotnet test tests/Bifrost.Ui.E2E --configuration Release --no-build --logger "console;verbosity=detailed"
+
+      # Nur im Fehlerfall entsteht hier etwas: Trace, Video und Bildschirmfoto des gescheiterten
+      # Weges. Ein gruener Lauf raeumt sein Verzeichnis selbst wieder ab.
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-chromium
+          path: artifacts/e2e
+
+  ui-e2e-other-browsers:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [firefox, webkit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build (warnings are errors)
+        run: dotnet build tests/Bifrost.Ui.E2E --configuration Release
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+
+      - name: Browser bereitstellen
+        run: pwsh tests/Bifrost.Ui.E2E/bin/Release/net10.0/playwright.ps1 install --with-deps ${{ matrix.browser }}
+
+      - name: Browserwege
+        env:
+          BIFROST_RUN_E2E: "1"
+          BIFROST_E2E_BROWSER: ${{ matrix.browser }}
+        run: dotnet test tests/Bifrost.Ui.E2E --configuration Release --no-build --logger "console;verbosity=detailed"
+
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-${{ matrix.browser }}
+          path: artifacts/e2e

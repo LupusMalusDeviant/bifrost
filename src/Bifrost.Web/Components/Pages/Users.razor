@@ -31,11 +31,11 @@
     </div>
     <h3>Neuen Nutzer anlegen</h3>
     <div class="row">
-        <div><label>Benutzername</label><input @bind="_username" autocomplete="off" /></div>
-        <div><label>Passwort</label><input @bind="_password" type="password" autocomplete="new-password" /></div>
+        <div><label>Benutzername</label><input data-testid="user-name" @bind="_username" autocomplete="off" /></div>
+        <div><label>Passwort</label><input data-testid="user-password" @bind="_password" type="password" autocomplete="new-password" /></div>
         <div>
             <label>Rolle</label>
-            <select @bind="_role">
+            <select data-testid="user-role" @bind="_role">
                 @foreach (var r in Enum.GetValues<UiRole>())
                 {
                     <option value="@r">@r</option>
@@ -44,7 +44,7 @@
         </div>
     </div>
     <div class="toolbar" style="margin-top:.75rem">
-        <button @onclick="Add">Anlegen</button>
+        <button data-testid="user-add" @onclick="Add">Anlegen</button>
         @if (_msg is not null) { <span class="@(_ok ? "msg-ok" : "msg-err")">@_msg</span> }
     </div>
     <p class="muted">Rollen: <strong>Admin</strong> = alles · <strong>Operator</strong> = Server verwalten &amp; Tools testen · <strong>Auditor</strong> = nur lesen.</p>

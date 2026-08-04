@@ -142,6 +142,59 @@ public sealed class MigrationSafetyTests : IAsyncLifetime
         error.ToCheck().Status.Should().Be(Bifrost.Abstractions.Operations.CheckStatus.Fail);
     }
 
+    /// <summary>
+    /// Der Lock hält auch, seit die Datenbank im WAL-Modus läuft.
+    /// <para>
+    /// WAL ändert, <i>wie</i> SQLite Schreibvorgänge sperrt — das Verfahren aus ADR-0024 E7 hängt
+    /// aber an keiner dieser Sperren: Die eine Hälfte ist ein Dateilock neben der Datenbank, die das
+    /// Betriebssystem verwaltet, die andere ein <c>BEGIN IMMEDIATE</c>, das es unter WAL genauso
+    /// gibt. Dieser Test hält das fest, statt es zu behaupten — er prüft den WAL-Zustand der Datei
+    /// ausdrücklich mit, damit er nicht eines Tages stillschweigend gegen DELETE läuft.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Migration_lock_still_holds_with_wal_active()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (factory, path) = NewDatabase("wal-lock");
+
+        // Erst einmal migrieren, damit die Datei existiert und wirklich auf WAL steht.
+        (await new DatabaseInitializer(factory).InitializeAsync(ct))
+            .Should().Be(DatabaseInitOutcome.CreatedFromMigrations);
+        SqliteConnection.ClearAllPools();
+        JournalModeOf(path).Should().Be("wal", "sonst prüft dieser Test etwas anderes als er behauptet");
+
+        // Und jetzt dasselbe wie in Start_against_a_held_lock_fails_explainably — mit WAL.
+        var lockFile = path + MigrationLock.SqliteLockFileSuffix;
+        await using var holder = new FileStream(
+            lockFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
+        var error = await Assert.ThrowsAsync<DatabaseInitializationException>(
+            () => new DatabaseInitializer(factory, options: new MigrationSafetyOptions
+            {
+                LockTimeout = TimeSpan.FromMilliseconds(300),
+                LockPollInterval = TimeSpan.FromMilliseconds(50),
+            }).InitializeAsync(ct));
+
+        error.Code.Should().Be("BFR-DB-0100", "der Dateilock hält unabhängig vom Journalverfahren");
+
+        // Das Journal — die zweite Hälfte des Verfahrens, BEGIN IMMEDIATE — ist unter WAL weiterhin
+        // schreibbar und lesbar.
+        await using var db = await factory.CreateDbContextAsync(ct);
+        (await MigrationJournal.ReadAllAsync(db, ct)).Should().ContainSingle();
+        JournalModeOf(path).Should().Be("wal", "und die Datei ist dabei WAL geblieben");
+    }
+
+    private static string JournalModeOf(string path)
+    {
+        using var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ConnectionString);
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA journal_mode;";
+        return (string)command.ExecuteScalar()!;
+    }
+
     // ── Pflichttest 3: Abbruch mitten in der Migration ──────────────────────────────────────────
 
     [Fact]

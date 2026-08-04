@@ -608,7 +608,21 @@ public sealed class RestoreService : IRestoreService
         }
 
         var target = _options.ResolvedSqliteFile;
-        MoveFileIntoPlace(Path.Combine(staging, "database", "bifrost.db"), target, parked, undo);
+        var staged = Path.Combine(staging, "database", "bifrost.db");
+        if (!File.Exists(staged))
+        {
+            // Kein Datenbankteil im Archiv: Dann bleibt auch die vorhandene Datenbank unberührt —
+            // samt ihrer Begleiter. Ohne diese Abfrage würden unten die '-wal' einer Datenbank
+            // weggeräumt, die gar nicht ersetzt wird.
+            return;
+        }
+
+        // Die Reihenfolge trägt die Rückbaubarkeit: Erst wenn die neue Datei WIRKLICH an ihrem Platz
+        // liegt, werden die Begleiter der alten weggeräumt. Scheitert das Einhängen, ist
+        // RemoveSidecars nie gelaufen — der Rückbaustapel holt die alte Datenbank zurück und findet
+        // ihr '-wal' unangetastet vor. Seit WAL die Vorgabe ist, steht dort im Zweifel der jüngste
+        // Stand; ein vorgezogenes Löschen nähme ihn mit.
+        MoveFileIntoPlace(staged, target, parked, undo);
         SqliteSnapshot.RemoveSidecars(target);
         notes.Add("Datenbank ersetzt; liegengebliebene WAL-Begleiter entfernt.");
     }

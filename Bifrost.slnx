@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Bifrost.Abstractions/Bifrost.Abstractions.csproj" />
     <Project Path="src/Bifrost.Cli/Bifrost.Cli.csproj" />
+    <Project Path="src/Bifrost.ConnectorKit/Bifrost.ConnectorKit.csproj" />
     <Project Path="src/Bifrost.Core/Bifrost.Core.csproj" />
     <Project Path="src/Bifrost.Persistence.Migrations.Postgres/Bifrost.Persistence.Migrations.Postgres.csproj" />
     <Project Path="src/Bifrost.Persistence.Migrations.Sqlite/Bifrost.Persistence.Migrations.Sqlite.csproj" />
@@ -12,11 +13,20 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Bifrost.Cli.Tests/Bifrost.Cli.Tests.csproj" />
+    <Project Path="tests/Bifrost.ConnectorKit.Tests/Bifrost.ConnectorKit.Tests.csproj" />
     <Project Path="tests/Bifrost.Core.Tests/Bifrost.Core.Tests.csproj" />
     <Project Path="tests/Bifrost.Integration.Tests/Bifrost.Integration.Tests.csproj" />
     <Project Path="tests/Bifrost.Security.Tests/Bifrost.Security.Tests.csproj" />
     <Project Path="tests/Bifrost.Upgrade.Tests/Bifrost.Upgrade.Tests.csproj" />
+    <Project Path="tests/Bifrost.Performance.Tests/Bifrost.Performance.Tests.csproj" />
+    <Project Path="tests/Bifrost.Ui.E2E/Bifrost.Ui.E2E.Tests.csproj" />
     <Project Path="tests/Bifrost.Upstream.Tests/Bifrost.Upstream.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/compatibility/">
+    <Project Path="tests/compatibility/Bifrost.Compatibility.Tests/Bifrost.Compatibility.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/soak/">
+    <Project Path="tests/soak/Bifrost.Soak.Tests/Bifrost.Soak.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/Bifrost.TestServers/" />
   <Folder Name="/tests/Bifrost.TestServers/WasiHostStub/">

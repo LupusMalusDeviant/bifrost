@@ -180,7 +180,7 @@ Read this part before exposing the gateway to anything you care about.
 | Tasks | Approvals generalised into persisted, cancellable tasks; polling is the contract ([ADR-0019](docs/adr/0019-langlaufende-tasks-und-events.md)) | ✅ on `main`; event delivery deferred |
 | OpenRPC | JSON-RPC services as upstreams, fail-closed schema import | ✅ on `main` |
 | Connector packages | Signed `.mcpkg`, quarantine install with probe, update/rollback, trust levels ([ADR-0016](docs/adr/0016-versionierter-connector-plugin-vertrag.md)) | ✅ on `main`; WASI transport only |
-| Upstream OAuth | Authorization-code flow with PKCE against upstream authorization servers; discovery targets run through the same SSRF guard as schema imports | ✅ on `main`; not yet exercised against a real authorization server |
+| Upstream OAuth | Authorization-code flow with PKCE against upstream authorization servers; discovery targets run through the same SSRF guard as schema imports | ✅ on `main`; exercised end-to-end against a real Keycloak in CI (discovery, PKCE incl. a wrong-verifier control, redemption, refresh, `iss` mismatch) — an external hosted provider is still untested |
 | Rug-pull protection | Tool definitions are fingerprinted per discovery; a changed tool is withheld until accepted | ✅ on `main`; trust-on-first-use |
 | Observability | Metrics plus OTel traces, exported when an OTLP endpoint is configured | ✅ on `main`; no alerting rules shipped |
 | gRPC / GraphQL | Unary gRPC has a design spike; GraphQL has a decision matrix | ⏳ open |

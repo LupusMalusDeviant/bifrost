@@ -31,10 +31,10 @@
     </div>
     <h3>Neue Rolle</h3>
     <div class="row">
-        <div><label>Name</label><input @bind="_roleName" /></div>
+        <div><label>Name</label><input data-testid="role-name" @bind="_roleName" /></div>
         <div><label>Rate-Limit (Calls/min, leer = unbegrenzt)</label><input type="number" @bind="_roleRate" /></div>
     </div>
-    <label><input type="checkbox" @bind="_roleGlobal" /> Global-Grant (alle Tools/Aktionen — Admin-Agent)</label>
+    <label><input data-testid="role-global" type="checkbox" @bind="_roleGlobal" /> Global-Grant (alle Tools/Aktionen — Admin-Agent)</label>
     <RiskHint Title="Was ein Global-Grant umfasst"
               WhenOn="@("Jede Identität mit dieser Rolle darf jedes Tool jedes angeschlossenen Servers aufrufen — auch Tools, die es heute noch nicht gibt. Ein Upstream, den morgen jemand anschließt, ist damit sofort mit erfasst, ohne dass diese Rolle angefasst wird.")"
               WhenOff="@("Die Rolle darf genau das, was unten aufgezählt ist. Ein neuer Server erweitert sie nicht.")"
@@ -44,7 +44,7 @@
         <div class="row">
             <div>
                 <label>Wirkungsebene</label>
-                <select @bind="_roleScope">
+                <select data-testid="role-scope" @bind="_roleScope">
                     <option value="tool">einzelne Tools</option>
                     <option value="server">ganzer Server (vererbt auf alle seine Tools)</option>
                 </select>
@@ -63,7 +63,7 @@
         @if (_roleScope == "tool")
         {
             <label>Tool-Grants (ein Namespaced-Name pro Zeile)</label>
-            <textarea class="mono" rows="3" @bind="_roleTools" placeholder="github__list_issues"></textarea>
+            <textarea data-testid="role-tools" class="mono" rows="3" @bind="_roleTools" placeholder="github__list_issues"></textarea>
         }
         <label>Erlaubte Aktionen</label>
         <div class="pill-list">
@@ -73,7 +73,7 @@
         </div>
     }
     <div class="toolbar" style="margin-top:.75rem">
-        <button @onclick="AddRole">Rolle anlegen</button>
+        <button data-testid="role-add" @onclick="AddRole">Rolle anlegen</button>
         @if (_roleMsg is not null) { <span class="@(_roleOk ? "msg-ok" : "msg-err")">@_roleMsg</span> }
     </div>
 </div>
@@ -91,7 +91,7 @@
                         <td><div class="pill-list">@foreach (var rid in i.Roles) { <span class="pill">@RoleName(rid)</span> }</div></td>
                         <td class="muted">@(i.Profile is { } p ? ProfileName(p) : "—")</td>
                         <td>
-                            <button class="btn-sm btn-ghost" @onclick="() => SelectForKey(i.Id)">Keys</button>
+                            <button data-testid="identity-keys" data-identity="@i.Name" class="btn-sm btn-ghost" @onclick="() => SelectForKey(i.Id)">Keys</button>
                             <ConfirmButton What="@($"Identität {i.Name}")" OnConfirmed="() => RemoveIdentity(i.Id)" />
                         </td>
                     </tr>
@@ -101,10 +101,10 @@
     </div>
     <h3>Neue Identität</h3>
     <div class="row">
-        <div><label>Name</label><input @bind="_idName" /></div>
+        <div><label>Name</label><input data-testid="identity-name" @bind="_idName" /></div>
         <div>
             <label>Profil (optional)</label>
-            <select @bind="_idProfile">
+            <select data-testid="identity-profile" @bind="_idProfile">
                 <option value="">(keins — sparsame Default-Sicht)</option>
                 @foreach (var p in _profiles) { <option value="@p.Id.Value">@p.Name</option> }
             </select>
@@ -114,11 +114,11 @@
     <div class="pill-list">
         @foreach (var r in _roles)
         {
-            <label class="pill"><input type="checkbox" checked="@_idRoles.Contains(r.Id)" @onchange="e => ToggleRole(r.Id, (bool)e.Value!)" /> @r.Name</label>
+            <label class="pill"><input data-testid="identity-role" data-role="@r.Name" type="checkbox" checked="@_idRoles.Contains(r.Id)" @onchange="e => ToggleRole(r.Id, (bool)e.Value!)" /> @r.Name</label>
         }
     </div>
     <div class="toolbar" style="margin-top:.75rem">
-        <button @onclick="AddIdentity">Identität anlegen</button>
+        <button data-testid="identity-add" @onclick="AddIdentity">Identität anlegen</button>
         @if (_idMsg is not null) { <span class="@(_idOk ? "msg-ok" : "msg-err")">@_idMsg</span> }
     </div>
 </div>
@@ -131,7 +131,7 @@
         {
             <div class="card card-accent">
                 <strong class="msg-ok">Neuer Key (wird nie wieder angezeigt):</strong>
-                <pre>@_newKey</pre>
+                <pre data-testid="key-plaintext">@_newKey</pre>
 
                 @* FR-41: Fertige Konfiguration statt Abtippen — der Key ist genau jetzt sichtbar. *@
                 <strong>Agenten anbinden</strong>
@@ -168,12 +168,12 @@
             </table>
         </div>
         <div class="row" style="margin-top:.75rem">
-            <div><label>Label</label><input @bind="_keyLabel" placeholder="ci-agent" /></div>
+            <div><label>Label</label><input data-testid="key-label" @bind="_keyLabel" placeholder="ci-agent" /></div>
             <div>
                 <label title="Leer lassen für einen unbefristeten Schlüssel.">Gültig bis (optional)</label>
                 <input type="date" @bind="_keyExpiresAt" />
             </div>
-            <div style="flex:0"><button style="margin-top:1.35rem" @onclick="IssueKey">Key erzeugen</button></div>
+            <div style="flex:0"><button data-testid="key-issue" style="margin-top:1.35rem" @onclick="IssueKey">Key erzeugen</button></div>
         </div>
     </div>
 }

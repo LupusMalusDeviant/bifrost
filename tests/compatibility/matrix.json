@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-02T15:11:22.2154575+00:00",
+  "entries": [
+    {
+      "client": "claude-code",
+      "clientVersion": "unbekannt",
+      "os": "windows",
+      "transport": "http",
+      "protocolVersion": "unbekannt",
+      "mode": "stateless",
+      "features": {
+        "tools": "untested",
+        "resources": "untested",
+        "prompts": "untested",
+        "elicitation": "untested",
+        "approval": "untested",
+        "listChanged": "untested",
+        "oauth": "untested",
+        "skills": "untested"
+      },
+      "limitations": []
+    },
+    {
+      "client": "claude-desktop",
+      "clientVersion": "unbekannt",
+      "os": "windows",
+      "transport": "http",
+      "protocolVersion": "unbekannt",
+      "mode": "stateless",
+      "features": {
+        "tools": "untested",
+        "resources": "untested",
+        "prompts": "untested",
+        "elicitation": "untested",
+        "approval": "untested",
+        "listChanged": "untested",
+        "oauth": "untested",
+        "skills": "untested"
+      },
+      "limitations": []
+    },
+    {
+      "client": "cursor",
+      "clientVersion": "unbekannt",
+      "os": "windows",
+      "transport": "http",
+      "protocolVersion": "unbekannt",
+      "mode": "stateless",
+      "features": {
+        "tools": "untested",
+        "resources": "untested",
+        "prompts": "untested",
+        "elicitation": "untested",
+        "approval": "untested",
+        "listChanged": "untested",
+        "oauth": "untested",
+        "skills": "untested"
+      },
+      "limitations": []
+    },
+    {
+      "client": "vscode",
+      "clientVersion": "unbekannt",
+      "os": "windows",
+      "transport": "http",
+      "protocolVersion": "unbekannt",
+      "mode": "stateless",
+      "features": {
+        "tools": "untested",
+        "resources": "untested",
+        "prompts": "untested",
+        "elicitation": "untested",
+        "approval": "untested",
+        "listChanged": "untested",
+        "oauth": "untested",
+        "skills": "untested"
+      },
+      "limitations": []
+    },
+    {
+      "client": "codex",
+      "clientVersion": "unbekannt",
+      "os": "windows",
+      "transport": "http",
+      "protocolVersion": "unbekannt",
+      "mode": "stateless",
+      "features": {
+        "tools": "untested",
+        "resources": "untested",
+        "prompts": "untested",
+        "elicitation": "untested",
+        "approval": "untested",
+        "listChanged": "untested",
+        "oauth": "untested",
+        "skills": "untested"
+      },
+      "limitations": []
+    },
+    {
+      "client": "mcp-inspector",
+      "clientVersion": "unbekannt",
+      "os": "windows",
+      "transport": "http",
+      "protocolVersion": "unbekannt",
+      "mode": "stateless",
+      "features": {
+        "tools": "untested",
+        "resources": "untested",
+        "prompts": "untested",
+        "elicitation": "untested",
+        "approval": "untested",
+        "listChanged": "untested",
+        "oauth": "untested",
+        "skills": "untested"
+      },
+      "limitations": []
+    },
+    {
+      "client": "csharp-sdk",
+      "clientVersion": "2.0.0",
+      "os": "windows",
+      "transport": "http",
+      "protocolVersion": "2026-07-28",
+      "mode": "stateless",
+      "features": {
+        "tools": "pass",
+        "resources": "pass",
+        "prompts": "pass",
+        "skills": "pass",
+        "listChanged": "unsupported",
+        "elicitation": "untested",
+        "approval": "untested",
+        "oauth": "untested"
+      },
+      "evidence": {
+        "kind": "automated",
+        "ref": "local://windows",
+        "date": "2026-08-02"
+      },
+      "limitations": [
+        "In-Process-Host: kein TCP, kein TLS, kein Reverse Proxy — die Netzstrecke belegt WP5.3."
+      ]
+    }
+  ]
+}

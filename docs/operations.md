@@ -261,7 +261,8 @@ Sicherung zurückholen.
 | `BIFROST_DATA_DIR` | `data` (bzw. `/data` im Container) | Verzeichnis für SQLite-DB **und** DataProtection-Key-Ring |
 | `BIFROST_DB_PROVIDER` | `sqlite` | `sqlite` oder `postgres` |
 | `BIFROST_DB_CONNECTION` | `Data Source=<datadir>/bifrost.db` | Connection-String (bei Postgres Pflicht) |
-| `BIFROST_AUDIT_MODE` | `best-effort` | `best-effort` verwirft bei Überlast gezählt; `compliance` meldet Überlast explizit und retryt DB-Fehler mit Backpressure |
+| `BIFROST_SQLITE_JOURNAL_MODE` | `wal` | Journalverfahren der SQLite-Datei. `delete` ist der [Rückweg](#sqlite-im-wal-modus) auf das klassische Rollback-Journal. Ein unbekannter Wert bricht den Start ab |
+| `BIFROST_AUDIT_MODE` | `best-effort` | `best-effort` wiederholt einen fehlgeschlagenen Batch dreimal und verwirft ihn dann **gezählt** (Befund `BFR-DB-0007`); `compliance` meldet Überlast explizit an den Aufrufer und wiederholt DB-Fehler unbegrenzt |
 | `BIFROST_BOOTSTRAP_TTL_MINUTES` | `60` | Gültigkeitsdauer des Setup-Tokens beim [Erstzugang](#erstzugang). Ungültige Angabe fällt auf den Default zurück |
 | `ASPNETCORE_URLS` | `http://+:8080` (Container) | Bind-Adresse/Port |
 | `BIFROST_KEYRING_PROTECTION` | *(nicht gesetzt)* | Ausdrückliche Betriebsart: `certificate`, `file-secret` oder `none` (siehe [Key-Ring schützen](#key-ring-schützen)). Nicht gesetzt = **keine Wahl getroffen**, der Start warnt |
@@ -1170,6 +1171,36 @@ claude mcp add --transport http bifrost http://localhost:8080/mcp \
 
 Der Agent sieht dann die Meta-Tools `search_tools` / `describe_tool` / `invoke_tool` (Lazy-Default) plus die im Profil gepinnten Tools. Upstream-Server, Rollen und Profile werden über die Web-UI oder die REST-API verwaltet.
 
+## SQLite im WAL-Modus
+
+Seit v0.7 öffnet der Gateway seine SQLite-Datei im **WAL-Modus** (`journal_mode=WAL`) und wartet bis
+zu 5 Sekunden auf einen gehaltenen Schreib-Lock (`busy_timeout=5000`). Ohne beides sperrte die
+Datenbank, sobald die Instanz gleichzeitig ihr eigenes Audit schrieb — Audit-Flush, Audit-Retention
+und die Fristprüfung der Vorgänge laufen ab dem Startende dauerhaft mit.
+
+**Für eine bestehende Installation ist das eine Umstellung an den Daten.** `journal_mode` ist eine
+Eigenschaft der *Datei*, nicht der Verbindung: Der erste Start mit v0.7 stellt sie dauerhaft um.
+Danach liegen neben `bifrost.db` zwei weitere Dateien:
+
+| Datei | Bedeutung |
+|---|---|
+| `bifrost.db-wal` | Die zuletzt bestätigten Transaktionen, noch nicht in die Hauptdatei zurückgeschrieben |
+| `bifrost.db-shm` | Gemeinsamer Speicher der beteiligten Verbindungen; entsteht neu und muss nie gesichert werden |
+
+> **Wer die Datenbankdatei von Hand kopiert, kopiert ohne `-wal` einen älteren Stand** — und sieht
+> es der Kopie nicht an. `bifrost backup` und `bifrost restore` sind davon **nicht** betroffen: Sie
+> benutzen seit jeher die Online-Backup-API von SQLite und nicht das Kopieren der Datei
+> (ADR-0024 E2). Für alles andere gilt: entweder alle drei Dateien bei gestopptem Gateway, oder
+> `bifrost backup`.
+
+**Der Rückweg.** `BIFROST_SQLITE_JOURNAL_MODE=delete` stellt beim nächsten Start auf das klassische
+Rollback-Journal zurück; die beiden Begleitdateien verschwinden dabei. Gedacht ist er für
+Datenverzeichnisse, auf denen SQLite den gemeinsamen Speicher nicht anlegen kann — ein per NFS oder
+SMB eingehängtes Verzeichnis etwa. Er kauft den Sperrfehler zurück, den WAL behebt; auf einem
+solchen Verzeichnis ist SQLite ohnehin kein tragfähiger Betriebsmodus (siehe
+[Migrationslock](#schema--upgrades)). Ein **unbekannter** Wert bricht den Start ab statt still auf
+`wal` zu fallen.
+
 ## PostgreSQL statt SQLite
 
 Für größere Setups (viel Audit-Volumen, mehrere Instanzen an einer DB) die Override-Datei
@@ -1475,8 +1506,51 @@ Auf PostgreSQL lohnt der Blick auf **`BFR-DB-0006`** vor dem ersten Ernstfall: E
 vorhandene `pg_dump` den Server überhaupt sichern kann (siehe
 [PostgreSQL-Backup](#voraussetzung-pg_dump-und-pg_restore)).
 
+**`BFR-DB-0007` beantwortet die Frage, auf der das ganze Produkt steht: Ist das Audit-Log
+lückenlos?** Er nennt die Zahl der verlorenen Ereignisse, ihre Ursache (bei der Annahme verworfen /
+beim Schreiben aufgegeben) und den Zeitpunkt des ersten Verlusts — ab da ist dem Log nicht mehr zu
+trauen. Ein einziger Verlust ist ein Fail. Ohne laufenden Serverprozess (also aus der CLI heraus)
+meldet er `Skipped` mit Begründung; „keine Auskunft" ist ausdrücklich nicht „nichts verloren".
+
 Dieselbe Ansicht gibt es in der Oberfläche unter **Betrieb** (nur für Admins), zusammen mit dem
 Anlegen einer Sicherung.
+
+## Support-Bundle
+
+Für den Fall, dass jemand von außen mitlesen soll, ohne Zugang zur Installation zu bekommen:
+
+```bash
+bifrost support-bundle --preview                 # erst zeigen, was hineinkäme
+bifrost support-bundle --out /data/support/b.zip # dann erzeugen
+bifrost support-bundle --categories version,diagnostics,runtime --log-lines 500
+```
+
+Dieselben zwei Schritte gibt es in der Oberfläche unter **Betrieb** und über die API
+(`POST /api/v1/operations/support-bundle/preview` und `POST /api/v1/operations/support-bundle`,
+beides admin-only). Die Vorschau ist **Pflicht vor dem Erzeugen** — ein Archiv, dessen Inhalt man
+erst nach dem Schreiben sieht, ist bereits geschrieben, und danach verlässt es das Haus.
+
+**Was drin ist:** Produktversion, Konfiguration **ohne Secretwerte** (derselbe Weg wie der
+Konfigurationsexport), der Diagnosebericht, der Zustand von Datenbank und Upstreams, der
+Migrationsstand und Laufzeitangaben (Betriebssystem, .NET, Container ja/nein, WASI-Host
+konfiguriert ja/nein). Dazu ein `manifest.json` mit Prüfsummen je Datei — es liegt unverschlüsselt
+oben im Archiv, damit ein Empfänger prüfen kann, was er vor sich hat, bevor er es öffnet.
+
+**Was nicht drin ist, und zwar auch nicht auf Wunsch:** Auditinhalte und Credentialmaterial. Es
+gibt dafür keinen Schalter. Wer Auditdaten braucht, nimmt den Auditexport — die Trennung ist der
+Sinn der Sache.
+
+**Der Maskierungslauf.** Jedes Dokument geht durch einen zentralen Durchgang, der Felder mit
+Secret-Namen maskiert und Werte wie `Password=…`, `Bearer …` und Zugangsdaten in URLs unkenntlich
+macht. Das Manifest nennt, **wie oft** maskiert wurde — nicht was. Der Durchgang ist ein
+Sicherheitsnetz, keine Erlaubnis: Er gilt auch für die Quelle, die morgen dazukommt.
+
+**Logs.** Das Gateway schreibt sein Anwendungslog auf die Standardausgabe; findet das Bundle keine
+Logdatei im Datenverzeichnis, sagt es das als übersprungene Kategorie und legt stattdessen eine
+Anleitung bei (`docker compose logs`, `journalctl`). Diese Ausgabe geht **nicht** durch den
+Maskierungslauf — vor dem Weitergeben also durchsehen.
+
+Die Erzeugung ist ein Auditvorgang: Wer wann ein Bundle gezogen hat, steht danach im Log.
 
 ## Wenn der Start BFR-DB-0101 meldet
 
@@ -1531,6 +1605,10 @@ Der Import ist zweistufig und **ausschließlich additiv**: Er legt an, überschr
 nichts. Konflikte und fehlende Abhängigkeiten stehen im Plan und führen zu Exit `5`, bevor
 irgendetwas geschrieben wird.
 
+> Es gibt einen zweiten Modus, der bestehende **Rollen und Profile ersetzt** — erreichbar
+> ausschließlich über [Policy Packs](#policy-packs), nicht über `bifrost config import`. Er
+> schreibt den vorigen Inhalt mit und liefert einen Rückweg; ohne den gäbe es ihn nicht.
+
 | | Backup | Konfigurationsexport |
 |---|---|---|
 | Zweck | dieselbe Instanz wiederherstellen | eine gleichartige Instanz aufbauen |
@@ -1543,6 +1621,55 @@ irgendetwas geschrieben wird.
 Alle Betriebs-Endpunkte (`/api/v1/operations/*`) verlangen eine Identität mit **Global-Grant** —
 dieselbe Schwelle wie RBAC-Verwaltung und Paketinstallation. In der Oberfläche liegt die Seite
 **Betrieb** hinter der Admin-Rolle. Jeder schreibende Vorgang steht im Audit-Log.
+
+## Policy Packs
+
+Ein Policy Pack ist eine **signierte Konfigurationsnutzlast** — Rollen und Profile von jemandem,
+dem diese Instanz vertraut. Es ist kein zweiter Importweg: Die Nutzlast ist genau das, was
+`bifrost config export` erzeugt. Neu ist die Frage, *von wem* sie stammt — und die Antwort auf die
+Frage, **wer danach mehr darf**.
+
+```bash
+# Zeigen, was passieren wuerde — schreibt nichts:
+bifrost policy plan team-standard.pack.json
+
+# Uebernehmen. Der Rechte-Diff steht IMMER davor; --yes ueberspringt die Rueckfrage, nicht die Anzeige.
+bifrost policy apply team-standard.pack.json --undo-out rueckweg.json
+
+# Und zurueck:
+bifrost policy revert rueckweg.json
+```
+
+**Der Rechte-Diff ist der Punkt.** Ein Diff auf Objektebene sagt „Rolle `entwickler` geändert". Das
+liest sich harmlos und kann bedeuten, dass drei Agenten ab sofort auf jedem Server schreiben dürfen.
+Plan und Oberfläche nennen deshalb **jede Identität**, die gewinnt, samt Wirkungsebene — und die
+Wegnahmen daneben, weil ein Pack auch unbemerkt Rechte entziehen kann.
+
+**Rollen werden über den Namen zugeordnet, die Id bleibt hiesig.** Ein Pack ist zum Weitergeben
+gedacht, und Guids sind auf jeder Instanz andere. Beim Ersetzen kommt der Inhalt aus dem Pack, die
+Id von hier — sonst zeigt die Zuordnung Identität→Rolle nach der Übernahme ins Leere.
+
+**Der Rückweg entsteht nur, wenn man ihn aufhebt.** Er steht in der Antwort der Übernahme und wird
+im Gateway **nicht** aufbewahrt:
+
+- CLI: `--undo-out <datei>`. Ohne die Angabe warnt der Befehl — und dann ist der Weg zurück weg.
+- Oberfläche (**Policy Packs**, nur für Admins): Der Knopf *Zurücknehmen* steht da, solange die
+  Seite offen ist; der Text darunter ist zum Sichern gedacht.
+- API: `POST /api/v1/operations/policy/plan`, `…/apply`, `…/revert` — alle admin-only, die
+  Übernahme auditiert mit Pack-Kennung, Version und Nutzlast-Fingerabdruck.
+
+Die Rücknahme setzt ersetzte Rollen und Profile auf ihren **vorigen Inhalt** zurück und entfernt,
+was diese Übernahme angelegt hat. Sie ist ausdrücklich kein Zeitpunkt: Wer nach der Übernahme
+dieselbe Rolle von Hand ändert, dessen Änderung wird von der Rücknahme überschrieben.
+
+**Was ein Pack nicht kann:** Identitäten mitbringen (der Export enthält keine), Objekte entfernen,
+die es nur nicht kennt (das wäre eine Synchronisierung), oder teilweise angewendet werden — ein Pack
+aus einer neueren Generation wird abgewiesen statt halb übernommen.
+
+**Herausgeber.** Signiert wird über Manifest **und** Nutzlast mit demselben Ed25519-Verfahren wie
+bei Connector-Paketen; der Herausgeber muss im Trust-Store stehen (Oberfläche: **Connector-Pakete →
+Herausgeber & Stufen**). Ein Pack von einem Drittanbieter wird nicht abgelehnt, aber der Plan sagt
+es dazu — es ändert dieselben Rechte wie eines aus eigener Hand.
 
 ## Fremde MCP-Konfigurationen übernehmen
 
@@ -1644,6 +1771,73 @@ Sie folgen der Tabelle der übrigen `bifrost`-Befehle (nicht der Betriebstabelle
 | `5` | Plan nicht anwendbar, Handle unbekannt/verbraucht, Slug-Konflikt, Probe fehlgeschlagen |
 | `6` | Bestätigung fehlt (`--confirm-risks`) oder Isolationsangabe fehlt |
 | `10` | Gateway nicht erreichbar |
+
+## Auditexport und Integritätskette
+
+Die Ansicht blättert, der Export **streamt**. Beides sieht dieselben Daten, aber ein Export ist eine
+Fortschreibung und keine Übersicht:
+
+```bash
+# Alles, als JSON Lines:
+bifrost audit export --out audit.jsonl
+
+# Als CSV, gefiltert:
+bifrost audit export --format csv --from 2026-08-01T00:00:00Z --tool github__ --out audit.csv
+
+# Fortsetzen, wo der letzte Export aufhoerte:
+bifrost audit export --after 481523 --out weiter.jsonl
+
+# Die Kette nachrechnen:
+bifrost audit verify
+```
+
+Dieselben Wege über die API (`GET /api/v1/audit/export`, `…/verify`, beide admin-only) und in der
+Oberfläche unter **Audit-Log** — dort schreibt der Export in eine Datei auf dem Rechner, auf dem der
+Gateway läuft, und nicht auf den des Betrachters.
+
+**Der Cursor ist eine Zeilennummer, keine Seitenzahl.** Wer über Seiten blättert, verliert oder
+verdoppelt Einträge, sobald nebenher geschrieben wird — und beim Audit wird immer nebenher
+geschrieben. `--after <n>` nimmt die zuletzt gesehene Nummer und liefert ausschließlich, was danach
+kam.
+
+**Der Export zieht keinen Arbeitsspeicher mit.** Die Zeilen gehen einzeln aus dem Datenbankleser in
+die Antwort. Gemessen an einer Fixture mit einer Million Einträgen: **1 MB gehaltener Speicher bei
+100 000 Zeilen, 0 MB bei 1 000 000** — eine Konstante, kein Anstieg (FR-P072, CI-Job `audit-scale`).
+
+**JSONL oder CSV.** JSONL trägt alles, inklusive der maskierten Argumente als eingebettetes JSON.
+CSV trägt sie **nicht** — sie gehören nicht in eine Tabellenzelle; dafür hat CSV eine feste
+Spaltenfolge und maskiert Felder, die eine Tabellenkalkulation als Formel läse (`=`, `+`, `-`, `@`).
+Ein Auditexport, der beim Öffnen Code startet, wäre die Umkehrung seines Zwecks.
+
+### Die Kette
+
+Jede Zeile trägt seit dieser Fassung einen SHA-256 über ihren Vorgänger **und** eine kanonische
+Fassung ihrer selbst. `bifrost audit verify` rechnet das nach und nennt die **erste** gebrochene
+Stelle mit Zeilennummer und Grund — nicht „ungültig".
+
+Gefunden werden damit: ein nachträglich geändertes Feld, eine entfernte Zeile, eine vertauschte
+Reihenfolge. Belegt ist beides gegen die echte Ablage: Ein Test ändert eine Zeile direkt in der
+Datenbank, ein zweiter löscht eine — beide fallen auf.
+
+**Was die Kette nicht zeigt, und das steht auch in ihrer eigenen Ausgabe:**
+
+- Sie ist **kein Beweis für Vollständigkeit**. Wer die letzten Einträge eines Abschnitts entfernt,
+  hinterlässt keine Lücke, die von hier aus sichtbar wäre.
+- **Gegen einen übernommenen Wirt schützt sie nicht.** Wer auf dem Rechner schreiben darf, kann die
+  Kette neu rechnen; dann stimmt sie wieder und sagt nichts mehr aus.
+- Ein **Abschnitt** entspricht einem Schreiberlauf. Ein Neustart beginnt einen neuen — dass ein
+  ganzer Abschnitt fehlt, ist hier nicht erkennbar. Der Zuschnitt ist Absicht: Eine durchgehende
+  Kette setzte genau einen Schreiber voraus, und zwei Instanzen auf derselben Datenbank meldeten
+  dann Manipulation, wo keine war.
+- Geprüft wird nur der volle Datenstrom. `verify` nimmt deshalb **keine Inhaltsfilter** an: Jede
+  herausgefilterte Zeile sähe aus wie eine gelöschte.
+
+Zeilen aus der Zeit vor der Kette tragen keine Glieder. Sie werden gezählt und als „nicht gedeckt"
+ausgewiesen, statt stillschweigend als geprüft zu gelten. Nachträglich verkettet wird nichts — ein
+Hash, den die Instanz sich selbst nachträglich ausrechnet, belegt nichts.
+
+Exit-Codes von `audit verify`: `0` kein Bruch, `4` Bruch gefunden. Ein Bruch ist ein Befund, kein
+Programmfehler — ein Skript soll beides unterscheiden können.
 
 ## Audit-Retention
 
@@ -1890,14 +2084,28 @@ Log des beendeten Prozesses.
 
 ## Audit-Betriebsmodi
 
-`best-effort` hält Tool-Calls bei Audit-Überlast nicht auf. Drops werden gezählt, in `/readyz`
-ausgegeben und beim Shutdown geloggt. Fehlgeschlagene DB-Batches werden als Fehler geloggt und
-verworfen.
+`best-effort` hält Tool-Calls bei Audit-Überlast nicht auf. Ist der Puffer voll, wird **gezählt**
+verworfen. Ein fehlgeschlagener DB-Batch wird **dreimal** versucht und erst dann aufgegeben — auch
+das gezählt.
 
 `compliance` wirft bei vollem Channel einen expliziten `AuditUnavailableException`, markiert
-Readiness als nicht bereit und verwirft fehlgeschlagene DB-Batches nicht; der Writer retryt sie.
-Das kann Shutdown oder Verarbeitung bei längerem DB-Ausfall bewusst blockieren. Für HA ist vor
-Produktionsfreigabe zusätzlich ein durables externes Spool/Queue-Backend erforderlich.
+Readiness als nicht bereit und gibt einen fehlgeschlagenen DB-Batch **nie** auf; der Writer
+wiederholt ihn unbegrenzt. Das kann Shutdown oder Verarbeitung bei längerem DB-Ausfall bewusst
+blockieren. Für HA ist vor Produktionsfreigabe zusätzlich ein durables externes Spool/Queue-Backend
+erforderlich.
+
+> **Warum `best-effort` überhaupt wiederholt.** Der Vertrag lautet: Ein Tool-Aufruf darf nie am
+> Audit scheitern oder warten. Er gilt der Annahme (`IAuditSink.Record`, ein Enqueue), nicht dem
+> Schreiben — das läuft im Hintergrunddienst und hält keinen Aufruf auf. Der häufigste Grund für
+> einen fehlgeschlagenen Batch ist ein Schreib-Lock, den ein anderer gerade hält; der ist beim
+> zweiten Anlauf weg. Unbegrenzt zu wiederholen wäre dagegen falsch: Bei einer dauerhaft kaputten
+> Datenbank liefe der Puffer voll, und der Verlust entstünde stattdessen bei der Annahme — verschoben,
+> nicht vermieden.
+
+**Verluste sind sichtbar, nicht nur zählbar.** `bifrost doctor` meldet unter `BFR-DB-0007`, **wie
+viele** Ereignisse verlorengingen und **seit wann**, getrennt nach Ursache (bei der Annahme
+verworfen / beim Schreiben aufgegeben). Ein einziger Verlust ist dort ein **Fail** — eine Zusage,
+deren Bruch als Randnotiz erscheint, ist keine.
 
 `/readyz` liefert `auditMode`, `auditHealthy` und `auditDropped`. Alarmieren auf
 `auditHealthy=false`, `auditDropped>0` und HTTP 503.

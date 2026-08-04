@@ -64,6 +64,12 @@ public sealed record DiagnosticContext
     public IUpstreamDiagnosticProbe? Upstreams { get; init; }
 
     /// <summary>
+    /// Die Verlustauskunft des Audits. <c>null</c> = nicht verdrahtet; BFR-DB-0007 meldet dann
+    /// Skipped — und ausdrücklich nicht „lückenlos".
+    /// </summary>
+    public IAuditDiagnosticProbe? Audit { get; init; }
+
+    /// <summary>
     /// Die PostgreSQL-Sicherungswerkzeuge dieser Installation. <c>null</c> = nicht verdrahtet;
     /// BFR-DB-0006 meldet dann Skipped.
     /// </summary>

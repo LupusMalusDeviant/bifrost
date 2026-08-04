@@ -43,6 +43,18 @@ public readonly record struct NamespacedToolName
 
     public string Value { get; }
 
+    /// <summary>
+    /// <b><c>[JsonConstructor]</c> ist hier nicht Zierde.</b> Ein Struct hat immer einen
+    /// parameterlosen Konstruktor, und System.Text.Json nimmt bei Structs diesen — <see cref="Value"/>
+    /// hat keinen Setter und bliebe damit <c>null</c>. Das Ergebnis wäre kein Fehler, sondern ein
+    /// Werkzeugname, der beim Lesen still verschwindet; bei einer Berechtigung, die auf genau ein
+    /// Werkzeug eingeschränkt ist, wird daraus eine Berechtigung auf alles.
+    /// <para>
+    /// Positionale <c>record struct</c>s wie <see cref="ServerId"/> sind davon nicht betroffen —
+    /// deshalb fiel es lange nicht auf. Belegt in <c>ValueTypeJsonTests</c>.
+    /// </para>
+    /// </summary>
+    [System.Text.Json.Serialization.JsonConstructor]
     public NamespacedToolName(string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);

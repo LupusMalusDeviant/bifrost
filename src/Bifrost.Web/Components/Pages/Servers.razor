@@ -28,7 +28,9 @@
                 <tbody>
                     @foreach (var s in _statuses)
                     {
-                        <tr>
+                        @* Die Zeile traegt Slug und Zustand als Daten, damit ein Browsertest den
+                           Zustand EINES Servers pruefen kann statt Text auf der ganzen Seite. *@
+                        <tr data-testid="server-row" data-slug="@s.Slug" data-state="@s.State">
                             <td class="mono">@s.Slug</td>
                             <td><StateBadge State="s.State" /></td>
                             <td>@s.ToolCount</td>
@@ -233,19 +235,22 @@
         </div>
         <div>
             <label>Slug (Namespace)</label>
-            <input @bind="_slug" placeholder="z.B. github" />
+            @* data-testid nur dort, wo es keinen stabilen semantischen Anker gibt (WP5.5): Diese
+               Felder tragen weder id noch Beschriftungsbezug, und der Platzhalter ist Text, den
+               jemand jederzeit umformuliert. *@
+            <input data-testid="server-slug" @bind="_slug" placeholder="z.B. github" />
         </div>
         <div>
             <label>Anzeigename</label>
-            <input @bind="_displayName" placeholder="GitHub" />
+            <input data-testid="server-name" @bind="_displayName" placeholder="GitHub" />
         </div>
     </div>
 
     @if (_kind == UpstreamTransportKind.Stdio)
     {
         <div class="row">
-            <div style="flex:2"><label>Kommando</label><input @bind="_command" placeholder="npx" /></div>
-            <div style="flex:3"><label>Argumente (durch Leerzeichen)</label><input @bind="_args" placeholder="-y @@modelcontextprotocol/server-github" /></div>
+            <div style="flex:2"><label>Kommando</label><input data-testid="server-command" @bind="_command" placeholder="npx" /></div>
+            <div style="flex:3"><label>Argumente (durch Leerzeichen)</label><input data-testid="server-args" @bind="_args" placeholder="-y @@modelcontextprotocol/server-github" /></div>
         </div>
         <label>Environment (KEY=VALUE pro Zeile)</label>
         <textarea class="mono" rows="3" @bind="_env" placeholder="GITHUB_TOKEN=ghp_..."></textarea>
@@ -371,7 +376,7 @@
         }
         @if (_message is not null)
         {
-            <span class="@(_ok ? "msg-ok" : "msg-err")">@_message</span>
+            <span data-testid="server-message" class="@(_ok ? "msg-ok" : "msg-err")">@_message</span>
         }
     </div>
 

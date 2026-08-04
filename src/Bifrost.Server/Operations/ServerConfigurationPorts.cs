@@ -1,5 +1,6 @@
 ﻿using Bifrost.Abstractions;
 using Bifrost.Abstractions.Execution;
+using Bifrost.Abstractions.Operations;
 using Bifrost.Core.Configuration;
 using Bifrost.Core.Execution;
 using Bifrost.Core.Upstreams;
@@ -145,11 +146,11 @@ public sealed partial class ServerConfigurationPorts : IConfigurationSnapshotSou
         await _upstreamConfigs.RemoveAsync(id, ct).ConfigureAwait(false);
     }
 
-    public Task AddRoleAsync(Role role, CancellationToken ct) => _rbac.UpsertRoleAsync(role, ct);
+    public Task SaveRoleAsync(Role role, CancellationToken ct) => _rbac.UpsertRoleAsync(role, ct);
 
     public Task RemoveRoleAsync(RoleId id, CancellationToken ct) => _rbac.RemoveRoleAsync(id, ct);
 
-    public Task AddProfileAsync(ToolProfile profile, CancellationToken ct)
+    public Task SaveProfileAsync(ToolProfile profile, CancellationToken ct)
         => _rbac.UpsertProfileAsync(profile, ct);
 
     public Task RemoveProfileAsync(ProfileId id, CancellationToken ct) => _rbac.RemoveProfileAsync(id, ct);

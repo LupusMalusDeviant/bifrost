@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- xUnit v3: Testprojekte sind eigenstaendige Executables, der Runner laeuft im selben Prozess. -->
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Bifrost.Soak.Tests</RootNamespace>
+    <Description>WP5.4: Soak- und Chaos-Harness. Faehrt Dauerlast mit Stoerungen gegen einen echten
+      Gateway-Prozess, schreibt die Messreihe fortlaufend mit und urteilt ueber Wachstum,
+      Kindprozesse und Erholung.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Bifrost.Server\Bifrost.Server.csproj" />
+    <ProjectReference Include="..\..\..\src\Bifrost.Persistence.Migrations.Sqlite\Bifrost.Persistence.Migrations.Sqlite.csproj" />
+    <!-- Nur Build-Reihenfolge: die TestServer werden als externe Prozesse gestartet. -->
+    <ProjectReference Include="..\..\Bifrost.TestServers\EchoServer\Bifrost.TestServers.EchoServer.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\Bifrost.TestServers\CrashServer\Bifrost.TestServers.CrashServer.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\Bifrost.TestServers\SlowServer\Bifrost.TestServers.SlowServer.csproj" ReferenceOutputAssembly="false" />
+
+    <!-- Der Prozess-Harness aus WP5.3, verlinkt statt nachgebaut: Wie ein Gateway gestartet,
+         freigeschaltet und wieder abgeraeumt wird, gibt es genau einmal. Zwei Fassungen wuerden
+         irgendwann unterschiedlich aufraeumen — und ausgerechnet das prueft dieses Projekt. -->
+    <Compile Include="..\..\Bifrost.Performance.Tests\Harness\GatewayProcess.cs" Link="Harness\GatewayProcess.cs" />
+    <!-- Dieselbe Prozesssuche wie im OrphanHost und in den Integrationstests (siehe dort). -->
+    <Compile Include="..\..\Bifrost.TestServers\Common\UpstreamProcessLookup.cs" Link="Harness\UpstreamProcessLookup.cs" />
+
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+  </ItemGroup>
+
+</Project>

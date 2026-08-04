@@ -256,3 +256,57 @@ public class SqliteDatabaseFileCheckTests
         result.Status.Should().Be(CheckStatus.Skipped);
     }
 }
+
+/// <summary>
+/// BFR-DB-0007 — der Befund, der die Zusage „lückenloses Audit-Log" überhaupt erst überprüfbar
+/// macht. Ohne ihn stand ein Verlust in einer Logzeile und in keinem Bericht.
+/// </summary>
+public class AuditCompletenessCheckTests
+{
+    [Fact]
+    public async Task Without_a_probe_the_check_is_skipped_and_not_silently_green()
+    {
+        var result = await new AuditCompletenessCheck()
+            .RunAsync(DiagnosticWorld.Context(), TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(CheckStatus.Skipped,
+            "keine Auskunft ist ausdrücklich nicht 'nichts verloren'");
+        result.Summary.Should().Contain("unbeantwortet");
+    }
+
+    [Fact]
+    public async Task No_loss_passes()
+    {
+        var context = DiagnosticWorld.Context() with
+        {
+            Audit = new FakeAuditProbe(new AuditDiagnosticFacts(0, 0, null, "best-effort")),
+        };
+
+        var result = await new AuditCompletenessCheck().RunAsync(context, TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(CheckStatus.Pass);
+        result.SafeDetails!["verloren_gesamt"].Should().Be("0");
+    }
+
+    [Fact]
+    public async Task A_discarded_batch_appears_with_its_number_and_the_time_it_started()
+    {
+        var firstLoss = new DateTimeOffset(2026, 8, 1, 10, 30, 0, TimeSpan.Zero);
+        var context = DiagnosticWorld.Context() with
+        {
+            Audit = new FakeAuditProbe(new AuditDiagnosticFacts(12, 500, firstLoss, "best-effort")),
+        };
+
+        var result = await new AuditCompletenessCheck().RunAsync(context, TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(CheckStatus.Fail,
+            "eine gebrochene Zusage ist keine Randnotiz");
+        result.Summary.Should().Contain("512", "der Bericht nennt die Zahl, nicht nur das Ereignis");
+        result.SafeDetails!["verworfen_bei_annahme"].Should().Be("12");
+        result.SafeDetails["aufgegeben_beim_schreiben"].Should().Be("500");
+        result.SafeDetails["verloren_gesamt"].Should().Be("512");
+        result.SafeDetails["erster_verlust"].Should().Contain("2026-08-01");
+        result.Summary.Should().Contain("2026-08-01", "und seit wann");
+        result.Remediation.Should().Contain("compliance");
+    }
+}
