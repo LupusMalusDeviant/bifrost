@@ -5,6 +5,8 @@ using AwesomeAssertions;
 using Bifrost.Abstractions.Operations;
 using Bifrost.Persistence.Backup;
 
+using Microsoft.Extensions.Time.Testing;
+
 using Xunit;
 
 namespace Bifrost.Core.Tests.Backup;
@@ -293,6 +295,95 @@ public sealed class RestoreTests
             .PlanAsync(new RestoreRequest(archive), TestContext.Current.CancellationToken);
 
         plan.CanApply.Should().BeTrue(string.Join(" | ", plan.Blockers));
+    }
+
+    /// <summary>
+    /// <b>BFR-F-0048 — der angekündigte Pfad ist der geschriebene.</b>
+    /// <para>
+    /// Im Piloten vom 2026-08-05 kündigte der Restore
+    /// <c>pre-restore-20260805-051215.zip</c> an und schrieb
+    /// <c>pre-restore-20260805-051216.zip</c>: Plan und Anwendung bildeten den Zeitstempel jeweils
+    /// selbst, und dazwischen lag eine Sekundengrenze. Der Pfad, den ein Betreiber im Ernstfall aus
+    /// der Ausgabe kopiert, existierte nicht.
+    /// </para>
+    /// <para>
+    /// <b>Warum mit gestellter Uhr.</b> Der Befund zeigt sich nur, wenn zwischen den beiden
+    /// Aufrufen eine Sekunde umspringt — mit der echten Uhr wäre dieser Test meistens grün und
+    /// gelegentlich rot, also wertlos. Hier springt sie garantiert um.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task The_pre_backup_is_written_where_the_plan_announced_it()
+    {
+        using var source = new InstanceDirectory("quelle-0048");
+        using var target = new InstanceDirectory("ziel-0048");
+        using var archives = new ArchiveDirectory();
+        var archive = await BackupOfAsync(source, archives, rows: 3);
+
+        // Das Ziel ist NICHT leer — nur dann verlangt ADR-0024 E5 die Vorsicherung.
+        using (target.CreateDatabaseWithOpenWal(1))
+        {
+            target.WriteKeyRing();
+        }
+
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 8, 5, 5, 12, 15, TimeSpan.Zero));
+        var options = target.Options();
+        var restore = new RestoreService(options, new BackupService(options), time);
+
+        var plan = await restore.PlanAsync(
+            new RestoreRequest(archive, RestoreMode.Replace), TestContext.Current.CancellationToken);
+        plan.CanApply.Should().BeTrue(string.Join(" | ", plan.Blockers));
+        plan.PreBackupPath.Should().NotBeNullOrEmpty();
+
+        // Genau der Sprung, der den Befund ausgeloest hat.
+        time.Advance(TimeSpan.FromSeconds(1));
+
+        var result = await restore.ApplyAsync(plan, TestContext.Current.CancellationToken);
+
+        result.Applied.Should().BeTrue();
+        result.PreBackupPath.Should().Be(
+            plan.PreBackupPath,
+            "der Plan kuendigt einen Pfad an, und im Ernstfall ist genau dieser der, den jemand "
+            + "herauskopiert");
+        File.Exists(plan.PreBackupPath).Should().BeTrue(
+            "eine angekuendigte Sicherung, die es nicht gibt, ist schlimmer als keine Ankuendigung");
+    }
+
+    /// <summary>
+    /// <b>Der zweite Teil desselben Griffs.</b> Der Plan reist als JSON und kommt als neues Objekt
+    /// zurück; was er dann trägt, hat der Aufrufer in der Hand. Setzt jemand
+    /// <c>targetIsEmpty</c> auf <c>true</c>, dürfte das die Vorsicherung <b>nicht</b> überspringen —
+    /// sie ist nach ADR-0024 E5 die Bedingung des Überschreibens und keine Höflichkeit.
+    /// </summary>
+    [Fact]
+    public async Task A_tampered_plan_cannot_talk_the_service_out_of_the_pre_backup()
+    {
+        using var source = new InstanceDirectory("quelle-0048b");
+        using var target = new InstanceDirectory("ziel-0048b");
+        using var archives = new ArchiveDirectory();
+        var archive = await BackupOfAsync(source, archives, rows: 3);
+
+        using (target.CreateDatabaseWithOpenWal(1))
+        {
+            target.WriteKeyRing();
+        }
+
+        var options = target.Options();
+        var restore = new RestoreService(options, new BackupService(options));
+        var plan = await restore.PlanAsync(
+            new RestoreRequest(archive, RestoreMode.Replace), TestContext.Current.CancellationToken);
+
+        // Genau das, was ueber HTTP moeglich ist: dieselben Felder, ein anderer Inhalt.
+        var tampered = plan with { TargetIsEmpty = true, PreBackupPath = null };
+
+        var result = await restore.ApplyAsync(tampered, TestContext.Current.CancellationToken);
+
+        result.Applied.Should().BeTrue();
+        result.PreBackupPath.Should().Be(
+            plan.PreBackupPath,
+            "was der Dienst beim Planen festgestellt hat, entscheidet er nicht neu, weil ein "
+            + "Aufrufer etwas anderes behauptet");
+        File.Exists(result.PreBackupPath).Should().BeTrue();
     }
 
     /// <summary>

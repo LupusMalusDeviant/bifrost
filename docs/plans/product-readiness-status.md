@@ -374,6 +374,33 @@ Anfrage mit `503` und `restart-required` — auch `/healthz`, denn ein Container
 und nichts mehr beantwortet, ist genau dasselbe Auseinanderfallen noch einmal. Der Neustart löst den
 Riegel; einen Befehl dafür gibt es bewusst nicht.
 
+**Zwei weitere Pilotbefunde sind mit behoben** — und der erste hat unterwegs einen dritten
+freigelegt.
+
+`BFR-F-0048` sah nach einem Schönheitsfehler aus: angekündigt `…-051215.zip`, geschrieben
+`…-051216.zip`, weil Plan und Anwendung den Zeitstempel jeweils selbst bildeten. Beim Beheben stellte
+sich heraus, dass die Ursache breiter war. Der Plan geht als JSON hinaus und kommt als **neues
+Objekt** zurück; das Handle wies nur nach, *dass* ein Plan bestand, nicht *was* darin stand. Die
+Anwendung entschied aber anhand der zurückgereichten Felder, ob die Vorsicherung entsteht — ein
+Aufrufer mit `targetIsEmpty: true` hätte sie abbestellt und damit überschrieben, ohne den Ausweg,
+den ADR-0024 E5 zur Bedingung macht (`BFR-F-0057`). Modus, Leere, Anwendbarkeit und Pfad stehen jetzt
+im serverseitigen Kontext; es reist wirklich nur noch das Handle, so wie der Nachtrag zum M2-Vertrag
+es immer beschrieben hat.
+
+Der Regressionstest läuft mit **gestellter Uhr**. Mit der echten wäre er meistens grün und
+gelegentlich rot — also wertlos: Der Befund hängt an einer Sekundengrenze zwischen zwei Aufrufen.
+
+`BFR-F-0050` und `BFR-F-0051` sind derselbe Absatz in `.env.example`. Die Datei behauptete, das
+Passwort des Key-Rings könne nicht aus einer Datei kommen; `_FILE` gibt es seit FR-P048, und sowohl
+die Compose-Datei als auch `bifrost doctor` sagen es. Eine falsche Zeile in genau der Datei, die
+jeder Betreiber kopiert — und sie drängte zum Klartextpasswort. Die verlangte Entscheidung
+`BIFROST_KEYRING_PROTECTION` fehlte dort ganz.
+
+Dagegen steht jetzt kein besserer Text, sondern ein Wächter, und er ist **allgemein** statt auf
+diesen Namen gemünzt: Jede geheimnistragende Einstellung in der Beispieldatei muss ihre `_FILE`-Form
+zeigen (`ExampleConfigurationTests`). Alle vier Korrekturen sind einzeln zurückgedreht worden; jede
+macht ihren eigenen Wächter rot.
+
 **Was ausdrücklich nicht gewählt wurde:** den Prozesszustand im laufenden Betrieb neu aufzubauen.
 Das wäre eine Zusage über jeden Zwischenspeicher, jede offene Upstream-Verbindung und jede Sitzung
 gewesen — nicht prüfbar, nur behauptbar, und beim nächsten hinzugefügten Zwischenspeicher lautlos

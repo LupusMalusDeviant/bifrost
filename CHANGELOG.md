@@ -105,6 +105,20 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
   - **Kein „Delete" im Sinne eines Abgleichs:** Ein Import entfernt nichts, was in der Nutzlast
     fehlt. Das wäre eine Synchronisierung, und die nimmt weg, was die Nutzlast nur nicht kennt.
 
+- **Die Vorab-Sicherung eines Restores liegt dort, wo der Plan sie angekündigt hat** (BFR-F-0048).
+  Vorher bildeten Ankündigung und Schreiben den Zeitstempel jeweils selbst; lag dazwischen eine
+  Sekundengrenze, nannte die Ausgabe einen Pfad, den es nie gab — im Ernstfall genau der, den man
+  herauskopiert. Beim Beheben kam heraus, dass derselbe Bau noch mehr trug: Modus, Leere und
+  Anwendbarkeit kamen aus dem zurückgereichten JSON. Ein Aufrufer hätte damit die Vorsicherung
+  abbestellen können, die ADR-0024 E5 zur Bedingung des Überschreibens macht. Jetzt reist wirklich
+  nur noch das Handle (BFR-F-0057).
+- **Die Beispielkonfiguration widerspricht dem Produkt nicht mehr** (BFR-F-0050, BFR-F-0051).
+  `.env.example` behauptete, der Gateway könne das Passwort des Key-Rings nicht aus einer Datei
+  lesen — er kann es seit FR-P048, und die Compose-Datei wie auch `bifrost doctor` sagen es. Die
+  falsche Zeile drängte zum Klartextpasswort in `.env`, also dorthin, wo `docker inspect` es zeigt.
+  Und `BIFROST_KEYRING_PROTECTION`, die einzige Entscheidung, die das Produkt ausdrücklich
+  verlangt, fehlte ganz. Beides steht jetzt da, und zwei Wächter halten es fest.
+
 - **Ein eingespielter Restore verriegelt den Gateway, bis er neu gestartet ist** (BFR-F-0047).
   Vorher meldete `bifrost restore` Erfolg, und der laufende Prozess bediente weiter den ersetzten
   Stand — die Zugänge aus dem Archiv bekamen `401`, die soeben überschriebenen weiter `200`. Jetzt

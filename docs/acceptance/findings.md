@@ -3,7 +3,7 @@
 > **Generiert aus `findings.json`.** Änderungen gehören in die Quelle, nicht hierher —
 > `FindingsReportTests` färbt den Lauf rot, sobald beides auseinanderläuft.
 
-**Offen:** 11 · **Behoben:** 45 · **Abdeckung ab:** M0
+**Offen:** 8 · **Behoben:** 49 · **Abdeckung ab:** M0
 
 Vollstaendig ab M0. Die Befunde aus M0-M3 sind am 2026-08-04 aus den jeweiligen Abschnitten des Fortschrittsprotokolls uebernommen worden (BFR-F-0026). Damit gilt die Aussage "kein offener Critical- oder High-Befund" fuer das ganze Programm und nicht mehr nur ab M4. Am 2026-08-05 um die Befunde aus Pilot 1 (WP7.3) und der Releasepruefung (WP7.2) erweitert.
 
@@ -31,16 +31,6 @@ ghcr.io/lupusmalusdeviant/bifrost gibt es nur als 0.12.0 und 0.12; 0.11.0 laesst
 
 **Mitigation:** Heute kann niemand auf 0.11.0 als Container sein — das Image hat nie existiert, es gibt also keinen Bestand, der zurueck muesste. Mit dem zweiten Release loest sich der Fall von selbst; bis dahin gehoert der Rollback-Abschnitt mit dem Hinweis versehen, dass er ab der zweiten veroeffentlichten Fassung gilt.
 
-### BFR-F-0048 · Die angekuendigte Vorab-Sicherung heisst anders als die geschriebene (medium)
-
-_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
-
-Der Restore kuendigt an: "Sicherung des Altzustands entsteht unter: /data/backups/pre-restore-20260805-051215.zip". Geschrieben wird pre-restore-20260805-051216.zip — eine Sekunde spaeter, weil der Zeitstempel zweimal formatiert wird statt einmal. Der Pfad, den ein Betreiber im Ernstfall aus der Ausgabe kopiert, existiert nicht.
-
-**Owner:** unbesetzt · **Termin:** vor der Freigabe des Release Candidate
-
-**Mitigation:** Die Sicherung selbst entsteht korrekt und liegt im selben Verzeichnis; sie ist auffindbar, nur nicht unter dem genannten Namen. Die zweite Zeile der Ausgabe ("Der bisherige Zustand liegt in ...") nennt den richtigen Pfad.
-
 ### BFR-F-0049 · Einen Restore auf eine leere Installation gibt es in der Praxis nicht (medium)
 
 _Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
@@ -50,16 +40,6 @@ Die CLI ist ein authentifizierter HTTP-Client. Eine frische Installation hat kei
 **Owner:** unbesetzt · **Termin:** vor der Freigabe des Release Candidate
 
 **Mitigation:** Der Weg funktioniert, sobald man ihn kennt: Zielinstanz bootstrappen, API-Key erzeugen, mit --replace zurueckspielen, Gateway neu starten. Er ist im Pilotprotokoll vollstaendig aufgeschrieben.
-
-### BFR-F-0050 · .env.example widerspricht dem Produkt beim Passwort des Key-Rings (medium)
-
-_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
-
-.env.example sagt: "Der Gateway kann es heute NICHT aus einer Datei lesen; ein Compose-Secret gibt es deshalb nur fuer das PFX selbst, nicht fuer sein Passwort." Das stimmt nicht. BIFROST_KEYRING_CERT_PASSWORD_FILE ist seit FR-P048 umgesetzt (src/Bifrost.Server/KeyRing/FileSecret.cs); docker-compose.yml nennt es im Secret-Block, und bifrost doctor empfiehlt es woertlich in BFR-KEY-0002. Die falsche Zeile steht in genau der Datei, die jeder Betreiber kopiert und bearbeitet, und sie draengt zum Klartextpasswort in .env — also dorthin, wo es in docker inspect und in /proc/<pid>/environ auftaucht.
-
-**Owner:** unbesetzt · **Termin:** vor der Freigabe des Release Candidate
-
-**Mitigation:** Der sichere Weg ist vorhanden und dokumentiert (docs/operations.md, "Key-Ring schuetzen"); falsch ist nur der Kommentar in der Beispieldatei. Wer der doctor-Empfehlung folgt, landet richtig.
 
 ### BFR-F-0055 · Der dokumentierte Kurzblick auf das Signaturzertifikat gibt null zurueck (medium)
 
@@ -80,16 +60,6 @@ RUSTSEC-2026-0222 und -0223, beide LOW und damit nicht blockierend — betroffen
 **Owner:** unbesetzt · **Termin:** vor M8/WP8.1
 
 **Mitigation:** Beide Meldungen sind LOW und betreffen Pfade, die dieser Gateway nicht nutzt (geprueft im Rahmen von WP3.5). Der Versionssprung ist ein Einzeiler und gehoert in den naechsten Abhaengigkeitslauf.
-
-### BFR-F-0051 · BIFROST_KEYRING_PROTECTION kommt in der Beispielkonfiguration nicht vor (low)
-
-_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
-
-Der Start warnt, wenn die Variable nicht gesetzt ist, doctor meldet BFR-KEY-0002, und die Pilotcheckliste verlangt eine ausdrueckliche Wahl. In .env.example steht sie nicht — dort stehen nur CERT_PATH und CERT_PASSWORD. Die eine Entscheidung, die das Produkt ausdruecklich verlangt, fehlt in der Datei, in der man Entscheidungen eintraegt.
-
-**Owner:** — · **Termin:** —
-
-**Mitigation:** —
 
 ### BFR-F-0052 · Ein fehlerfreier Erststart schreibt vier Error-Zeilen ins Log (low)
 
@@ -339,6 +309,24 @@ _Quelle: M3/WP3.5, ausdruecklich nicht als erfuellt gemeldet · Beleg: `docs/acc
 
 Es gibt kein Release-Image, an dem sich zeigen liesse, dass das Gate scheitern kann. Ein Gate ohne Gegenprobe ist eine Behauptung. — Erledigt am 2026-08-05: Derselbe Aufruf wie in release.yml (Trivy 0.72.0, CRITICAL/HIGH, ignore-unfixed=false, exit-code 1) endet gegen das veroeffentlichte Image mit 0 und gegen debian:11-slim mit 1. Das Gate kann rot werden. Nebenbefund: Das Image ist auch vier Tage nach dem Release gegen eine aktuelle Schwachstellendatenbank ohne Critical- oder High-Fund.
 
+### BFR-F-0048 · Die angekuendigte Vorab-Sicherung heisst anders als die geschriebene (medium)
+
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `RestoreTests.The_pre_backup_is_written_where_the_plan_announced_it`_
+
+Der Restore kuendigt an: "Sicherung des Altzustands entsteht unter: /data/backups/pre-restore-20260805-051215.zip". Geschrieben wird pre-restore-20260805-051216.zip — eine Sekunde spaeter, weil der Zeitstempel zweimal formatiert wird statt einmal. Der Pfad, den ein Betreiber im Ernstfall aus der Ausgabe kopiert, existiert nicht. — Behoben am 2026-08-05. Der Pfad entsteht jetzt GENAU EINMAL, beim Planen, und wird im serverseitigen PlanContext gehalten; die Anwendung nimmt ihn von dort. Damit ist der angekuendigte Pfad der geschriebene. Der Regressionstest laeuft mit gestellter Uhr (FakeTimeProvider) und laesst zwischen Plan und Anwendung genau die Sekundengrenze umspringen, an der der Befund haengt — mit der echten Uhr waere er meistens gruen und gelegentlich rot, also wertlos. Gegenprobe: Bildet die Anwendung den Pfad wieder selbst, faellt der Test mit abweichenden Namen. Beim Beheben nebenbei aufgefallen und mitkorrigiert: DropExpiredContexts verglich den Zeitstempel des Kontexts gegen DateTimeOffset.UtcNow — zwei Uhren fuer einen Vergleich.
+
+### BFR-F-0050 · .env.example widerspricht dem Produkt beim Passwort des Key-Rings (medium)
+
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `ExampleConfigurationTests.Every_secret_setting_in_the_example_shows_its_file_variant`_
+
+.env.example sagt: "Der Gateway kann es heute NICHT aus einer Datei lesen; ein Compose-Secret gibt es deshalb nur fuer das PFX selbst, nicht fuer sein Passwort." Das stimmt nicht. BIFROST_KEYRING_CERT_PASSWORD_FILE ist seit FR-P048 umgesetzt (src/Bifrost.Server/KeyRing/FileSecret.cs); docker-compose.yml nennt es im Secret-Block, und bifrost doctor empfiehlt es woertlich in BFR-KEY-0002. Die falsche Zeile steht in genau der Datei, die jeder Betreiber kopiert und bearbeitet, und sie draengt zum Klartextpasswort in .env — also dorthin, wo es in docker inspect und in /proc/<pid>/environ auftaucht. — Behoben am 2026-08-05. Der Key-Ring-Block in .env.example nennt jetzt BIFROST_KEYRING_CERT_PASSWORD_FILE als den besseren Weg, erklaert das Compose-Secret und sagt, dass beide Quellen zusammen den Start abbrechen. Die falsche Behauptung ist weg. Der Waechter ist allgemein und nicht auf diesen einen Namen gemuenzt: Jede geheimnistragende Einstellung in der Beispieldatei muss ihre _FILE-Form zeigen.
+
+### BFR-F-0057 · Ein veraenderter Plan konnte die Vorsicherung des Restores abbestellen (medium)
+
+_Quelle: M7, beim Beheben von BFR-F-0048 aufgefallen · Beleg: `RestoreTests.A_tampered_plan_cannot_talk_the_service_out_of_the_pre_backup`_
+
+Der Restore-Plan geht als JSON hinaus und kommt als neues Objekt zurueck; das Handle wies nur nach, DASS ein Plan bestand, nicht WAS darin stand. ApplyAsync entschied aber anhand von plan.TargetIsEmpty und plan.Mode, ob die Vorsicherung entsteht — und anhand von plan.CanApply, ob ueberhaupt angewendet wird. Ein Aufrufer, der targetIsEmpty auf true setzt, haette damit die Sicherung des Altzustands uebersprungen, die ADR-0024 E5 zur Bedingung des Ueberschreibens macht: ueberschreiben ohne Ausweg. Einordnung: kein Rechteproblem. Die Betriebsendpunkte sind admin-only, und ein Admin darf ohnehin zurueckspielen. Der Schaden waere ein Datenverlust ohne Rueckweg durch ein fehlerhaftes oder eigenwilliges Clientwerkzeug — nicht durch einen Angreifer. Behoben am 2026-08-05: Modus, Leere, Anwendbarkeit und Pfad stehen im serverseitigen PlanContext, und ApplyAsync nimmt sie ausschliesslich von dort. Damit reist wirklich nur noch das Handle — so, wie es der Nachtrag zum M2-Vertrag immer beschrieben hat.
+
 ### BFR-F-0003 · Falschpositiv in der Maskenerkennung (low)
 
 _Quelle: M4, Abnahme WP4.1-4.3 · Beleg: `docs/plans/product-readiness-status.md#vier-befunde-aus-der-abnahme-von-41-43--behoben`_
@@ -386,6 +374,12 @@ cargo fmt --check wurde rot, weil die Kiste umbenannt wurde und der Import seitd
 _Quelle: M1, erster echter Releaselauf, Befunde 1-3 und 9 · Beleg: `docs/plans/product-readiness-status.md#was-der-erste-lauf-gekostet-hat-neun-befunde`_
 
 Ein erfundener Token im Negativkorpus blockierte den Push; die Secret-Baseline kannte zwei Werte nicht; ein Versionstest trug ein Literal und brach beim Versionssprung; der Nebenlaeufigkeitsnachweis des Backups mass den Planer.
+
+### BFR-F-0051 · BIFROST_KEYRING_PROTECTION kommt in der Beispielkonfiguration nicht vor (low)
+
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `ExampleConfigurationTests.The_example_names_the_key_ring_decision_the_product_demands`_
+
+Der Start warnt, wenn die Variable nicht gesetzt ist, doctor meldet BFR-KEY-0002, und die Pilotcheckliste verlangt eine ausdrueckliche Wahl. In .env.example steht sie nicht — dort stehen nur CERT_PATH und CERT_PASSWORD. Die eine Entscheidung, die das Produkt ausdruecklich verlangt, fehlt in der Datei, in der man Entscheidungen eintraegt. — Behoben am 2026-08-05, im selben Griff wie BFR-F-0050: BIFROST_KEYRING_PROTECTION steht jetzt mit allen drei zulaessigen Werten in .env.example, an der Stelle, an der ein Betreiber Entscheidungen eintraegt.
 
 ### BFR-F-0054 · Die Pilotcheckliste verlangte Befehle, die es in keinem Release gibt (low)
 

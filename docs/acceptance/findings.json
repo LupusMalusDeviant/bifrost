@@ -442,13 +442,10 @@
       "id": "BFR-F-0048",
       "title": "Die angekuendigte Vorab-Sicherung heisst anders als die geschriebene",
       "severity": "medium",
-      "status": "offen",
+      "status": "behoben",
       "source": "M7/WP7.3, Pilot 1",
-      "detail": "Der Restore kuendigt an: \"Sicherung des Altzustands entsteht unter: /data/backups/pre-restore-20260805-051215.zip\". Geschrieben wird pre-restore-20260805-051216.zip — eine Sekunde spaeter, weil der Zeitstempel zweimal formatiert wird statt einmal. Der Pfad, den ein Betreiber im Ernstfall aus der Ausgabe kopiert, existiert nicht.",
-      "evidence": "docs/acceptance/pilot-1-protokoll.md",
-      "owner": "unbesetzt",
-      "due": "vor der Freigabe des Release Candidate",
-      "mitigation": "Die Sicherung selbst entsteht korrekt und liegt im selben Verzeichnis; sie ist auffindbar, nur nicht unter dem genannten Namen. Die zweite Zeile der Ausgabe (\"Der bisherige Zustand liegt in ...\") nennt den richtigen Pfad."
+      "detail": "Der Restore kuendigt an: \"Sicherung des Altzustands entsteht unter: /data/backups/pre-restore-20260805-051215.zip\". Geschrieben wird pre-restore-20260805-051216.zip — eine Sekunde spaeter, weil der Zeitstempel zweimal formatiert wird statt einmal. Der Pfad, den ein Betreiber im Ernstfall aus der Ausgabe kopiert, existiert nicht. — Behoben am 2026-08-05. Der Pfad entsteht jetzt GENAU EINMAL, beim Planen, und wird im serverseitigen PlanContext gehalten; die Anwendung nimmt ihn von dort. Damit ist der angekuendigte Pfad der geschriebene. Der Regressionstest laeuft mit gestellter Uhr (FakeTimeProvider) und laesst zwischen Plan und Anwendung genau die Sekundengrenze umspringen, an der der Befund haengt — mit der echten Uhr waere er meistens gruen und gelegentlich rot, also wertlos. Gegenprobe: Bildet die Anwendung den Pfad wieder selbst, faellt der Test mit abweichenden Namen. Beim Beheben nebenbei aufgefallen und mitkorrigiert: DropExpiredContexts verglich den Zeitstempel des Kontexts gegen DateTimeOffset.UtcNow — zwei Uhren fuer einen Vergleich.",
+      "evidence": "RestoreTests.The_pre_backup_is_written_where_the_plan_announced_it"
     },
     {
       "id": "BFR-F-0049",
@@ -466,22 +463,19 @@
       "id": "BFR-F-0050",
       "title": ".env.example widerspricht dem Produkt beim Passwort des Key-Rings",
       "severity": "medium",
-      "status": "offen",
+      "status": "behoben",
       "source": "M7/WP7.3, Pilot 1",
-      "detail": ".env.example sagt: \"Der Gateway kann es heute NICHT aus einer Datei lesen; ein Compose-Secret gibt es deshalb nur fuer das PFX selbst, nicht fuer sein Passwort.\" Das stimmt nicht. BIFROST_KEYRING_CERT_PASSWORD_FILE ist seit FR-P048 umgesetzt (src/Bifrost.Server/KeyRing/FileSecret.cs); docker-compose.yml nennt es im Secret-Block, und bifrost doctor empfiehlt es woertlich in BFR-KEY-0002. Die falsche Zeile steht in genau der Datei, die jeder Betreiber kopiert und bearbeitet, und sie draengt zum Klartextpasswort in .env — also dorthin, wo es in docker inspect und in /proc/<pid>/environ auftaucht.",
-      "evidence": "docs/acceptance/pilot-1-protokoll.md",
-      "owner": "unbesetzt",
-      "due": "vor der Freigabe des Release Candidate",
-      "mitigation": "Der sichere Weg ist vorhanden und dokumentiert (docs/operations.md, \"Key-Ring schuetzen\"); falsch ist nur der Kommentar in der Beispieldatei. Wer der doctor-Empfehlung folgt, landet richtig."
+      "detail": ".env.example sagt: \"Der Gateway kann es heute NICHT aus einer Datei lesen; ein Compose-Secret gibt es deshalb nur fuer das PFX selbst, nicht fuer sein Passwort.\" Das stimmt nicht. BIFROST_KEYRING_CERT_PASSWORD_FILE ist seit FR-P048 umgesetzt (src/Bifrost.Server/KeyRing/FileSecret.cs); docker-compose.yml nennt es im Secret-Block, und bifrost doctor empfiehlt es woertlich in BFR-KEY-0002. Die falsche Zeile steht in genau der Datei, die jeder Betreiber kopiert und bearbeitet, und sie draengt zum Klartextpasswort in .env — also dorthin, wo es in docker inspect und in /proc/<pid>/environ auftaucht. — Behoben am 2026-08-05. Der Key-Ring-Block in .env.example nennt jetzt BIFROST_KEYRING_CERT_PASSWORD_FILE als den besseren Weg, erklaert das Compose-Secret und sagt, dass beide Quellen zusammen den Start abbrechen. Die falsche Behauptung ist weg. Der Waechter ist allgemein und nicht auf diesen einen Namen gemuenzt: Jede geheimnistragende Einstellung in der Beispieldatei muss ihre _FILE-Form zeigen.",
+      "evidence": "ExampleConfigurationTests.Every_secret_setting_in_the_example_shows_its_file_variant"
     },
     {
       "id": "BFR-F-0051",
       "title": "BIFROST_KEYRING_PROTECTION kommt in der Beispielkonfiguration nicht vor",
       "severity": "low",
-      "status": "offen",
+      "status": "behoben",
       "source": "M7/WP7.3, Pilot 1",
-      "detail": "Der Start warnt, wenn die Variable nicht gesetzt ist, doctor meldet BFR-KEY-0002, und die Pilotcheckliste verlangt eine ausdrueckliche Wahl. In .env.example steht sie nicht — dort stehen nur CERT_PATH und CERT_PASSWORD. Die eine Entscheidung, die das Produkt ausdruecklich verlangt, fehlt in der Datei, in der man Entscheidungen eintraegt.",
-      "evidence": "docs/acceptance/pilot-1-protokoll.md"
+      "detail": "Der Start warnt, wenn die Variable nicht gesetzt ist, doctor meldet BFR-KEY-0002, und die Pilotcheckliste verlangt eine ausdrueckliche Wahl. In .env.example steht sie nicht — dort stehen nur CERT_PATH und CERT_PASSWORD. Die eine Entscheidung, die das Produkt ausdruecklich verlangt, fehlt in der Datei, in der man Entscheidungen eintraegt. — Behoben am 2026-08-05, im selben Griff wie BFR-F-0050: BIFROST_KEYRING_PROTECTION steht jetzt mit allen drei zulaessigen Werten in .env.example, an der Stelle, an der ein Betreiber Entscheidungen eintraegt.",
+      "evidence": "ExampleConfigurationTests.The_example_names_the_key_ring_decision_the_product_demands"
     },
     {
       "id": "BFR-F-0052",
@@ -530,6 +524,15 @@
       "source": "M7/WP7.3, Pilot 1",
       "detail": "Auf einer frischen Installation entsteht vor der Erstmigration /data/backups/pre-migration-<zeit>.zip. Der Gateway sagt selbst dazu, sie sei unverschluesselt und enthalte den DataProtection-Key-Ring. Auf einer Installation ohne Vorzustand ist das ein schuetzenswertes Artefakt ohne Gegenwert — es sichert einen Zustand, den es nicht gab.",
       "evidence": "docs/acceptance/pilot-1-protokoll.md"
+    },
+    {
+      "id": "BFR-F-0057",
+      "title": "Ein veraenderter Plan konnte die Vorsicherung des Restores abbestellen",
+      "severity": "medium",
+      "status": "behoben",
+      "source": "M7, beim Beheben von BFR-F-0048 aufgefallen",
+      "detail": "Der Restore-Plan geht als JSON hinaus und kommt als neues Objekt zurueck; das Handle wies nur nach, DASS ein Plan bestand, nicht WAS darin stand. ApplyAsync entschied aber anhand von plan.TargetIsEmpty und plan.Mode, ob die Vorsicherung entsteht — und anhand von plan.CanApply, ob ueberhaupt angewendet wird. Ein Aufrufer, der targetIsEmpty auf true setzt, haette damit die Sicherung des Altzustands uebersprungen, die ADR-0024 E5 zur Bedingung des Ueberschreibens macht: ueberschreiben ohne Ausweg. Einordnung: kein Rechteproblem. Die Betriebsendpunkte sind admin-only, und ein Admin darf ohnehin zurueckspielen. Der Schaden waere ein Datenverlust ohne Rueckweg durch ein fehlerhaftes oder eigenwilliges Clientwerkzeug — nicht durch einen Angreifer. Behoben am 2026-08-05: Modus, Leere, Anwendbarkeit und Pfad stehen im serverseitigen PlanContext, und ApplyAsync nimmt sie ausschliesslich von dort. Damit reist wirklich nur noch das Handle — so, wie es der Nachtrag zum M2-Vertrag immer beschrieben hat.",
+      "evidence": "RestoreTests.A_tampered_plan_cannot_talk_the_service_out_of_the_pre_backup"
     }
   ]
 }

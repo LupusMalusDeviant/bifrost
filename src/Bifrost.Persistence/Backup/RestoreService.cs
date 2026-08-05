@@ -27,17 +27,46 @@ public sealed class RestoreService : IRestoreService
 {
     private readonly BackupOptions _options;
     private readonly IBackupService _backupService;
+    private readonly TimeProvider _time;
     private readonly ConcurrentDictionary<string, PlanContext> _contexts = new(StringComparer.Ordinal);
 
-    public RestoreService(BackupOptions options, IBackupService backupService)
+    /// <param name="time">
+    /// Nur der Dateiname der Vorsicherung haengt daran — aber genau der war <c>BFR-F-0048</c>, und
+    /// ohne steuerbare Uhr laesst sich der Befund nicht verlaesslich nachstellen: Er zeigt sich nur,
+    /// wenn zwischen Plan und Anwendung eine Sekundengrenze liegt. Optional, weil
+    /// <see cref="TimeProvider.System"/> fuer jeden echten Aufrufer die richtige Antwort ist.
+    /// </param>
+    public RestoreService(
+        BackupOptions options, IBackupService backupService, TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(backupService);
         _options = options;
         _backupService = backupService;
+        _time = time ?? TimeProvider.System;
     }
 
-    private sealed record PlanContext(string ArchivePath, string? Passphrase, DateTimeOffset CreatedAt);
+    /// <summary>
+    /// Was der Dienst ueber einen vorgemerkten Vorgang weiss — und was er beim Anwenden
+    /// <b>ausschliesslich</b> von hier nimmt.
+    /// <para>
+    /// <b>Warum Modus, Leere und Pfad hier stehen und nicht im Plan</b> (<c>BFR-F-0048</c>): Der
+    /// Plan geht als JSON hinaus und kommt als neues Objekt zurueck; was er dann traegt, hat der
+    /// Aufrufer in der Hand. Beim Pfad der Vorsicherung fiel das im Piloten als Ungereimtheit auf —
+    /// angekuendigt wurde <c>…-051215.zip</c>, geschrieben <c>…-051216.zip</c>, weil beide Seiten
+    /// den Zeitstempel selbst bildeten. Dieselbe Bauart betraf aber auch <c>TargetIsEmpty</c>: Ein
+    /// Aufrufer, der es auf <c>true</c> setzt, haette die Vorsicherung uebersprungen, die ADR-0024
+    /// E5 zur Bedingung des Ueberschreibens macht. Deshalb reist jetzt wirklich nur das Handle.
+    /// </para>
+    /// </summary>
+    private sealed record PlanContext(
+        string ArchivePath,
+        string? Passphrase,
+        DateTimeOffset CreatedAt,
+        RestoreMode Mode,
+        bool TargetIsEmpty,
+        bool CanApply,
+        string? PreBackupPath);
 
     /// <summary>
     /// Die zweite und tragende Hälfte des Rückwärts-Tors aus ADR-0024 E6.
@@ -86,7 +115,9 @@ public sealed class RestoreService : IRestoreService
     /// </summary>
     private void DropExpiredContexts()
     {
-        var deadline = DateTimeOffset.UtcNow - PlanTokens.Lifetime;
+        // Dieselbe Uhr, die den Zeitstempel gesetzt hat. Zwei Uhren für einen Vergleich heißt: Der
+        // Vergleich stimmt genau so lange, wie sie gleich gehen.
+        var deadline = _time.GetUtcNow() - PlanTokens.Lifetime;
         foreach (var (token, context) in _contexts)
         {
             if (context.CreatedAt < deadline)
@@ -144,7 +175,13 @@ public sealed class RestoreService : IRestoreService
             Token: PlanTokens.New());
 
         _contexts[plan.Token!] = new PlanContext(
-            archivePath, request.Passphrase, DateTimeOffset.UtcNow);
+            archivePath,
+            request.Passphrase,
+            _time.GetUtcNow(),
+            request.Mode,
+            targetIsEmpty,
+            canApply,
+            preBackupPath);
         return plan;
     }
 
@@ -291,12 +328,18 @@ public sealed class RestoreService : IRestoreService
         => Directory.Exists(directory)
             && Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Any();
 
+    /// <summary>
+    /// <b>Genau einmal je Vorgang</b>, beim Planen (<c>BFR-F-0048</c>). Der Name traegt einen
+    /// Zeitstempel auf die Sekunde; zweimal gebildet ist er zweimal ein anderer, sobald zwischen
+    /// Ankuendigung und Schreiben eine Sekundengrenze liegt. Angekuendigt war dann ein Pfad, den es
+    /// nie gab — und im Ernstfall ist der angekuendigte genau der, den jemand herauskopiert.
+    /// </summary>
     private string PlannedPreBackupPath() => Path.Combine(
         _options.PreBackupDirectory,
         string.Format(
             CultureInfo.InvariantCulture,
             "pre-restore-{0:yyyyMMdd-HHmmss}.zip",
-            DateTimeOffset.UtcNow));
+            _time.GetUtcNow()));
 
     // ── Anwendung ───────────────────────────────────────────────────────────────────────────────
 
@@ -311,7 +354,10 @@ public sealed class RestoreService : IRestoreService
                 + $"Dienstinstanz und innerhalb von {PlanTokens.Lifetime.TotalMinutes:0} Minuten.");
         }
 
-        if (!plan.CanApply)
+        // Aus dem KONTEXT, nicht aus dem zurueckgereichten Plan: Ob dieser Vorgang anwendbar ist,
+        // hat der Dienst beim Planen entschieden. Ein Aufrufer, der 'canApply' im JSON auf true
+        // setzt, hat damit nichts entschieden, sondern nur etwas behauptet.
+        if (!context.CanApply)
         {
             throw new InvalidOperationException(
                 "Ein Plan mit Blockern wird nicht angewendet: " + string.Join(" | ", plan.Blockers));
@@ -345,14 +391,15 @@ public sealed class RestoreService : IRestoreService
             var sections = await ExtractAsync(context, inspected.Manifest, staging, ct).ConfigureAwait(false);
 
             string? preBackup = null;
-            if (plan.Mode == RestoreMode.Replace && !plan.TargetIsEmpty)
+            if (context.Mode == RestoreMode.Replace && !context.TargetIsEmpty)
             {
-                // ADR-0024 E5: Ohne Ausweg kein Überschreiben.
-                preBackup = await CreatePreBackupAsync(context.Passphrase, ct).ConfigureAwait(false);
+                // ADR-0024 E5: Ohne Ausweg kein Ueberschreiben. Die Bedingung kommt aus dem Kontext
+                // — sonst entscheidet der Aufrufer mit einem Feld im JSON, ob es einen Ausweg gibt.
+                preBackup = await CreatePreBackupAsync(context, ct).ConfigureAwait(false);
                 notes.Add($"Der bisherige Zustand liegt in '{preBackup}'.");
             }
 
-            await SwitchOverAsync(staging, sections, plan, notes, ct).ConfigureAwait(false);
+            await SwitchOverAsync(staging, sections, context, notes, ct).ConfigureAwait(false);
 
             // BFR-F-0047: Getauscht ist die Platte, nicht der Prozess. Jeder Abschnitt, den dieser
             // Restore angefasst hat, liegt in einem laufenden Gateway auch als offene Verbindung,
@@ -377,10 +424,13 @@ public sealed class RestoreService : IRestoreService
         }
     }
 
-    private async Task<string> CreatePreBackupAsync(string? passphrase, CancellationToken ct)
+    private async Task<string> CreatePreBackupAsync(PlanContext context, CancellationToken ct)
     {
         Directory.CreateDirectory(_options.PreBackupDirectory);
-        var target = PlannedPreBackupPath();
+
+        // BFR-F-0048: Der Pfad, der im Plan stand — nicht ein zweiter, der genauso aussieht.
+        var target = context.PreBackupPath ?? PlannedPreBackupPath();
+        var passphrase = context.Passphrase;
         // Dieselbe Passphrase wie der Restore: Wer das Archiv entschlüsseln darf, darf auch die
         // Sicherung des Altzustands lesen — und ein zweites Geheimnis, das niemand notiert hat, wäre
         // beim Ernstfall wertlos.
@@ -519,7 +569,7 @@ public sealed class RestoreService : IRestoreService
     private async Task SwitchOverAsync(
         string staging,
         BackupSections sections,
-        RestorePlan plan,
+        PlanContext context,
         List<string> notes,
         CancellationToken ct)
     {
@@ -558,7 +608,7 @@ public sealed class RestoreService : IRestoreService
 
             if (sections.HasFlag(BackupSections.Database))
             {
-                await RestoreDatabaseAsync(staging, plan, parked, undo, notes, ct).ConfigureAwait(false);
+                await RestoreDatabaseAsync(staging, context, parked, undo, notes, ct).ConfigureAwait(false);
             }
         }
         catch
@@ -592,7 +642,7 @@ public sealed class RestoreService : IRestoreService
     /// </summary>
     private async Task RestoreDatabaseAsync(
         string staging,
-        RestorePlan plan,
+        PlanContext context,
         string parked,
         Stack<Action> undo,
         List<string> notes,
@@ -612,12 +662,12 @@ public sealed class RestoreService : IRestoreService
                 .RestoreAsync(
                     _options.RequiredPostgresConnectionString,
                     dump,
-                    clean: !plan.TargetIsEmpty,
+                    clean: !context.TargetIsEmpty,
                     _options.PostgresToolDirectory,
                     ct)
                 .ConfigureAwait(false);
 
-            notes.Add(plan.TargetIsEmpty
+            notes.Add(context.TargetIsEmpty
                 ? "Datenbank aus dem pg_dump eingespielt (leeres Ziel, eine Transaktion)."
                 : "Datenbank aus dem pg_dump eingespielt; vorhandene Objekte wurden zuvor entfernt "
                   + "(eine Transaktion). Der Rückweg ist die Vorsicherung, nicht ein Rückbau.");
