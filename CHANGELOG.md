@@ -105,6 +105,17 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
   - **Kein „Delete" im Sinne eines Abgleichs:** Ein Import entfernt nichts, was in der Nutzlast
     fehlt. Das wäre eine Synchronisierung, und die nimmt weg, was die Nutzlast nur nicht kennt.
 
+- **Eine unbekannte Adresse sagt jetzt, was los ist** (BFR-F-0053). Vorher antwortete der Gateway
+  auf einen Tippfehler mit `404` und **null Bytes** — im Browser eine weiße Seite ohne Hinweis, ohne
+  Rückweg und ohne Kennzeichen. Jetzt gibt es eine Seite mit Statuscode, Grund und einem Weg zurück,
+  und für Maschinen dieselbe JSON-Form, die die API ohnehin benutzt. Antworten, die schon eine
+  eigene Begründung tragen, bleiben unangetastet.
+- **Die Anleitung „Releases selbst überprüfen" stimmt wieder** (BFR-F-0055). Der dokumentierte
+  Kurzblick auf das Signaturzertifikat lieferte unter cosign 3 nur `null` — und der Schritt danach
+  verlangte genau diesen Wert. Repository, Tag und Commit kommen jetzt aus der signierten
+  Herkunftsbescheinigung; beide Befehle sind gegen `v0.12.0` gefahren worden, bevor sie in der
+  Anleitung standen.
+
 - **Die Vorab-Sicherung eines Restores liegt dort, wo der Plan sie angekündigt hat** (BFR-F-0048).
   Vorher bildeten Ankündigung und Schreiben den Zeitstempel jeweils selbst; lag dazwischen eine
   Sekundengrenze, nannte die Ausgabe einen Pfad, den es nie gab — im Ernstfall genau der, den man

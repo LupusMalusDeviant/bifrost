@@ -374,6 +374,32 @@ Anfrage mit `503` und `restart-required` — auch `/healthz`, denn ein Container
 und nichts mehr beantwortet, ist genau dasselbe Auseinanderfallen noch einmal. Der Neustart löst den
 Riegel; einen Befehl dafür gibt es bewusst nicht.
 
+**Die weiße Seite und die Anleitung, die `null` sagte.**
+
+`BFR-F-0053`: Eine unbekannte Adresse antwortete mit `404` und null Bytes. Der Statuscode war
+richtig, der Browser zeigte nichts. Behoben über `UseStatusCodePages` — ganz außen im Pipeline-Bau
+und ausschließlich dort wirksam, wo niemand sonst geschrieben hat. Das ist die eigentliche
+Anforderung: Eine Absage mit eigener Begründung — der API-Key-Wächter, der Riegel aus `BFR-F-0047` —
+darf nicht durch eine Allerweltsformel ersetzt werden. Dafür gibt es einen eigenen Test, der genau
+das prüft; ohne ihn wäre die Korrektur eine Verschlechterung mit Fehlerseite.
+
+Beim Schreiben des Tests fiel nebenbei auf, dass ein unbekannter `/api`-Pfad **ohne** Schlüssel
+`401` bekommt und nicht `404` — der API-Key-Wächter greift vor dem Routing. Das ist richtig so und
+bleibt: Einem unangemeldeten Aufrufer zu verraten, welche API-Pfade existieren, wäre eine Auskunft
+ohne Anlass. Die Erwartung im Test war falsch, nicht das Produkt.
+
+`BFR-F-0055`: Der in der Prüfanleitung dokumentierte Kurzblick auf das Zertifikat lieferte unter
+cosign 3 `Repo: null`, und der Schritt danach verlangte genau diesen Wert. Jetzt kommen Repository,
+Tag und Commit aus der signierten SLSA-Herkunftsbescheinigung, mit dem Weg ohne `gh` als Gegenprobe.
+**Beide Befehle sind gegen `v0.12.0` gefahren worden, bevor sie in der Anleitung standen** — dieselbe
+Regel, an der der alte Aufruf gescheitert ist.
+
+**Für 0055 gibt es keinen Test, und das steht so da.** Ein Wächter dafür bräuchte cosign, `gh` und
+ein veröffentlichtes Artefakt in der Suite — also genau die Art Tor, das in der CI als Erstes
+übersprungen wird. Stattdessen eine stehende Anweisung im Prüfprotokoll: Vor jedem Release wird die
+Anleitung einmal gefahren, Ergebnis daneben abgelegt. Der Fehler hat vier Monate überlebt, weil
+niemand sie gefahren hat; was ihn künftig findet, ist derselbe Handgriff, der ihn gefunden hat.
+
 **Zwei weitere Pilotbefunde sind mit behoben** — und der erste hat unterwegs einen dritten
 freigelegt.
 

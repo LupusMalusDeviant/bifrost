@@ -490,10 +490,10 @@
       "id": "BFR-F-0053",
       "title": "Unbekannte Pfade der Oberflaeche liefern 404 mit leerem Rumpf",
       "severity": "low",
-      "status": "offen",
+      "status": "behoben",
       "source": "M7/WP7.3, Pilot 1",
-      "detail": "GET /rbac/keys und GET /voellig-erfunden antworten mit 404 und null Bytes. Der Statuscode ist richtig, im Browser steht eine weisse Seite ohne Hinweis, ohne Rueckweg und ohne Kennzeichen des Produkts. Ein Tippfehler, ein alter Lesezeichen-Eintrag oder ein veralteter Link in der Doku sieht damit aus wie ein Ausfall.",
-      "evidence": "docs/acceptance/pilot-1-protokoll.md"
+      "detail": "GET /rbac/keys und GET /voellig-erfunden antworten mit 404 und null Bytes. Der Statuscode ist richtig, im Browser steht eine weisse Seite ohne Hinweis, ohne Rueckweg und ohne Kennzeichen des Produkts. Ein Tippfehler, ein alter Lesezeichen-Eintrag oder ein veralteter Link in der Doku sieht damit aus wie ein Ausfall. — Behoben am 2026-08-05. UseStatusCodePages gibt jeder Fehlerantwort OHNE Rumpf einen: eine selbstenthaltene HTML-Seite in der Sprache der Oberflaeche, mit Statuscode, Grund und einem Rueckweg — und fuer Maschinen dieselbe JSON-Form, die die Betriebsendpunkte ohnehin benutzen ({\"error\":{\"code\",\"message\"}}), damit es kein zweites Fehlerformat fuer dieselbe Sache gibt. Bewusst NICHT als Blazor-NotFound-Vorlage: Die griffe nur fuer Pfade, die ueberhaupt beim Router ankommen, und der leere Rumpf entstand schon im Endpunkt-Routing — und genauso bei /api-Pfaden. Der Eingriff wirkt ausschliesslich dort, wo niemand sonst geschrieben hat; eine eigene Absage mit Begruendung bleibt unberuehrt. Genau dafuer gibt es einen eigenen Test (An_answer_that_already_has_a_body_keeps_it) — sonst haette diese Korrektur die Fehlermeldungen des Produkts durch eine Allerweltsformel ersetzt.",
+      "evidence": "ErrorBodyTests.An_unknown_page_says_what_happened_and_offers_a_way_back"
     },
     {
       "id": "BFR-F-0054",
@@ -508,13 +508,10 @@
       "id": "BFR-F-0055",
       "title": "Der dokumentierte Kurzblick auf das Signaturzertifikat gibt null zurueck",
       "severity": "medium",
-      "status": "offen",
+      "status": "behoben",
       "source": "M7/WP7.2, Releasepruefung 0.12.0",
-      "detail": "docs/security/verifying-releases.md §2.1 verspricht Subject, Issuer, Commit und Tag und nennt dafuer einen jq-Aufruf. Unter cosign 3 — der Fassung, die release.yml selbst festnagelt — bleibt optional im Payload leer; der Aufruf liefert \"Repo: null, Tag: -, Commit: -\". Die Signaturpruefung selbst ist davon nicht betroffen und lehnt in beiden Negativproben ab. Der Schaden ist ein Kettenbruch in der Anleitung: §3 Schritt 4 verlangt den Vergleich des CLI-Commits mit dem Commit \"der in Schritt 1 im Cosign-Zertifikat stand\" — und den bekommt der Leser nie zu sehen.",
-      "evidence": "docs/acceptance/release-verification-0.12.0.md",
-      "owner": "unbesetzt",
-      "due": "vor der Freigabe des Release Candidate",
-      "mitigation": "Der Vergleich aus §3 Schritt 4 ist trotzdem moeglich: org.opencontainers.image.revision am Image traegt denselben Commit (71e4acfb...ee101, im Pilotlauf gegen bifrost --version gehalten). Die Identitaet selbst wird geprueft — Probe A zeigt sie woertlich in ihrer Ablehnung."
+      "detail": "docs/security/verifying-releases.md §2.1 verspricht Subject, Issuer, Commit und Tag und nennt dafuer einen jq-Aufruf. Unter cosign 3 — der Fassung, die release.yml selbst festnagelt — bleibt optional im Payload leer; der Aufruf liefert \"Repo: null, Tag: -, Commit: -\". Die Signaturpruefung selbst ist davon nicht betroffen und lehnt in beiden Negativproben ab. Der Schaden ist ein Kettenbruch in der Anleitung: §3 Schritt 4 verlangt den Vergleich des CLI-Commits mit dem Commit \"der in Schritt 1 im Cosign-Zertifikat stand\" — und den bekommt der Leser nie zu sehen. — Behoben am 2026-08-05. §2.1 nennt jetzt zuerst das Richtige: Repository, Tag und Commit werden von cosign selbst geprueft, der Exit-Code ist die Aussage, und Probe A zeigt die tatsaechliche Identitaet in ihrer Ablehnung. Wer die Werte sehen will, holt sie aus der SLSA-Herkunftsbescheinigung (gh attestation verify --format json) — signiert und an denselben Digest gebunden. §3 Schritt 4 zeigt jetzt auf diesen Wert und nennt zusaetzlich den Weg ohne gh ueber org.opencontainers.image.revision. Beide Befehle sind am 2026-08-05 woertlich gegen v0.12.0 gefahren worden und liefern denselben Commit wie \"bifrost --version\" (71e4acfb...ee101). Mitkorrigiert: §2.2 sagt jetzt, dass gh attestation verify ausserhalb eines Terminals bei Erfolg schweigt — leere Ausgabe heisst dort \"nichts zu beanstanden\", nicht \"nichts geprueft\".",
+      "evidence": "docs/acceptance/release-verification-0.12.0.md"
     },
     {
       "id": "BFR-F-0056",

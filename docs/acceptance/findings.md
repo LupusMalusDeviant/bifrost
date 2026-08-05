@@ -3,7 +3,7 @@
 > **Generiert aus `findings.json`.** Änderungen gehören in die Quelle, nicht hierher —
 > `FindingsReportTests` färbt den Lauf rot, sobald beides auseinanderläuft.
 
-**Offen:** 8 · **Behoben:** 49 · **Abdeckung ab:** M0
+**Offen:** 6 · **Behoben:** 51 · **Abdeckung ab:** M0
 
 Vollstaendig ab M0. Die Befunde aus M0-M3 sind am 2026-08-04 aus den jeweiligen Abschnitten des Fortschrittsprotokolls uebernommen worden (BFR-F-0026). Damit gilt die Aussage "kein offener Critical- oder High-Befund" fuer das ganze Programm und nicht mehr nur ab M4. Am 2026-08-05 um die Befunde aus Pilot 1 (WP7.3) und der Releasepruefung (WP7.2) erweitert.
 
@@ -41,16 +41,6 @@ Die CLI ist ein authentifizierter HTTP-Client. Eine frische Installation hat kei
 
 **Mitigation:** Der Weg funktioniert, sobald man ihn kennt: Zielinstanz bootstrappen, API-Key erzeugen, mit --replace zurueckspielen, Gateway neu starten. Er ist im Pilotprotokoll vollstaendig aufgeschrieben.
 
-### BFR-F-0055 · Der dokumentierte Kurzblick auf das Signaturzertifikat gibt null zurueck (medium)
-
-_Quelle: M7/WP7.2, Releasepruefung 0.12.0 · Beleg: `docs/acceptance/release-verification-0.12.0.md`_
-
-docs/security/verifying-releases.md §2.1 verspricht Subject, Issuer, Commit und Tag und nennt dafuer einen jq-Aufruf. Unter cosign 3 — der Fassung, die release.yml selbst festnagelt — bleibt optional im Payload leer; der Aufruf liefert "Repo: null, Tag: -, Commit: -". Die Signaturpruefung selbst ist davon nicht betroffen und lehnt in beiden Negativproben ab. Der Schaden ist ein Kettenbruch in der Anleitung: §3 Schritt 4 verlangt den Vergleich des CLI-Commits mit dem Commit "der in Schritt 1 im Cosign-Zertifikat stand" — und den bekommt der Leser nie zu sehen.
-
-**Owner:** unbesetzt · **Termin:** vor der Freigabe des Release Candidate
-
-**Mitigation:** Der Vergleich aus §3 Schritt 4 ist trotzdem moeglich: org.opencontainers.image.revision am Image traegt denselben Commit (71e4acfb...ee101, im Pilotlauf gegen bifrost --version gehalten). Die Identitaet selbst wird geprueft — Probe A zeigt sie woertlich in ihrer Ablehnung.
-
 ### BFR-F-0044 · wasmtime 47.0.2: zwei RUSTSEC-Meldungen in der WASI-Sandbox (low)
 
 _Quelle: M3/WP3.5 · Beleg: `spikes/wasi-component-runtime/Cargo.toml`_
@@ -66,16 +56,6 @@ RUSTSEC-2026-0222 und -0223, beide LOW und damit nicht blockierend — betroffen
 _Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
 
 Beim ersten Start protokolliert EF Core zweimal "Failed executing DbCommand" samt Ausnahme, weil vor der Migration auf ConfigVersions und Identities zugegriffen wird — "no such table". Das ist harmlos und erwartbar, steht aber auf Error. Jede logbasierte Alarmierung schlaegt damit ausgerechnet bei der gesunden Erstinstallation an, und der erste Eindruck eines korrekten Aufbaus sind vier Fehler. Dazu kommt: 82 Information-Zeilen sind SQL-Anweisungen; im Dauerbetrieb protokolliert der Gateway jede Abfrage.
-
-**Owner:** — · **Termin:** —
-
-**Mitigation:** —
-
-### BFR-F-0053 · Unbekannte Pfade der Oberflaeche liefern 404 mit leerem Rumpf (low)
-
-_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
-
-GET /rbac/keys und GET /voellig-erfunden antworten mit 404 und null Bytes. Der Statuscode ist richtig, im Browser steht eine weisse Seite ohne Hinweis, ohne Rueckweg und ohne Kennzeichen des Produkts. Ein Tippfehler, ein alter Lesezeichen-Eintrag oder ein veralteter Link in der Doku sieht damit aus wie ein Ausfall.
 
 **Owner:** — · **Termin:** —
 
@@ -321,6 +301,12 @@ _Quelle: M7/WP7.3, Pilot 1 · Beleg: `ExampleConfigurationTests.Every_secret_set
 
 .env.example sagt: "Der Gateway kann es heute NICHT aus einer Datei lesen; ein Compose-Secret gibt es deshalb nur fuer das PFX selbst, nicht fuer sein Passwort." Das stimmt nicht. BIFROST_KEYRING_CERT_PASSWORD_FILE ist seit FR-P048 umgesetzt (src/Bifrost.Server/KeyRing/FileSecret.cs); docker-compose.yml nennt es im Secret-Block, und bifrost doctor empfiehlt es woertlich in BFR-KEY-0002. Die falsche Zeile steht in genau der Datei, die jeder Betreiber kopiert und bearbeitet, und sie draengt zum Klartextpasswort in .env — also dorthin, wo es in docker inspect und in /proc/<pid>/environ auftaucht. — Behoben am 2026-08-05. Der Key-Ring-Block in .env.example nennt jetzt BIFROST_KEYRING_CERT_PASSWORD_FILE als den besseren Weg, erklaert das Compose-Secret und sagt, dass beide Quellen zusammen den Start abbrechen. Die falsche Behauptung ist weg. Der Waechter ist allgemein und nicht auf diesen einen Namen gemuenzt: Jede geheimnistragende Einstellung in der Beispieldatei muss ihre _FILE-Form zeigen.
 
+### BFR-F-0055 · Der dokumentierte Kurzblick auf das Signaturzertifikat gibt null zurueck (medium)
+
+_Quelle: M7/WP7.2, Releasepruefung 0.12.0 · Beleg: `docs/acceptance/release-verification-0.12.0.md`_
+
+docs/security/verifying-releases.md §2.1 verspricht Subject, Issuer, Commit und Tag und nennt dafuer einen jq-Aufruf. Unter cosign 3 — der Fassung, die release.yml selbst festnagelt — bleibt optional im Payload leer; der Aufruf liefert "Repo: null, Tag: -, Commit: -". Die Signaturpruefung selbst ist davon nicht betroffen und lehnt in beiden Negativproben ab. Der Schaden ist ein Kettenbruch in der Anleitung: §3 Schritt 4 verlangt den Vergleich des CLI-Commits mit dem Commit "der in Schritt 1 im Cosign-Zertifikat stand" — und den bekommt der Leser nie zu sehen. — Behoben am 2026-08-05. §2.1 nennt jetzt zuerst das Richtige: Repository, Tag und Commit werden von cosign selbst geprueft, der Exit-Code ist die Aussage, und Probe A zeigt die tatsaechliche Identitaet in ihrer Ablehnung. Wer die Werte sehen will, holt sie aus der SLSA-Herkunftsbescheinigung (gh attestation verify --format json) — signiert und an denselben Digest gebunden. §3 Schritt 4 zeigt jetzt auf diesen Wert und nennt zusaetzlich den Weg ohne gh ueber org.opencontainers.image.revision. Beide Befehle sind am 2026-08-05 woertlich gegen v0.12.0 gefahren worden und liefern denselben Commit wie "bifrost --version" (71e4acfb...ee101). Mitkorrigiert: §2.2 sagt jetzt, dass gh attestation verify ausserhalb eines Terminals bei Erfolg schweigt — leere Ausgabe heisst dort "nichts zu beanstanden", nicht "nichts geprueft".
+
 ### BFR-F-0057 · Ein veraenderter Plan konnte die Vorsicherung des Restores abbestellen (medium)
 
 _Quelle: M7, beim Beheben von BFR-F-0048 aufgefallen · Beleg: `RestoreTests.A_tampered_plan_cannot_talk_the_service_out_of_the_pre_backup`_
@@ -380,6 +366,12 @@ Ein erfundener Token im Negativkorpus blockierte den Push; die Secret-Baseline k
 _Quelle: M7/WP7.3, Pilot 1 · Beleg: `ExampleConfigurationTests.The_example_names_the_key_ring_decision_the_product_demands`_
 
 Der Start warnt, wenn die Variable nicht gesetzt ist, doctor meldet BFR-KEY-0002, und die Pilotcheckliste verlangt eine ausdrueckliche Wahl. In .env.example steht sie nicht — dort stehen nur CERT_PATH und CERT_PASSWORD. Die eine Entscheidung, die das Produkt ausdruecklich verlangt, fehlt in der Datei, in der man Entscheidungen eintraegt. — Behoben am 2026-08-05, im selben Griff wie BFR-F-0050: BIFROST_KEYRING_PROTECTION steht jetzt mit allen drei zulaessigen Werten in .env.example, an der Stelle, an der ein Betreiber Entscheidungen eintraegt.
+
+### BFR-F-0053 · Unbekannte Pfade der Oberflaeche liefern 404 mit leerem Rumpf (low)
+
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `ErrorBodyTests.An_unknown_page_says_what_happened_and_offers_a_way_back`_
+
+GET /rbac/keys und GET /voellig-erfunden antworten mit 404 und null Bytes. Der Statuscode ist richtig, im Browser steht eine weisse Seite ohne Hinweis, ohne Rueckweg und ohne Kennzeichen des Produkts. Ein Tippfehler, ein alter Lesezeichen-Eintrag oder ein veralteter Link in der Doku sieht damit aus wie ein Ausfall. — Behoben am 2026-08-05. UseStatusCodePages gibt jeder Fehlerantwort OHNE Rumpf einen: eine selbstenthaltene HTML-Seite in der Sprache der Oberflaeche, mit Statuscode, Grund und einem Rueckweg — und fuer Maschinen dieselbe JSON-Form, die die Betriebsendpunkte ohnehin benutzen ({"error":{"code","message"}}), damit es kein zweites Fehlerformat fuer dieselbe Sache gibt. Bewusst NICHT als Blazor-NotFound-Vorlage: Die griffe nur fuer Pfade, die ueberhaupt beim Router ankommen, und der leere Rumpf entstand schon im Endpunkt-Routing — und genauso bei /api-Pfaden. Der Eingriff wirkt ausschliesslich dort, wo niemand sonst geschrieben hat; eine eigene Absage mit Begruendung bleibt unberuehrt. Genau dafuer gibt es einen eigenen Test (An_answer_that_already_has_a_body_keeps_it) — sonst haette diese Korrektur die Fehlermeldungen des Produkts durch eine Allerweltsformel ersetzt.
 
 ### BFR-F-0054 · Die Pilotcheckliste verlangte Befehle, die es in keinem Release gibt (low)
 

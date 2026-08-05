@@ -43,6 +43,9 @@ Identität und Issuer wörtlich aus der Anleitung, **nicht** gelockert.
 
 ## Zwei Beobachtungen zur Anleitung
 
+> **Beide sind am selben Tag korrigiert worden** (BFR-F-0055). Was hier steht, ist der Befund des
+> Laufs — nicht der heutige Stand der Anleitung.
+
 **§2.1 liefert nicht, was sie verspricht.** Unter cosign 3 bleibt `optional` im Payload leer; der
 angegebene `jq`-Aufruf gibt `null` und zwei Striche zurück. Das ist kein Sicherheitsproblem — die
 Identität *wird* geprüft, Probe A zeigt sie sogar wörtlich in ihrer Fehlermeldung. Es ist ein
@@ -71,6 +74,24 @@ gegen debian:11-slim                                        ->  Exit 1   (u.a. C
 Das Gate kann rot werden. Nebenbei: Das veröffentlichte Image ist auch vier Tage nach dem Release
 gegen eine heute geladene Schwachstellendatenbank ohne Critical- oder High-Fund — geprüft wurde also
 nicht nur der Stand zum Zeitpunkt des Builds.
+
+## Diese Prüfung gehört zu jedem Release
+
+**Für BFR-F-0055 gibt es keinen Test.** Es gibt auch keinen, den man bauen könnte, ohne cosign, `gh`
+und ein veröffentlichtes Artefakt in die Suite zu holen — und ein Wächter, der Netz und fremde
+Werkzeuge braucht, ist in der CI der erste, den jemand überspringt.
+
+Der Fehler stand über vier Monate in einer Datei, deren ganzer Zweck es ist, misstrauisch zu machen,
+und ist erst aufgefallen, als sie zum ersten Mal jemand gefahren hat. Was ihn künftig findet, ist
+deshalb nicht Code, sondern ein Schritt:
+
+> **Vor jedem veröffentlichten Release wird [`verifying-releases.md`](../security/verifying-releases.md)
+> einmal von oben nach unten gefahren — einschließlich Abschnitt 5.** Das Ergebnis kommt als
+> `release-verification-<version>.md` neben dieses Protokoll. Wer die Anleitung nicht fährt,
+> veröffentlicht eine Prüfanleitung, von der niemand weiß, ob sie noch stimmt.
+
+Der Aufwand ist eine Viertelstunde. Die Alternative ist ein Betreiber, der ihr folgt, `null` sieht
+und nicht weiß, ob das Artefakt oder die Anleitung kaputt ist.
 
 ## Was offen bleibt
 

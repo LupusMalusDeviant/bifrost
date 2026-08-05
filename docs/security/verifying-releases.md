@@ -1,7 +1,12 @@
 # Releases selbst überprüfen
 
-Stand: 2026-07-31 · gilt ab dem ersten Release, das der Job `supply-chain` erzeugt
+Stand: 2026-08-05 · gilt ab dem ersten Release, das der Job `supply-chain` erzeugt
 (WP1.2, FR-P002/FR-P004).
+
+> **Diese Anleitung ist gegen ein echtes Release gefahren worden** — `v0.12.0`, am 2026-08-05,
+> einschließlich der Negativproben aus Abschnitt 5. Protokoll:
+> [`docs/acceptance/release-verification-0.12.0.md`](../acceptance/release-verification-0.12.0.md).
+> Dabei ist genau ein Fehler aufgefallen, und er stand in dieser Datei; er ist behoben.
 
 Jedes veröffentlichte Artefakt von B.I.F.R.O.S.T ist signiert und trägt eine Herkunftsbescheinigung.
 Sie brauchen dafür **keinen Schlüssel von uns** — die Prüfung läuft gegen die öffentliche
@@ -80,18 +85,40 @@ cosign verify \
   "$IMAGE@$DIGEST"
 ```
 
-Erfolg: Cosign gibt die geprüften Claims als JSON aus und endet mit **Exit-Code 0**. In der Ausgabe
-stehen unter anderem `Subject` (die Workflow-Identität), `Issuer`, der Commit-SHA und der Tag.
+Erfolg: Cosign gibt die geprüften Claims als JSON aus und endet mit **Exit-Code 0**. Für das
+signierte Image erscheinen dabei drei Einträge — die Signatur selbst, die Stückliste und die
+Herkunftsbescheinigung.
 
-Nur das Wesentliche sehen:
+> **Der Exit-Code ist die Aussage, nicht der Text.** Ob Repository, Tag und Commit stimmen, hat der
+> Befehl bereits entschieden: Genau das steht in `$IDENTITY`, und passt es nicht, endet er mit
+> einem Fehler und nennt die tatsächliche Identität ([Probe A](#probe-a-fremde-signierer-identität)
+> zeigt das). Ein Auge auf die Ausgabe ersetzt diese Prüfung nicht — es wiederholt sie nur.
+
+**Wer die Werte trotzdem sehen will**, holt sie aus der Herkunftsbescheinigung. Sie ist signiert und
+an denselben Digest gebunden:
 
 ```bash
-cosign verify \
-  --certificate-identity-regexp "$IDENTITY" \
-  --certificate-oidc-issuer "$ISSUER" \
-  "$IMAGE@$DIGEST" 2>/dev/null \
-| jq -r '.[0].optional | "Repo:   \(.["1.3.6.1.4.1.57264.1.12"] // .Subject)\nTag:    \(.["1.3.6.1.4.1.57264.1.14"] // "-")\nCommit: \(.["1.3.6.1.4.1.57264.1.13"] // "-")"'
+gh attestation verify "oci://$IMAGE@$DIGEST" \
+  --repo LupusMalusDeviant/bifrost \
+  --signer-workflow LupusMalusDeviant/bifrost/.github/workflows/release.yml \
+  --format json \
+| jq -r '[.[].verificationResult.statement
+          | select(.predicateType == "https://slsa.dev/provenance/v1")][0]
+         | .predicate.buildDefinition
+         | "Repo:   \(.externalParameters.workflow.repository)\nTag:    \(.externalParameters.workflow.ref)\nCommit: \(.resolvedDependencies[0].digest.gitCommit)"'
 ```
+
+```
+Repo:   https://github.com/LupusMalusDeviant/bifrost
+Tag:    refs/tags/v0.12.0
+Commit: 71e4acfb007beb2aba39c4fa1e509f199cdee101
+```
+
+> **Warum nicht aus der Cosign-Ausgabe.** Bis einschließlich dieser Anleitung stand hier ein
+> `jq`-Aufruf auf `.[0].optional`. Unter cosign 3 — der Fassung, die der Releaseworkflow selbst
+> festnagelt — ist dieses Feld leer; der Aufruf lieferte `Repo: null` und zwei Striche. Aufgefallen
+> ist das erst, als die Anleitung zum ersten Mal jemand gegen ein echtes Release gefahren hat
+> (BFR-F-0055). Die Signaturprüfung war davon nie betroffen — die Anleitung war es.
 
 ### 2.2 Herkunft (GitHub Artifact Attestation)
 
@@ -103,6 +130,10 @@ gh attestation verify "oci://$IMAGE@$DIGEST" \
 
 `--signer-workflow` ist der strengere Weg: er verlangt, dass die Bescheinigung aus *genau dieser*
 Workflow-Datei stammt, nicht bloß aus irgendeinem Workflow des Repositorys. Nehmen Sie ihn.
+
+> **In einem Skript schweigt der Befehl bei Erfolg.** Die Bestätigung geht nur an ein Terminal; im
+> Skript oder in der CI bleibt die Ausgabe leer und der Exit-Code ist `0`. Leere Ausgabe heißt hier
+> also nicht „nichts geprüft", sondern „nichts zu beanstanden" — prüfen Sie den Exit-Code.
 
 ### 2.3 Stückliste (SBOM)
 
@@ -200,9 +231,20 @@ gh attestation verify "bifrost-cli-$VERSION-linux-x64.tar.gz" \
 ```bash
 tar -xzf "bifrost-cli-$VERSION-linux-x64.tar.gz"
 ./bifrost --version
-# nennt SemVer UND Commit-SHA; der Commit muss dem entsprechen,
-# der in Schritt 1 im Cosign-Zertifikat stand.
+# nennt SemVer UND Commit-SHA.
 ```
+
+Der Commit muss dem entsprechen, den die Herkunftsbescheinigung des Images nennt
+([Abschnitt 2.1](#21-signatur-cosign-keyless)). Gegenprobe ohne `gh`, direkt am Image:
+
+```bash
+docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+  "$IMAGE@$DIGEST"
+# -> 71e4acfb007beb2aba39c4fa1e509f199cdee101
+```
+
+Beide Wege müssen denselben Commit nennen wie `bifrost --version`. Tun sie es nicht, gehören CLI und
+Image nicht zusammen.
 
 ---
 

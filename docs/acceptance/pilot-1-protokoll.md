@@ -62,7 +62,7 @@ Key-Ring wirklich übertragen hat. Die erste ist BFR-F-0047.
 
 ## Was der Pilot gefunden hat
 
-Zehn Befunde, davon einer High. Fünf davon sind inzwischen behoben — der High darunter. Sie stehen mit vollem Text in
+Zehn Befunde, davon einer High. Sechs davon sind inzwischen behoben — der High darunter. Sie stehen mit vollem Text in
 [`findings.md`](findings.md) — hier nur die Zuordnung:
 
 | Befund | Kurz |
@@ -74,7 +74,7 @@ Zehn Befunde, davon einer High. Fünf davon sind inzwischen behoben — der High
 | ~~BFR-F-0050~~ | `.env.example` widerspricht dem Produkt beim Key-Ring-Passwort — behoben am 2026-08-05 |
 | ~~BFR-F-0051~~ | `BIFROST_KEYRING_PROTECTION` fehlt in der Beispielkonfiguration — behoben am 2026-08-05 |
 | BFR-F-0052 | vier `Error`-Zeilen im Log eines fehlerfreien Erststarts |
-| BFR-F-0053 | unbekannte UI-Pfade liefern 404 mit leerem Rumpf |
+| ~~BFR-F-0053~~ | unbekannte UI-Pfade liefern 404 mit leerem Rumpf — behoben am 2026-08-05 |
 | BFR-F-0054 | die Pilotcheckliste verlangt Befehle, die es im Release nicht gibt (behoben) |
 | BFR-F-0056 | der Erststart legt eine unverschlüsselte Vollsicherung an, obwohl es nichts zu sichern gab |
 
