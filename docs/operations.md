@@ -1336,8 +1336,30 @@ bifrost restore /data/backups/bifrost-2026-07-31.zip --replace
 Bestätigung. Vor dem Überschreiben entsteht automatisch eine Sicherung des Altzustands — ohne
 Ausweg kein Überschreiben (ADR-0024 E5).
 
-**Ein Restore braucht einen Wartungsmoment.** Er tauscht Datenbank und Key-Ring aus; das lässt sich
-im laufenden Schreibbetrieb nicht atomar halten. Gateway stoppen, zurückspielen, starten.
+**Ein Restore braucht einen Wartungsmoment — und die Reihenfolge ist nicht die naheliegende.**
+`bifrost` ist ein HTTP-Client; ein gestoppter Gateway nimmt keinen Restore entgegen. Die Reihenfolge
+ist deshalb: **zurückspielen, dann neu starten.**
+
+```bash
+bifrost restore /data/backups/a.zip --replace --yes
+docker compose restart bifrost          # ← nicht optional
+```
+
+**Warum der zweite Befehl kein Rat ist.** Der Restore tauscht die Dateien; der laufende Prozess hält
+seine Datenbankverbindung und seinen entschlüsselten Key-Ring weiter und würde damit gegen den
+Zustand entscheiden, den der Restore gerade ersetzt hat — einschließlich der Zugänge. Deshalb
+**verriegelt sich der Gateway nach einem eingespielten Restore selbst**: Er beantwortet ab diesem
+Moment jede Anfrage mit `503` und `{"status":"restart-required"}`, auch `/healthz`. Das ist kein
+Ausfall, sondern die Weigerung, für Daten geradezustehen, die er nicht mehr hat. Der Neustart löst
+den Riegel; einen Befehl dafür gibt es bewusst nicht.
+
+> Bis `0.12.0` fiel das anders aus: Der Restore meldete Erfolg und der Gateway bediente weiter den
+> ersetzten Stand. Aufgefallen ist es erst im Piloten (BFR-F-0047), weil dort gefragt wurde, ob nach
+> dem Restore etwas *läuft* — und nicht, ob der Befehl mit 0 endet.
+
+**Auf eine frische Installation zurückspielen:** Die Zielinstanz muss vorher eingerichtet sein
+(Setup-Token einlösen, API-Key erzeugen) — sonst gibt es niemanden, der den Restore aufrufen darf.
+Damit ist sie nicht mehr leer, und `--replace` ist der normale Weg, nicht die Ausnahme.
 
 ### Exit-Codes
 

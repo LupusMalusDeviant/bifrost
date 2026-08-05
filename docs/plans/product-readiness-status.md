@@ -366,8 +366,24 @@ tot. Genau dabei fiel der schärfste Befund an.
 **Zehn Befunde, einer davon High.** [BFR-F-0047](../acceptance/findings.md): `bifrost restore`
 meldet Erfolg, und der laufende Gateway bedient bis zum Neustart weiter den überschriebenen Stand —
 einschließlich des Wegwerf-Zugangs, den man nur angelegt hat, um den Restore aufrufen zu können.
-**Der RC-Wächter steht damit rot.** Das ist seine Aufgabe; ein Release Candidate mit einem
-Wiederherstellungsweg, der Erfolg meldet und nicht wirkt, ist keiner.
+Der RC-Wächter stand damit rot; das ist seine Aufgabe.
+
+**BFR-F-0047 ist am selben Tag behoben.** Der Gateway verriegelt sich nach einem eingespielten
+Restore selbst: `RestartRequiredMiddleware` läuft **vor** der Authentifizierung und beantwortet jede
+Anfrage mit `503` und `restart-required` — auch `/healthz`, denn ein Container, der „healthy" meldet
+und nichts mehr beantwortet, ist genau dasselbe Auseinanderfallen noch einmal. Der Neustart löst den
+Riegel; einen Befehl dafür gibt es bewusst nicht.
+
+**Was ausdrücklich nicht gewählt wurde:** den Prozesszustand im laufenden Betrieb neu aufzubauen.
+Das wäre eine Zusage über jeden Zwischenspeicher, jede offene Upstream-Verbindung und jede Sitzung
+gewesen — nicht prüfbar, nur behauptbar, und beim nächsten hinzugefügten Zwischenspeicher lautlos
+falsch. Der Riegel ist eine Zusage über *eine* Sache, und sie ist fail-closed.
+
+Gegenprobe: Ohne die eine Middleware-Zeile fällt
+`RestoreRestartLatchTests.A_restore_locks_the_gateway_until_it_is_restarted` mit `200` statt `503`.
+Der Test hat eine **eigene Fixture** — ein eingerasteter Riegel gilt für den ganzen Prozess und
+hätte sonst jeden nach ihm laufenden Test derselben Klasse mitgenommen, ohne dass in einem
+Fehlschlag stünde, woran es liegt.
 
 Einer der zehn ist mein eigener: Die Pilotcheckliste vom Vortag verlangte `bifrost audit export` und
 `bifrost audit verify` — Befehle aus M6, die in der einzigen veröffentlichten Fassung nicht

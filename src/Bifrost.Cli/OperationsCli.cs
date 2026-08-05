@@ -373,9 +373,34 @@ public sealed class OperationsCli
         await WriteAsync(result, () => (applied
                 ? $"Wiederhergestellt: {result.GetProperty("restoredSections").GetString()}"
                 : "Nicht angewendet.")
-            + Environment.NewLine + Bullets(result, "notes"));
+            + Environment.NewLine + Bullets(result, "notes")
+            + RestartHint(result));
         return applied ? Success : ArchiveInvalid;
     }
+
+    /// <summary>
+    /// <b>Die letzte Zeile, weil sie die wichtigste ist</b> (<c>BFR-F-0047</c>). Sie steht unter den
+    /// Notizen und nicht zwischen ihnen: Wer nur das Ende der Ausgabe liest, muss trotzdem erfahren,
+    /// dass der Gateway ab jetzt nichts mehr beantwortet.
+    /// <para>
+    /// Der Exit-Code bleibt <see cref="Success"/> — der Restore <em>ist</em> gelungen, und die
+    /// Codetabelle des M2-Vertrags kennt kein „gelungen, aber". Was ein Skript aufhält, das die
+    /// Zeile überliest, ist deshalb nicht dieser Text, sondern die <c>503</c> des Gateways beim
+    /// nächsten Aufruf. Der Hinweis erklärt sie nur vorher.
+    /// </para>
+    /// </summary>
+    private static string RestartHint(JsonElement result)
+        => result.TryGetProperty("restartRequired", out var flag) && flag.ValueKind is JsonValueKind.True
+            ? Environment.NewLine
+              + Environment.NewLine
+              + "NEUSTART ERFORDERLICH. Der wiederhergestellte Stand liegt auf der Platte; dieser"
+              + Environment.NewLine
+              + "Gateway-Prozess haelt noch die ersetzte Datenbank und den ersetzten Key-Ring offen."
+              + Environment.NewLine
+              + "Er nimmt ab sofort keine Anfragen mehr an (503) — bis er neu gestartet ist."
+              + Environment.NewLine
+              + "  Im Container:  docker compose restart bifrost"
+            : string.Empty;
 
     private async Task<bool> ConfirmReplaceAsync(CancellationToken ct)
     {

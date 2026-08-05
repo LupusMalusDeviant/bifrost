@@ -3,23 +3,13 @@
 > **Generiert aus `findings.json`.** Änderungen gehören in die Quelle, nicht hierher —
 > `FindingsReportTests` färbt den Lauf rot, sobald beides auseinanderläuft.
 
-**Offen:** 12 · **Behoben:** 44 · **Abdeckung ab:** M0
+**Offen:** 11 · **Behoben:** 45 · **Abdeckung ab:** M0
 
 Vollstaendig ab M0. Die Befunde aus M0-M3 sind am 2026-08-04 aus den jeweiligen Abschnitten des Fortschrittsprotokolls uebernommen worden (BFR-F-0026). Damit gilt die Aussage "kein offener Critical- oder High-Befund" fuer das ganze Programm und nicht mehr nur ab M4. Am 2026-08-05 um die Befunde aus Pilot 1 (WP7.3) und der Releasepruefung (WP7.2) erweitert.
 
-**1 offene(r) Releaseblocker.** Der Release Candidate ist keiner, solange das so steht.
+**Kein offener Critical- oder High-Befund.** Das ist die Bedingung aus WP7.1 — im Rahmen der oben genannten Abdeckung.
 
 ## Offen
-
-### BFR-F-0047 · restore meldet Erfolg — der laufende Gateway bedient bis zum Neustart den alten Stand (high)
-
-_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
-
-bifrost restore --replace --yes endet mit Exit 0 und "Wiederhergestellt: Database, KeyRing, Config". Danach, ohne Neustart: Der API-Key aus dem Archiv bekommt 401, der Schluessel des ueberschriebenen Zielzustands bekommt weiter 200. Nach einem Neustart des Containers kehrt sich beides um — der Restore war also inhaltlich richtig, nur nicht wirksam. Die Meldung sagt davon nichts. Der schlimme Fall ist der Wiederherstellungsfall: Der Betreiber sieht Erfolg, richtet die Agenten aus, und der Gateway authentifiziert weiter gegen den Stand, den der Restore gerade ersetzt hat — einschliesslich des Wegwerf-Zugangs, den man nur angelegt hat, um den Restore ueberhaupt aufrufen zu koennen. Gegenrede, die zum Befund gehoert: docs/operations.md nennt den Wartungsmoment ("Gateway stoppen, zurueckspielen, starten"). Nur ist genau das nicht befolgbar — die CLI ist ein HTTP-Client und braucht einen laufenden Gateway (siehe BFR-F-0049).
-
-**Owner:** — · **Termin:** —
-
-**Mitigation:** —
 
 ### BFR-F-0015 · Speicherwachstum unter Saettigung: 110 MB je Minute ohne Abflachen (medium)
 
@@ -210,6 +200,12 @@ HttpTransportOptions trug kein AllowPrivateTargets, waehrend OpenAPI, OpenRPC un
 _Quelle: M3/WP3.5 — ein M1-Fehler, gefunden in M3 · Beleg: `.github/workflows/release.yml`_
 
 Die Action bricht bei fehlendem Ignorefile ab. Der allererste Releaselauf waere daran gescheitert, und zwar nicht an einem Scanergebnis, sondern an einem Pfad; die Dokumentation behauptete an der Stelle das Gegenteil. Zweiter Beleg fuer dasselbe Muster: Jedes Mal, wenn jemand genau hinsieht, findet er etwas, das erst ein echter Lauf gezeigt haette.
+
+### BFR-F-0047 · restore meldet Erfolg — der laufende Gateway bedient bis zum Neustart den alten Stand (high)
+
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `RestoreRestartLatchTests.A_restore_locks_the_gateway_until_it_is_restarted`_
+
+bifrost restore --replace --yes endet mit Exit 0 und "Wiederhergestellt: Database, KeyRing, Config". Danach, ohne Neustart: Der API-Key aus dem Archiv bekommt 401, der Schluessel des ueberschriebenen Zielzustands bekommt weiter 200. Nach einem Neustart des Containers kehrt sich beides um — der Restore war also inhaltlich richtig, nur nicht wirksam. Die Meldung sagt davon nichts. Der schlimme Fall ist der Wiederherstellungsfall: Der Betreiber sieht Erfolg, richtet die Agenten aus, und der Gateway authentifiziert weiter gegen den Stand, den der Restore gerade ersetzt hat — einschliesslich des Wegwerf-Zugangs, den man nur angelegt hat, um den Restore ueberhaupt aufrufen zu koennen. Gegenrede, die zum Befund gehoert: docs/operations.md nennt den Wartungsmoment ("Gateway stoppen, zurueckspielen, starten"). Nur ist genau das nicht befolgbar — die CLI ist ein HTTP-Client und braucht einen laufenden Gateway (siehe BFR-F-0049). — Behoben am 2026-08-05. Der Gateway verriegelt sich nach einem eingespielten Restore selbst: RestartRequiredMiddleware laeuft VOR der Authentifizierung und beantwortet jede Anfrage mit 503 und {"status":"restart-required"} — auch /healthz, damit ein Container nicht "healthy" meldet, waehrend er nichts mehr beantwortet. Der Neustart loest den Riegel; einen Befehl dafuer gibt es bewusst nicht. RestoreResult traegt die Forderung als eigenes Feld (RestartRequired) statt als Notiz, und die CLI schreibt sie als letzte Zeile. BEWUSST NICHT GEWAEHLT: den Prozesszustand im Betrieb neu aufzubauen. Das waere eine Zusage ueber jeden Zwischenspeicher, jede offene Upstream-Verbindung und jede Sitzung — nicht pruefbar und beim naechsten hinzugefuegten Zwischenspeicher lautlos falsch. Gegenprobe: Ohne die Middleware-Zeile faellt der Test mit 200 statt 503.
 
 ### BFR-F-0001 · Teilimport: ein kaputter Eintrag machte den ganzen Plan unanwendbar (medium)
 

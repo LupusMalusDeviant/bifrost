@@ -458,8 +458,24 @@ shell history. Use `--passphrase-env NAME` or `--passphrase-prompt`.
 
 `--replace` asks back; the answer is the word `replace`, and `--yes` supplies it in scripts. Before
 overwriting, a backup of the previous state is taken automatically — no overwrite without a way out
-(ADR-0024 E5). **A restore needs a maintenance window:** it swaps database and key ring, which
-cannot be kept atomic under live writes. Stop, restore, start.
+(ADR-0024 E5). **A restore needs a maintenance window — and the order is not the obvious one.** `bifrost` is an
+HTTP client; a stopped gateway accepts no restore. So it is **restore, then restart**:
+
+```bash
+bifrost restore /data/backups/a.zip --replace --yes
+docker compose restart bifrost          # not optional
+```
+
+The restore swaps the files; the running process still holds its database connection and its
+decrypted key ring, and would keep deciding against the state the restore just replaced —
+credentials included. That is why **the gateway locks itself after an applied restore**: every
+request, `/healthz` included, answers `503` with `{"status":"restart-required"}` until it is
+restarted. Not an outage — a refusal to answer for data it no longer has. There is deliberately no
+command to clear the lock; the restart is the way.
+
+Restoring onto a **fresh** installation: set it up first (redeem the setup token, create an API
+key), or there is nobody allowed to call the restore. That makes it non-empty, so `--replace` is the
+normal path rather than the exception.
 
 ### PostgreSQL: needs `pg_dump` and `pg_restore`
 

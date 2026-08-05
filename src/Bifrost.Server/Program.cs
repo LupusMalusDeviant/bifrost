@@ -607,6 +607,11 @@ if (ForwardedProxyOptions.TryCreate(builder.Configuration["BIFROST_TRUSTED_PROXI
     app.UseForwardedHeaders(forwarded);
 }
 
+// BFR-F-0047: VOR der Authentifizierung. Ist ein Restore eingespielt und der Prozess noch der alte,
+// entscheidet jede Authentifizierung gegen einen Zustand, den es nicht mehr gibt — die Antwort darf
+// gar nicht erst so weit kommen. Solange kein Restore lief, ist das ein Feldvergleich je Request.
+app.UseMiddleware<RestartRequiredMiddleware>();
+
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();

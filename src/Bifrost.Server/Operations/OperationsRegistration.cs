@@ -69,6 +69,10 @@ public static class OperationsRegistration
         services.AddSingleton<IRestoreService>(sp => new RestoreService(
             backupOptions, sp.GetRequiredService<IBackupService>()));
 
+        // BFR-F-0047: Der Riegel, den ein eingespielter Restore umlegt. Singleton aus demselben
+        // Grund wie oben — ein Zustand je Prozess, denn genau der Prozess ist das Problem.
+        services.AddSingleton<RestartRequiredState>();
+
         // ADR-0024 E7: Vor einer schemaändernden Migration entsteht automatisch eine Sicherung.
         // 'Always' heißt: ohne Sicherung keine Migration.
         services.AddSingleton<IPreMigrationBackup, PreMigrationBackupService>();

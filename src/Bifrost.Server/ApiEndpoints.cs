@@ -11,6 +11,7 @@ using Bifrost.Core.Upstreams;
 using Bifrost.Core.Packaging;
 using Bifrost.Persistence;
 using Bifrost.Persistence.Startup;
+using Bifrost.Server.Operations;
 using Microsoft.EntityFrameworkCore;
 
 namespace Bifrost.Server;
@@ -889,13 +890,27 @@ internal static class ApiEndpoints
 
         operations.MapPost("/restore/apply", async (
             RestorePlan plan, HttpContext ctx, IRestoreService restore, IAuditSink audit,
-            TimeProvider time, CancellationToken ct) =>
+            RestartRequiredState restart, TimeProvider time, CancellationToken ct) =>
         {
             try
             {
                 var result = await restore.ApplyAsync(plan, ct);
                 AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null,
                     $"restore-applied:{result.RestoredSections}");
+
+                // BFR-F-0047: Der Riegel faellt NACH dem Auditeintrag und VOR der Antwort. Die
+                // Antwort selbst kommt noch durch — die Middleware hat fuer diesen Request bereits
+                // entschieden. Der naechste Aufruf trifft auf den Riegel, und das ist der erste,
+                // der sonst gegen den ersetzten Zustand beantwortet wuerde.
+                if (result.RestartRequired)
+                {
+                    restart.Require(
+                        "Ein Restore ist eingespielt worden. Der wiederhergestellte Stand liegt auf "
+                        + "der Platte; dieser Prozess haelt noch die ersetzte Datenbank und den "
+                        + "ersetzten Key-Ring offen und wuerde damit gegen einen Zustand "
+                        + "entscheiden, den es nicht mehr gibt. Den Gateway neu starten.");
+                }
+
                 return Results.Ok(result);
             }
             catch (InvalidOperationException exception)

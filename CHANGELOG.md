@@ -105,6 +105,14 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
   - **Kein „Delete" im Sinne eines Abgleichs:** Ein Import entfernt nichts, was in der Nutzlast
     fehlt. Das wäre eine Synchronisierung, und die nimmt weg, was die Nutzlast nur nicht kennt.
 
+- **Ein eingespielter Restore verriegelt den Gateway, bis er neu gestartet ist** (BFR-F-0047).
+  Vorher meldete `bifrost restore` Erfolg, und der laufende Prozess bediente weiter den ersetzten
+  Stand — die Zugänge aus dem Archiv bekamen `401`, die soeben überschriebenen weiter `200`. Jetzt
+  antwortet der Gateway ab dem Restore auf jede Anfrage mit `503` und `restart-required`, auch auf
+  `/healthz`: Ein Container, der „healthy" meldet und nichts mehr beantwortet, war genau das
+  Auseinanderfallen, um das es hier ging. Der Neustart löst den Riegel; einen Befehl dafür gibt es
+  bewusst nicht.
+
 - **Zum ersten Mal ist eine echte Installation aus einem veröffentlichten Release gefahren worden**
   (M7/WP7.3, Pilot 1 von 3) — mit Erstzugang, Backup, Prüfung und Restore auf eine zweite
   Installation. Sie hat zehn Befunde ergeben, darunter einen Releaseblocker: `bifrost restore`

@@ -116,11 +116,24 @@ public sealed record RestorePlan(
     string? PreBackupPath = null,
     string? Token = null);
 
+/// <param name="RestartRequired">
+/// <b>Der Restore ist auf der Platte, nicht im Prozess.</b> Ein laufender Gateway hält die
+/// Datenbankverbindung, den Key-Ring und seine Zwischenspeicher offen; die getauschten Dateien
+/// erreichen ihn erst mit dem nächsten Start. Bis dahin würde er weiter gegen den Zustand
+/// entscheiden, den der Restore gerade ersetzt hat — einschließlich der Zugänge.
+/// <para>
+/// Deshalb ist das hier eine <em>Zusage des Ergebnisses</em> und nicht eine Zeile unter
+/// <see cref="Notes"/>: Der Aufrufer muss sie nicht lesen können, um sich richtig zu verhalten.
+/// Der Server verriegelt sich daraufhin selbst (<c>BFR-F-0047</c>) — ein Hinweis, den man
+/// überlesen kann, wäre für diesen Fall zu wenig.
+/// </para>
+/// </param>
 public sealed record RestoreResult(
     bool Applied,
     BackupSections RestoredSections,
     string? PreBackupPath,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes,
+    bool RestartRequired);
 
 public interface IBackupService
 {

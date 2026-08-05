@@ -332,7 +332,8 @@ public sealed class RestoreService : IRestoreService
         {
             notes.Add("Das Archiv hat sich seit der Prüfung verändert oder ist nicht mehr lesbar.");
             notes.AddRange(inspected.Problems);
-            return new RestoreResult(false, BackupSections.None, null, notes.AsReadOnly());
+            return new RestoreResult(
+                false, BackupSections.None, null, notes.AsReadOnly(), RestartRequired: false);
         }
 
         Directory.CreateDirectory(_options.DataDirectory);
@@ -352,7 +353,23 @@ public sealed class RestoreService : IRestoreService
             }
 
             await SwitchOverAsync(staging, sections, plan, notes, ct).ConfigureAwait(false);
-            return new RestoreResult(true, sections, preBackup, notes.AsReadOnly());
+
+            // BFR-F-0047: Getauscht ist die Platte, nicht der Prozess. Jeder Abschnitt, den dieser
+            // Restore angefasst hat, liegt in einem laufenden Gateway auch als offene Verbindung,
+            // geladener Schlüssel oder Zwischenspeicher vor — die Datei allein erreicht ihn nicht.
+            // Deshalb gilt die Forderung, sobald überhaupt etwas ersetzt wurde, und nicht nur für
+            // die Datenbank: Ein Key-Ring, der auf der Platte ein anderer ist als im Speicher,
+            // entschlüsselt ab dem Neustart andere Zugangsdaten.
+            var restartRequired = sections is not BackupSections.None;
+            if (restartRequired)
+            {
+                notes.Add(
+                    "NEUSTART ERFORDERLICH: Der wiederhergestellte Stand liegt auf der Platte, der "
+                    + "laufende Gateway arbeitet bis zum Neustart weiter mit dem ersetzten. Er nimmt "
+                    + "deshalb ab sofort keine Anfragen mehr an.");
+            }
+
+            return new RestoreResult(true, sections, preBackup, notes.AsReadOnly(), restartRequired);
         }
         finally
         {
