@@ -52,9 +52,14 @@ später von einem Betriebsproblem nicht zu unterscheiden.
 ### 4. Der Alltag, zwei Wochen
 
 - [ ] eine Freigabe (Approval) über die Oberfläche entschieden
-- [ ] ein Auditexport gezogen (`bifrost audit export`)
-- [ ] die Integritätskette geprüft (`bifrost audit verify`)
+- [ ] ein Auditexport gezogen (`bifrost audit export`) — **erst ab der Fassung, die den Befehl
+      mitbringt**; `0.12.0` kennt ihn nicht
+- [ ] die Integritätskette geprüft (`bifrost audit verify`) — dieselbe Einschränkung
 - [ ] mindestens einmal eine geänderte Tool-Definition angenommen oder abgelehnt
+
+> **Was hier schiefging** (BFR-F-0054): Diese drei Zeilen standen zuerst ohne Einschränkung da.
+> Geschrieben waren sie gegen das Repository — und das ist weiter als alles, was ein Pilot
+> installieren kann. Eine Checkliste gegen den eigenen Arbeitsstand ist keine.
 
 ## Was zurückgemeldet wird
 

@@ -3,13 +3,23 @@
 > **Generiert aus `findings.json`.** Änderungen gehören in die Quelle, nicht hierher —
 > `FindingsReportTests` färbt den Lauf rot, sobald beides auseinanderläuft.
 
-**Offen:** 4 · **Behoben:** 41 · **Abdeckung ab:** M0
+**Offen:** 12 · **Behoben:** 44 · **Abdeckung ab:** M0
 
-Vollstaendig ab M0. Die Befunde aus M0-M3 sind am 2026-08-04 aus den jeweiligen Abschnitten des Fortschrittsprotokolls uebernommen worden (BFR-F-0026). Damit gilt die Aussage "kein offener Critical- oder High-Befund" fuer das ganze Programm und nicht mehr nur ab M4.
+Vollstaendig ab M0. Die Befunde aus M0-M3 sind am 2026-08-04 aus den jeweiligen Abschnitten des Fortschrittsprotokolls uebernommen worden (BFR-F-0026). Damit gilt die Aussage "kein offener Critical- oder High-Befund" fuer das ganze Programm und nicht mehr nur ab M4. Am 2026-08-05 um die Befunde aus Pilot 1 (WP7.3) und der Releasepruefung (WP7.2) erweitert.
 
-**Kein offener Critical- oder High-Befund.** Das ist die Bedingung aus WP7.1 — im Rahmen der oben genannten Abdeckung.
+**1 offene(r) Releaseblocker.** Der Release Candidate ist keiner, solange das so steht.
 
 ## Offen
+
+### BFR-F-0047 · restore meldet Erfolg — der laufende Gateway bedient bis zum Neustart den alten Stand (high)
+
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
+
+bifrost restore --replace --yes endet mit Exit 0 und "Wiederhergestellt: Database, KeyRing, Config". Danach, ohne Neustart: Der API-Key aus dem Archiv bekommt 401, der Schluessel des ueberschriebenen Zielzustands bekommt weiter 200. Nach einem Neustart des Containers kehrt sich beides um — der Restore war also inhaltlich richtig, nur nicht wirksam. Die Meldung sagt davon nichts. Der schlimme Fall ist der Wiederherstellungsfall: Der Betreiber sieht Erfolg, richtet die Agenten aus, und der Gateway authentifiziert weiter gegen den Stand, den der Restore gerade ersetzt hat — einschliesslich des Wegwerf-Zugangs, den man nur angelegt hat, um den Restore ueberhaupt aufrufen zu koennen. Gegenrede, die zum Befund gehoert: docs/operations.md nennt den Wartungsmoment ("Gateway stoppen, zurueckspielen, starten"). Nur ist genau das nicht befolgbar — die CLI ist ein HTTP-Client und braucht einen laufenden Gateway (siehe BFR-F-0049).
+
+**Owner:** — · **Termin:** —
+
+**Mitigation:** —
 
 ### BFR-F-0015 · Speicherwachstum unter Saettigung: 110 MB je Minute ohne Abflachen (medium)
 
@@ -21,25 +31,55 @@ Der Lauf ohne Wartezeit (~3 500 Aufrufe/s) zeigte ueber 6,7 Minuten RSS 615 -> 1
 
 **Mitigation:** Der 4-Stunden-Nachtlauf bei realistischer Rate entscheidet, ob die Kurve abflacht. Bis dahin gilt die Betriebsempfehlung: Speicher beobachten, Retention aktiv halten. Kein bekannter Ausfall im Betrieb.
 
-### BFR-F-0039 · Der Standardweg der Installation ist bis zum ersten Releaselauf kaputt (medium)
+### BFR-F-0046 · Es gibt genau eine installierbare Fassung — Upgrade und Rollback haben kein Ziel (medium)
 
-_Quelle: M1/WP1.4 · Beleg: `docker-compose.yml`_
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
 
-docker compose up -d zieht ein Image, das es noch nicht gibt. Das ist die vom Pflichtenheft verlangte Richtung, aber die Luecke schliesst erst der erste veroeffentlichte Tag: Der Vorgabewert der Version in docker-compose.yml und .env.example gehoert daran gekoppelt.
+ghcr.io/lupusmalusdeviant/bifrost gibt es nur als 0.12.0 und 0.12; 0.11.0 laesst sich nicht ziehen ("not found"), obwohl v0.11.0 als GitHub-Release existiert und in SECURITY.md als "superseded" gefuehrt wird — was nach "gab es einmal" aussieht. Folgen: Der Upgrade-Schritt der Pilotcheckliste ist fuer niemanden ausfuehrbar, und der in docs/operations.md beschriebene Rollback ("der Weg zurueck auf die vorherige Zeile in .env") hat heute kein Ziel. Ein Rueckweg, den man nicht gehen kann, ist keiner.
 
-**Owner:** unbesetzt · **Termin:** mit dem ersten veroeffentlichten Release (M1-Abnahme)
+**Owner:** unbesetzt · **Termin:** mit dem zweiten veroeffentlichten Release
 
-**Mitigation:** Bis dahin gilt der dokumentierte Weg ueber den lokalen Build; docs/operations.md nennt ihn. Kein Betreiber ausserhalb dieses Repositories ist betroffen, weil es noch kein veroeffentlichtes Image gibt.
+**Mitigation:** Heute kann niemand auf 0.11.0 als Container sein — das Image hat nie existiert, es gibt also keinen Bestand, der zurueck muesste. Mit dem zweiten Release loest sich der Fall von selbst; bis dahin gehoert der Rollback-Abschnitt mit dem Hinweis versehen, dass er ab der zweiten veroeffentlichten Fassung gilt.
 
-### BFR-F-0045 · Der Nachweis fuer das Containerfilesystem-Gate fehlt (medium)
+### BFR-F-0048 · Die angekuendigte Vorab-Sicherung heisst anders als die geschriebene (medium)
 
-_Quelle: M3/WP3.5, ausdruecklich nicht als erfuellt gemeldet · Beleg: `.github/workflows/release.yml`_
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
 
-Es gibt kein Release-Image, an dem sich zeigen liesse, dass das Gate scheitern kann. Ein Gate ohne Gegenprobe ist eine Behauptung.
+Der Restore kuendigt an: "Sicherung des Altzustands entsteht unter: /data/backups/pre-restore-20260805-051215.zip". Geschrieben wird pre-restore-20260805-051216.zip — eine Sekunde spaeter, weil der Zeitstempel zweimal formatiert wird statt einmal. Der Pfad, den ein Betreiber im Ernstfall aus der Ausgabe kopiert, existiert nicht.
 
-**Owner:** unbesetzt · **Termin:** mit dem ersten veroeffentlichten Release (M1-Abnahme)
+**Owner:** unbesetzt · **Termin:** vor der Freigabe des Release Candidate
 
-**Mitigation:** Das Gate ist im Workflow vorhanden und laeuft; ungeprueft ist nur, ob es rot werden kann. Der erste Releaselauf liefert das Image, an dem sich das zeigen laesst.
+**Mitigation:** Die Sicherung selbst entsteht korrekt und liegt im selben Verzeichnis; sie ist auffindbar, nur nicht unter dem genannten Namen. Die zweite Zeile der Ausgabe ("Der bisherige Zustand liegt in ...") nennt den richtigen Pfad.
+
+### BFR-F-0049 · Einen Restore auf eine leere Installation gibt es in der Praxis nicht (medium)
+
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
+
+Die CLI ist ein authentifizierter HTTP-Client. Eine frische Installation hat keinen Zugang; einen anzulegen macht sie nicht mehr leer. Damit scheitert der dokumentierte Normalfall "bifrost restore <archiv>" auf jeder neuen Installation mit Exit 6, und --replace ist nicht die Ausnahme, sondern der einzige Weg. docs/operations.md fuehrt --replace als Sonderfall und verschweigt, dass die Zielinstanz vorher eingerichtet werden muss — im Wiederherstellungsfall genau die Information, die fehlt.
+
+**Owner:** unbesetzt · **Termin:** vor der Freigabe des Release Candidate
+
+**Mitigation:** Der Weg funktioniert, sobald man ihn kennt: Zielinstanz bootstrappen, API-Key erzeugen, mit --replace zurueckspielen, Gateway neu starten. Er ist im Pilotprotokoll vollstaendig aufgeschrieben.
+
+### BFR-F-0050 · .env.example widerspricht dem Produkt beim Passwort des Key-Rings (medium)
+
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
+
+.env.example sagt: "Der Gateway kann es heute NICHT aus einer Datei lesen; ein Compose-Secret gibt es deshalb nur fuer das PFX selbst, nicht fuer sein Passwort." Das stimmt nicht. BIFROST_KEYRING_CERT_PASSWORD_FILE ist seit FR-P048 umgesetzt (src/Bifrost.Server/KeyRing/FileSecret.cs); docker-compose.yml nennt es im Secret-Block, und bifrost doctor empfiehlt es woertlich in BFR-KEY-0002. Die falsche Zeile steht in genau der Datei, die jeder Betreiber kopiert und bearbeitet, und sie draengt zum Klartextpasswort in .env — also dorthin, wo es in docker inspect und in /proc/<pid>/environ auftaucht.
+
+**Owner:** unbesetzt · **Termin:** vor der Freigabe des Release Candidate
+
+**Mitigation:** Der sichere Weg ist vorhanden und dokumentiert (docs/operations.md, "Key-Ring schuetzen"); falsch ist nur der Kommentar in der Beispieldatei. Wer der doctor-Empfehlung folgt, landet richtig.
+
+### BFR-F-0055 · Der dokumentierte Kurzblick auf das Signaturzertifikat gibt null zurueck (medium)
+
+_Quelle: M7/WP7.2, Releasepruefung 0.12.0 · Beleg: `docs/acceptance/release-verification-0.12.0.md`_
+
+docs/security/verifying-releases.md §2.1 verspricht Subject, Issuer, Commit und Tag und nennt dafuer einen jq-Aufruf. Unter cosign 3 — der Fassung, die release.yml selbst festnagelt — bleibt optional im Payload leer; der Aufruf liefert "Repo: null, Tag: -, Commit: -". Die Signaturpruefung selbst ist davon nicht betroffen und lehnt in beiden Negativproben ab. Der Schaden ist ein Kettenbruch in der Anleitung: §3 Schritt 4 verlangt den Vergleich des CLI-Commits mit dem Commit "der in Schritt 1 im Cosign-Zertifikat stand" — und den bekommt der Leser nie zu sehen.
+
+**Owner:** unbesetzt · **Termin:** vor der Freigabe des Release Candidate
+
+**Mitigation:** Der Vergleich aus §3 Schritt 4 ist trotzdem moeglich: org.opencontainers.image.revision am Image traegt denselben Commit (71e4acfb...ee101, im Pilotlauf gegen bifrost --version gehalten). Die Identitaet selbst wird geprueft — Probe A zeigt sie woertlich in ihrer Ablehnung.
 
 ### BFR-F-0044 · wasmtime 47.0.2: zwei RUSTSEC-Meldungen in der WASI-Sandbox (low)
 
@@ -50,6 +90,46 @@ RUSTSEC-2026-0222 und -0223, beide LOW und damit nicht blockierend — betroffen
 **Owner:** unbesetzt · **Termin:** vor M8/WP8.1
 
 **Mitigation:** Beide Meldungen sind LOW und betreffen Pfade, die dieser Gateway nicht nutzt (geprueft im Rahmen von WP3.5). Der Versionssprung ist ein Einzeiler und gehoert in den naechsten Abhaengigkeitslauf.
+
+### BFR-F-0051 · BIFROST_KEYRING_PROTECTION kommt in der Beispielkonfiguration nicht vor (low)
+
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
+
+Der Start warnt, wenn die Variable nicht gesetzt ist, doctor meldet BFR-KEY-0002, und die Pilotcheckliste verlangt eine ausdrueckliche Wahl. In .env.example steht sie nicht — dort stehen nur CERT_PATH und CERT_PASSWORD. Die eine Entscheidung, die das Produkt ausdruecklich verlangt, fehlt in der Datei, in der man Entscheidungen eintraegt.
+
+**Owner:** — · **Termin:** —
+
+**Mitigation:** —
+
+### BFR-F-0052 · Ein fehlerfreier Erststart schreibt vier Error-Zeilen ins Log (low)
+
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
+
+Beim ersten Start protokolliert EF Core zweimal "Failed executing DbCommand" samt Ausnahme, weil vor der Migration auf ConfigVersions und Identities zugegriffen wird — "no such table". Das ist harmlos und erwartbar, steht aber auf Error. Jede logbasierte Alarmierung schlaegt damit ausgerechnet bei der gesunden Erstinstallation an, und der erste Eindruck eines korrekten Aufbaus sind vier Fehler. Dazu kommt: 82 Information-Zeilen sind SQL-Anweisungen; im Dauerbetrieb protokolliert der Gateway jede Abfrage.
+
+**Owner:** — · **Termin:** —
+
+**Mitigation:** —
+
+### BFR-F-0053 · Unbekannte Pfade der Oberflaeche liefern 404 mit leerem Rumpf (low)
+
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
+
+GET /rbac/keys und GET /voellig-erfunden antworten mit 404 und null Bytes. Der Statuscode ist richtig, im Browser steht eine weisse Seite ohne Hinweis, ohne Rueckweg und ohne Kennzeichen des Produkts. Ein Tippfehler, ein alter Lesezeichen-Eintrag oder ein veralteter Link in der Doku sieht damit aus wie ein Ausfall.
+
+**Owner:** — · **Termin:** —
+
+**Mitigation:** —
+
+### BFR-F-0056 · Der Erststart legt eine unverschluesselte Vollsicherung an, obwohl es nichts zu sichern gab (low)
+
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
+
+Auf einer frischen Installation entsteht vor der Erstmigration /data/backups/pre-migration-<zeit>.zip. Der Gateway sagt selbst dazu, sie sei unverschluesselt und enthalte den DataProtection-Key-Ring. Auf einer Installation ohne Vorzustand ist das ein schuetzenswertes Artefakt ohne Gegenwert — es sichert einen Zustand, den es nicht gab.
+
+**Owner:** — · **Termin:** —
+
+**Mitigation:** —
 
 ## Behoben
 
@@ -239,6 +319,12 @@ _Quelle: M1, erster echter Releaselauf, Befund 7 · Beleg: `.github/workflows/re
 
 Der Job supply-chain war im Trockenlauf immer rot. Ein Trockenlauf, den niemand fahren kann, ist kein Trockenlauf.
 
+### BFR-F-0039 · Der Standardweg der Installation ist bis zum ersten Releaselauf kaputt (medium)
+
+_Quelle: M1/WP1.4 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
+
+docker compose up -d zieht ein Image, das es noch nicht gibt. Das ist die vom Pflichtenheft verlangte Richtung, aber die Luecke schliesst erst der erste veroeffentlichte Tag: Der Vorgabewert der Version in docker-compose.yml und .env.example gehoert daran gekoppelt. — Erledigt: Mit v0.12.0 gibt es das Image. Am 2026-08-05 aus einem frischen Verzeichnis nach der dokumentierten Anleitung geprueft: docker compose up -d zieht ghcr.io/lupusmalusdeviant/bifrost:0.12.0 und healthz antwortet mit 200. Der Vorgabewert in docker-compose.yml und .env.example steht auf 0.12.0.
+
 ### BFR-F-0041 · Die Runtime-Diagnose verschwieg genau den Fall, fuer den sie da war (medium)
 
 _Quelle: M3/WP3.2, selbst gemeldet · Beleg: `RuntimeCheckTests`_
@@ -250,6 +336,12 @@ ServerDiagnosticService zaehlte nur Config.Cli?.Isolation. Eine Instanz mit auss
 _Quelle: M3/WP3.5 · Beleg: `.github/workflows/security.yml`_
 
 dotnet list package --vulnerable endet mit Exit 0, auch bei High-Funden. Die naheliegende Pruefung waere eine gewesen, die nie anschlaegt. Die Tabellenausgabe ist zudem lokalisiert (Schweregrad statt Severity) — ein grep haette hier zufaellig funktioniert.
+
+### BFR-F-0045 · Der Nachweis fuer das Containerfilesystem-Gate fehlt (medium)
+
+_Quelle: M3/WP3.5, ausdruecklich nicht als erfuellt gemeldet · Beleg: `docs/acceptance/release-verification-0.12.0.md`_
+
+Es gibt kein Release-Image, an dem sich zeigen liesse, dass das Gate scheitern kann. Ein Gate ohne Gegenprobe ist eine Behauptung. — Erledigt am 2026-08-05: Derselbe Aufruf wie in release.yml (Trivy 0.72.0, CRITICAL/HIGH, ignore-unfixed=false, exit-code 1) endet gegen das veroeffentlichte Image mit 0 und gegen debian:11-slim mit 1. Das Gate kann rot werden. Nebenbefund: Das Image ist auch vier Tage nach dem Release gegen eine aktuelle Schwachstellendatenbank ohne Critical- oder High-Fund.
 
 ### BFR-F-0003 · Falschpositiv in der Maskenerkennung (low)
 
@@ -298,4 +390,10 @@ cargo fmt --check wurde rot, weil die Kiste umbenannt wurde und der Import seitd
 _Quelle: M1, erster echter Releaselauf, Befunde 1-3 und 9 · Beleg: `docs/plans/product-readiness-status.md#was-der-erste-lauf-gekostet-hat-neun-befunde`_
 
 Ein erfundener Token im Negativkorpus blockierte den Push; die Secret-Baseline kannte zwei Werte nicht; ein Versionstest trug ein Literal und brach beim Versionssprung; der Nebenlaeufigkeitsnachweis des Backups mass den Planer.
+
+### BFR-F-0054 · Die Pilotcheckliste verlangte Befehle, die es in keinem Release gibt (low)
+
+_Quelle: M7/WP7.3, eigener Fehler · Beleg: `docs/acceptance/pilot-checklist.md`_
+
+Die Checkliste (WP7.3) verlangt bifrost audit export und bifrost audit verify. Beide stammen aus M6 und stehen in 0.12.0 nicht zur Verfuegung — die einzige veroeffentlichte Fassung kennt sie nicht. Geschrieben gegen das Repository statt gegen das, was ein Pilot bekommen kann. Behoben am 2026-08-05: Die betroffenen Zeilen sind als "erst ab der Fassung, die sie mitbringt" gekennzeichnet.
 

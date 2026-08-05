@@ -31,7 +31,7 @@ ob er noch gilt.
 | **Backupcrypto** | `src/Bifrost.Core/Backup/**`, `src/Bifrost.Persistence/Backup/**` | Verschlüsselung und Integritätsprüfung des Archivs; der Key-Ring ist Teil davon |
 | **Package/WASI** | `src/Bifrost.Core/Packaging/**`, `spikes/wasi-component-runtime` | Ed25519-Signatur über Manifest und Nutzlast, Herausgeber-Trust-Store, Sandbox |
 | **Containerlaunch** | `src/Bifrost.Upstream/**` (Isolation) | Vorgabe ist Container; Host-Ausführung nur mit ausdrücklicher Erlaubnis |
-| **Releaseworkflow** | `.github/workflows/release.yml` | Signatur, SBOM, Provenance, Checksummen — **ungeprüft am Ergebnis**, siehe §4 |
+| **Releaseworkflow** | `.github/workflows/release.yml` | Signatur, SBOM, Provenance, Checksummen — am Ergebnis geprüft, aber **von uns selbst**: [`release-verification-0.12.0.md`](release-verification-0.12.0.md) |
 
 ## 3. Was der Prüfer bekommt
 
@@ -51,19 +51,26 @@ ob er noch gilt.
 Diese Liste gehört in die Auftragsunterlage, weil ein Prüfer sonst Zeit damit verbringt, sie zu
 finden:
 
-1. **Der Releaseworkflow ist nie gegen ein veröffentlichtes Artefakt geprüft worden.** M1 gilt seit
-   drei Meilensteinen als „implementiert, nicht abgenommen". Zweimal hat jemand genau hingesehen und
-   jedes Mal etwas gefunden (BFR-F-0036, BFR-F-0042). Die Wahrscheinlichkeit, dass dort noch etwas
-   liegt, ist die höchste im ganzen Bestand.
-2. **Der Maskierungslauf ist ein Netz, kein Inhaltsscanner** (BFR-F-0005). Ein Secret unter einem
+1. **Der Wiederherstellungsweg** (BFR-F-0047, offen und High). `bifrost restore` meldet Erfolg,
+   während der laufende Gateway bis zum Neustart weiter gegen den überschriebenen Stand
+   authentifiziert. Belegt am 2026-08-05 auf einer echten Installation
+   ([Pilotprotokoll](pilot-1-protokoll.md)). Die Frage an den Review ist nicht, ob es das gibt —
+   sondern wo dieselbe Bauart noch steckt: eine Zusage, die die Platte erreicht und den Prozess
+   nicht.
+2. **Der Releaseworkflow.** Zweimal hat jemand genau hingesehen und jedes Mal etwas gefunden
+   (BFR-F-0036, BFR-F-0042). Am 2026-08-05 ist die Betreiber-Anleitung erstmals gegen das echte
+   Release gefahren worden, mit beiden Negativproben — grün, bis auf einen Kettenbruch in der
+   Anleitung selbst (BFR-F-0055). Der Zusatz „ungeprüft am Ergebnis" ist damit weg; **geprüft hat
+   aber dieselbe Seite, die den Workflow geschrieben hat.**
+3. **Der Maskierungslauf ist ein Netz, kein Inhaltsscanner** (BFR-F-0005). Ein Secret unter einem
    harmlosen Feldnamen und ohne erkennbare Form bleibt stehen. Das ist die gewollte Bauweise — die
    Frage an den Review ist, ob sie an allen Ausgängen gleich gut hält.
-3. **Die Integritätskette des Audits schützt nicht gegen einen übernommenen Wirt** und nicht gegen
+4. **Die Integritätskette des Audits schützt nicht gegen einen übernommenen Wirt** und nicht gegen
    das Entfernen der letzten Einträge eines Abschnitts. Beides steht in ihrer eigenen Ausgabe; die
    Frage ist, ob die Grenze dort richtig gezogen ist.
-4. **`BIFROST_TRUSTED_PROXIES=any`** ist ein zulässiger Betriebsmodus. Steht der Gateway zusätzlich
+5. **`BIFROST_TRUSTED_PROXIES=any`** ist ein zulässiger Betriebsmodus. Steht der Gateway zusätzlich
    direkt im Netz, kann jeder Client `X-Forwarded-Proto: https` behaupten.
-5. **Host-Ausführung** (`BIFROST_ALLOW_HOST_EXECUTION`) gibt einem Upstream die Rechte des
+6. **Host-Ausführung** (`BIFROST_ALLOW_HOST_EXECUTION`) gibt einem Upstream die Rechte des
    Dienstbenutzers — einschließlich der API-Keys aller Agenten. Der Schalter ist bewusst da; die
    Frage ist, ob der Weg dorthin ausreichend im Weg steht.
 

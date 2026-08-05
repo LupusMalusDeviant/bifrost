@@ -308,12 +308,15 @@ drei, die als `offen` mit Owner, Termin und Mitigation eingetragen sind:
 
 | Id | Befund | Wartet auf |
 |---|---|---|
-| BFR-F-0039 | `docker compose up -d` zieht ein Image, das es nicht gibt | erstes veröffentlichtes Release |
+| ~~BFR-F-0039~~ | `docker compose up -d` zieht ein Image, das es nicht gibt | **behoben am 2026-08-05** |
 | BFR-F-0044 | wasmtime 47.0.2: zwei LOW-Meldungen in der WASI-Sandbox | nächsten Abhängigkeitslauf |
-| BFR-F-0045 | das Containerfilesystem-Gate hat keine Gegenprobe | erstes veröffentlichtes Release |
+| ~~BFR-F-0045~~ | das Containerfilesystem-Gate hat keine Gegenprobe | **behoben am 2026-08-05** |
 
-**Zwei von dreien warten auf dasselbe.** Das ist derselbe Engpass wie bei sieben der zehn offenen
-Must-Anforderungen: M1 ist nicht abgenommen.
+**Zwei von dreien warteten auf dasselbe** — ein veröffentlichtes Release. Beim Aufschreiben ist die
+Wartezeit nicht nachgerechnet worden: **M1 ist seit dem 2026-08-01 abgenommen**, `v0.12.0` ist
+veröffentlicht. Beide Befunde waren am Tag ihrer Übernahme bereits erledigt und standen nur deshalb
+auf `offen`, weil die Zeile aus dem Protokoll übernommen wurde statt gegen den Ist-Stand gehalten.
+Nachgeholt am 2026-08-05, siehe unten.
 
 ### Der Fehlschlag ohne Namen hat jetzt einen Mechanismus statt einer Gewohnheit
 
@@ -344,6 +347,53 @@ verbringen, das zu finden, was wir ohnehin wissen.
 erst als bewiesen, wenn auf der zweiten Installation etwas läuft, nicht wenn er fehlerfrei endet.
 Zurückgemeldet wird von Hand: Telemetrie gibt es nicht, und der opt-in-Metrikpfad ist eine
 Produktentscheidung, kein Nebenprodukt dieses Pakets.
+
+### WP7.2 und WP7.3, zweiter Anlauf: was sich doch fahren ließ
+
+Die Einschätzung „nicht startbar" stimmte für **beide Pakete als Ganzes** und stimmt weiter. Sie
+stimmte aber nicht für das, was ein veröffentlichtes Release möglich macht — und dass es eines gibt,
+war bei der ersten Einschätzung nicht mitgedacht.
+
+**WP7.3 — Pilot 1 von 3, gefahren.** Eine echte Installation aus `ghcr.io/lupusmalusdeviant/bifrost:0.12.0`,
+in einem frischen Verzeichnis, über genau den dokumentierten Weg. Erstaufbau, Erstzugang, API-Key,
+`doctor`, Backup mit Passphrase, Prüfung, Prüfung mit falscher Passphrase, Restore auf eine zweite
+Installation. Protokoll: [`pilot-1-protokoll.md`](../acceptance/pilot-1-protokoll.md).
+
+Der Restore ist **nicht** über „Exit 0" abgenommen worden, sondern über die Frage, ob danach etwas
+läuft: Der API-Key aus Pilot 1 authentifiziert gegen Pilot 2, der eigene Schlüssel von Pilot 2 ist
+tot. Genau dabei fiel der schärfste Befund an.
+
+**Zehn Befunde, einer davon High.** [BFR-F-0047](../acceptance/findings.md): `bifrost restore`
+meldet Erfolg, und der laufende Gateway bedient bis zum Neustart weiter den überschriebenen Stand —
+einschließlich des Wegwerf-Zugangs, den man nur angelegt hat, um den Restore aufrufen zu können.
+**Der RC-Wächter steht damit rot.** Das ist seine Aufgabe; ein Release Candidate mit einem
+Wiederherstellungsweg, der Erfolg meldet und nicht wirkt, ist keiner.
+
+Einer der zehn ist mein eigener: Die Pilotcheckliste vom Vortag verlangte `bifrost audit export` und
+`bifrost audit verify` — Befehle aus M6, die in der einzigen veröffentlichten Fassung nicht
+existieren. Gegen das Repository geschrieben statt gegen das, was ein Pilot bekommt.
+
+**Was der Pilot nicht zeigen konnte:** Upgrade und Rollback. Es gibt genau **ein** installierbares
+Image; `0.11.0` existiert als GitHub-Release, aber nie als Image (BFR-F-0046). Der dokumentierte
+Rollbackweg hat heute kein Ziel.
+
+**WP7.2 — der Releaseworkflow ist am Ergebnis geprüft.** Die Betreiber-Anleitung
+`docs/security/verifying-releases.md` ist erstmals gegen ein echtes Release gefahren worden, mit
+ihren eigenen Negativproben: `cosign verify`, `verify-blob`, `gh attestation verify` (Image und
+CLI-Archiv), Prüfsumme, Commit-Abgleich — alles grün; Probe A und Probe B lehnen ab. Dazu die
+fehlende Gegenprobe für das Schwachstellen-Gate: derselbe Trivy-Aufruf wie im Workflow endet gegen
+das Release-Image mit 0 und gegen `debian:11-slim` mit 1. Protokoll:
+[`release-verification-0.12.0.md`](../acceptance/release-verification-0.12.0.md).
+
+Damit sind **BFR-F-0039 und BFR-F-0045 erledigt** und ein neuer Befund entstanden: Der in §2.1 der
+Anleitung dokumentierte Kurzblick auf das Zertifikat liefert unter cosign 3 nur `null` — und §3
+Schritt 4 verlangt genau diesen Wert (BFR-F-0055).
+
+**Was damit ausdrücklich nicht erledigt ist.** WP7.2 bleibt offen: sieben der acht Scope-Bereiche
+sind unangetastet, und die eine Prüfung stammt von derselben Seite, die den Workflow geschrieben
+hat. Ein Selbsttest ist kein Review. WP7.3 bleibt offen: eine von drei Installationen, kein
+PostgreSQL, kein echter Upstream, kein echter Client, kein Alltag — und der Betreiber war der
+Entwickler.
 
 ### Was von M5 offen bleibt — und warum es hier nicht zu schließen ist
 

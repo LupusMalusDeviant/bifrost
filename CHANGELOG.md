@@ -105,6 +105,16 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
   - **Kein „Delete" im Sinne eines Abgleichs:** Ein Import entfernt nichts, was in der Nutzlast
     fehlt. Das wäre eine Synchronisierung, und die nimmt weg, was die Nutzlast nur nicht kennt.
 
+- **Zum ersten Mal ist eine echte Installation aus einem veröffentlichten Release gefahren worden**
+  (M7/WP7.3, Pilot 1 von 3) — mit Erstzugang, Backup, Prüfung und Restore auf eine zweite
+  Installation. Sie hat zehn Befunde ergeben, darunter einen Releaseblocker: `bifrost restore`
+  meldet Erfolg, während der laufende Gateway bis zum Neustart weiter den überschriebenen Stand
+  bedient. Der RC-Wächter steht deshalb rot — das ist seine Aufgabe.
+- **Die Anleitung „Releases selbst überprüfen" ist erstmals gegen ein echtes Release gefahren**
+  (M7/WP7.2), einschließlich der beiden Negativproben, die scheitern müssen. Sie tun es. Der
+  Zusatz „ungeprüft am Ergebnis" am Releaseworkflow ist damit weg — geprüft hat allerdings dieselbe
+  Seite, die ihn geschrieben hat.
+
 - **Die Befunde des ganzen Programms stehen in einer Liste** (M7/WP7.1) — 45 Einträge ab M0,
   41 behoben, 4 offen. Vorher begann die Liste bei M4, und die Aussage „kein offener Critical- oder
   High-Befund" galt nur mit diesem Zusatz. Jetzt gilt sie ohne.
