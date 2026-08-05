@@ -144,7 +144,8 @@ public sealed partial class DatabaseInitializer
         var pending = known.Except(applied, StringComparer.Ordinal).ToList();
         if (pending.Count > 0)
         {
-            await MigrateUnderLockAsync(db, provider, applied, pending, ct).ConfigureAwait(false);
+            await MigrateUnderLockAsync(db, provider, applied, pending, existedBefore, ct)
+                .ConfigureAwait(false);
         }
 
         Log.Initialized(_logger, outcome, applied.Count + pending.Count);
@@ -229,10 +230,12 @@ public sealed partial class DatabaseInitializer
         string provider,
         List<string> applied,
         List<string> pending,
+        bool databaseExistedBefore,
         CancellationToken ct)
     {
         var current = applied.Count > 0 ? applied[^1] : null;
-        var backupPath = await RunPreMigrationBackupAsync(db, provider, current, pending, ct).ConfigureAwait(false);
+        var backupPath = await RunPreMigrationBackupAsync(
+            db, provider, current, pending, databaseExistedBefore, ct).ConfigureAwait(false);
 
         // Der Eintrag steht auf der Platte, BEVOR die erste Migration läuft. Verschwindet der
         // Prozess dazwischen, findet der nächste Start genau ihn — das ist der ganze Zweck.
@@ -282,6 +285,7 @@ public sealed partial class DatabaseInitializer
         string provider,
         string? current,
         List<string> pending,
+        bool databaseExistedBefore,
         CancellationToken ct)
     {
         if (_options.PreMigrationBackup is PreMigrationBackupRequirement.Never)
@@ -289,6 +293,25 @@ public sealed partial class DatabaseInitializer
             return null;
         }
 
+        // ── BFR-F-0056 ───────────────────────────────────────────────────────────────────────
+        // Eine Vorsicherung schuetzt einen VORHERIGEN Zustand. Haben wir die Datenbank selbst
+        // gerade angelegt, gibt es keinen — und das Archiv waere dann nicht bloss ueberfluessig,
+        // sondern ein Verlust: Es enthaelt den DataProtection-Key-Ring und liegt nach Vorgabe
+        // unverschluesselt (ADR-0024 E3). Der Erststart legte damit ein schuetzenswertes Artefakt
+        // an, das nichts schuetzt — und meldete das auch noch als Warnung.
+        //
+        // Die Bedingung ist bewusst ENG: nicht "keine Migration angewendet", sondern "die
+        // Datenbank lag vorher nicht da". Eine vorgefundene Datei wird gesichert, auch wenn sie
+        // leer aussieht — sie kann von jemandem dorthin gelegt worden sein, und der Zweifel geht
+        // zugunsten der Sicherung aus. Eine Alt-Installation ohne Migrationshistorie ist von
+        // diesem Zweig ohnehin nicht betroffen: Sie wird vorher gestempelt
+        // (DatabaseInitOutcome.BaselinedLegacySchema) und hat dann eine.
+
+        if (!databaseExistedBefore && current is null)
+        {
+            Log.PreMigrationBackupSkippedForNewDatabase(_logger);
+            return null;
+        }
         var required = _options.PreMigrationBackup is PreMigrationBackupRequirement.Always;
 
         if (_preMigrationBackup is null)
@@ -468,6 +491,11 @@ public sealed partial class DatabaseInitializer
         [LoggerMessage(Level = LogLevel.Debug,
             Message = "Anlegen der Datenbank ist parallel schon passiert: {Reason}")]
         public static partial void DatabaseCreationRaced(ILogger logger, string reason);
+
+        [LoggerMessage(Level = LogLevel.Information,
+            Message = "Neue Datenbank: Es gibt keinen vorherigen Zustand, den eine Vorsicherung "
+                + "schuetzen koennte — sie entfaellt (ADR-0024 E7, BFR-F-0056).")]
+        public static partial void PreMigrationBackupSkippedForNewDatabase(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Warning,
             Message = "Kein Backupdienst verdrahtet — {PendingCount} Migration(en) laufen OHNE Vor-Migrationsbackup (ADR-0024 E7).")]

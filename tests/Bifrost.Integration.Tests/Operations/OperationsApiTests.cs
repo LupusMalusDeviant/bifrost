@@ -221,15 +221,31 @@ public class PreMigrationBackupTests : IClassFixture<GatewayFixture>
         _fixture.Services.GetService<IPreMigrationBackup>().Should().NotBeNull();
     }
 
+    /// <summary>
+    /// <b>BFR-F-0056 — hier stand bis zum 2026-08-05 das Gegenteil.</b>
+    /// <para>
+    /// Der Test hielt fest, dass der Erststart ein <c>pre-migration-*.zip</c> hinterlässt, mit der
+    /// Begründung: Eine frische Datenbank anzulegen sei auch eine schemaändernde Migration. Das
+    /// stimmt — nur schützt eine Sicherung einen <em>vorherigen</em> Zustand, und den gibt es hier
+    /// nicht. Übrig blieb ein Archiv, das den DataProtection-Key-Ring unverschlüsselt enthält
+    /// (ADR-0024 E3) und nichts schützt; der Start meldete es zusätzlich als Warnung.
+    /// </para>
+    /// <para>
+    /// Dass der Haken überhaupt feuert, hält jetzt
+    /// <c>MigrationSafetyTests.Pre_migration_backup_hook_is_called_before_the_migration</c> fest —
+    /// dort an einer Datenbank, die schon da war.
+    /// </para>
+    /// </summary>
     [Fact]
-    public void The_first_start_left_a_pre_migration_archive_behind()
+    public void The_first_start_leaves_no_pre_migration_archive_behind()
     {
         var options = _fixture.Services.GetRequiredService<BackupOptions>();
 
-        // Der Fixture-Start legt eine frische Datenbank an — das ist eine schemaändernde Migration,
-        // und genau davor muss die Sicherung entstanden sein.
-        Directory.Exists(options.PreBackupDirectory).Should().BeTrue();
-        Directory.GetFiles(options.PreBackupDirectory, "pre-migration-*.zip")
-            .Should().NotBeEmpty();
+        var archives = Directory.Exists(options.PreBackupDirectory)
+            ? Directory.GetFiles(options.PreBackupDirectory, "pre-migration-*.zip")
+            : [];
+
+        archives.Should().BeEmpty(
+            "eine Vorsicherung ohne Vorzustand schuetzt nichts und ist selbst ein Geheimnis");
     }
 }

@@ -3,7 +3,7 @@
 > **Generiert aus `findings.json`.** Änderungen gehören in die Quelle, nicht hierher —
 > `FindingsReportTests` färbt den Lauf rot, sobald beides auseinanderläuft.
 
-**Offen:** 6 · **Behoben:** 51 · **Abdeckung ab:** M0
+**Offen:** 4 · **Behoben:** 53 · **Abdeckung ab:** M0
 
 Vollstaendig ab M0. Die Befunde aus M0-M3 sind am 2026-08-04 aus den jeweiligen Abschnitten des Fortschrittsprotokolls uebernommen worden (BFR-F-0026). Damit gilt die Aussage "kein offener Critical- oder High-Befund" fuer das ganze Programm und nicht mehr nur ab M4. Am 2026-08-05 um die Befunde aus Pilot 1 (WP7.3) und der Releasepruefung (WP7.2) erweitert.
 
@@ -50,26 +50,6 @@ RUSTSEC-2026-0222 und -0223, beide LOW und damit nicht blockierend — betroffen
 **Owner:** unbesetzt · **Termin:** vor M8/WP8.1
 
 **Mitigation:** Beide Meldungen sind LOW und betreffen Pfade, die dieser Gateway nicht nutzt (geprueft im Rahmen von WP3.5). Der Versionssprung ist ein Einzeiler und gehoert in den naechsten Abhaengigkeitslauf.
-
-### BFR-F-0052 · Ein fehlerfreier Erststart schreibt vier Error-Zeilen ins Log (low)
-
-_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
-
-Beim ersten Start protokolliert EF Core zweimal "Failed executing DbCommand" samt Ausnahme, weil vor der Migration auf ConfigVersions und Identities zugegriffen wird — "no such table". Das ist harmlos und erwartbar, steht aber auf Error. Jede logbasierte Alarmierung schlaegt damit ausgerechnet bei der gesunden Erstinstallation an, und der erste Eindruck eines korrekten Aufbaus sind vier Fehler. Dazu kommt: 82 Information-Zeilen sind SQL-Anweisungen; im Dauerbetrieb protokolliert der Gateway jede Abfrage.
-
-**Owner:** — · **Termin:** —
-
-**Mitigation:** —
-
-### BFR-F-0056 · Der Erststart legt eine unverschluesselte Vollsicherung an, obwohl es nichts zu sichern gab (low)
-
-_Quelle: M7/WP7.3, Pilot 1 · Beleg: `docs/acceptance/pilot-1-protokoll.md`_
-
-Auf einer frischen Installation entsteht vor der Erstmigration /data/backups/pre-migration-<zeit>.zip. Der Gateway sagt selbst dazu, sie sei unverschluesselt und enthalte den DataProtection-Key-Ring. Auf einer Installation ohne Vorzustand ist das ein schuetzenswertes Artefakt ohne Gegenwert — es sichert einen Zustand, den es nicht gab.
-
-**Owner:** — · **Termin:** —
-
-**Mitigation:** —
 
 ## Behoben
 
@@ -367,6 +347,12 @@ _Quelle: M7/WP7.3, Pilot 1 · Beleg: `ExampleConfigurationTests.The_example_name
 
 Der Start warnt, wenn die Variable nicht gesetzt ist, doctor meldet BFR-KEY-0002, und die Pilotcheckliste verlangt eine ausdrueckliche Wahl. In .env.example steht sie nicht — dort stehen nur CERT_PATH und CERT_PASSWORD. Die eine Entscheidung, die das Produkt ausdruecklich verlangt, fehlt in der Datei, in der man Entscheidungen eintraegt. — Behoben am 2026-08-05, im selben Griff wie BFR-F-0050: BIFROST_KEYRING_PROTECTION steht jetzt mit allen drei zulaessigen Werten in .env.example, an der Stelle, an der ein Betreiber Entscheidungen eintraegt.
 
+### BFR-F-0052 · Ein fehlerfreier Erststart schreibt vier Error-Zeilen ins Log (low)
+
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `QuietFirstStartTests.A_healthy_first_start_logs_nothing_on_error_level`_
+
+Beim ersten Start protokolliert EF Core zweimal "Failed executing DbCommand" samt Ausnahme, weil vor der Migration auf ConfigVersions und Identities zugegriffen wird — "no such table". Das ist harmlos und erwartbar, steht aber auf Error. Jede logbasierte Alarmierung schlaegt damit ausgerechnet bei der gesunden Erstinstallation an, und der erste Eindruck eines korrekten Aufbaus sind vier Fehler. Dazu kommt: 82 Information-Zeilen sind SQL-Anweisungen; im Dauerbetrieb protokolliert der Gateway jede Abfrage. — Behoben am 2026-08-05, und die Ursache lag tiefer als die Zeilen. Die vier Error-Zeilen kamen aus ZWEI Sonden, deren Fehlschlag die Antwort war: der Ciphertext-Zaehler des Key-Rings (ConfigVersions) und die Schemapruefung des DatabaseInitializer (Identities). Der Key-Ring-Check laeuft vor dem Schemaaufbau; er zaehlte in Tabellen, die es noch nicht gab. DIE NEBENWIRKUNG WAR DER EIGENTLICHE BEFUND: Der fehlgeschlagene Zugriff legte bei SQLite die Datenbankdatei an. Damit war existedBefore im DatabaseInitializer ab dem allerersten Start immer true — genau die Pruefung, an der er eine bestehende Alt-Installation von einer neuen unterscheidet. Sie landete trotzdem richtig, aber nur ueber eine gefangene Ausnahme statt ueber die Existenzpruefung. Die Sonde fragt jetzt zuerst, ob die Datenbank ueberhaupt existiert, und antwortet ohne Abfrage mit 0. Danach entfaellt auch die zweite Sonde, weil existedBefore wieder stimmt. Dazu: EF-Core-Anweisungsprotokoll ausserhalb der Entwicklung auf Warning — der Start schrieb rund siebzig Zeilen SQL. Ueberschreibbar ueber die uebliche Logging-Konfiguration. Nachgemessen an einem echten Erststart: vorher 4 Error und 71 Information, danach 0 und 30.
+
 ### BFR-F-0053 · Unbekannte Pfade der Oberflaeche liefern 404 mit leerem Rumpf (low)
 
 _Quelle: M7/WP7.3, Pilot 1 · Beleg: `ErrorBodyTests.An_unknown_page_says_what_happened_and_offers_a_way_back`_
@@ -378,4 +364,10 @@ GET /rbac/keys und GET /voellig-erfunden antworten mit 404 und null Bytes. Der S
 _Quelle: M7/WP7.3, eigener Fehler · Beleg: `docs/acceptance/pilot-checklist.md`_
 
 Die Checkliste (WP7.3) verlangt bifrost audit export und bifrost audit verify. Beide stammen aus M6 und stehen in 0.12.0 nicht zur Verfuegung — die einzige veroeffentlichte Fassung kennt sie nicht. Geschrieben gegen das Repository statt gegen das, was ein Pilot bekommen kann. Behoben am 2026-08-05: Die betroffenen Zeilen sind als "erst ab der Fassung, die sie mitbringt" gekennzeichnet.
+
+### BFR-F-0056 · Der Erststart legt eine unverschluesselte Vollsicherung an, obwohl es nichts zu sichern gab (low)
+
+_Quelle: M7/WP7.3, Pilot 1 · Beleg: `MigrationSafetyTests.A_database_we_create_ourselves_gets_no_pre_migration_backup`_
+
+Auf einer frischen Installation entsteht vor der Erstmigration /data/backups/pre-migration-<zeit>.zip. Der Gateway sagt selbst dazu, sie sei unverschluesselt und enthalte den DataProtection-Key-Ring. Auf einer Installation ohne Vorzustand ist das ein schuetzenswertes Artefakt ohne Gegenwert — es sichert einen Zustand, den es nicht gab. — Behoben am 2026-08-05, im selben Griff: Legt der Start die Datenbank selbst an, entfaellt die Vorsicherung. Die Bedingung ist bewusst eng — nicht "keine Migration angewendet", sondern "die Datenbank lag vorher nicht da". Eine vorgefundene Datei wird gesichert, auch wenn sie leer aussieht; der Zweifel geht zugunsten der Sicherung aus. Alt-Installationen ohne Migrationshistorie sind nicht betroffen, weil sie vorher gestempelt werden (BaselinedLegacySchema). ZWEI TESTS SIND DABEI UMGEDREHT WORDEN, beide absichtlich so geschrieben: The_first_start_left_a_pre_migration_archive_behind hielt genau dieses Verhalten fest, und Pre_migration_backup_hook_is_called_before_the_migration prueft den Haken jetzt an einer Datenbank, die schon da war, statt an einer frischen. FOLGE, DIE ZUM BEFUND GEHOERT: Mit PreMigrationBackupRequirement.Always und ohne registrierten Backupdienst startet eine NEUE Datenbank jetzt durch, statt abzubrechen. Das ist gewollt — sonst kaeme eine Neuinstallation mit Always gar nicht hoch, obwohl es nichts zu sichern gibt. Fuer eine vorhandene Datenbank gilt die Forderung unveraendert (Required_pre_migration_backup_without_a_service_stops_the_start).
 

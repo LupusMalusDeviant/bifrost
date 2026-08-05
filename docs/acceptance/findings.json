@@ -481,10 +481,10 @@
       "id": "BFR-F-0052",
       "title": "Ein fehlerfreier Erststart schreibt vier Error-Zeilen ins Log",
       "severity": "low",
-      "status": "offen",
+      "status": "behoben",
       "source": "M7/WP7.3, Pilot 1",
-      "detail": "Beim ersten Start protokolliert EF Core zweimal \"Failed executing DbCommand\" samt Ausnahme, weil vor der Migration auf ConfigVersions und Identities zugegriffen wird — \"no such table\". Das ist harmlos und erwartbar, steht aber auf Error. Jede logbasierte Alarmierung schlaegt damit ausgerechnet bei der gesunden Erstinstallation an, und der erste Eindruck eines korrekten Aufbaus sind vier Fehler. Dazu kommt: 82 Information-Zeilen sind SQL-Anweisungen; im Dauerbetrieb protokolliert der Gateway jede Abfrage.",
-      "evidence": "docs/acceptance/pilot-1-protokoll.md"
+      "detail": "Beim ersten Start protokolliert EF Core zweimal \"Failed executing DbCommand\" samt Ausnahme, weil vor der Migration auf ConfigVersions und Identities zugegriffen wird — \"no such table\". Das ist harmlos und erwartbar, steht aber auf Error. Jede logbasierte Alarmierung schlaegt damit ausgerechnet bei der gesunden Erstinstallation an, und der erste Eindruck eines korrekten Aufbaus sind vier Fehler. Dazu kommt: 82 Information-Zeilen sind SQL-Anweisungen; im Dauerbetrieb protokolliert der Gateway jede Abfrage. — Behoben am 2026-08-05, und die Ursache lag tiefer als die Zeilen. Die vier Error-Zeilen kamen aus ZWEI Sonden, deren Fehlschlag die Antwort war: der Ciphertext-Zaehler des Key-Rings (ConfigVersions) und die Schemapruefung des DatabaseInitializer (Identities). Der Key-Ring-Check laeuft vor dem Schemaaufbau; er zaehlte in Tabellen, die es noch nicht gab. DIE NEBENWIRKUNG WAR DER EIGENTLICHE BEFUND: Der fehlgeschlagene Zugriff legte bei SQLite die Datenbankdatei an. Damit war existedBefore im DatabaseInitializer ab dem allerersten Start immer true — genau die Pruefung, an der er eine bestehende Alt-Installation von einer neuen unterscheidet. Sie landete trotzdem richtig, aber nur ueber eine gefangene Ausnahme statt ueber die Existenzpruefung. Die Sonde fragt jetzt zuerst, ob die Datenbank ueberhaupt existiert, und antwortet ohne Abfrage mit 0. Danach entfaellt auch die zweite Sonde, weil existedBefore wieder stimmt. Dazu: EF-Core-Anweisungsprotokoll ausserhalb der Entwicklung auf Warning — der Start schrieb rund siebzig Zeilen SQL. Ueberschreibbar ueber die uebliche Logging-Konfiguration. Nachgemessen an einem echten Erststart: vorher 4 Error und 71 Information, danach 0 und 30.",
+      "evidence": "QuietFirstStartTests.A_healthy_first_start_logs_nothing_on_error_level"
     },
     {
       "id": "BFR-F-0053",
@@ -517,10 +517,10 @@
       "id": "BFR-F-0056",
       "title": "Der Erststart legt eine unverschluesselte Vollsicherung an, obwohl es nichts zu sichern gab",
       "severity": "low",
-      "status": "offen",
+      "status": "behoben",
       "source": "M7/WP7.3, Pilot 1",
-      "detail": "Auf einer frischen Installation entsteht vor der Erstmigration /data/backups/pre-migration-<zeit>.zip. Der Gateway sagt selbst dazu, sie sei unverschluesselt und enthalte den DataProtection-Key-Ring. Auf einer Installation ohne Vorzustand ist das ein schuetzenswertes Artefakt ohne Gegenwert — es sichert einen Zustand, den es nicht gab.",
-      "evidence": "docs/acceptance/pilot-1-protokoll.md"
+      "detail": "Auf einer frischen Installation entsteht vor der Erstmigration /data/backups/pre-migration-<zeit>.zip. Der Gateway sagt selbst dazu, sie sei unverschluesselt und enthalte den DataProtection-Key-Ring. Auf einer Installation ohne Vorzustand ist das ein schuetzenswertes Artefakt ohne Gegenwert — es sichert einen Zustand, den es nicht gab. — Behoben am 2026-08-05, im selben Griff: Legt der Start die Datenbank selbst an, entfaellt die Vorsicherung. Die Bedingung ist bewusst eng — nicht \"keine Migration angewendet\", sondern \"die Datenbank lag vorher nicht da\". Eine vorgefundene Datei wird gesichert, auch wenn sie leer aussieht; der Zweifel geht zugunsten der Sicherung aus. Alt-Installationen ohne Migrationshistorie sind nicht betroffen, weil sie vorher gestempelt werden (BaselinedLegacySchema). ZWEI TESTS SIND DABEI UMGEDREHT WORDEN, beide absichtlich so geschrieben: The_first_start_left_a_pre_migration_archive_behind hielt genau dieses Verhalten fest, und Pre_migration_backup_hook_is_called_before_the_migration prueft den Haken jetzt an einer Datenbank, die schon da war, statt an einer frischen. FOLGE, DIE ZUM BEFUND GEHOERT: Mit PreMigrationBackupRequirement.Always und ohne registrierten Backupdienst startet eine NEUE Datenbank jetzt durch, statt abzubrechen. Das ist gewollt — sonst kaeme eine Neuinstallation mit Always gar nicht hoch, obwohl es nichts zu sichern gibt. Fuer eine vorhandene Datenbank gilt die Forderung unveraendert (Required_pre_migration_backup_without_a_service_stops_the_start).",
+      "evidence": "MigrationSafetyTests.A_database_we_create_ourselves_gets_no_pre_migration_backup"
     },
     {
       "id": "BFR-F-0057",

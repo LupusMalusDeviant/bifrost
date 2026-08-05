@@ -374,6 +374,38 @@ Anfrage mit `503` und `restart-required` — auch `/healthz`, denn ein Container
 und nichts mehr beantwortet, ist genau dasselbe Auseinanderfallen noch einmal. Der Neustart löst den
 Riegel; einen Befehl dafür gibt es bewusst nicht.
 
+**Zwei Befunde, eine Ursache — und die war keine Kosmetik.**
+
+`BFR-F-0052` sah nach vier lästigen Logzeilen aus. Sie kamen aus zwei Sonden, deren Fehlschlag die
+Antwort ist: der Ciphertext-Zähler des Key-Rings und die Schemaprüfung des Starts. Der
+Key-Ring-Check läuft **vor** dem Schemaaufbau und zählte in Tabellen, die es noch nicht gab.
+
+Die Nebenwirkung war der eigentliche Befund: **Der fehlgeschlagene Zugriff legte bei SQLite die
+Datenbankdatei an.** Damit war `existedBefore` im `DatabaseInitializer` ab dem allerersten Start
+immer `true` — genau die Prüfung, an der er eine bestehende Alt-Installation von einer neuen
+unterscheidet, und über der ein Kommentar steht, der davor warnt: *„Die Existenzprüfung muss laufen,
+BEVOR irgendetwas die Verbindung öffnet."* Ein Aufrufer weiter oben tat genau das. Der Start landete
+trotzdem richtig — aber über eine gefangene Ausnahme statt über die Prüfung, die dafür da ist.
+
+`BFR-F-0056` hing daran: Weil `existedBefore` fälschlich `true` war, sah der Start eine
+„vorhandene" Datenbank und legte pflichtschuldig eine Vorsicherung an — ein Archiv mit dem
+unverschlüsselten Key-Ring, das nichts schützt. Dass beide Befunde dieselbe Wurzel haben, ist
+belegt: Dreht man **nur** die Sonde zurück, fällt auch der Test zur Vorsicherung.
+
+Nachgemessen an einem echten Erststart, nicht am Test: **vorher 4 Fehler und 71 Informationszeilen,
+danach 0 und 30**, und kein `backups`-Verzeichnis mehr.
+
+**Zwei Tests sind dabei umgedreht worden**, beide absichtlich so geschrieben. Der eine hielt fest,
+dass der Erststart ein Archiv hinterlässt; der andere prüfte den Vorsicherungs-Haken an einer
+frischen Datenbank. Sie prüfen jetzt den Fall, für den der Haken da ist — eine Datenbank, die schon
+da war. Das ist keine Anpassung an den Code, sondern die Korrektur einer Annahme: Eine Sicherung
+schützt einen vorherigen Zustand.
+
+**Und eine Verhaltensänderung, die dazugehört:** Mit `PreMigrationBackupRequirement.Always` und ohne
+registrierten Backupdienst startet eine **neue** Datenbank jetzt durch, statt abzubrechen. Sonst
+käme eine Neuinstallation mit `Always` gar nicht hoch, obwohl es nichts zu sichern gibt. Für eine
+vorhandene Datenbank gilt die Forderung unverändert.
+
 **Die weiße Seite und die Anleitung, die `null` sagte.**
 
 `BFR-F-0053`: Eine unbekannte Adresse antwortete mit `404` und null Bytes. Der Statuscode war

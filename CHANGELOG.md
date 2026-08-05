@@ -105,6 +105,21 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
   - **Kein „Delete" im Sinne eines Abgleichs:** Ein Import entfernt nichts, was in der Nutzlast
     fehlt. Das wäre eine Synchronisierung, und die nimmt weg, was die Nutzlast nur nicht kennt.
 
+- **Ein fehlerfreier Erststart ist still** (BFR-F-0052). Vorher schrieb er vier Zeilen auf Stufe
+  `Error` und rund siebzig SQL-Anweisungen — die gesunde Erstinstallation weckte jede
+  logbasierte Alarmierung. Der Grund war eine Sonde, die in Tabellen zählte, die es noch nicht
+  gab; nachgemessen an einem echten Erststart: vorher 4 Fehler und 71 Informationszeilen, danach
+  **0 und 30**. Das Anweisungsprotokoll von EF Core steht außerhalb der Entwicklung auf `Warning`
+  und lässt sich über die übliche Logging-Konfiguration zurückholen.
+- **Der Erststart legt keine Vollsicherung mehr an, die nichts schützt** (BFR-F-0056). Eine
+  Vorsicherung schützt einen *vorherigen* Zustand; auf einer neuen Installation gibt es keinen, und
+  das Archiv enthielt den DataProtection-Key-Ring unverschlüsselt. Legt der Start die Datenbank
+  selbst an, entfällt sie. Eine **vorgefundene** Datei wird weiterhin gesichert, auch wenn sie leer
+  aussieht.
+  > **Verhaltensänderung:** Mit `Always` und ohne registrierten Backupdienst startet eine neue
+  > Datenbank jetzt durch, statt abzubrechen. Für eine vorhandene Datenbank gilt die Forderung
+  > unverändert.
+
 - **Eine unbekannte Adresse sagt jetzt, was los ist** (BFR-F-0053). Vorher antwortete der Gateway
   auf einen Tippfehler mit `404` und **null Bytes** — im Browser eine weiße Seite ohne Hinweis, ohne
   Rückweg und ohne Kennzeichen. Jetzt gibt es eine Seite mit Statuscode, Grund und einem Weg zurück,

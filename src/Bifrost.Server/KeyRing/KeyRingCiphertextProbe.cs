@@ -1,6 +1,8 @@
 using Bifrost.Persistence;
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Bifrost.Server.KeyRing;
 
@@ -41,6 +43,27 @@ public sealed class EfKeyRingCiphertextProbe : IKeyRingCiphertextProbe
         try
         {
             await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+
+            // ── BFR-F-0047-Nachbar: BFR-F-0052 ───────────────────────────────────────────────
+            // Diese Prüfung läuft VOR dem Schemaaufbau — beim Erststart gibt es die Tabellen also
+            // noch nicht. Bis hierher wurde trotzdem gezählt und der Fehlschlag unten gefangen.
+            // Zwei Folgen, beide unerwünscht:
+            //
+            //   1. Ein fehlerfreier Erststart schrieb zwei Zeilen auf Stufe 'Error' samt
+            //      Ausnahmetext. Wer sein Log auf Fehler alarmiert, wird von der gesunden
+            //      Erstinstallation geweckt — und Fehlermeldungen im Normalbetrieb entwerten die
+            //      Stufe für den Fall, in dem sie etwas bedeutet.
+            //   2. Schwerer: Der fehlgeschlagene Zugriff LEGTE BEI SQLITE DIE DATENBANKDATEI AN.
+            //      Damit war die Existenzprüfung des DatabaseInitializer ("lag die Datenbank schon
+            //      vorher da?") ab dem allerersten Start unbrauchbar — genau die Prüfung, an der
+            //      er eine bestehende Alt-Installation von einer neuen unterscheidet.
+            //
+            // Existiert die Datenbank nicht, ist die Antwort ohne Abfrage bekannt: Es gibt keinen
+            // Geheimtext, den ein verlorener Key-Ring unlesbar machen könnte.
+            if (!await db.GetService<IRelationalDatabaseCreator>().ExistsAsync(ct).ConfigureAwait(false))
+            {
+                return 0;
+            }
 
             // Genau die drei Ablagen, deren Inhalt über IDataProtector geht: die
             // Upstream-Konfiguration (Zugangsdaten), die OAuth-Token und die Webhook-Secrets.

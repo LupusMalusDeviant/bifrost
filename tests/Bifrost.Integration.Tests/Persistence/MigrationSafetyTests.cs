@@ -315,11 +315,25 @@ public sealed class MigrationSafetyTests : IAsyncLifetime
 
     // ── Vor-Migrationsbackup: der Haken für WP2.1 ───────────────────────────────────────────────
 
+    /// <summary>
+    /// <b>Der Haken feuert — wenn es etwas zu schützen gibt.</b>
+    /// <para>
+    /// Dieser Test hat bis zum 2026-08-05 eine <em>frische</em> Datenbank benutzt und damit
+    /// festgehalten, dass auch der Erststart sichert. Genau das war <c>BFR-F-0056</c>: Auf einer
+    /// Installation ohne Vorzustand entstand ein Archiv, das nichts schützt — und das den
+    /// DataProtection-Key-Ring unverschlüsselt enthält. Der Test prüft jetzt den Fall, für den der
+    /// Haken da ist: eine Datenbank, die <b>schon da war</b>.
+    /// </para>
+    /// </summary>
     [Fact]
     public async Task Pre_migration_backup_hook_is_called_before_the_migration()
     {
         var ct = TestContext.Current.CancellationToken;
         var (factory, path) = NewDatabase("hook");
+
+        // Vorgefunden, nicht selbst angelegt. Der Zweifel geht zugunsten der Sicherung aus: Eine
+        // Datei, die jemand dorthin gelegt hat, wird gesichert — auch wenn sie leer aussieht.
+        await File.WriteAllBytesAsync(path, [], ct);
 
         var hook = new RecordingBackup(Path.Combine(_directory, "vorher.zip"));
         var initializer = new DatabaseInitializer(factory, preMigrationBackup: hook,
@@ -338,11 +352,50 @@ public sealed class MigrationSafetyTests : IAsyncLifetime
         journal[0].BackupPath.Should().Be(hook.ArchivePath, "das Journal sagt, wohin der Rückweg führt");
     }
 
+    /// <summary>
+    /// <b>BFR-F-0056 — und die Gegenprobe dazu.</b> Legt der Start die Datenbank selbst an, gibt es
+    /// keinen vorherigen Zustand; eine Sicherung davon wäre ein schützenswertes Artefakt ohne
+    /// Schutzwert. Sie unterbleibt — und zwar auch dann, wenn sie auf <c>Always</c> steht: Der
+    /// fehlende Vorzustand ist kein fehlender Ausweg.
+    /// </summary>
+    [Fact]
+    public async Task A_database_we_create_ourselves_gets_no_pre_migration_backup()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (factory, path) = NewDatabase("frisch");
+        File.Exists(path).Should().BeFalse("die Datei entsteht erst beim Start");
+
+        var hook = new RecordingBackup(Path.Combine(_directory, "unnoetig.zip"));
+        var initializer = new DatabaseInitializer(factory, preMigrationBackup: hook,
+            options: new MigrationSafetyOptions { PreMigrationBackup = PreMigrationBackupRequirement.Always });
+
+        var outcome = await initializer.InitializeAsync(ct);
+
+        outcome.Should().Be(DatabaseInitOutcome.CreatedFromMigrations);
+        hook.Calls.Should().BeEmpty(
+            "eine Vorsicherung schuetzt einen vorherigen Zustand — hier gibt es keinen");
+
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var journal = await MigrationJournal.ReadAllAsync(db, ct);
+        journal[0].BackupPath.Should().BeNull("das Journal behauptet keinen Rueckweg, den es nicht gibt");
+    }
+
+    /// <summary>
+    /// „Verlangt" heißt verlangt — an einer Datenbank, die schon da war.
+    /// <para>
+    /// Bis zum 2026-08-05 lief dieser Test auf einer frischen Datenbank. Seit <c>BFR-F-0056</c>
+    /// entfällt die Vorsicherung dort, weil es keinen Vorzustand gibt; die Forderung greift also
+    /// nicht mehr, und der Start liefe durch. <b>Das ist die gewollte Folge</b> — sonst käme eine
+    /// neue Installation mit <c>Always</c> und ohne Backupdienst gar nicht erst hoch, obwohl es
+    /// nichts zu sichern gibt. Geprüft wird deshalb der Fall, in dem die Forderung etwas bedeutet.
+    /// </para>
+    /// </summary>
     [Fact]
     public async Task Required_pre_migration_backup_without_a_service_stops_the_start()
     {
         var ct = TestContext.Current.CancellationToken;
-        var (factory, _) = NewDatabase("kein-hook");
+        var (factory, path) = NewDatabase("kein-hook");
+        await File.WriteAllBytesAsync(path, [], ct);
 
         var initializer = new DatabaseInitializer(factory,
             options: new MigrationSafetyOptions { PreMigrationBackup = PreMigrationBackupRequirement.Always });

@@ -81,6 +81,17 @@ if (!builder.Environment.IsDevelopment())
         o.TimestampFormat = "yyyy-MM-dd'T'HH:mm:ss.fff'Z'";
         o.UseUtcTimestamp = true;
     });
+
+    // BFR-F-0052: EF Core protokolliert JEDE Anweisung auf 'Information' — allein der Start ergab
+    // damit rund siebzig Zeilen SQL, im Betrieb je Abfrage eine. Das ist eine
+    // Entwicklungseinstellung an einem Produktionsplatz: Es verwaessert das Log, in dem die sechs
+    // Zeilen stehen, die zaehlen, und es kostet bei einem Logaggregator Geld.
+    //
+    // Auf 'Warning' bleibt genau das uebrig, was ein Betreiber wissen will: was schiefging.
+    // Ausdruecklich UEBERSCHREIBBAR — wer eine Abfrage sucht, setzt
+    // Logging__LogLevel__Microsoft_EntityFrameworkCore_Database_Command=Information und bekommt
+    // alles zurueck. Deshalb nur eine Vorgabe und keine Filterregel im Code.
+    builder.Logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Warning);
 }
 
 // ── Konfiguration (NFR-05: Env-Vars + Volume) ────────────────────────────────
