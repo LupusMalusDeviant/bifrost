@@ -874,14 +874,14 @@ jobs:
       # ---------------------------------------------------------------------------------
 
       - name: Provenance fuer das Image
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ env.IMAGE_DIGEST }}
           push-to-registry: true # braucht `packages: write` — siehe Punkt (1)
 
       - name: Provenance fuer alle CLI-Archive
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           # `subject-checksums` nimmt die Pruefsummendatei aus Vertrag §2 direkt entgegen —
           # ein Subject je Archiv, ohne fuenf einzelne Schritte.
@@ -896,7 +896,7 @@ jobs:
       # ---------------------------------------------------------------------------------
 
       - name: SBOM-Attestation — Image
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ env.IMAGE_DIGEST }}
@@ -904,31 +904,31 @@ jobs:
           push-to-registry: true
 
       - name: SBOM-Attestation — CLI win-x64
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/bifrost-cli-${{ env.VERSION }}-win-x64.zip
           sbom-path: sbom/bifrost-cli-${{ env.VERSION }}-win-x64.cdx.json
 
       - name: SBOM-Attestation — CLI linux-x64
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/bifrost-cli-${{ env.VERSION }}-linux-x64.tar.gz
           sbom-path: sbom/bifrost-cli-${{ env.VERSION }}-linux-x64.cdx.json
 
       - name: SBOM-Attestation — CLI linux-arm64
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/bifrost-cli-${{ env.VERSION }}-linux-arm64.tar.gz
           sbom-path: sbom/bifrost-cli-${{ env.VERSION }}-linux-arm64.cdx.json
 
       - name: SBOM-Attestation — CLI osx-x64
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/bifrost-cli-${{ env.VERSION }}-osx-x64.tar.gz
           sbom-path: sbom/bifrost-cli-${{ env.VERSION }}-osx-x64.cdx.json
 
       - name: SBOM-Attestation — CLI osx-arm64
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/bifrost-cli-${{ env.VERSION }}-osx-arm64.tar.gz
           sbom-path: sbom/bifrost-cli-${{ env.VERSION }}-osx-arm64.cdx.json
