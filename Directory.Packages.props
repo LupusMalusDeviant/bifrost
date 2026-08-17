@@ -14,14 +14,14 @@
          eigenen ITaskStore und die REST-Fassade (ADR-0019, Polling ist der Vertrag) — und die
          SDK-Tasks aus 1.4.x sind zu den neuen ohnehin nicht drahtkompatibel. -->
     <PackageVersion Include="ModelContextProtocol" Version="2.0.0" />
-    <PackageVersion Include="ModelContextProtocol.Core" Version="2.0.0" />
+    <PackageVersion Include="ModelContextProtocol.Core" Version="2.2.0" />
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.0.0" />
     <!-- Serverseitige Argument-Validierung im Lazy-Pfad (ADR-0003, Plan-Risiko R3; MIT) -->
-    <PackageVersion Include="JsonSchema.Net" Version="9.3.0" />
+    <PackageVersion Include="JsonSchema.Net" Version="9.4.0" />
 
     <!-- Hosting / ASP.NET Core -->
-    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
     <PackageVersion Include="Microsoft.AspNetCore.Components.Web" Version="10.0.10" />
 
     <!-- Metriken-Export (FR-26). OTLP statt Prometheus-Exporter: letzterer ist nicht stabil
@@ -34,18 +34,18 @@
          öffentlich mit; BouncyCastle ist MIT, rein verwaltet (kein natives Beipack, also auch auf
          arm64 unverändert) und geprüfter Code. Eine eigene Kurvenarithmetik an einer
          Vertrauensgrenze wäre die schlechtere Wahl, egal wie kurz sie ausfiele. -->
-    <PackageVersion Include="BouncyCastle.Cryptography" Version="2.6.2" />
+    <PackageVersion Include="BouncyCastle.Cryptography" Version="2.7.0" />
 
     <!-- Token-Prüfung, wenn der Gateway selbst Resource Server ist (MCP-Autorisierung).
          Bringt JWKS-Abruf mit Zwischenspeicher und Schlüsselrotation mit — genau das, was man
          nicht selbst schreiben will, wenn eine Signaturprüfung davon abhängt. -->
-    <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.21.0" />
+    <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.22.0" />
 
     <!-- Persistenz (ADR-0007) + Secret-Verschlüsselung (NFR-04) -->
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
-    <PackageVersion Include="Microsoft.AspNetCore.DataProtection" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.AspNetCore.DataProtection" Version="10.0.11" />
     <!-- Transitive Pins: EF Sqlite 10.0.10 zieht 2.1.11 mit bekannter CVE (GHSA-2m69-gcr7-jv3q) -->
     <PackageVersion Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
     <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
@@ -61,7 +61,7 @@
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <PackageVersion Include="AwesomeAssertions" Version="9.5.0" />
-    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.8.0" />
+    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.9.0" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.13.0" />
   </ItemGroup>
 
