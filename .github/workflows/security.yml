@@ -96,7 +96,7 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: CodeQL init
-        uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           languages: ${{ matrix.language }}
           # `security-and-quality` statt der Vorgabe `security`: Das Projekt haelt einen
@@ -114,7 +114,7 @@ jobs:
 
       - name: CodeQL analyze
         id: analyze
-        uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           category: /language:${{ matrix.language }}
           output: codeql-sarif
@@ -319,7 +319,7 @@ jobs:
         # Forks bekommen kein `security-events: write`; ohne die Bedingung schluege der
         # Upload dort fehl und wuerde einen Fund als Werkzeugfehler tarnen.
         if: always() && github.event.pull_request.head.repo.fork != true
-        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: security-reports/gitleaks.sarif
           category: gitleaks
@@ -400,7 +400,7 @@ jobs:
 
       - name: SARIF in die Code-Scanning-Ansicht
         if: always() && github.event.pull_request.head.repo.fork != true
-        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: security-reports
           category: trivy
