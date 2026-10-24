@@ -16,6 +16,7 @@ using Bifrost.Persistence.Startup;
 using Microsoft.Extensions.DependencyInjection;
 
 using Xunit;
+using Bifrost.Core.Operations;
 
 namespace Bifrost.Integration.Tests.Operations;
 
@@ -66,8 +67,8 @@ public class OperationsApiTests : IClassFixture<GatewayFixture>
     public async Task A_broken_archive_is_reported_as_invalid_without_a_restore()
     {
         var client = await AdminClientAsync();
-        var options = _fixture.Services.GetRequiredService<BackupOptions>();
-        var broken = Path.Combine(options.DataDirectory, "testarchive", $"kaputt-{Guid.NewGuid():N}.zip");
+        var location = _fixture.Services.GetRequiredService<BackupLocation>();
+        var broken = Path.Combine(location.Directory, "testarchive", $"kaputt-{Guid.NewGuid():N}.zip");
         Directory.CreateDirectory(Path.GetDirectoryName(broken)!);
         await File.WriteAllTextAsync(broken, "das ist kein ZIP", TestContext.Current.CancellationToken);
 
@@ -81,6 +82,70 @@ public class OperationsApiTests : IClassFixture<GatewayFixture>
             Json, TestContext.Current.CancellationToken);
         inspection!.Valid.Should().BeFalse();
         inspection.Problems.Should().NotBeEmpty();
+    }
+
+    /// <summary>
+    /// Ohne Grenze läse „prüfen" jede Datei, die der Gateway lesen darf, und die Antwort verriete, ob
+    /// es sie gibt und ob sie ein Zip ist. Auch einem Admin wird das nicht beantwortet.
+    /// </summary>
+    [Fact]
+    public async Task An_archive_outside_the_backup_directory_is_not_read()
+    {
+        var client = await AdminClientAsync();
+        var outside = Path.Combine(Path.GetTempPath(), $"draussen-{Guid.NewGuid():N}.zip");
+        await File.WriteAllTextAsync(outside, "das ist kein ZIP", TestContext.Current.CancellationToken);
+
+        try
+        {
+            foreach (var path in new[] { outside, Path.Combine("..", "..", Path.GetFileName(outside)) })
+            {
+                var verify = await client.PostAsJsonAsync(
+                    "/api/v1/operations/backup/verify", new { archivePath = path },
+                    TestContext.Current.CancellationToken);
+                verify.StatusCode.Should().Be(HttpStatusCode.BadRequest, path);
+                (await verify.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))
+                    .Should().Contain("außerhalb des Sicherungsverzeichnisses");
+            }
+
+            var restore = await client.PostAsJsonAsync(
+                "/api/v1/operations/restore/plan", new { archivePath = outside, mode = "Replace" },
+                TestContext.Current.CancellationToken);
+            restore.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        }
+        finally
+        {
+            File.Delete(outside);
+        }
+    }
+
+    /// <summary>
+    /// Eine Sicherung entsteht nur im Sicherungsverzeichnis; ein bloßer Name landet dort. Über eine
+    /// fremde Datei zu schreiben, ist kein Bedienfehler, den man zulassen muss.
+    /// </summary>
+    [Fact]
+    public async Task A_backup_is_only_written_into_the_backup_directory()
+    {
+        var client = await AdminClientAsync();
+        var location = _fixture.Services.GetRequiredService<BackupLocation>();
+
+        var outside = await client.PostAsJsonAsync(
+            "/api/v1/operations/backup",
+            new { targetPath = Path.Combine(Path.GetTempPath(), $"draussen-{Guid.NewGuid():N}.zip"), sections = ConfigSection },
+            TestContext.Current.CancellationToken);
+        outside.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var name = $"nur-name-{Guid.NewGuid():N}.zip";
+        var inside = await client.PostAsJsonAsync(
+            "/api/v1/operations/backup", new { targetPath = name, sections = ConfigSection },
+            TestContext.Current.CancellationToken);
+        inside.StatusCode.Should().Be(
+            HttpStatusCode.OK, await inside.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        File.Exists(Path.Combine(location.Directory, name)).Should().BeTrue();
+
+        var verify = await client.PostAsJsonAsync(
+            "/api/v1/operations/backup/verify", new { archivePath = name },
+            TestContext.Current.CancellationToken);
+        verify.StatusCode.Should().Be(HttpStatusCode.OK, "derselbe Name findet die Sicherung wieder");
     }
 
     /// <summary>

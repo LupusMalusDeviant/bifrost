@@ -30,8 +30,10 @@ public sealed class StdioIsolationTests
     public async Task A_missing_runtime_refuses_the_upstream_instead_of_falling_back()
     {
         var connector = new StdioUpstreamConnector();
+        // Eine zulässige Runtime, die auf den Testrechnern nicht installiert ist — geprüft wird die
+        // fehlende Runtime, nicht die Liste.
         var config = Config(new IsolationOptions(
-            IsolationMode.Container, Image: "alpine:3.20", Runtime: "gibt-es-nicht-als-runtime"));
+            IsolationMode.Container, Image: "alpine:3.20", Runtime: "finch"));
 
         var act = async () => await connector.ConnectAsync(
             new ServerId(Guid.NewGuid()), config, TestContext.Current.CancellationToken);
@@ -68,6 +70,26 @@ public sealed class StdioIsolationTests
 
         Process.GetProcesses().Length.Should().BeCloseTo(before, 20,
             "die Absage hinterlaesst keinen laufenden Prozess");
+    }
+
+    /// <summary>
+    /// Der Weg am Verbot nativer Ausführung vorbei (ADR-0025): Ein Container-Upstream gilt als
+    /// isoliert, die Runtime aber startet nativ. Ein Bestand, der vor der Liste mit einem beliebigen
+    /// Programm als „Runtime" angelegt wurde, darf dieses Programm auch beim Start nicht ausführen —
+    /// der Connector prüft selbst und verlässt sich nicht auf den Validator.
+    /// </summary>
+    [Fact]
+    public async Task A_runtime_outside_the_list_is_refused_without_being_started()
+    {
+        var connector = new StdioUpstreamConnector();
+
+        var act = async () => await connector.ConnectAsync(
+            new ServerId(Guid.NewGuid()),
+            Config(new IsolationOptions(IsolationMode.Container, Image: "alpine:3.20", Runtime: "/bin/sh")),
+            TestContext.Current.CancellationToken);
+
+        (await act.Should().ThrowAsync<InvalidOperationException>())
+            .WithMessage("*'/bin/sh' ist nicht zulässig*Rückfall auf den Host findet nicht statt*");
     }
 
     /// <summary>

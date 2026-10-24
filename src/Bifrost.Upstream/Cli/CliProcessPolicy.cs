@@ -104,7 +104,7 @@ internal static class CliProcessPolicy
         {
             // Im Container-Modus wird die Runtime gestartet, nicht das Programm — das Programm
             // steht am Ende der Argumentliste, hinter dem Image.
-            FileName = container is null ? resolved.Executable : container.Runtime,
+            FileName = container is null ? resolved.Executable : ContainerRuntimes.Resolve(container.Runtime),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,

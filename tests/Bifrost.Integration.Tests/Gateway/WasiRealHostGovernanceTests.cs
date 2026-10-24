@@ -19,16 +19,16 @@ namespace Bifrost.Integration.Tests.Gateway;
 /// Rust-CI-Job erzwingt <c>BIFROST_REQUIRE_WASI_HOST=1</c> den Lauf.
 /// </para>
 /// </summary>
-public sealed class WasiRealHostGovernanceTests : IClassFixture<GatewayFixture>
+public sealed class WasiRealHostGovernanceTests : IClassFixture<RealWasiHostGatewayFixture>
 {
     private const string Slug = "wasirt";
 
     /// <summary>Der Guest importiert wasi:cli/environment — ohne diesen Grant startet er nicht.</summary>
     private static readonly string[] EnvironmentGrant = ["MCPMCP_SPIKE"];
 
-    private readonly GatewayFixture _gw;
+    private readonly RealWasiHostGatewayFixture _gw;
 
-    public WasiRealHostGovernanceTests(GatewayFixture gw) => _gw = gw;
+    public WasiRealHostGovernanceTests(RealWasiHostGatewayFixture gw) => _gw = gw;
 
     [Fact]
     public async Task A_signed_component_runs_through_the_full_pipeline_and_is_audited()

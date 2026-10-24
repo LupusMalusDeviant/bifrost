@@ -322,7 +322,9 @@ public sealed partial class ConnectorPackageInstaller
             SafeDelete(version.Directory);
         }
 
-        SafeDelete(Path.Combine(RootDirectory, packageId));
+        // Der Ordnername kommt aus dem Bestand, nicht aus der Anfrage: Gelöscht wird nur, was
+        // installiert wurde — und auch das nur innerhalb des Paketordners.
+        SafeDelete(PackagePath(versions[0].PackageId));
 
         // Erst die Dateien, dann die Skills: Bleibt eine Anleitung ohne ihren Konnektor stehen, ist
         // das der Zustand, den F5 gerade abschafft — umgekehrt wäre eine gelöschte Anleitung zu
@@ -338,7 +340,34 @@ public sealed partial class ConnectorPackageInstaller
     }
 
     private string VersionDirectory(string packageId, string version)
-        => Path.Combine(RootDirectory, packageId, version);
+        => PackagePath(packageId, version);
+
+    /// <summary>
+    /// Ein Pfad unterhalb von <see cref="RootDirectory"/> — oder eine Absage. Die Regeln für Id und
+    /// Version schließen Verzeichnisverweise schon aus; diese Prüfung sitzt trotzdem an der Stelle, an
+    /// der aus Namen ein Pfad wird, damit eine künftige Lockerung der Regeln nicht still zu einem
+    /// Schreib- oder Löschzugriff außerhalb des Paketordners wird.
+    /// </summary>
+    private string PackagePath(params string[] segments)
+    {
+        var path = Path.GetFullPath(Path.Combine([RootDirectory, .. segments]));
+        if (!IsUnderRoot(path))
+        {
+            throw new ConnectorPackageException(
+                $"'{string.Join('/', segments)}' liegt außerhalb des Paketordners '{RootDirectory}'.");
+        }
+
+        return path;
+    }
+
+    private bool IsUnderRoot(string path)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var root = Path.EndsInDirectorySeparator(RootDirectory)
+            ? RootDirectory
+            : RootDirectory + Path.DirectorySeparatorChar;
+        return Path.GetFullPath(path).StartsWith(root, comparison);
+    }
 
     private static void EnsurePlatformSupported(ConnectorManifest manifest)
     {
@@ -370,8 +399,15 @@ public sealed partial class ConnectorPackageInstaller
             + $"{current}.");
     }
 
-    private static void SafeDelete(string directory)
+    private void SafeDelete(string directory)
     {
+        // Ein Verzeichnis aus dem Bestand, das nicht unter dem Paketordner liegt, wird nicht
+        // angefasst — es bleibt liegen, statt dass ein Löschauftrag den Ordner verlässt.
+        if (!IsUnderRoot(directory))
+        {
+            return;
+        }
+
         try
         {
             if (Directory.Exists(directory))

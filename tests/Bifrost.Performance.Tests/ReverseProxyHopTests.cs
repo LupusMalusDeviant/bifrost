@@ -95,7 +95,7 @@ public sealed class ReverseProxyHopTests
         hopped.Errors.Should().Be(0, "ein Sprung, der Fehler erzeugt, ist kein Messergebnis");
 
         // NFR-01 gilt für die Strecke, die ein Betreiber betreibt — und das ist die mit Proxy.
-        hopped.P95.Should().BeLessThan(50 + options.UpstreamLatencyMs * 2,
+        hopped.P95.Should().BeLessThan(50 + options.UpstreamLatencyMs * 2.0,
             "NFR-01 (p95 ≤ 50 ms über dem Fremdanteil) muss auch hinter einem Proxy halten");
 
         // Die eigentliche Aussage: Der Sprung kostet etwas, aber nichts in der Größenordnung des

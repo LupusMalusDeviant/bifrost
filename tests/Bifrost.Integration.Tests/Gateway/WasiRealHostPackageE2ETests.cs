@@ -28,13 +28,13 @@ namespace Bifrost.Integration.Tests.Gateway;
 /// Praefix liefe dieser Nachweis in <em>keinem</em> Job — und niemand haette es gemerkt.
 /// </para>
 /// </summary>
-public sealed class WasiRealHostPackageE2ETests : IClassFixture<GatewayFixture>
+public sealed class WasiRealHostPackageE2ETests : IClassFixture<RealWasiHostGatewayFixture>
 {
     private const string PackageId = "com.bifrost.fixture-guest";
 
-    private readonly GatewayFixture _gw;
+    private readonly RealWasiHostGatewayFixture _gw;
 
-    public WasiRealHostPackageE2ETests(GatewayFixture gw) => _gw = gw;
+    public WasiRealHostPackageE2ETests(RealWasiHostGatewayFixture gw) => _gw = gw;
 
     /// <summary>
     /// Der ganze Weg: bauen → installieren (mit Probe) → Upstream über die Paket-Id → Aufruf durch
@@ -45,71 +45,63 @@ public sealed class WasiRealHostPackageE2ETests : IClassFixture<GatewayFixture>
     {
         var ct = TestContext.Current.CancellationToken;
         var host = WasiHostPaths.RequireHost();
-        var previousHost = Environment.GetEnvironmentVariable("BIFROST_WASI_HOST");
-        Environment.SetEnvironmentVariable("BIFROST_WASI_HOST", host);
+        // Der Host kommt aus der Fixture (BIFROST_WASI_HOST beim Start), nicht aus einer zur
+        // Laufzeit umgebogenen Umgebungsvariable: Die liest der Gateway nur einmal.
+        var maintainer = await PinMaintainerAsync(ct);
+        var installer = _gw.Services.GetRequiredService<ConnectorPackageInstaller>();
+        var resolver = _gw.Services.GetRequiredService<ConnectorPackageResolver>();
 
-        try
-        {
-            var maintainer = await PinMaintainerAsync(ct);
-            var installer = _gw.Services.GetRequiredService<ConnectorPackageInstaller>();
-            var resolver = _gw.Services.GetRequiredService<ConnectorPackageResolver>();
+        // 1) Installieren. Die Probe startet den echten Host und fragt den Katalog ab; ein
+        //    Paket, das das nicht übersteht, käme hier nicht durch.
+        using var v1 = await BuildPackageAsync(maintainer, "1.0.0", ct);
+        var installed = await installer.InstallAsync(
+            v1, new ConnectorInstallOptions(AcceptedGrants: ["env:MCPMCP_SPIKE"]), null, ct);
+        await resolver.RefreshAsync(ct);
 
-            // 1) Installieren. Die Probe startet den echten Host und fragt den Katalog ab; ein
-            //    Paket, das das nicht übersteht, käme hier nicht durch.
-            using var v1 = await BuildPackageAsync(maintainer, "1.0.0", ct);
-            var installed = await installer.InstallAsync(
-                v1, new ConnectorInstallOptions(AcceptedGrants: ["env:MCPMCP_SPIKE"]), null, ct);
-            await resolver.RefreshAsync(ct);
+        installed.Package.State.Should().Be(PackageState.Active);
+        installed.Package.TrustLevel.Should().Be(ConnectorTrustLevel.Official);
 
-            installed.Package.State.Should().Be(PackageState.Active);
-            installed.Package.TrustLevel.Should().Be(ConnectorTrustLevel.Official);
+        // 2) Ein Upstream, der nur die Paket-Id kennt — keine Pfade in der Konfiguration.
+        var serverId = await _gw.Supervisor.AddAsync(
+            new UpstreamServerConfig(
+                "pkgguest", "Guest aus dem Paket", UpstreamTransportKind.Wasi, Enabled: true,
+                Wasi: new WasiTransportOptions(
+                    host,
+                    ComponentPath: string.Empty,
+                    SignaturePath: string.Empty,
+                    PinnedPublishers: [],
+                    Grants: new WasiCapabilityGrants(Environment: ["MCPMCP_SPIKE"]),
+                    PackageId: PackageId)),
+            ct);
+        await IntegrationSupport.WaitUntilAsync(
+            () => _gw.Supervisor.GetStatus(serverId)?.State == UpstreamState.Healthy,
+            because: "der Upstream muss allein über die Paket-Id hochkommen");
 
-            // 2) Ein Upstream, der nur die Paket-Id kennt — keine Pfade in der Konfiguration.
-            var serverId = await _gw.Supervisor.AddAsync(
-                new UpstreamServerConfig(
-                    "pkgguest", "Guest aus dem Paket", UpstreamTransportKind.Wasi, Enabled: true,
-                    Wasi: new WasiTransportOptions(
-                        host,
-                        ComponentPath: string.Empty,
-                        SignaturePath: string.Empty,
-                        PinnedPublishers: [],
-                        Grants: new WasiCapabilityGrants(Environment: ["MCPMCP_SPIKE"]),
-                        PackageId: PackageId)),
-                ct);
-            await IntegrationSupport.WaitUntilAsync(
-                () => _gw.Supervisor.GetStatus(serverId)?.State == UpstreamState.Healthy,
-                because: "der Upstream muss allein über die Paket-Id hochkommen");
+        // 3) Aufruf durch die volle Governance-Pipeline.
+        var (admin, _) = await _gw.SeedAdminAsync("pkg-admin");
+        var tool = _gw.Supervisor.GetInventory(serverId)!.Tools[0].Name;
+        var result = await _gw.Invoker.InvokeAsync(
+            new ToolInvocationRequest(
+                admin, CallOrigin.Rest, new NamespacedToolName($"pkgguest__{tool}"),
+                JsonSerializer.Deserialize<JsonElement>("{}"), null),
+            ct);
 
-            // 3) Aufruf durch die volle Governance-Pipeline.
-            var (admin, _) = await _gw.SeedAdminAsync("pkg-admin");
-            var tool = _gw.Supervisor.GetInventory(serverId)!.Tools[0].Name;
-            var result = await _gw.Invoker.InvokeAsync(
-                new ToolInvocationRequest(
-                    admin, CallOrigin.Rest, new NamespacedToolName($"pkgguest__{tool}"),
-                    JsonSerializer.Deserialize<JsonElement>("{}"), null),
-                ct);
+        result.Status.Should().Be(InvocationStatus.Success, result.ErrorMessage);
 
-            result.Status.Should().Be(InvocationStatus.Success, result.ErrorMessage);
+        // 4) Update und Rollback: Die Dateien wechseln, die Konfiguration bleibt unangetastet.
+        using var v2 = await BuildPackageAsync(maintainer, "2.0.0", ct);
+        await installer.InstallAsync(
+            v2, new ConnectorInstallOptions(AcceptedGrants: ["env:MCPMCP_SPIKE"]), null, ct);
+        await resolver.RefreshAsync(ct);
+        resolver.ResolveActive(PackageId)!.Value.EntryPoint.Should().Contain("2.0.0");
 
-            // 4) Update und Rollback: Die Dateien wechseln, die Konfiguration bleibt unangetastet.
-            using var v2 = await BuildPackageAsync(maintainer, "2.0.0", ct);
-            await installer.InstallAsync(
-                v2, new ConnectorInstallOptions(AcceptedGrants: ["env:MCPMCP_SPIKE"]), null, ct);
-            await resolver.RefreshAsync(ct);
-            resolver.ResolveActive(PackageId)!.Value.EntryPoint.Should().Contain("2.0.0");
+        await installer.RollbackAsync(PackageId, null, ct);
+        await resolver.RefreshAsync(ct);
+        resolver.ResolveActive(PackageId)!.Value.EntryPoint.Should().Contain("1.0.0");
 
-            await installer.RollbackAsync(PackageId, null, ct);
-            await resolver.RefreshAsync(ct);
-            resolver.ResolveActive(PackageId)!.Value.EntryPoint.Should().Contain("1.0.0");
-
-            await _gw.Supervisor.RemoveAsync(serverId, DrainPolicy.Immediate, ct);
-            await installer.RemovePackageAsync(PackageId, null, ct);
-            await resolver.RefreshAsync(ct);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("BIFROST_WASI_HOST", previousHost);
-        }
+        await _gw.Supervisor.RemoveAsync(serverId, DrainPolicy.Immediate, ct);
+        await installer.RemovePackageAsync(PackageId, null, ct);
+        await resolver.RefreshAsync(ct);
     }
 
     /// <summary>

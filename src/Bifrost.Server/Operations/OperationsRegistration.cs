@@ -32,11 +32,16 @@ public static class OperationsRegistration
     /// SQLite-Datei — eine aus dem Datenverzeichnis geratene Vorgabe hätte bei gesetztem
     /// <c>BIFROST_DB_CONNECTION</c> die falsche Datei gesichert.
     /// </param>
+    /// <param name="backupDirectory">
+    /// <c>BIFROST_BACKUP_DIR</c>: wo Sicherungen über REST, CLI und Oberfläche entstehen und gelesen
+    /// werden. Vorgabe <c>&lt;Datenverzeichnis&gt;/backups</c>.
+    /// </param>
     public static IServiceCollection AddBifrostOperations(
         this IServiceCollection services,
         string dataDirectory,
         string databaseProvider,
-        string connectionString)
+        string connectionString,
+        string? backupDirectory = null)
     {
         ArgumentNullException.ThrowIfNull(services);
 
@@ -61,6 +66,12 @@ public static class OperationsRegistration
         };
 
         services.AddSingleton(backupOptions);
+
+        // Die Grenze für Pfade von außen. Die selbst angelegten Sicherungen vor Restore und
+        // Migration bleiben lesbar, auch wenn das Sicherungsverzeichnis woanders liegt.
+        services.AddSingleton(new Bifrost.Core.Operations.BackupLocation(
+            string.IsNullOrWhiteSpace(backupDirectory) ? backupOptions.PreBackupDirectory : backupDirectory,
+            backupOptions.PreBackupDirectory));
 
         // Singleton ist hier Vertrag, nicht Geschmack: Der Restore-Plan trägt ein Handle, dessen
         // Zustand beim Dienst bleibt (M2-Vertrag, Nachtrag zum Handle). Zwei Instanzen hießen: Der

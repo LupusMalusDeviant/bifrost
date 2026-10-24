@@ -40,7 +40,8 @@ internal static class WasiHostPaths
         return host;
     }
 
-    private static string? Locate()
+    /// <summary>Der echte Host, falls gebaut — ohne zu überspringen (für Fixtures).</summary>
+    public static string? Locate()
     {
         if (Environment.GetEnvironmentVariable("BIFROST_WASI_HOST") is { Length: > 0 } configured)
         {

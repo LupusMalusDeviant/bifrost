@@ -26,17 +26,33 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
     /// </summary>
     public const string ProtocolVersion = "4";
 
+    /// <summary>Die Betreiber-Einstellung, die den WASI-Host dieser Instanz benennt.</summary>
+    public const string HostSettingName = "BIFROST_WASI_HOST";
+
     private readonly IPublisherTrustStore _trust;
+    private readonly string? _hostExecutable;
     private readonly IAuditSink? _audit;
     private readonly IConnectorPackageResolver? _packages;
 
+    /// <param name="trust">Die Vertrauensquelle für die Publisher (WP4).</param>
+    /// <param name="hostExecutable">
+    /// Der WASI-Host dieser Instanz, vom Betreiber gesetzt (<c>BIFROST_WASI_HOST</c>). Gestartet wird
+    /// <b>nur dieser</b>, nie der Wert aus der Upstream-Konfiguration: Ein WASI-Upstream gilt für die
+    /// Host-Policy als isoliert (ADR-0025), der Host selbst läuft aber nativ. Ein freies Feld wäre
+    /// deshalb der Weg am Verbot nativer Ausführung vorbei. <c>null</c> heißt: WASI ist auf dieser
+    /// Instanz nicht eingerichtet, und jeder Start wird abgelehnt.
+    /// </param>
+    /// <param name="audit">Ziel des Grant-Audits je Load.</param>
+    /// <param name="packages">Auflösung installierter Pakete (ADR-0016).</param>
     public WasiRuntimeConnector(
         IPublisherTrustStore trust,
+        string? hostExecutable,
         IAuditSink? audit = null,
         IConnectorPackageResolver? packages = null)
     {
         ArgumentNullException.ThrowIfNull(trust);
         _trust = trust;
+        _hostExecutable = string.IsNullOrWhiteSpace(hostExecutable) ? null : hostExecutable;
         _audit = audit;
         _packages = packages;
     }
@@ -54,6 +70,7 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
         // Ist er leer, gehen null Schlüssel an den Host, und der lehnt fail-closed ab.
         var pinned = _trust.ActivePublicKeys;
 
+        var hostExecutable = ResolveHost(config, options);
         var (componentPath, signaturePath) = ResolvePaths(config, options);
 
         // Component und Signatur werden hier gelesen, aber NICHT hier geprüft: die Verifikation
@@ -64,7 +81,7 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
         ProcessHygiene.EnsureInitialized();
         var startInfo = new ProcessStartInfo
         {
-            FileName = options.HostExecutable,
+            FileName = hostExecutable,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -94,7 +111,7 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
         {
             process.Dispose();
             throw new InvalidOperationException(
-                $"WASI-Host '{options.HostExecutable}' ließ sich nicht starten.");
+                $"WASI-Host '{hostExecutable}' ließ sich nicht starten.");
         }
 
         var connection = new WasiUpstreamConnection(id, process, options);
@@ -114,6 +131,54 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
         }
 
         return connection;
+    }
+
+    /// <summary>
+    /// Der Host, der gestartet wird: immer der des Betreibers. Die Konfiguration darf ihn nennen —
+    /// als denselben Pfad oder als bloßen Dateinamen (<c>bifrost-wasi-host</c>, so steht er im
+    /// Image) —, aber nicht auf ein anderes Programm umlenken.
+    /// </summary>
+    private string ResolveHost(UpstreamServerConfig config, WasiTransportOptions options)
+    {
+        if (_hostExecutable is null)
+        {
+            throw new InvalidOperationException(
+                $"Upstream '{config.Slug}': Auf dieser Instanz ist kein WASI-Host eingerichtet "
+                + "(BIFROST_WASI_HOST). Ohne ihn startet kein WASI-Upstream — ein Programm aus der "
+                + "Konfiguration wird bewusst nicht ersatzweise genommen.");
+        }
+
+        if (!NamesHost(options.HostExecutable, _hostExecutable))
+        {
+            throw new InvalidOperationException(
+                $"Upstream '{config.Slug}': Wasi.HostExecutable '{options.HostExecutable}' ist nicht der "
+                + $"WASI-Host dieser Instanz ('{_hostExecutable}', BIFROST_WASI_HOST). Der Host läuft "
+                + "nativ; welches Programm das ist, entscheidet der Betreiber, nicht die "
+                + "Upstream-Konfiguration (ADR-0025).");
+        }
+
+        return _hostExecutable;
+    }
+
+    private static bool NamesHost(string configured, string host)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            return false;
+        }
+
+        if (Path.GetFileName(configured) == configured)
+        {
+            // Nur ".exe" darf fehlen — GetFileNameWithoutExtension hielte unter Linux jeden Punkt im
+            // Namen für den Beginn einer Endung.
+            var hostName = Path.GetFileName(host);
+            return configured.Equals(hostName, comparison)
+                || (hostName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                    && configured.Equals(hostName[..^4], comparison));
+        }
+
+        return Path.GetFullPath(configured).Equals(Path.GetFullPath(host), comparison);
     }
 
     /// <summary>

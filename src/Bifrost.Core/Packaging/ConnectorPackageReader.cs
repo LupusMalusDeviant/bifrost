@@ -513,6 +513,17 @@ public static class ConnectorPackageReader
                     + "— der Wert wird zu einem Verzeichnisnamen.");
             }
         }
+
+        // Die Zeichenliste allein reicht nicht: '.' und '..' bestehen nur aus erlaubten Zeichen und
+        // sind trotzdem Verweise auf dieses und das übergeordnete Verzeichnis. Ein Paket mit der Id
+        // '..' würde neben dem Paketordner entpackt, und sein Entfernen löschte den Ordner darüber.
+        // Ein Punkt am Anfang hielte außerdem die Quarantäne ('.quarantine') für ein Paket.
+        if (!char.IsAsciiLetterOrDigit(value[0]))
+        {
+            throw new ConnectorPackageException(
+                $"{what} '{value}' muss mit einem Buchstaben oder einer Ziffer beginnen — '.' und '..' "
+                + "wären als Verzeichnisname ein Verweis, kein Name.");
+        }
     }
 
     private static void EnsureVersion(string value)

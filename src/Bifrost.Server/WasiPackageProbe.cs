@@ -48,12 +48,18 @@ internal static class WasiPackageProbe
                     + "installierbar — bisher gibt es nur den WASI-Pfad (ADR-0016/0020).");
             }
 
-            var hostExecutable = Environment.GetEnvironmentVariable("BIFROST_WASI_HOST")
-                ?? throw new ConnectorPackageException(
+            // Aus der Konfiguration statt direkt aus der Umgebung: dieselbe Quelle wie der
+            // Connector im Betrieb, sonst probte die Installation einen anderen Host als den, der
+            // das Paket danach ausfuehrt. Umgebungsvariablen sind darin ohnehin enthalten.
+            var hostExecutable = services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>()[
+                    WasiRuntimeConnector.HostSettingName] is { Length: > 0 } configured
+                ? configured
+                : throw new ConnectorPackageException(
                     "Kein WASI-Host konfiguriert (BIFROST_WASI_HOST). Ohne ihn ließe sich das Paket "
                     + "nicht proben, und ungeprobt wird nichts aktiv.");
 
-            var connector = new WasiRuntimeConnector(services.GetRequiredService<IPublisherTrustStore>());
+            var connector = new WasiRuntimeConnector(
+                services.GetRequiredService<IPublisherTrustStore>(), hostExecutable);
             var config = new UpstreamServerConfig(
                 $"probe-{context.Manifest.Id}", context.Manifest.DisplayName,
                 UpstreamTransportKind.Wasi, Enabled: true,

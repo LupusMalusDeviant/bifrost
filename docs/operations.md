@@ -259,6 +259,7 @@ Sicherung zurückholen.
 | Variable | Default | Zweck |
 |---|---|---|
 | `BIFROST_DATA_DIR` | `data` (bzw. `/data` im Container) | Verzeichnis für SQLite-DB **und** DataProtection-Key-Ring |
+| `BIFROST_BACKUP_DIR` | `<BIFROST_DATA_DIR>/backups` | Einziger Ort für Sicherungen über REST, CLI und Oberfläche: `backup create`, `backup verify` und `restore` akzeptieren nur Pfade darin; ein bloßer Name liegt dort. Die automatischen Sicherungen vor Restore und Migration bleiben lesbar, auch wenn das Verzeichnis woanders liegt (z. B. auf einem NAS-Mount) |
 | `BIFROST_DB_PROVIDER` | `sqlite` | `sqlite` oder `postgres` |
 | `BIFROST_DB_CONNECTION` | `Data Source=<datadir>/bifrost.db` | Connection-String (bei Postgres Pflicht) |
 | `BIFROST_SQLITE_JOURNAL_MODE` | `wal` | Journalverfahren der SQLite-Datei. `delete` ist der [Rückweg](#sqlite-im-wal-modus) auf das klassische Rollback-Journal. Ein unbekannter Wert bricht den Start ab |
@@ -273,7 +274,7 @@ Sicherung zurückholen.
 | `BIFROST_KEYRING_CERT_PASSWORD_PREVIOUS` | *(nicht gesetzt)* | Passwort dazu; ebenfalls mit `_FILE`-Suffix möglich |
 | `BIFROST_OAUTH_ISSUER` | *(nicht gesetzt)* | Authorization Server, dem für **eingehende** Agenten-Token vertraut wird. Gesetzt = der Gateway ist zusätzlich OAuth-Resource-Server (siehe [Agenten über OAuth](#agenten-über-oauth)) |
 | `BIFROST_OAUTH_AUDIENCE` | `BIFROST_PUBLIC_BASE_URL` | Kanonische Adresse dieses Gateways; ein Token muss darauf lauten |
-| `BIFROST_WASI_HOST` | *(nicht gesetzt)* | Pfad zum WASI-Host-Binary. **Pflicht für die Installation von Connector-Paketen** — ohne ihn lässt sich ein Paket nicht proben, und ungeprobt wird nichts aktiv |
+| `BIFROST_WASI_HOST` | *(nicht gesetzt; im Image `/usr/local/bin/bifrost-wasi-host`)* | Pfad zum WASI-Host-Binary. **Pflicht für jeden WASI-Upstream und für die Installation von Connector-Paketen.** Gestartet wird nur dieser Host; `Wasi.HostExecutable` eines Upstreams muss ihn nennen (gleicher Pfad oder bloßer Dateiname) und kann nicht auf ein anderes Programm zeigen — der Host läuft nativ, ein WASI-Upstream gilt aber als isoliert (ADR-0025) |
 | `BIFROST_PUBLIC_BASE_URL` | *(nicht gesetzt)* | Öffentliche Adresse des Gateways; nötig für die Redirect-URI der Upstream-Autorisierung (siehe [OAuth gegen Upstreams](#oauth-gegen-upstreams)) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | *(nicht gesetzt)* | Ziel für Metriken **und** Traces (siehe [Metriken und Traces](#metriken-und-traces)) |
 | `BIFROST_AUDIT_DEBUG_PAYLOADS` | *(aus)* | `1`/`true` schaltet den Debug-Modus des Audits ein (siehe [Audit-Debug-Modus](#audit-debug-modus)) |
@@ -943,6 +944,11 @@ Wichtig für die Konfiguration:
   offenes Bridge-Netz durchgereicht — ein offenes Netz mit dem Etikett „Allowlist" wäre schlimmer
   als eine ehrliche Absage.
 
+**Die Runtime steht auf einer festen Liste:** `docker`, `podman`, `nerdctl`, `finch` — als Name, nicht
+als Pfad; gefunden wird sie über den `PATH`. Die Runtime läuft nativ auf dem Host, ein
+Container-Upstream gilt aber als isoliert (ADR-0025). Ein freies Feld wäre deshalb ein Weg am Verbot
+nativer Ausführung vorbei. Ein Bestand mit anderem Wert wird beim Start abgelehnt, nicht ausgeführt.
+
 **Kein stiller Rückfall.** Verlangt eine Konfiguration Container und ist keine passende Runtime da,
 kommt der Upstream **nicht** hoch, mit genau dieser Meldung. Ein Ausweichen auf den Host würde die
 Isolation abschalten, ohne dass es jemand merkt.
@@ -960,7 +966,8 @@ Aufruf — dafür braucht es einen eigenen Entwurf.
 Ein signiertes WebAssembly-Component läuft in einem eigenen Rust-Host-Prozess
 ([ADR-0020](adr/0020-wasi-runtime-out-of-process-rust-host.md)). Der Host **liegt im Image** unter
 `/usr/local/bin/bifrost-wasi-host` — genau dieser Pfad gehört in `Wasi.HostExecutable` eines
-WASI-Upstreams.
+WASI-Upstreams. Das Image setzt `BIFROST_WASI_HOST` darauf; gestartet wird immer der Host aus dieser
+Einstellung, ein anderer Wert in `Wasi.HostExecutable` wird abgelehnt.
 
 Vertrauen kommt **ausschließlich** aus dem Publisher-Trust-Store, nicht aus der Upstream-Config:
 

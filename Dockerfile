@@ -68,7 +68,8 @@ RUN case "$TARGETARCH" in \
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
 WORKDIR /app
 COPY --from=build /app ./
-# Fester Pfad im Image: Er gehört in die Wasi.HostExecutable eines WASI-Upstreams.
+# Fester Pfad im Image. BIFROST_WASI_HOST (unten) macht ihn zum Host dieser Instanz: Gestartet wird
+# nur dieser; ein WASI-Upstream darf ihn nennen, aber nicht auf ein anderes Programm umlenken.
 COPY --from=wasi-host /bifrost-wasi-host /usr/local/bin/bifrost-wasi-host
 
 # Datenverzeichnis (SQLite-DB + DataProtection-Keys) beschreibbar anlegen und dem non-root
@@ -77,6 +78,7 @@ COPY --from=wasi-host /bifrost-wasi-host /usr/local/bin/bifrost-wasi-host
 RUN mkdir -p /data && chown app:app /data && chmod 0770 /data
 
 ENV BIFROST_DATA_DIR=/data \
+    BIFROST_WASI_HOST=/usr/local/bin/bifrost-wasi-host \
     ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 USER app

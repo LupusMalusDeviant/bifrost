@@ -11,6 +11,33 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
 
 ## [Unveröffentlicht]
 
+### Sicherheit
+
+Befunde aus dem ersten vollständigen CodeQL-Lauf (2026-10-24). Alle setzen Admin-Rechte voraus;
+keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemeldeten Stelle.
+
+- **Breaking: Container-Runtime nur noch von einer festen Liste.** `Isolation.Runtime` war ein
+  freies Feld, und die Runtime läuft nativ auf dem Host — ein Container-Upstream gilt für die
+  Host-Policy aber als isoliert (ADR-0025). Damit ließ sich jedes Programm als „Runtime" eintragen
+  und das Verbot nativer Ausführung umgehen. Erlaubt sind jetzt `docker`, `podman`, `nerdctl`,
+  `finch`, als Name. *Upgrade:* Ein Upstream mit anderem Wert (etwa einem absoluten Pfad) startet
+  nicht mehr und meldet das; den Wert auf den Namen umstellen.
+- **Breaking: WASI-Host nur noch aus `BIFROST_WASI_HOST`.** Dieselbe Lücke über
+  `Wasi.HostExecutable`. Gestartet wird jetzt ausschließlich der Host des Betreibers; die
+  Konfiguration darf ihn nennen (gleicher Pfad oder Dateiname), aber nicht umlenken. Das Image setzt
+  `BIFROST_WASI_HOST=/usr/local/bin/bifrost-wasi-host`. *Upgrade:* Außerhalb des Images
+  `BIFROST_WASI_HOST` setzen, sonst startet kein WASI-Upstream.
+- **Paket-Ids `.` und `..` werden abgewiesen.** Sie bestanden nur aus erlaubten Zeichen; ein Paket
+  mit der Id `..` wäre neben dem Paketordner entpackt worden, und sein Entfernen hätte den Ordner
+  darüber gelöscht. Ids und Versionen beginnen jetzt mit Buchstabe oder Ziffer, und jeder aus Namen
+  gebildete Pfad muss im Paketordner liegen. Entfernt wird nach der Id aus dem Bestand, nicht aus der
+  Anfrage.
+- **Breaking: Sicherungen nur noch im Sicherungsverzeichnis.** `backup create`, `backup verify` und
+  `restore` (REST, CLI, Oberfläche) nahmen jeden Pfad auf dem Gateway-Rechner. Neu ist
+  `BIFROST_BACKUP_DIR` (Vorgabe `<BIFROST_DATA_DIR>/backups`); ein bloßer Name liegt dort, ein Pfad
+  außerhalb wird abgewiesen. *Upgrade:* `--out /irgendwo/x.zip` durch einen Namen ersetzen oder
+  `BIFROST_BACKUP_DIR` auf den gewünschten Ort setzen; vorhandene Archive dorthin verschieben.
+
 ### Behoben
 
 - **Der Skip-Wächter der CI zählte nur eine einzige Testassembly** (Befund aus dem M5-Audit). Der

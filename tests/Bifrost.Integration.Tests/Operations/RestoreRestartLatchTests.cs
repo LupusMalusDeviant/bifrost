@@ -15,6 +15,7 @@ using Bifrost.Persistence.Backup;
 using Microsoft.Extensions.DependencyInjection;
 
 using Xunit;
+using Bifrost.Core.Operations;
 
 namespace Bifrost.Integration.Tests.Operations;
 
@@ -68,9 +69,9 @@ public class RestoreRestartLatchTests : IClassFixture<GatewayFixture>
     public async Task A_restore_locks_the_gateway_until_it_is_restarted()
     {
         var client = await AdminClientAsync();
-        var options = _fixture.Services.GetRequiredService<BackupOptions>();
+        var location = _fixture.Services.GetRequiredService<BackupLocation>();
         var archive = Path.Combine(
-            options.DataDirectory, "testarchive", $"config-{Guid.NewGuid():N}.zip");
+            location.Directory, "testarchive", $"config-{Guid.NewGuid():N}.zip");
 
         var created = await client.PostAsJsonAsync(
             "/api/v1/operations/backup",

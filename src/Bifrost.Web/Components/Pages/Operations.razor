@@ -3,6 +3,7 @@
 @attribute [Authorize(Policy = UiPolicies.Admin)]
 @inject IDiagnosticService Diagnostics
 @inject IBackupService Backups
+@inject Bifrost.Core.Operations.BackupLocation BackupLocation
 @inject ISupportBundleService SupportBundles
 @inject IAuditSink Audit
 @inject TimeProvider Time
@@ -68,9 +69,10 @@
     </p>
     <div class="row">
         <div>
-            <label>Zielpfad</label>
+            <label>Dateiname</label>
             <input data-testid="backup-path" @bind="_target" @bind:event="oninput"
-                   placeholder="data/backups/bifrost-2026-07-31.zip" />
+                   placeholder="bifrost-2026-07-31.zip" />
+            <div class="muted">im Sicherungsverzeichnis <code>@BackupLocation.Directory</code></div>
         </div>
         <div>
             <label>Passphrase (leer = unverschlüsselt)</label>
@@ -321,7 +323,7 @@
         {
             var result = await Backups.CreateAsync(
                 new BackupRequest(
-                    _target.Trim(),
+                    BackupLocation.ResolveTarget(_target.Trim()),
                     sections,
                     string.IsNullOrEmpty(_passphrase) ? null : _passphrase),
                 CancellationToken.None);

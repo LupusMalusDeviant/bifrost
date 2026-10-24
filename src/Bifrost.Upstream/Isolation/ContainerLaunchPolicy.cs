@@ -202,12 +202,18 @@ internal static class ContainerLaunchPolicy
     public static async Task<string?> ProbeAsync(IsolationOptions isolation, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(isolation);
+        if (!ContainerRuntimes.IsAllowed(isolation.Runtime))
+        {
+            // Auch ein Bestand, der vor der Liste angelegt wurde, startet nichts Unbekanntes.
+            return ContainerRuntimes.Rejection(isolation.Runtime);
+        }
+
         try
         {
             using var probe = System.Diagnostics.Process.Start(
                 new System.Diagnostics.ProcessStartInfo
                 {
-                    FileName = isolation.Runtime,
+                    FileName = ContainerRuntimes.Resolve(isolation.Runtime),
                     // Die Plattform des *Servers*, nicht des Clients: Docker Desktop auf Windows
                     // kann beides, und nur der Linux-Modus traegt die Policy.
                     ArgumentList = { "version", "--format", "{{.Server.Os}}" },

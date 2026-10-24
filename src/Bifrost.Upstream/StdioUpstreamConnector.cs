@@ -132,7 +132,7 @@ public sealed class StdioUpstreamConnector(GatewayIdentity? gateway = null)
         var transport = new StdioClientTransport(new StdioClientTransportOptions
         {
             Name = config.Slug,
-            Command = isolation.Runtime,
+            Command = ContainerRuntimes.Resolve(isolation.Runtime),
             Arguments = arguments,
             // Das Arbeitsverzeichnis gilt IM Container und wurde dort über `--workdir` gesetzt; der
             // Runtime-Client selbst startet neutral.

@@ -33,7 +33,10 @@ public sealed class BackupJourneyTests
         await using var session = await UiSession.StartAsync(
             nameof(An_admin_creates_a_backup_and_the_archive_is_readable), ct);
 
-        var target = Path.Combine(Path.GetTempPath(), $"bifrost-ui-backup-{Guid.NewGuid():N}.zip");
+        // Die Oberfläche nimmt einen Namen; die Sicherung entsteht im Sicherungsverzeichnis der
+        // Instanz (Vorgabe <Datenverzeichnis>/backups) und nirgends sonst.
+        var name = $"bifrost-ui-backup-{Guid.NewGuid():N}.zip";
+        var target = Path.Combine(session.Gateway.DataDirectory, "backups", name);
 
         try
         {
@@ -41,7 +44,7 @@ public sealed class BackupJourneyTests
             await session.Page.GotoAsync("operations");
             await session.WaitForInteractivityAsync("[data-testid=backup-path]");
 
-            await session.Page.FillAsync("[data-testid=backup-path]", target);
+            await session.Page.FillAsync("[data-testid=backup-path]", name);
 
             // Datenbank und Key-Ring sind die beiden Teile, ohne die eine Sicherung keine ist.
             foreach (var box in (string[])["backup-database", "backup-keyring"])

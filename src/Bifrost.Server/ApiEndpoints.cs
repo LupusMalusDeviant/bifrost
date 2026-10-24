@@ -772,7 +772,8 @@ internal static class ApiEndpoints
 
         // ── Sicherung ────────────────────────────────────────────────────────
         operations.MapPost("/backup", async (
-            BackupCreateRequest body, HttpContext ctx, IBackupService backups, IAuditSink audit,
+            BackupCreateRequest body, HttpContext ctx, IBackupService backups,
+            Bifrost.Core.Operations.BackupLocation location, IAuditSink audit,
             TimeProvider time, CancellationToken ct) =>
         {
             if (!TryParseSections(body.Sections, out var sections, out var sectionProblem))
@@ -782,8 +783,9 @@ internal static class ApiEndpoints
 
             try
             {
+                // Nur ins Sicherungsverzeichnis — ein bloßer Name landet dort (BIFROST_BACKUP_DIR).
                 var result = await backups.CreateAsync(
-                    new BackupRequest(body.TargetPath, sections, body.Passphrase), ct);
+                    new BackupRequest(location.ResolveTarget(body.TargetPath), sections, body.Passphrase), ct);
                 AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null,
                     $"backup-created:{result.Manifest.Sections}");
                 return Results.Ok(new
@@ -848,13 +850,15 @@ internal static class ApiEndpoints
         });
 
         operations.MapPost("/backup/verify", async (
-            ArchiveRequest body, IBackupService backups, CancellationToken ct) =>
+            ArchiveRequest body, IBackupService backups, Bifrost.Core.Operations.BackupLocation location,
+            CancellationToken ct) =>
         {
             try
             {
                 // Ein ungültiges Archiv ist hier kein HTTP-Fehler, sondern das Ergebnis der Prüfung:
                 // Der Aufrufer hat genau danach gefragt. Die Bewertung steht im Rumpf.
-                var inspection = await backups.InspectAsync(body.ArchivePath, body.Passphrase, ct);
+                var inspection = await backups.InspectAsync(
+                    location.ResolveExisting(body.ArchivePath), body.Passphrase, ct);
                 return Results.Ok(inspection);
             }
             catch (Exception exception) when (exception is ArgumentException or IOException)
@@ -866,7 +870,8 @@ internal static class ApiEndpoints
 
         // ── Wiederherstellung: zweistufig über das Handle im Plan ────────────
         operations.MapPost("/restore/plan", async (
-            RestorePlanRequest body, IRestoreService restore, CancellationToken ct) =>
+            RestorePlanRequest body, IRestoreService restore, Bifrost.Core.Operations.BackupLocation location,
+            CancellationToken ct) =>
         {
             if (!TryParseRestoreMode(body.Mode, out var mode, out var modeProblem))
             {
@@ -878,7 +883,7 @@ internal static class ApiEndpoints
                 // Der Plan geht als JSON hinaus und kommt als neues Objekt zurück — genau dafür
                 // trägt er ein Handle statt seiner Objektidentität (M2-Vertrag, Nachtrag).
                 var plan = await restore.PlanAsync(
-                    new RestoreRequest(body.ArchivePath, mode, body.Passphrase), ct);
+                    new RestoreRequest(location.ResolveExisting(body.ArchivePath), mode, body.Passphrase), ct);
                 return Results.Ok(plan);
             }
             catch (Exception exception) when (exception is ArgumentException or IOException)

@@ -127,6 +127,7 @@ the same secret is a rule you would misremember, and then you would be running w
 | Variable | Default | Purpose |
 |---|---|---|
 | `BIFROST_DATA_DIR` | `data` (`/data` in the container) | Directory for the SQLite database **and** the DataProtection key ring |
+| `BIFROST_BACKUP_DIR` | `<BIFROST_DATA_DIR>/backups` | The only place for backups via REST, CLI and UI: `backup create`, `backup verify` and `restore` accept paths inside it only; a bare name lands there. The automatic backups taken before a restore or migration stay readable even if the directory lives elsewhere (e.g. on a NAS mount) |
 | `BIFROST_DB_PROVIDER` | `sqlite` | `sqlite` or `postgres` |
 | `BIFROST_DB_CONNECTION` | `Data Source=<datadir>/bifrost.db` | Connection string (mandatory for Postgres) |
 | `BIFROST_SQLITE_JOURNAL_MODE` | `wal` | Journal mode of the SQLite file. `delete` is the way back to the classic rollback journal. An unknown value aborts startup |
@@ -144,7 +145,7 @@ the same secret is a rule you would misremember, and then you would be running w
 | `BIFROST_KEYRING_CERT_PATH_PREVIOUS` | *(unset)* | The **previous** certificate during a rotation. It no longer encrypts, but still decrypts |
 | `BIFROST_OAUTH_ISSUER` | *(unset)* | Authorization server trusted for **inbound** agent tokens. Set = the gateway is also an OAuth resource server |
 | `BIFROST_OAUTH_AUDIENCE` | `BIFROST_PUBLIC_BASE_URL` | Canonical address of this gateway; a token must be addressed to it |
-| `BIFROST_WASI_HOST` | *(unset)* | Path to the WASI host binary. **Required to install connector packages** — without it a package cannot be probed, and nothing unprobed is activated |
+| `BIFROST_WASI_HOST` | *(unset; `/usr/local/bin/bifrost-wasi-host` in the image)* | Path to the WASI host binary. **Required for every WASI upstream and to install connector packages.** Only this host is started; an upstream's `Wasi.HostExecutable` must name it (same path or bare file name) and cannot point at another program — the host runs natively while a WASI upstream counts as isolated (ADR-0025) |
 | `BIFROST_MCP_STATELESS` | `1` | `0`/`false` reverts to the session-based operation of the previous protocol revision |
 | `BIFROST_MCP_LIST_TTL_SECONDS` | `60` | How long a client may treat tool/resource/prompt lists as fresh. `0` = no hint |
 | `BIFROST_MAX_RESULT_CHARS` | *(off)* | Truncates tool results above this character count (FR-16) |

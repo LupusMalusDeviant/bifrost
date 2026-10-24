@@ -100,8 +100,8 @@ public sealed class WasiRealHostCompatibilityTests
         "wasi-real", "WASI (echter Host)", UpstreamTransportKind.Wasi, Enabled: true,
         Wasi: new WasiTransportOptions(host, ComponentPath, SignaturePath, [], Grants: grants));
 
-    private static WasiRuntimeConnector ConnectorFor(string publisher)
-        => new(new FakePublisherTrustStore(publisher));
+    private static WasiRuntimeConnector ConnectorFor(string publisher, string host)
+        => new(new FakePublisherTrustStore(publisher), host);
 
     [Fact]
     public async Task Handshake_load_discover_and_invoke_work_against_the_real_host()
@@ -110,7 +110,7 @@ public sealed class WasiRealHostCompatibilityTests
         var ct = TestContext.Current.CancellationToken;
         // Der Guest importiert wasi:cli/environment — ohne diesen Grant würde er gar nicht erst
         // instanziiert (deny-before-instantiation, siehe Negativtest unten).
-        var connector = ConnectorFor(await PinnedPublisherAsync(ct));
+        var connector = ConnectorFor(await PinnedPublisherAsync(ct), host);
         var config = Config(host, new WasiCapabilityGrants(Environment: EnvironmentGrant));
 
         await using var connection = await connector.ConnectAsync(new ServerId(Guid.NewGuid()), config, ct);
@@ -134,7 +134,7 @@ public sealed class WasiRealHostCompatibilityTests
     {
         var host = RequireHost();
         var ct = TestContext.Current.CancellationToken;
-        var connector = ConnectorFor(await PinnedPublisherAsync(ct));
+        var connector = ConnectorFor(await PinnedPublisherAsync(ct), host);
         // Der Fixture-Guest gibt den Wert von MCPMCP_SPIKE aus — hier also den Secret-Wert statt
         // des Platzhalters, den ein blosser Environment-Grant setzt.
         var config = Config(host, new WasiCapabilityGrants(Secrets: ["MCPMCP_SPIKE"])) with
@@ -157,7 +157,7 @@ public sealed class WasiRealHostCompatibilityTests
     {
         var host = RequireHost();
         var ct = TestContext.Current.CancellationToken;
-        var connector = ConnectorFor(await PinnedPublisherAsync(ct));
+        var connector = ConnectorFor(await PinnedPublisherAsync(ct), host);
         // Ein mit wasm32-wasip2 gebautes Component, das ein WIT-Interface exportiert — die Form,
         // in der reale Components ihre Funktionen anbieten.
         var config = Config(host, new WasiCapabilityGrants(Environment: EnvironmentGrant)) with
@@ -194,7 +194,7 @@ public sealed class WasiRealHostCompatibilityTests
         var ct = TestContext.Current.CancellationToken;
         // Ohne Grants: derselbe Aufruf muss scheitern — nicht als Transportfehler, sondern als
         // Fehlerergebnis, das die Governance-Schicht sauber weiterreichen kann.
-        var connector = ConnectorFor(await PinnedPublisherAsync(ct));
+        var connector = ConnectorFor(await PinnedPublisherAsync(ct), host);
         var config = Config(host, new WasiCapabilityGrants());
 
         await using var connection = await connector.ConnectAsync(new ServerId(Guid.NewGuid()), config, ct);
@@ -211,7 +211,7 @@ public sealed class WasiRealHostCompatibilityTests
         var ct = TestContext.Current.CancellationToken;
         var stranger = Convert.ToBase64String(new byte[32]); // gültige Länge, falscher Schlüssel.
 
-        var act = () => ConnectorFor(stranger).ConnectAsync(
+        var act = () => ConnectorFor(stranger, host).ConnectAsync(
             new ServerId(Guid.NewGuid()), Config(host, new WasiCapabilityGrants()), ct);
 
         // Fail-closed: der Upstream darf gar nicht erst hochkommen.
@@ -419,7 +419,7 @@ public sealed class WasiRealHostCompatibilityTests
     {
         var host = RequireHost();
         var ct = TestContext.Current.CancellationToken;
-        var connector = ConnectorFor(await PinnedPublisherAsync(ct));
+        var connector = ConnectorFor(await PinnedPublisherAsync(ct), host);
         var config = new UpstreamServerConfig(
             "wasi-counter", "WASI (Resource)", UpstreamTransportKind.Wasi, Enabled: true,
             Wasi: new WasiTransportOptions(
@@ -476,7 +476,7 @@ public sealed class WasiRealHostCompatibilityTests
     {
         var host = RequireHost();
         var ct = TestContext.Current.CancellationToken;
-        var connector = ConnectorFor(await PinnedPublisherAsync(ct));
+        var connector = ConnectorFor(await PinnedPublisherAsync(ct), host);
         var config = new UpstreamServerConfig(
             "wasi-counter", "WASI (Resource)", UpstreamTransportKind.Wasi, Enabled: true,
             Wasi: new WasiTransportOptions(

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using Bifrost.Abstractions;
 
 namespace Bifrost.Upstream.Isolation;
 
@@ -134,7 +135,7 @@ internal static class ContainerLifecycle
         {
             var startInfo = new ProcessStartInfo
             {
-                FileName = runtime,
+                FileName = ContainerRuntimes.Resolve(runtime),
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,

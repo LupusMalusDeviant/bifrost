@@ -104,7 +104,9 @@ public sealed class OperationsCli
           bifrost support-bundle [--out <pfad>] [--categories version,configuration,diagnostics,
                                  health,logs,migrations,runtime] [--log-lines <n>] [--preview]
 
-        Pfade von backup/restore gelten auf dem Rechner, auf dem der Gateway laeuft.
+        Pfade von backup/restore gelten auf dem Rechner, auf dem der Gateway laeuft, und nur im
+        Sicherungsverzeichnis (BIFROST_BACKUP_DIR, Vorgabe <Datenverzeichnis>/backups). Ein blosser
+        Name wie 'bifrost-2026-10-24.zip' liegt dort; ein Pfad ausserhalb wird abgewiesen.
         Eine Passphrase wird NIE als Argument entgegengenommen — sie stuende in der Prozessliste
         und in der Shell-Historie. Nur Umgebungsvariable oder Eingabe ohne Echo.
         Ein Vollbackup enthaelt den Key-Ring und ist so schuetzenswert wie die Instanz selbst.

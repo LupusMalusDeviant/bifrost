@@ -171,7 +171,7 @@ public sealed class ContainerIsolationE2ETests
             "/bin/echo",
             [new CliToolSpec("run", FixedArguments: ["egal"])],
             Isolation: new IsolationOptions(
-                IsolationMode.Container, Image: Image, Runtime: "gibt-es-nicht-als-runtime"));
+                IsolationMode.Container, Image: Image, Runtime: "finch")); // zulässig, aber nicht installiert
         var connector = new CliUpstreamConnector();
 
         var act = async () => await connector.ConnectAsync(

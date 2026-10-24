@@ -62,12 +62,12 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
             HostArguments: hostArguments));
 
     private Task<IUpstreamConnection> ConnectAsync(params string[] hostArguments)
-        => new WasiRuntimeConnector(Trust).ConnectAsync(
+        => new WasiRuntimeConnector(Trust, StubHost).ConnectAsync(
             new ServerId(Guid.NewGuid()), Config(hostArguments), TestContext.Current.CancellationToken);
 
     [Fact]
     public void Connector_declares_the_wasi_transport()
-        => new WasiRuntimeConnector(Trust).Kind.Should().Be(UpstreamTransportKind.Wasi);
+        => new WasiRuntimeConnector(Trust, StubHost).Kind.Should().Be(UpstreamTransportKind.Wasi);
 
     [Fact]
     public async Task Connect_performs_the_handshake_and_lists_the_components_tools()
@@ -324,5 +324,53 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
 
         await readResource.Should().ThrowAsync<NotSupportedException>();
         await getPrompt.Should().ThrowAsync<NotSupportedException>();
+    }
+
+    private UpstreamServerConfig ConfigNamingHost(string hostExecutable)
+    {
+        var config = Config([]);
+        return config with { Wasi = config.Wasi! with { HostExecutable = hostExecutable } };
+    }
+
+    /// <summary>
+    /// Ohne eingerichteten Host startet nichts — und vor allem nicht ersatzweise das Programm aus der
+    /// Konfiguration. Der Host läuft nativ; ein WASI-Upstream gilt aber als isoliert (ADR-0025).
+    /// </summary>
+    [Fact]
+    public async Task Without_an_operator_host_nothing_is_started()
+    {
+        var act = () => new WasiRuntimeConnector(Trust, hostExecutable: null).ConnectAsync(
+            new ServerId(Guid.NewGuid()), Config([]), TestContext.Current.CancellationToken);
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*kein WASI-Host eingerichtet*");
+    }
+
+    /// <summary>Der Weg am Verbot nativer Ausführung vorbei: ein beliebiges Programm als „Host".</summary>
+    [Fact]
+    public async Task A_configuration_cannot_redirect_the_host_to_another_program()
+    {
+        var act = () => new WasiRuntimeConnector(Trust, StubHost).ConnectAsync(
+            new ServerId(Guid.NewGuid()), ConfigNamingHost(Environment.ProcessPath!),
+            TestContext.Current.CancellationToken);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*ist nicht der WASI-Host dieser Instanz*");
+    }
+
+    /// <summary>
+    /// Der bloße Dateiname reicht als Verweis — so steht der Host im Image
+    /// (<c>bifrost-wasi-host</c>), und gestartet wird ohnehin der Pfad des Betreibers.
+    /// </summary>
+    [Fact]
+    public async Task The_bare_file_name_of_the_operator_host_is_accepted()
+    {
+        // Ohne ".exe" — so, wie man den Host unter Windows und Linux gleichermaßen nennt.
+        var name = Path.GetFileName(StubHost);
+        name = name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name;
+
+        await using var connection = await new WasiRuntimeConnector(Trust, StubHost).ConnectAsync(
+            new ServerId(Guid.NewGuid()), ConfigNamingHost(name), TestContext.Current.CancellationToken);
+
+        connection.Should().NotBeNull();
     }
 }

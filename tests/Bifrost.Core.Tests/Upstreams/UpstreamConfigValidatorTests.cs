@@ -330,4 +330,58 @@ public class UpstreamConfigValidatorTests
         act
             .Should().Throw<ArgumentException>();
     }
+
+    private static UpstreamServerConfig ContainerStdio(string runtime)
+    {
+        var config = TestData.StdioConfig("github");
+        return config with
+        {
+            Stdio = config.Stdio! with
+            {
+                Isolation = new IsolationOptions(IsolationMode.Container, Image: "alpine:3.20", Runtime: runtime),
+            },
+        };
+    }
+
+    /// <summary>
+    /// Die Runtime läuft nativ auf dem Host, ein Container-Upstream gilt aber als isoliert
+    /// (ADR-0025). Ein freies Feld wäre deshalb der Weg am Verbot nativer Ausführung vorbei: als
+    /// „Runtime" ließe sich jedes Programm eintragen.
+    /// </summary>
+    [Theory]
+    [InlineData("/bin/sh")]
+    [InlineData("/usr/bin/docker")]
+    [InlineData("Docker")]
+    [InlineData("docker.exe")]
+    public void A_runtime_outside_the_list_is_rejected(string runtime)
+    {
+        var act = () => UpstreamConfigValidator.Validate(ContainerStdio(runtime));
+
+        act.Should().Throw<ArgumentException>().WithMessage("*Stdio.Isolation.Runtime*nicht zulässig*");
+    }
+
+    [Theory]
+    [InlineData("docker")]
+    [InlineData("podman")]
+    [InlineData("nerdctl")]
+    [InlineData("finch")]
+    public void The_listed_runtimes_pass(string runtime)
+    {
+        var act = () => UpstreamConfigValidator.Validate(ContainerStdio(runtime));
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void The_resolved_runtime_is_the_constant_not_the_input()
+    {
+        // Gleichheit reicht nicht als Beleg: Die Rückgabe muss dieselbe interne Zeichenkette sein,
+        // damit nachweislich nichts aus der Konfiguration den Prozess startet.
+        var input = new string("docker".ToCharArray());
+
+        ReferenceEquals(ContainerRuntimes.Resolve(input), input).Should().BeFalse();
+        ContainerRuntimes.Resolve(input).Should().Be("docker");
+        var act = () => ContainerRuntimes.Resolve("/bin/sh");
+        act.Should().Throw<ArgumentException>();
+    }
 }

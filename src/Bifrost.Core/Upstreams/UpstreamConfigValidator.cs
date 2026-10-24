@@ -531,6 +531,12 @@ public static partial class UpstreamConfigValidator
                 nameof(config));
         }
 
+        if (!ContainerRuntimes.IsAllowed(isolation.Runtime))
+        {
+            throw new ArgumentException(
+                $"{subject}.Runtime: {ContainerRuntimes.Rejection(isolation.Runtime)}", nameof(config));
+        }
+
         if (isolation.MemoryLimitMb <= 0 || isolation.PidLimit <= 0 || isolation.CpuLimit <= 0
             || isolation.TmpfsSizeMb < 0)
         {

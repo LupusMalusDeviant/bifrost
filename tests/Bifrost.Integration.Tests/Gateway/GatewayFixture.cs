@@ -34,6 +34,9 @@ public class GatewayFixture : WebApplicationFactory<Program>
     /// </summary>
     protected virtual IEnumerable<KeyValuePair<string, string>> ExtraSettings => [];
 
+    /// <summary>Der WASI-Host dieser Instanz (<c>BIFROST_WASI_HOST</c>).</summary>
+    protected virtual string WasiHost => TestPaths.Executable("WasiHostStub");
+
     protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
     {
         Directory.CreateDirectory(_dataDir);
@@ -45,6 +48,10 @@ public class GatewayFixture : WebApplicationFactory<Program>
         // Betreiber sie setzen wuerde. Wer die Absage pruefen will, ueberschreibt sie in
         // ExtraSettings.
         builder.UseSetting("BIFROST_ALLOW_HOST_EXECUTION", "true");
+        // Der WASI-Host kommt aus der Betreiber-Einstellung, nicht aus der Upstream-Konfiguration
+        // (ADR-0025). Vorgabe ist der Stub; wer den echten Host braucht, nimmt
+        // RealWasiHostGatewayFixture.
+        builder.UseSetting("BIFROST_WASI_HOST", WasiHost);
         foreach (var (key, value) in ExtraSettings)
         {
             builder.UseSetting(key, value);

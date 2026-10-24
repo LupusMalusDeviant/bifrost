@@ -206,8 +206,10 @@ builder.Services.AddSingleton<IUpstreamConnector, Bifrost.Upstream.Cli.CliUpstre
 builder.Services.AddSingleton<IUpstreamConnector, Bifrost.Upstream.OpenRpc.OpenRpcUpstreamConnector>(); // Roadmap Phase 8
 // Der WASI-Connector holt die gepinnten Publisher aus dem Trust-Store (WP4) und schreibt den
 // Grant-Audit-Datensatz jedes Loads in den Audit-Pfad.
+// Der Host kommt aus der Betreiber-Einstellung, nicht aus der Upstream-Konfiguration (ADR-0025).
 builder.Services.AddSingleton<IUpstreamConnector>(sp => new Bifrost.Upstream.Wasi.WasiRuntimeConnector(
     sp.GetRequiredService<IPublisherTrustStore>(),
+    builder.Configuration[Bifrost.Upstream.Wasi.WasiRuntimeConnector.HostSettingName],
     sp.GetRequiredService<IAuditSink>(),
     sp.GetRequiredService<IConnectorPackageResolver>())); // ADR-0020, Pakete nach ADR-0016
 builder.Services.AddSingleton<IUpstreamConfigStore, EfUpstreamConfigStore>();
@@ -516,7 +518,8 @@ builder.Services.AddAuthorizationBuilder()
 // (M2/ADR-0024, WP2.7). Erst diese Zeile macht die in M2 gebauten Dienste erreichbar — und sie
 // setzt den Haken aus ADR-0024 E7: vor einer schemaaendernden Migration entsteht bei SQLite
 // automatisch eine Sicherung, ohne die nicht migriert wird.
-builder.Services.AddBifrostOperations(dataDir, dbProvider, connectionString);
+builder.Services.AddBifrostOperations(
+    dataDir, dbProvider, connectionString, builder.Configuration[Bifrost.Core.Operations.BackupLocation.SettingName]);
 
 // ── Konfigurationsimport (M4, WP4.3) ─────────────────────────────────────────
 // Der Importer aus WP4.1 und die Ablage der vorgemerkten Plaene. Erst diese Zeile macht ihn

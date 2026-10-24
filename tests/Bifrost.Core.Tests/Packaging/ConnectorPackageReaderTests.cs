@@ -233,6 +233,26 @@ public sealed class ConnectorPackageReaderTests
         act.Should().Throw<ConnectorPackageException>();
     }
 
+    /// <summary>
+    /// Nur aus erlaubten Zeichen und trotzdem ein Verweis: Ein Paket mit der Id <c>..</c> würde neben
+    /// dem Paketordner entpackt, und sein Entfernen löschte den Ordner darüber — das Datenverzeichnis.
+    /// </summary>
+    [Theory]
+    [InlineData(".")]
+    [InlineData("..")]
+    [InlineData(".quarantine")]
+    [InlineData("-strich-vorn")]
+    public void A_package_id_that_is_a_directory_reference_is_refused(string id)
+    {
+        var files = TestPackage.Files();
+        var manifest = TestPackage.WithPayloads(TestPackage.Manifest(_publisher, id), files);
+        using var package = TestPackage.Raw(manifest, _publisher.Sign, files);
+
+        var act = () => ConnectorPackageReader.Verify(package, Pinned);
+
+        act.Should().Throw<ConnectorPackageException>().WithMessage("*muss mit einem Buchstaben oder einer Ziffer beginnen*");
+    }
+
     [Fact]
     public void An_entry_point_that_is_not_declared_is_refused()
     {
