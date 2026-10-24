@@ -7,5 +7,5 @@ namespace Bifrost.Integration.Tests.Gateway;
 /// </summary>
 public sealed class RealWasiHostGatewayFixture : GatewayFixture
 {
-    protected override string WasiHost => WasiHostPaths.Locate() ?? base.WasiHost;
+    protected override string? WasiHost => WasiHostPaths.Locate() ?? base.WasiHost;
 }

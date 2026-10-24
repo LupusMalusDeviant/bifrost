@@ -34,8 +34,26 @@ public class GatewayFixture : WebApplicationFactory<Program>
     /// </summary>
     protected virtual IEnumerable<KeyValuePair<string, string>> ExtraSettings => [];
 
-    /// <summary>Der WASI-Host dieser Instanz (<c>BIFROST_WASI_HOST</c>).</summary>
-    protected virtual string WasiHost => TestPaths.Executable("WasiHostStub");
+    /// <summary>
+    /// Der WASI-Host dieser Instanz (<c>BIFROST_WASI_HOST</c>), oder <c>null</c>, wenn der Stub nicht
+    /// gebaut ist. Das kommt vor: Der Kompatibilitäts-Job baut nur sein eigenes Projekt und braucht
+    /// kein WASI. Ohne Host lehnt der Gateway WASI-Upstreams ab — die Fixture darf deshalb nicht
+    /// schon beim Start daran scheitern.
+    /// </summary>
+    protected virtual string? WasiHost
+    {
+        get
+        {
+            try
+            {
+                return TestPaths.Executable("WasiHostStub");
+            }
+            catch (FileNotFoundException)
+            {
+                return null;
+            }
+        }
+    }
 
     protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
     {
@@ -51,7 +69,10 @@ public class GatewayFixture : WebApplicationFactory<Program>
         // Der WASI-Host kommt aus der Betreiber-Einstellung, nicht aus der Upstream-Konfiguration
         // (ADR-0025). Vorgabe ist der Stub; wer den echten Host braucht, nimmt
         // RealWasiHostGatewayFixture.
-        builder.UseSetting("BIFROST_WASI_HOST", WasiHost);
+        if (WasiHost is { } wasiHost)
+        {
+            builder.UseSetting("BIFROST_WASI_HOST", wasiHost);
+        }
         foreach (var (key, value) in ExtraSettings)
         {
             builder.UseSetting(key, value);
