@@ -31,7 +31,7 @@ var config = new UpstreamServerConfig(
 
 // Vor dem Start merken, welche Prozesse dieses Namens es schon gibt — die Zeile unten soll den
 // NEUEN nennen und nicht irgendeinen.
-var name = Path.GetFileNameWithoutExtension(args[0]);
+var name = UpstreamProcessLookup.ExecutableNameOf(args[0]);
 var before = UpstreamProcessLookup.FindByExecutableName(name).ToHashSet();
 
 await using var connection = await connector.ConnectAsync(new ServerId(Guid.NewGuid()), config, CancellationToken.None);

@@ -398,12 +398,23 @@ jobs:
             --skip-dirs '**/obj' --skip-dirs '**/bin' --skip-dirs '**/target' \
             --timeout 15m --exit-code 1 --no-progress .
 
-      - name: SARIF in die Code-Scanning-Ansicht
-        if: always() && github.event.pull_request.head.repo.fork != true
+      # Je Bericht ein Upload mit eigener Kategorie: Seit 2025-07 lehnt Code Scanning mehrere
+      # Runs unter derselben Kategorie ab — der Verzeichnis-Upload unter `trivy` war deshalb rot.
+      # `hashFiles` statt nur `always()`: bricht der Bau vor dem Scan ab, fehlt die Datei, und der
+      # Upload soll dann nicht einen zweiten, irrefuehrenden Fehler beisteuern.
+      - name: SARIF in die Code-Scanning-Ansicht (Image)
+        if: always() && github.event.pull_request.head.repo.fork != true && hashFiles('security-reports/trivy-image.sarif') != ''
         uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
         with:
-          sarif_file: security-reports
-          category: trivy
+          sarif_file: security-reports/trivy-image.sarif
+          category: trivy-image
+
+      - name: SARIF in die Code-Scanning-Ansicht (Arbeitsbaum)
+        if: always() && github.event.pull_request.head.repo.fork != true && hashFiles('security-reports/trivy-fs.sarif') != ''
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        with:
+          sarif_file: security-reports/trivy-fs.sarif
+          category: trivy-fs
 
       - name: SARIF als Artefakt
         if: always()

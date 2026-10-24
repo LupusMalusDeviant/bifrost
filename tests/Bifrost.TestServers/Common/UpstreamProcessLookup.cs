@@ -115,13 +115,35 @@ public static class UpstreamProcessLookup
             }
 
             if (cmdline.Split('\0', StringSplitOptions.RemoveEmptyEntries)
-                .Any(argument => Path.GetFileNameWithoutExtension(argument)
-                    .Equals(executableName, StringComparison.Ordinal)))
+                .Any(argument => IsExecutable(Path.GetFileName(argument), executableName)))
             {
                 found.Add(pid);
             }
         }
 
         return found;
+    }
+
+    /// <summary>
+    /// Der Apphost unter Linux heißt <c>Bifrost.TestServers.EchoServer</c> — ohne Endung. Ein
+    /// <see cref="Path.GetFileNameWithoutExtension(string)"/> hielte <c>.EchoServer</c> für die Endung
+    /// und lieferte <c>Bifrost.TestServers</c>: kein Treffer, nie. Deshalb der volle Name, und die
+    /// Endung nur dort abziehen, wo es wirklich eine ist (<c>dotnet X.dll</c>).
+    /// </summary>
+    private static bool IsExecutable(string fileName, string executableName) =>
+        fileName.Equals(executableName, StringComparison.Ordinal)
+        || fileName.Equals(executableName + ".dll", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Der Programmname zu einem Pfad, so wie <see cref="FindByExecutableName"/> ihn erwartet: nur
+    /// <c>.exe</c>/<c>.dll</c> wird abgezogen — aus demselben Grund wie oben.
+    /// </summary>
+    public static string ExecutableNameOf(string path)
+    {
+        var fileName = Path.GetFileName(path);
+        return fileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            || fileName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+            ? fileName[..^4]
+            : fileName;
     }
 }

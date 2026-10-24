@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- xUnit v3: Testprojekte sind eigenstaendige Executables, der Runner laeuft im selben Prozess. -->
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Bifrost.Ui.E2E</RootNamespace>
+    <Description>WP5.5: Browser-E2E. Faehrt die kritischen Wege der Oberflaeche gegen eine echte
+      Instanz mit echter Datenbank, ueber TLS und mit dem ausgelieferten Anmeldeformular.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Bifrost.Server\Bifrost.Server.csproj" />
+    <ProjectReference Include="..\..\src\Bifrost.Persistence.Migrations.Sqlite\Bifrost.Persistence.Migrations.Sqlite.csproj" />
+    <!-- Nur Build-Reihenfolge: der TestServer wird als Upstream angeschlossen. -->
+    <ProjectReference Include="..\Bifrost.TestServers\EchoServer\Bifrost.TestServers.EchoServer.csproj" ReferenceOutputAssembly="false" />
+
+    <!-- Derselbe Prozess-Harness wie in WP5.3/WP5.4, verlinkt statt nachgebaut: Wie eine Instanz
+         hochkommt, einen Zugang bekommt und wieder abgeraeumt wird, gibt es genau einmal. -->
+    <Compile Include="..\Bifrost.Performance.Tests\Harness\GatewayProcess.cs" Link="Harness\GatewayProcess.cs" />
+
+    <!-- FR-P056: Haengt ein Lauf, entsteht ein Bericht mit Sequenz und aktiven
+         Kindprozessen. Verlinkt statt nachgebaut — vier Projekte starten echte Prozesse,
+         und vier Fassungen davon waeren vier Wahrheiten. -->
+    <Compile Include="..\Bifrost.TestServers\Common\HangReport.cs" Link="Harness\HangReport.cs" />
+    <Compile Include="..\Bifrost.TestServers\Common\HangWatchdog.cs" Link="Harness\HangWatchdog.cs" />
+    <Compile Include="..\Bifrost.TestServers\Common\UpstreamProcessLookup.cs" Link="Harness\UpstreamProcessLookup.cs" />
+    <PackageReference Include="Microsoft.Playwright" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+  </ItemGroup>
+
+</Project>

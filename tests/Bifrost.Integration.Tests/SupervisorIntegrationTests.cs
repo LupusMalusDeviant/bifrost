@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using AwesomeAssertions;
 using Bifrost.Abstractions;
+using Bifrost.TestServers.Common;
 using Xunit;
 
 namespace Bifrost.Integration.Tests;
@@ -116,13 +117,13 @@ public class SupervisorIntegrationTests
         await IntegrationSupport.WaitUntilAsync(
             () => supervisor.GetStatus(id)?.State == UpstreamState.Healthy);
 
-        Process.GetProcessesByName("Bifrost.TestServers.EchoServer").Length
+        UpstreamProcessLookup.FindByExecutableName("Bifrost.TestServers.EchoServer").Count
             .Should().BeGreaterThan(baseline, "der Upstream-Prozess muss laufen");
 
         await supervisor.DisposeAsync();
 
         await IntegrationSupport.WaitUntilAsync(
-            () => Process.GetProcessesByName("Bifrost.TestServers.EchoServer").Length == baseline,
+            () => UpstreamProcessLookup.FindByExecutableName("Bifrost.TestServers.EchoServer").Count == baseline,
             timeoutMs: 10000,
             because: "nach Host-Shutdown darf kein Kindprozess überleben (WP1-DoD, ADR-0005)");
     }
@@ -133,7 +134,7 @@ public class SupervisorIntegrationTests
         var stableSamples = 0;
         for (var i = 0; i < 40; i++)
         {
-            var count = Process.GetProcessesByName("Bifrost.TestServers.EchoServer").Length;
+            var count = UpstreamProcessLookup.FindByExecutableName("Bifrost.TestServers.EchoServer").Count;
             if (count == last)
             {
                 if (++stableSamples >= 6)

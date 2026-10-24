@@ -75,3 +75,7 @@ paths = [
 # haelt genau diese neunzehn Fundstellen fest und laesst jeden neuen Fund durch.
 # Der Unterschied ist wichtig: ein Pfad-Ausschluss gilt fuer alle Zukunft, eine Baseline
 # nur fuer den festgehaltenen Stand.
+#
+# Nachgetragen 2026-10-24: `2fd942d`, docs/plans/product-readiness-status.md:645. Der
+# "Schluessel" ist das Wort `72-Stunden-Soak` hinter "OAuth-Anbieter," — Prosa, kein Wert.
+# Gepinnt per Baseline statt Pfad, damit ein spaeterer echter Fund in derselben Datei rot wird.
