@@ -8,7 +8,7 @@ rust-version = "1.94"
 [dependencies]
 anyhow = "1.0.100"
 base64 = "0.22.1"
-ed25519-dalek = "2.1.1"
+ed25519-dalek = "3.0.0"
 # HMAC-SHA256 über die Platten-Kompilate (WP5). RustCrypto wie sha2, teilt dessen digest-Basis;
 # `verify_slice` vergleicht in konstanter Zeit. Kein Handbau von HMAC.
 hmac = "0.12.1"
