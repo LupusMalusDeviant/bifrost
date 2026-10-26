@@ -96,7 +96,7 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: CodeQL init
-        uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: ${{ matrix.language }}
           # `security-and-quality` statt der Vorgabe `security`: Das Projekt haelt einen
@@ -114,7 +114,7 @@ jobs:
 
       - name: CodeQL analyze
         id: analyze
-        uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           category: /language:${{ matrix.language }}
           output: codeql-sarif
@@ -319,7 +319,7 @@ jobs:
         # Forks bekommen kein `security-events: write`; ohne die Bedingung schluege der
         # Upload dort fehl und wuerde einen Fund als Werkzeugfehler tarnen.
         if: always() && github.event.pull_request.head.repo.fork != true
-        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: security-reports/gitleaks.sarif
           category: gitleaks
@@ -404,14 +404,14 @@ jobs:
       # Upload soll dann nicht einen zweiten, irrefuehrenden Fehler beisteuern.
       - name: SARIF in die Code-Scanning-Ansicht (Image)
         if: always() && github.event.pull_request.head.repo.fork != true && hashFiles('security-reports/trivy-image.sarif') != ''
-        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: security-reports/trivy-image.sarif
           category: trivy-image
 
       - name: SARIF in die Code-Scanning-Ansicht (Arbeitsbaum)
         if: always() && github.event.pull_request.head.repo.fork != true && hashFiles('security-reports/trivy-fs.sarif') != ''
-        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: security-reports/trivy-fs.sarif
           category: trivy-fs
