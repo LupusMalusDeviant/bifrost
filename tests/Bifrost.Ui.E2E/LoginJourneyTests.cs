@@ -41,8 +41,10 @@ public sealed class LoginJourneyTests
 
         // Abmelden ist ein Form-POST wie die Anmeldung — ein Klick auf einen Link waere hier der
         // falsche Nachweis.
+        // Auch hier bis zum Ende warten: Sonst bricht das nächste GotoAsync die Abmeldung ab, und
+        // der Test prüfte eine Sitzung, die noch besteht (in WebKit beobachtet, 2026-11-16).
         await session.Page.GotoAsync("");
-        await session.Page.ClickAsync("text=Abmelden");
+        await session.SubmitAndWaitToLeaveAsync("text=Abmelden", session.Page.Url);
 
         await session.Page.GotoAsync("servers");
         session.Page.Url.Should().Contain("login", "ohne Sitzung fuehrt jede geschuetzte Seite zurueck zur Anmeldung");
@@ -84,7 +86,7 @@ public sealed class LoginJourneyTests
         (await session.Page.InputValueAsync("#password")).Should().NotBeEmpty(
             "ein getipptes Passwort verschwindet nicht von selbst");
 
-        await session.Page.ClickAsync("button[type=submit]");
+        await session.SubmitAndWaitToLeaveAsync("button[type=submit]", session.Page.Url);
 
         session.Page.Url.Should().NotContain("login", "richtige Zugangsdaten führen in die Oberfläche");
     }

@@ -56,6 +56,13 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   schon einen Circuit aufgebaut hatte; ohne ihn fielen lokal 8 bis 9 von 19 Wegen. Die Oberfläche
   sagt jetzt selbst, ab wann sie bedienbar ist (`data-interactive` an `circuit-state`), und die Wege
   warten auf diesen Wert.
+- **Die Browserwege warteten nicht auf das Ende von Anmeldung und Abmeldung** (Befund vom
+  2026-11-16, WebKit: 16 von 19 Wegen). Der Klick auf „Anmelden" kehrt in WebKit zurück, bevor die
+  Antwort da ist; der nächste Seitenaufruf des Weges brach die Anmeldung ab („POST /auth/login —
+  Load request cancelled"), und der Weg stand unangemeldet wieder auf der Anmeldeseite. Die Wege
+  warten jetzt, bis die Seite das Formular verlassen hat und die Zielseite gelesen ist. Ein Weg,
+  der dabei oder beim Warten auf den Circuit die Frist reißt, nennt Adresse, Seitenzustand und was
+  der Browser gemeldet hat.
 - **Der Skip-Wächter der CI brach ab, wenn kein Test übersprungen war** (Befund vom 2026-11-16).
   `grep` endet mit 1, wenn es nichts findet, und die Shell des Runners läuft mit `-e -o pipefail`:
   Der Schritt scheiterte also genau im Sollzustand, ohne Zählzeile und ohne Meldung. Verdeckt war
