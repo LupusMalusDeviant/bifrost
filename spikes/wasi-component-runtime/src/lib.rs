@@ -29,7 +29,14 @@ const NEEDS_RANDOM_COMPONENT: &str = include_str!("../fixtures/needs-random.comp
 #[cfg(test)]
 const NEEDS_CLOCK_COMPONENT: &str = include_str!("../fixtures/needs-clock.component.wat");
 const CONTROL_PLANE_WIT: &str = include_str!("../../../docs/spikes/fixtures/control-plane.wit");
-pub const RUNTIME_VERSION: &str = "wasmtime-47.0.2";
+/// Die Runtime, wie sie im Audit, im Health-Bericht und im Schlüssel des Modul-Caches steht.
+///
+/// Der Wert muss der gepinnten wasmtime-Version entsprechen — nicht nur der Ehrlichkeit halber:
+/// Er trennt im Cache die Kompilate verschiedener Runtime-Stände. Stand er nach einem Sprung noch
+/// auf dem alten Wert (so geschehen bei 47.0.2 → 47.0.3 → 48.0.8), meldet das Audit eine Runtime,
+/// die nicht läuft, und der Cache hält alte und neue Kompilate für dieselben. Der Test
+/// `the_runtime_version_names_the_pinned_wasmtime` hält ihn deshalb gegen `Cargo.lock`.
+pub const RUNTIME_VERSION: &str = "wasmtime-48.0.8";
 const WASI_GUEST_COMPONENT: &[u8] = include_bytes!("../fixtures/wasi-p2-guest.component.wasm");
 /// Mit `wasm32-wasip2` gebauter Reactor-Guest, der `mcpmcp:spike/tools` exportiert — die
 /// Gegenprobe zum Interface-Aufruf. Quelle: `guest-interface/`, Vertrag:
@@ -1604,7 +1611,7 @@ pub fn compare_with_container(image: &str, samples: usize) -> Result<IsolationCo
 
     Ok(IsolationComparisonReport {
         samples,
-        wasi_runtime: "wasmtime-47.0.2",
+        wasi_runtime: RUNTIME_VERSION,
         wasi_policy: "zero imports, fuel, epoch deadline, 128-KiB memory ceiling",
         wasi_cold_start_milliseconds: timing_summary(wasi_timings),
         container_runtime: runtime,
@@ -2121,7 +2128,7 @@ mod tests {
 
         assert_eq!(record.module_sha256, sha256_hex(b"component-bytes"));
         assert_eq!(record.publisher_key_id, "publisher-id");
-        assert_eq!(record.runtime, "wasmtime-47.0.2");
+        assert_eq!(record.runtime, RUNTIME_VERSION);
         assert_eq!(record.granted_filesystem_preopens, ["/srv/data"]);
         assert_eq!(record.granted_network_allow, ["example:443"]);
         assert_eq!(record.granted_secrets, ["db"]);
@@ -2796,6 +2803,30 @@ mod tests {
             assert_eq!(outcome.result, Some(serde_json::json!(7)));
         }
         Ok(())
+    }
+
+    /// `RUNTIME_VERSION` wird von Hand gepflegt und stand zweimal auf einem alten Wert. Gegen das
+    /// Lockfile geprüft, weil dort steht, was wirklich gebaut wird.
+    #[test]
+    fn the_runtime_version_names_the_pinned_wasmtime() {
+        let lock = include_str!("../Cargo.lock");
+        let mut lines = lock.lines().map(str::trim);
+        let pinned = loop {
+            let line = lines.next().expect("Cargo.lock nennt das Paket wasmtime");
+            if line == r#"name = "wasmtime""# {
+                let version = lines.next().expect("auf den Namen folgt die Version");
+                break version
+                    .strip_prefix(r#"version = ""#)
+                    .and_then(|rest| rest.strip_suffix('"'))
+                    .expect("die Zeile nach dem Namen ist `version = \"…\"`");
+            }
+        };
+
+        assert_eq!(
+            RUNTIME_VERSION,
+            format!("wasmtime-{pinned}"),
+            "RUNTIME_VERSION muss mit jedem wasmtime-Sprung mitziehen"
+        );
     }
 
     /// Welche Interfaces der Linker anbietet, ist die eigentliche Durchsetzung. Geprüft wird über

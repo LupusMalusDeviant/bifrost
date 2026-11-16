@@ -47,6 +47,10 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   (`rust-toolchain.toml`, `Cargo.toml`, Bau-Image im `Dockerfile`). Für Betreiber des Images ändert
   sich nichts; wer den Host selbst baut, braucht die neue Toolchain. Preopens bleiben nur lesend —
   die Schnittstelle dafür heißt in 48 `FsPerms::ReadOnly`.
+- **Die Runtime-Kennung des WASI-Hosts nennt die wasmtime, die läuft.** Im Audit jedes Grants und
+  im Health-Bericht stand seit dem Sprung auf 47.0.3 noch `wasmtime-47.0.2`; jetzt
+  `wasmtime-48.0.8`. Die Kennung ist auch Teil des Schlüssels im Modul-Cache und trennt dort die
+  Kompilate verschiedener Runtime-Stände. Ein Test hält sie künftig gegen `Cargo.lock`.
 
 ### Behoben
 
