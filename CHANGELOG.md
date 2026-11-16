@@ -73,6 +73,11 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   warten jetzt, bis die Seite das Formular verlassen hat und die Zielseite gelesen ist. Ein Weg,
   der dabei oder beim Warten auf den Circuit die Frist reißt, nennt Adresse, Seitenzustand und was
   der Browser gemeldet hat.
+- **Der Test zur Sicherung bei aktivem WAL flatterte** (Befund vom 2026-11-16, CI unter Windows).
+  Die Verbindung, die das WAL offen halten sollte, hatte die Datenbank nie gelesen und hielt es
+  deshalb nicht fest. Leerte ein parallel laufender Test die Verbindungspools, schrieb SQLite das WAL
+  in die Hauptdatei, und die Vorbedingung des Tests war dahin. Die Verbindung liest jetzt einmal.
+  An der Sicherung selbst war nichts falsch.
 - **Der Skip-Wächter der CI brach ab, wenn kein Test übersprungen war** (Befund vom 2026-11-16).
   `grep` endet mit 1, wenn es nichts findet, und die Shell des Runners läuft mit `-e -o pipefail`:
   Der Schritt scheiterte also genau im Sollzustand, ohne Zählzeile und ohne Meldung. Verdeckt war
