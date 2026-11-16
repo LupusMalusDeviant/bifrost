@@ -77,17 +77,27 @@ public sealed class SqliteWalBackupTests : IAsyncLifetime
             new SqliteConnectionStringBuilder { DataSource = dbFile, Pooling = false }.ConnectionString);
         await keepAlive.OpenAsync(ct);
 
-        // Den selbsttätigen Checkpoint abschalten, sonst prüft dieser Test das Gegenteil dessen,
-        // was er behauptet: SQLite schiebt das WAL ab etwa 1000 Seiten von allein in die
-        // Hauptdatei, und dann steht der Zeuge dort, wo er laut Vorbedingung nicht sein soll.
+        // **Offen allein hält das WAL nicht fest — die Verbindung muss die Datenbank gelesen haben.**
+        // Erst dann hängt sie am WAL und hält ihre Sperre auf der Hauptdatei. Ohne das ist für
+        // SQLite die *schreibende*, gepoolte Verbindung die letzte am WAL: Schließt sie, wird das
+        // WAL in die Hauptdatei geschrieben und gelöscht, und der Zeuge steht dort, wo er laut
+        // Vorbedingung nicht sein soll.
         //
-        // Isoliert lief der Test gruen, im Gesamtlauf rot — die Auslastung entscheidet, ob der
-        // Checkpoint dazwischenkommt. Dieselbe Zeile steht aus demselben Grund seit WP2.1 in
-        // BackupTestKit.CreateDatabaseWithOpenWal; sie fehlte hier.
-        await using (var pragma = keepAlive.CreateCommand())
+        // Geschlossen wird sie von aussen: `SqliteConnection.ClearAllPools()` gilt für den ganzen
+        // Prozess, und andere Testklassen dieses Projekts rufen es auf, während dieser Test läuft.
+        // Deshalb war der Test isoliert grün und im Gesamtlauf selten rot (CI, Windows,
+        // 2026-11-16). Nachgestellt mit einem `ClearAllPools()` direkt nach dem Schreiben: ohne die
+        // Abfrage hier ist das WAL weg und der Zeuge in der Hauptdatei, mit ihr bleibt beides, wie
+        // der Test es braucht.
+        //
+        // Vorher stand hier `PRAGMA wal_autocheckpoint=0`, mit der Begründung, SQLite schiebe das
+        // WAL ab 1000 Seiten von allein zurück. Gemessen sind es rund 150 Seiten — die Schwelle
+        // wird nie erreicht —, und die Einstellung gilt nur für die Verbindung, die sie setzt;
+        // diese hier schreibt nicht.
+        await using (var read = keepAlive.CreateCommand())
         {
-            pragma.CommandText = "PRAGMA wal_autocheckpoint=0";
-            await pragma.ExecuteNonQueryAsync(ct);
+            read.CommandText = "SELECT count(*) FROM sqlite_master";
+            await read.ExecuteScalarAsync(ct);
         }
 
         await using (var db = await factory.CreateDbContextAsync(ct))
