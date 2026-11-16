@@ -490,12 +490,9 @@ fn apply_grants_to_context(
             .with_context(|| format!("Preopen-Wurzel '{root}' ist nicht auflösbar"))?;
         // Nur lesend: Schreibrechte sind im Grant-Modell noch nicht ausdrückbar und werden
         // deshalb nicht stillschweigend vergeben.
-        builder.preopened_dir(
-            &canonical,
-            root,
-            wasmtime_wasi::DirPerms::READ,
-            wasmtime_wasi::FilePerms::READ,
-        )?;
+        // Seit wasmtime-wasi 48 ein einziger Wert statt getrennter Rechte für Verzeichnis und
+        // Datei; `ReadOnly` deckt beides ab.
+        builder.preopened_dir(&canonical, root, wasmtime_wasi::FsPerms::ReadOnly)?;
     }
 
     if !grants.network_allow.is_empty() {
@@ -2801,16 +2798,37 @@ mod tests {
         Ok(())
     }
 
-    /// Welche Interfaces der Linker anbietet, ist die eigentliche Durchsetzung. `Linker::instance`
-    /// schlägt bei einem bereits definierten Namen fehl — damit lässt sich die Politik für
-    /// Kategorien prüfen, deren Schnittstellen zu groß sind, um sie als WAT-Fixture zu bauen.
+    /// Welche Interfaces der Linker anbietet, ist die eigentliche Durchsetzung. Geprüft wird über
+    /// das Verbot, einen Namen zweimal zu vergeben (`allow_shadowing` ist aus, das ist wasmtimes
+    /// Vorgabe): Lässt sich unter dem Namen des Interfaces an der Wurzel noch etwas definieren,
+    /// war er frei; scheitert es mit „defined twice", ist das Interface gelinkt. So lässt sich
+    /// die Politik auch für Kategorien prüfen, deren Schnittstellen zu groß sind, um sie als
+    /// WAT-Fixture nachzubauen.
+    ///
+    /// Zwei Proben taugen dafür **nicht**, beide beim Sprung auf wasmtime 48.0.8 gesehen:
+    /// `linker.instance(name).is_err()` (so stand es bis 47) — seit 48 öffnet `Linker::instance`
+    /// eine vorhandene Instanz wieder, statt zu scheitern, die Probe meldet also nie „gelinkt".
+    /// Und ein Component, das das Interface als leere Instanz importiert — den Import erfüllt
+    /// der Linker auch dann, wenn der Name gar nicht definiert ist, die Probe meldet also immer
+    /// „gelinkt".
     #[test]
     fn only_granted_interfaces_are_linked() -> Result<()> {
         fn is_linked(grants: &CapabilityGrants, interface: &str) -> Result<bool> {
             let engine = hardened_engine(false, false)?;
             let mut linker = Linker::<WasiGuestHost>::new(&engine);
             add_granted_wasi_to_linker(&mut linker, grants)?;
-            Ok(linker.instance(interface).is_err())
+            let attempt = linker.root().func_wrap(
+                interface,
+                |_store: wasmtime::StoreContextMut<'_, WasiGuestHost>, (): ()| Ok(()),
+            );
+            match attempt {
+                Ok(()) => Ok(false),
+                // Nur „schon vergeben" zählt als Ja. Jeder andere Fehler ist ein Fehler der
+                // Probe und darf nicht als Antwort durchgehen.
+                Err(error) if format!("{error:#}").contains("defined twice") => Ok(true),
+                Err(error) => Err(anyhow::Error::from(error)
+                    .context(format!("Probe für {interface} ist gescheitert"))),
+            }
         }
 
         // Die Namen tragen die WASI-Version der gepinnten wasmtime-wasi-Bindings (0.2.12);

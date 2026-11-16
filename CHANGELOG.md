@@ -37,6 +37,16 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   `BIFROST_BACKUP_DIR` (Vorgabe `<BIFROST_DATA_DIR>/backups`); ein bloßer Name liegt dort, ein Pfad
   außerhalb wird abgewiesen. *Upgrade:* `--out /irgendwo/x.zip` durch einen Namen ersetzen oder
   `BIFROST_BACKUP_DIR` auf den gewünschten Ort setzen; vorhandene Archive dorthin verschieben.
+- **WASI-Sandbox: wasmtime 47.0.3 → 48.0.8** (Befund der Gates vom 2026-11-16, nicht aus CodeQL).
+  `cargo audit` meldete für den Host 30 Schwachstellen: 23 in `wasmtime`, 6 in `wasmtime-wasi`, eine
+  in `cap-primitives` — darunter drei kritische (RUSTSEC-2026-0327, -0379, -0482); Trivy meldete
+  dazu CVE-2026-115893. Betroffen war genau die Schicht, die fremde Components einsperrt. Die 47er-Linie bekommt
+  keine Korrekturen mehr; 48 ist die gepflegte Langzeitlinie. Mit angehoben: `cap-primitives` 4.0.3,
+  `rustix` 1.1.6, `tokio` 1.54.1, `chacha20` 0.10.2 (drei Warnungen: unsound, unsound, yanked) und
+  die wasm-tools-Crates auf 254.2. Der Host braucht dafür **Rust 1.95** statt 1.94
+  (`rust-toolchain.toml`, `Cargo.toml`, Bau-Image im `Dockerfile`). Für Betreiber des Images ändert
+  sich nichts; wer den Host selbst baut, braucht die neue Toolchain. Preopens bleiben nur lesend —
+  die Schnittstelle dafür heißt in 48 `FsPerms::ReadOnly`.
 
 ### Behoben
 

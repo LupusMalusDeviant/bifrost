@@ -3,7 +3,7 @@ name = "bifrost-wasi-component-spike"
 version = "0.1.0"
 edition = "2024"
 publish = false
-rust-version = "1.94"
+rust-version = "1.95"
 
 [dependencies]
 anyhow = "1.0.100"
@@ -17,7 +17,7 @@ getrandom = "0.4.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10.9"
-wasmtime = { version = "=47.0.3", default-features = false, features = [
+wasmtime = { version = "=48.0.8", default-features = false, features = [
   "anyhow",
   "component-model",
   "cranelift",
@@ -25,10 +25,10 @@ wasmtime = { version = "=47.0.3", default-features = false, features = [
   "std",
   "wat",
 ] }
-wasmtime-wasi = "=47.0.3"
-wat = "=1.254.0"
-wit-parser = { version = "=0.254.0", default-features = false, features = [
+wasmtime-wasi = "=48.0.8"
+wat = "=1.254.2"
+wit-parser = { version = "=0.254.2", default-features = false, features = [
   "decoding",
   "std",
 ] }
-wit-component = { version = "=0.254.0", features = ["dummy-module"] }
+wit-component = { version = "=0.254.2", features = ["dummy-module"] }
