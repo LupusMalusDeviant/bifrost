@@ -35,6 +35,15 @@ public sealed class TraceabilityTests
     private static readonly string[] Stati = ["erfuellt", "teilweise", "offen", "entfaellt"];
     private static readonly string[] Levels = ["must", "should", "could"];
 
+    /// <summary>Der versionierte Stellvertreter des unversionierten Lastenhefts, neben der Matrix.</summary>
+    private const string IdListFile = "lastenheft-anforderungen.txt";
+
+    /// <summary>So steht eine Anforderung im Lastenheft: <c>- **FR-P001 (M): …</c>.</summary>
+    private static readonly Regex RequirementHeading =
+        new(@"^- \*\*((?:FR|NFR)-P\d+) \([MSC]\):", RegexOptions.Multiline);
+
+    private static readonly Regex RequirementId = new(@"^(?:FR|NFR)-P\d+$");
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
@@ -48,24 +57,76 @@ public sealed class TraceabilityTests
     /// <summary>
     /// <b>Keine weggelassene Anforderung.</b> Was nicht abgedeckt ist, steht als <c>offen</c> drin
     /// und sieht offen aus — der Unterschied zwischen einer Rückverfolgung und einer Werbeaussage.
-    /// Geprüft wird gegen das Lastenheft selbst: Wer dort eine Anforderung ergänzt, färbt diesen
-    /// Lauf rot, bis sie hier eine Zeile hat.
+    /// <para>
+    /// Geprüft wird gegen die versionierte Id-Liste des Lastenhefts, nicht gegen das Lastenheft
+    /// selbst: Das liegt bewusst nicht im Repository (<c>.gitignore</c>, <c>docs/produktreife/</c>)
+    /// und fehlt deshalb in jedem CI-Checkout. Ein Test, der eine Datei liest, die es dort nie
+    /// gibt, prüft dort nichts — er ist nur rot. Dass die Liste dem Lastenheft entspricht, hält
+    /// <see cref="The_id_list_mirrors_the_lastenheft_wherever_it_is_present"/> fest.
+    /// </para>
     /// </summary>
     [Fact]
     public void Every_requirement_of_the_lastenheft_has_a_row()
     {
-        var document = Load();
-        var declared = document.Requirements.Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
+        var declared = Load().Requirements.Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
+        var listed = LoadIdList().ToHashSet(StringComparer.Ordinal);
 
-        var inSource = new Regex(@"^- \*\*((?:FR|NFR)-P\d+) \([MSC]\):", RegexOptions.Multiline)
-            .Matches(File.ReadAllText(Path.Combine(RepoTree.Root, document.Source)))
+        _output.WriteLine($"Id-Liste: {listed.Count} · Matrix: {declared.Count}");
+
+        listed.Except(declared).Should().BeEmpty("jede Anforderung braucht eine Zeile — auch eine offene");
+        declared.Except(listed).Should().BeEmpty("eine Zeile ohne Anforderung im Lastenheft ist erfunden");
+    }
+
+    /// <summary>
+    /// Die Id-Liste ist ein Stellvertreter, und ein Stellvertreter mit Tippfehlern oder Dubletten
+    /// täuscht eine Zahl vor. Leer darf sie auch nicht sein: Gegen eine leere Liste bestünde nur
+    /// eine leere Matrix.
+    /// </summary>
+    [Fact]
+    public void The_id_list_is_well_formed()
+    {
+        var listed = LoadIdList();
+
+        listed.Should().NotBeEmpty();
+        listed.Should().OnlyContain(id => RequirementId.IsMatch(id), "jede Zeile ist genau eine Anforderungs-Id");
+        listed.Should().OnlyHaveUniqueItems();
+    }
+
+    /// <summary>
+    /// <b>Die Liste entspricht dem Lastenheft</b> — überall dort, wo das Lastenheft liegt.
+    /// <para>
+    /// Das ist die Stelle, an der eine neue Anforderung auffällt: Wer sie im Lastenheft ergänzt,
+    /// färbt diesen Lauf auf seinem Rechner rot, bis Liste und Matrix nachgezogen sind. Fehlt das
+    /// Lastenheft (CI, frischer Klon, Worktree), gibt es nichts zu vergleichen; der Test besteht
+    /// dann und sagt es in der Ausgabe. Ein Skip wäre ehrlicher gemeint, aber schlechter: Er
+    /// stünde in jedem CI-Lauf, und ein Skip, der immer da ist, sieht niemand mehr.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void The_id_list_mirrors_the_lastenheft_wherever_it_is_present()
+    {
+        var source = Path.Combine(RepoTree.Root, Load().Source);
+        if (!File.Exists(source))
+        {
+            _output.WriteLine(
+                $"Lastenheft nicht vorhanden ({Load().Source} ist nicht versioniert) — "
+                + "der Abgleich der Id-Liste mit dem Lastenheft ist in diesem Lauf NICHT gelaufen.");
+            return;
+        }
+
+        var inSource = RequirementHeading
+            .Matches(File.ReadAllText(source))
             .Select(m => m.Groups[1].Value)
             .ToHashSet(StringComparer.Ordinal);
+        var listed = LoadIdList().ToHashSet(StringComparer.Ordinal);
 
-        _output.WriteLine($"Lastenheft: {inSource.Count} · Matrix: {declared.Count}");
+        _output.WriteLine($"Lastenheft: {inSource.Count} · Id-Liste: {listed.Count}");
 
-        inSource.Except(declared).Should().BeEmpty("jede Anforderung braucht eine Zeile — auch eine offene");
-        declared.Except(inSource).Should().BeEmpty("eine Zeile ohne Anforderung im Lastenheft ist erfunden");
+        inSource.Should().NotBeEmpty("ein Lastenheft ohne erkannte Anforderung heißt, dass das Muster nicht mehr passt");
+        inSource.Except(listed).Should().BeEmpty(
+            $"das Lastenheft kennt Anforderungen, die in {IdListFile} fehlen — Liste und Matrix nachziehen");
+        listed.Except(inSource).Should().BeEmpty(
+            $"{IdListFile} nennt Anforderungen, die das Lastenheft nicht (mehr) kennt");
     }
 
     /// <summary>
@@ -155,6 +216,12 @@ public sealed class TraceabilityTests
         open.Should().OnlyContain(r => !string.IsNullOrWhiteSpace(r.Note),
             "gerade die offenen Must-Anforderungen brauchen einen Grund");
     }
+
+    /// <summary>Die Ids aus der versionierten Liste: eine je Zeile, <c>#</c> leitet einen Kommentar ein.</summary>
+    private static List<string> LoadIdList()
+        => [.. File.ReadAllLines(Path.Combine(RepoTree.Root, "docs", "acceptance", IdListFile))
+            .Select(line => line.Trim())
+            .Where(line => line.Length > 0 && !line.StartsWith('#'))];
 
     private static TraceabilityDocument Load()
         => JsonSerializer.Deserialize<TraceabilityDocument>(

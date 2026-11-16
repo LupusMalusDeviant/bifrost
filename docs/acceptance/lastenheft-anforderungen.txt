@@ -1,0 +1,88 @@
+# Die Anforderungs-Ids des Lastenhefts — eine Id je Zeile.
+#
+# Das Lastenheft selbst (docs/produktreife/BIFROST_Produktreife_01_Lastenheft.md) ist bewusst
+# nicht versioniert: Es kommt von aussen und wird dort gepflegt (.gitignore). In einem
+# CI-Checkout und in jedem Worktree fehlt es deshalb. Diese Liste ist sein versionierter
+# Stellvertreter, damit die Rueckverfolgung ueberall geprueft werden kann:
+#
+#   Lastenheft  <->  diese Liste   nur dort, wo das Lastenheft liegt
+#   diese Liste <->  Matrix        ueberall, auch in der CI
+#
+# Beides prueft TraceabilityTests. Kommt im Lastenheft eine Anforderung dazu oder faellt eine
+# weg, wird der Abgleich dort rot, wo das Lastenheft liegt — dann diese Liste und
+# docs/acceptance/traceability.json im selben Commit nachziehen.
+#
+# Zeilen mit '#' und Leerzeilen zaehlen nicht.
+
+FR-P001
+FR-P002
+FR-P003
+FR-P004
+FR-P005
+FR-P006
+FR-P007
+FR-P008
+FR-P010
+FR-P011
+FR-P012
+FR-P013
+FR-P014
+FR-P015
+FR-P016
+FR-P017
+FR-P020
+FR-P021
+FR-P022
+FR-P023
+FR-P024
+FR-P025
+FR-P026
+FR-P027
+FR-P028
+FR-P030
+FR-P031
+FR-P032
+FR-P033
+FR-P034
+FR-P035
+FR-P036
+FR-P040
+FR-P041
+FR-P042
+FR-P043
+FR-P044
+FR-P045
+FR-P046
+FR-P047
+FR-P048
+FR-P050
+FR-P051
+FR-P052
+FR-P053
+FR-P054
+FR-P055
+FR-P056
+FR-P060
+FR-P061
+FR-P062
+FR-P063
+FR-P064
+FR-P065
+FR-P070
+FR-P071
+FR-P072
+FR-P073
+FR-P074
+FR-P075
+FR-P080
+FR-P081
+FR-P082
+FR-P083
+FR-P084
+FR-P085
+FR-P086
+FR-P090
+FR-P091
+FR-P092
+FR-P093
+FR-P094
