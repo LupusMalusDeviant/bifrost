@@ -75,9 +75,11 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   der Browser gemeldet hat.
 - **Der Test zur Sicherung bei aktivem WAL flatterte** (Befund vom 2026-11-16, CI unter Windows).
   Die Verbindung, die das WAL offen halten sollte, hatte die Datenbank nie gelesen und hielt es
-  deshalb nicht fest. Leerte ein parallel laufender Test die Verbindungspools, schrieb SQLite das WAL
-  in die Hauptdatei, und die Vorbedingung des Tests war dahin. Die Verbindung liest jetzt einmal.
-  An der Sicherung selbst war nichts falsch.
+  deshalb nicht fest. Nachgestellt: Leert ein parallel laufender Test die Verbindungspools, schreibt
+  SQLite das WAL in die Hauptdatei, und die Vorbedingung des Tests ist dahin. Der genaue Ablauf des
+  roten CI-Laufs ist nicht nachgestellt; er passt zu diesem Vorgang. Die Verbindung liest jetzt
+  einmal, und der Test leert die Pools selbst, damit ein Rückfall immer auffällt statt selten. An
+  der Sicherung selbst war nichts falsch.
 - **Der Skip-Wächter der CI brach ab, wenn kein Test übersprungen war** (Befund vom 2026-11-16).
   `grep` endet mit 1, wenn es nichts findet, und die Shell des Runners läuft mit `-e -o pipefail`:
   Der Schritt scheiterte also genau im Sollzustand, ohne Zählzeile und ohne Meldung. Verdeckt war

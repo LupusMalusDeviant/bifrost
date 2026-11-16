@@ -85,10 +85,15 @@ public sealed class SqliteWalBackupTests : IAsyncLifetime
         //
         // Geschlossen wird sie von aussen: `SqliteConnection.ClearAllPools()` gilt für den ganzen
         // Prozess, und andere Testklassen dieses Projekts rufen es auf, während dieser Test läuft.
-        // Deshalb war der Test isoliert grün und im Gesamtlauf selten rot (CI, Windows,
-        // 2026-11-16). Nachgestellt mit einem `ClearAllPools()` direkt nach dem Schreiben: ohne die
-        // Abfrage hier ist das WAL weg und der Zeuge in der Hauptdatei, mit ihr bleibt beides, wie
-        // der Test es braucht.
+        // Belegt ist das durch Nachstellung (2026-11-16): Mit einem `ClearAllPools()` direkt nach
+        // dem Schreiben und ohne die Abfrage hier ist das WAL weg und der Zeuge in der Hauptdatei;
+        // mit ihr bleibt beides, wie der Test es braucht. Der Aufruf steht deshalb unten fest im
+        // Test.
+        //
+        // Nicht nachgestellt ist der Ablauf des einen roten CI-Laufs (Windows, 2026-11-16). Dort
+        // war das WAL noch da und der Zeuge trotzdem schon in der Hauptdatei. Das passt zum selben
+        // Vorgang zu einem anderen Zeitpunkt — beim Schließen schreibt SQLite erst die Hauptdatei
+        // und löscht dann das WAL —, ist aber eine Schlussfolgerung, keine Messung.
         //
         // Vorher stand hier `PRAGMA wal_autocheckpoint=0`, mit der Begründung, SQLite schiebe das
         // WAL ab 1000 Seiten von allein zurück. Gemessen sind es rund 150 Seiten — die Schwelle
@@ -112,6 +117,10 @@ public sealed class SqliteWalBackupTests : IAsyncLifetime
             }));
             await db.SaveChangesAsync(ct);
         }
+
+        // Die Störung gehört in den Test: Was andere Testklassen ihm zufällig antun, tut er sich
+        // hier jedes Mal selbst an. Fehlt die Abfrage oben, ist er damit immer rot statt selten.
+        SqliteConnection.ClearAllPools();
 
         // Der Nachweis, dass die Lage wirklich hergestellt ist: Die Zeilen stehen im '-wal' und
         // nicht in der Hauptdatei. Ohne diesen Schritt prüfte der Test unter Umständen gar nichts.
