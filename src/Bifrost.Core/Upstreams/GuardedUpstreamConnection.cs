@@ -224,6 +224,16 @@ public sealed class GuardedUpstreamConnection
         {
             return await operation(_inner, linked.Token).ConfigureAwait(false);
         }
+        catch (UpstreamSessionLostException)
+        {
+            // Hier und nicht erst im Wiederholungsweg gemerkt: Auch das Lebenszeichen und die
+            // Katalogabfrage laufen über diese Methode, und wenn eine von ihnen das 404 bekommt,
+            // ist der Client genauso tot. Ohne diese Zeile liefe ein Aufruf, der während des
+            // Neuaufbaus ankommt, in die tote Verbindung und bekäme „nicht wiederholt", obwohl
+            // nichts das Gateway verlassen hat (Vertrag Abschnitt 4, „nach dem 404 begonnen").
+            _sessionLost = true;
+            throw;
+        }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
             throw new TimeoutException(

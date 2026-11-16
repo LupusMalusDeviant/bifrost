@@ -16,6 +16,34 @@ Paket ein lauffähiger, vollständig getesteter Stand steht.
 - `ToolInvoker` reicht bei einem gescheiterten Werkzeugaufruf die ungefilterte Meldung des Upstreams
   an den Agenten und ins Audit (`Upstream-Fehler: …`). Außerhalb dieses Vertrags, nicht geändert.
 
+**Review vom 2026-11-16** (unabhängiger Lesedurchgang, kein kritischer Befund). Eingearbeitet auf
+Entscheidung des Nutzers:
+
+- **M1** — Der Run-Loop konnte an seiner eigenen Buchführung enden (Audit wirft, Frist außerhalb des
+  Timer-Bereichs) und `Failed` ohne weiteren Versuch hinterlassen. Jetzt abgefangen; Z1 hat dafür
+  einen Test. `[Claude-prüfbar]`, erledigt.
+- **M2** — Bemerkte das Lebenszeichen die verlorene Sitzung, liefen neue Aufrufe in die tote
+  Verbindung statt auf den Neuaufbau zu warten (Abweichung von Abschnitt 4). `[Claude-prüfbar]`,
+  erledigt.
+- **M4** — Die Runtime-Kennung des WASI-Hosts stand noch auf `wasmtime-47.0.2`.
+  `[Claude-prüfbar]`, erledigt.
+
+Offen aus demselben Review, **nicht** eingearbeitet:
+
+- **H1** — OAuth-Upstreams fallen bei jedem Ablauf des Access-Tokens für bis zu 15 min aus: Das
+  Token wird nur beim Verbinden erneuert, und ein 401 auf der stehenden Verbindung führt in die
+  feste Frist aus E2. Vertragsgemäß, braucht eine Vertragsänderung. `[braucht Nutzer]`
+- **H2** — Mögliche Doppelausführung, wenn ein Upstream mitten im Aufruf neu startet und der
+  SDK-Client die SSE-Verbindung wieder aufnimmt. Nicht belegt; es fehlt der Test, der es zeigt oder
+  ausschließt. `[Claude-prüfbar]`
+- **M3** — Fremdtext des Upstreams erreicht `LastError`, Audit und Log auch auf anderen Wegen als
+  „Response body:"; der Verbindungstest über REST schneidet den Antwortkörper nicht ab.
+  `[Claude-prüfbar]`
+- **L1 – L7** — u. a. ein kurzes Fenster, in dem „Jetzt verbinden" verpufft; Neuaufbauten der
+  Sitzung ohne Backoff; Prüffenster nach einem Neuaufbau; der OAuth-Rückruf stößt keinen
+  Verbindungsversuch an; die Audit-Zeile beim Eintritt in `Failed` nennt die Fehlerart nicht.
+  `[Claude-prüfbar]`
+
 ## Arbeitspakete
 
 | # | Inhalt | Marke |

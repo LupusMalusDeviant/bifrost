@@ -42,7 +42,7 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
 
     public async ValueTask DisposeAsync() => await _supervisor.DisposeAsync();
 
-    private UpstreamSupervisor Create(FakeUpstreamConnector connector, double jitter)
+    private UpstreamSupervisor Create(FakeUpstreamConnector connector, double jitter, IAuditSink? audit = null)
     {
         var supervisor = new UpstreamSupervisor(
             [connector],
@@ -62,7 +62,7 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
             },
             _time,
             _log,
-            _audit,
+            audit ?? _audit,
             hostExecution: HostExecutionPolicy.AllowedByOperator());
         supervisor.Changed += (_, e) =>
         {
@@ -445,6 +445,89 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         _supervisor.GetStatus(server)!.Reconnect!.Attempt.Should().Be(1);
     }
 
+    // ── Z1: Der Loop überlebt seine eigene Buchführung ───────────────────────────────────────
+
+    [Fact]
+    public async Task An_audit_that_refuses_the_failure_does_not_end_the_retries()
+    {
+        // Das Audit darf werfen — im Compliance-Modus tut es das, wenn sein Kanal voll ist. Trifft
+        // das die Zeile über den Eintritt in Failed, darf daran nicht die Wiederverbindung hängen:
+        // Ein Loop, der hier stirbt, hinterlässt Failed ohne jeden weiteren Versuch.
+        var audit = new RefusingAuditSink { Refuses = e => e.Detail?.Contains("Failed", StringComparison.Ordinal) == true };
+        var connector = new FakeUpstreamConnector();
+        var available = false;
+        connector.DefaultBehavior = (id, _) => Volatile.Read(ref available)
+            ? new FakeUpstreamConnection { Id = id }
+            : throw new IOException("weg (Test)");
+        await using var supervisor = Create(connector, jitter: 0d, audit);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("audit-voll"), Ct);
+
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => connector.ConnectCalls >= 4,
+            step: TimeSpan.FromSeconds(30), timeoutMs: 15000,
+            because: "nach der abgewiesenen Audit-Zeile folgen weitere Versuche");
+
+        audit.Refused.Should().BeGreaterThan(0, "sonst hätte der Test den Fall gar nicht hergestellt");
+        var status = supervisor.GetStatus(server)!;
+        status.State.Should().Be(UpstreamState.Failed);
+        status.Reconnect!.NextAttemptAt.Should().NotBeNull("der Zustand nennt weiter eine Frist");
+        _log.Entries.Should().Contain(
+            e => e.Level == LogLevel.Error && e.Message.Contains("nicht vollständig verbucht", StringComparison.Ordinal),
+            "eine verlorene Audit-Zeile steht wenigstens im Log");
+
+        Volatile.Write(ref available, true);
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => supervisor.GetStatus(server)?.State == UpstreamState.Healthy,
+            step: TimeSpan.FromSeconds(30), timeoutMs: 15000,
+            because: "kommt der Upstream zurück, verbindet der Loop von selbst");
+    }
+
+    [Fact]
+    public async Task A_refused_audit_line_does_not_lift_an_explicit_limit()
+    {
+        // E1 gilt auch im Ausnahmefall: Die Ersatzfrist darf eine ausdrücklich gesetzte Obergrenze
+        // nicht in „weiter versuchen" verwandeln.
+        var audit = new RefusingAuditSink { Refuses = e => e.Detail?.Contains("Failed", StringComparison.Ordinal) == true };
+        var connector = new FakeUpstreamConnector { DefaultBehavior = (_, _) => throw new IOException("weg (Test)") };
+        await using var supervisor = Create(connector, jitter: 0d, audit);
+        var limited = new RestartPolicy(MaxRetries: 0, TimeSpan.FromSeconds(5), 2.0, TimeSpan.FromMinutes(5));
+        var server = await supervisor.AddAsync(TestData.StdioConfig("begrenzt-audit-voll", restart: limited), Ct);
+
+        await TestData.WaitUntilAsync(
+            () => supervisor.GetStatus(server)?.Reconnect?.Exhausted == true,
+            because: "ohne Wiederholungen ist die Grenze nach dem Erstversuch erreicht");
+        for (var i = 0; i < 12; i++)
+        {
+            _time.Advance(TimeSpan.FromMinutes(30));
+            await Task.Delay(5, Ct);
+        }
+
+        connector.ConnectCalls.Should().Be(1);
+        supervisor.GetStatus(server)!.Reconnect!.NextAttemptAt.Should().BeNull();
+    }
+
+    [Fact]
+    public void A_delay_never_exceeds_what_a_timer_accepts()
+    {
+        // Der Validator nimmt jede MaxBackoff ≥ InitialBackoff an. Oberhalb von rund 49,7 Tagen
+        // wirft Task.Delay — und der Loop wäre an einer gültigen Konfiguration gestorben.
+        var absurd = new RestartPolicy(
+            MaxRetries: null, TimeSpan.FromDays(60), BackoffMultiplier: 2.0, MaxBackoff: TimeSpan.FromDays(400));
+
+        foreach (var attempt in new[] { 1, 2, 40 })
+        {
+            var delay = _supervisor.ComputeDelay(absurd, UpstreamFailureKind.Unreachable, attempt);
+            delay.Should().Be(UpstreamSupervisor.LongestWait);
+
+            // Der Timer nimmt die Frist an. Eine Frist außerhalb seines Bereichs würfe schon hier,
+            // beim Anlegen, und nicht erst beim Warten.
+            using var cts = new CancellationTokenSource();
+            var pending = Task.Delay(delay, _time, cts.Token);
+            pending.IsFaulted.Should().BeFalse();
+            cts.Cancel();
+        }
+    }
+
     // ── Ausdrückliche Obergrenze ─────────────────────────────────────────────────────────────
 
     [Fact]
@@ -528,6 +611,42 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         await stale.CallToolAsync("echo", TestData.EmptySchema(), Ct);
         _connector.Connections[0].CallCount.Should().Be(before);
         _connector.ConnectCalls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task A_session_lost_on_the_health_ping_makes_new_calls_wait_for_the_rebuild()
+    {
+        // Nicht nur ein Aufruf bemerkt die verlorene Sitzung — oft ist es das Lebenszeichen. Der
+        // Client ist danach genauso tot. Ein Aufruf, der während des Neuaufbaus ankommt, hat das
+        // Gateway noch nicht verlassen: Er wartet und läuft auf der neuen Verbindung (Vertrag
+        // Abschnitt 4, „nach dem 404 begonnen"), statt in die tote zu laufen.
+        var server = await _supervisor.AddAsync(TestData.StdioConfig(), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        var first = _connector.Connections[0];
+        var stale = _supervisor.GetConnection(server)!;
+
+        // So verhält sich der tote SDK-Client: Jeder weitere Aufruf endet sofort im Abbruch.
+        first.CallException = new TaskCanceledException("toter Client (Test)");
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _connector.ConnectHook = _ => release.Task;
+        first.PingException = new UpstreamSessionLostException("404 auf die Sitzung (Test)");
+
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => _connector.ConnectCalls == 2,
+            step: TimeSpan.FromMilliseconds(500), timeoutMs: 15000,
+            because: "das Lebenszeichen bemerkt den Verlust und stößt den Neuaufbau an");
+
+        var call = stale.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+        await TestData.StaysFalseAsync(
+            () => call.IsCompleted, because: "der Aufruf wartet auf den Neuaufbau, statt zu scheitern");
+
+        release.SetResult();
+        var result = await call;
+
+        result.GetProperty("tool").GetString().Should().Be("echo");
+        first.CallCount.Should().Be(0, "über die tote Verbindung ging nichts mehr hinaus");
+        _connector.Connections[1].CallCount.Should().Be(1);
+        _connector.ConnectCalls.Should().Be(2, "ein Neuaufbau, kein zweiter");
     }
 
     [Fact]
@@ -732,6 +851,28 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
             => Task.FromResult((GuardedUpstreamConnection)supervisor.GetConnection(server)!);
 
         public bool IsToolAvailable(string toolName) => true;
+    }
+
+    /// <summary>
+    /// Ein Audit, das bestimmte Zeilen nicht annimmt und dabei wirft — wie das echte im
+    /// Compliance-Modus bei vollem Kanal.
+    /// </summary>
+    private sealed class RefusingAuditSink : IAuditSink
+    {
+        private int _refused;
+
+        public required Func<AuditEvent, bool> Refuses { get; init; }
+
+        public int Refused => Volatile.Read(ref _refused);
+
+        public void Record(AuditEvent evt)
+        {
+            if (Refuses(evt))
+            {
+                Interlocked.Increment(ref _refused);
+                throw new InvalidOperationException("Audit-Kanal voll (Test).");
+            }
+        }
     }
 
     private sealed record LogEntry(LogLevel Level, string Message, Exception? Exception);

@@ -179,8 +179,16 @@ internal sealed class FakeUpstreamConnection : IUpstreamConnection
     public Task<JsonElement> GetPromptAsync(string promptName, JsonElement? args, CancellationToken ct)
         => Task.FromResult(JsonSerializer.SerializeToElement(new { messages = Array.Empty<object>() }));
 
+    /// <summary>
+    /// Wenn gesetzt, wirft PingAsync diese Exception — etwa den Verlust der Sitzung, den das
+    /// Lebenszeichen als Erstes bemerkt.
+    /// </summary>
+    public Exception? PingException { get; set; }
+
     public Task PingAsync(CancellationToken ct)
-        => _failPing ? Task.FromException(new IOException("Verbindung tot (Test).")) : Task.CompletedTask;
+        => PingException is { } ex
+            ? Task.FromException(ex)
+            : _failPing ? Task.FromException(new IOException("Verbindung tot (Test).")) : Task.CompletedTask;
 
     public ValueTask DisposeAsync()
     {

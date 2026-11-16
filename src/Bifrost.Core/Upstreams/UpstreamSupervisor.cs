@@ -340,6 +340,13 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             {
                 // erwartetes Loop-Ende
             }
+            catch (Exception ex)
+            {
+                // Ein Loop, der an einem Fehler geendet ist, darf das Abschalten, Umkonfigurieren
+                // und Entfernen nicht ebenfalls scheitern lassen — sonst ließe sich ein solcher
+                // Upstream nicht einmal mehr ausschalten.
+                Log.UpstreamLoopFaulted(_logger, entry.Config.Slug, UpstreamFailure.TypeChain(ex));
+            }
         }
 
         await CleanupConnectionAsync(entry).ConfigureAwait(false);
@@ -398,20 +405,37 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
                     failure = ex;
                 }
 
-                await CleanupConnectionAsync(entry).ConfigureAwait(false);
-
+                // Z1: Was ab hier scheitert, darf den Loop nicht beenden. Die Buchführung schreibt ins
+                // Audit, und das Audit darf werfen (im Compliance-Modus bei vollem Kanal). Ein Loop,
+                // der daran stirbt, hinterlässt genau den Zustand, den es nicht mehr geben soll:
+                // Failed, und niemand versucht es wieder.
                 int attempt;
                 lock (entry.Gate)
                 {
                     attempt = ++entry.Attempt;
                 }
 
-                var kind = UpstreamFailure.Classify(failure);
-                var reason = UpstreamFailure.Describe(failure, entry.Config);
+                // Vor dem geschützten Block bestimmt: Eine ausdrücklich gesetzte Obergrenze (E1) gilt
+                // auch dann, wenn die Buchführung scheitert.
                 var exhausted = policy.MaxRetries is { } max && attempt > max;
-                TimeSpan? delay = exhausted ? null : ComputeDelay(policy, kind, attempt);
+                TimeSpan? delay;
+                try
+                {
+                    await CleanupConnectionAsync(entry).ConfigureAwait(false);
 
-                MarkFailed(entry, kind, reason, attempt, delay, failure);
+                    var kind = UpstreamFailure.Classify(failure);
+                    var reason = UpstreamFailure.Describe(failure, entry.Config);
+                    delay = exhausted ? null : ComputeDelay(policy, kind, attempt);
+
+                    MarkFailed(entry, kind, reason, attempt, delay, failure);
+                }
+                catch (Exception ex)
+                {
+                    delay = exhausted ? null : FallbackDelay(policy);
+                    MarkFailedWithoutReport(entry, delay);
+                    Log.UpstreamBookkeepingFailed(
+                        _logger, entry.Config.Slug, UpstreamFailure.TypeChain(ex), delay);
+                }
 
                 try
                 {
@@ -745,7 +769,51 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             : ComputeBackoff(policy, attempt);
 
         var share = Math.Clamp(_options.JitterSource(), 0d, 1d) * Math.Clamp(_options.ReconnectJitter, 0d, 1d);
-        return TimeSpan.FromTicks((long)(nominal.Ticks * (1d - share)));
+        return Waitable(TimeSpan.FromTicks((long)(nominal.Ticks * (1d - share))));
+    }
+
+    /// <summary>
+    /// Die längste Frist, die ein Timer überhaupt annimmt (rund 49,7 Tage). Eine von Hand gesetzte
+    /// <c>restart.maxBackoff</c> darüber ließe <see cref="Task.Delay(TimeSpan, TimeProvider, CancellationToken)"/>
+    /// werfen — und der Loop wäre an einer Konfiguration gestorben, die der Validator annimmt.
+    /// </summary>
+    internal static readonly TimeSpan LongestWait = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
+
+    private static TimeSpan Waitable(TimeSpan delay)
+        => delay < TimeSpan.Zero ? TimeSpan.Zero : delay > LongestWait ? LongestWait : delay;
+
+    /// <summary>
+    /// Die Frist für den Fall, dass die Buchführung eines Fehlversuchs selbst scheitert: der Deckel
+    /// der Policy, ohne Jitter und ohne alles, was noch einmal werfen könnte.
+    /// </summary>
+    private static TimeSpan FallbackDelay(RestartPolicy policy) => Waitable(policy.MaxBackoff);
+
+    /// <summary>
+    /// Setzt nur den Zustand — ohne Audit und ohne Log über den Fehlversuch. Für den Fall, dass
+    /// genau diese Meldungen gescheitert sind: Der Zustand soll trotzdem stimmen und die nächste
+    /// Frist sichtbar sein. Was <see cref="MarkFailed"/> schon gesetzt hat, bleibt stehen.
+    /// </summary>
+    private void MarkFailedWithoutReport(Entry entry, TimeSpan? delay)
+    {
+        var now = _time.GetUtcNow();
+        lock (entry.Gate)
+        {
+            if (entry.State != UpstreamState.Failed)
+            {
+                entry.FailedSince = now;
+            }
+
+            entry.State = UpstreamState.Failed;
+            entry.LastError ??= "Der Fehlversuch konnte nicht vollständig verbucht werden.";
+            entry.NextAttemptAt = delay is { } wait ? now + wait : null;
+            entry.Exhausted = delay is null;
+        }
+
+        // Beide Ereignisse, auch wenn der Zustand schon Failed war: MarkFailed kann nach dem
+        // Zustandswechsel und vor seinen Ereignissen gescheitert sein — dann wüsste der Katalog
+        // nicht, dass das Inventar fort ist. Ein Ereignis zu viel ist harmlos, eines zu wenig nicht.
+        Raise(entry, UpstreamChangeKind.StateChanged);
+        Raise(entry, UpstreamChangeKind.InventoryChanged);
     }
 
     internal static TimeSpan ComputeBackoff(RestartPolicy policy, int attempt)
@@ -1369,6 +1437,15 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         [LoggerMessage(Level = LogLevel.Error,
             Message = "Upstream {Slug}: Wiederverbindung nach {Attempts} Versuchen eingestellt — die Obergrenze ist ausdrücklich so konfiguriert. Weiter geht es nur über „Jetzt verbinden“.")]
         public static partial void UpstreamRetriesExhausted(ILogger logger, string slug, int attempts);
+
+        [LoggerMessage(Level = LogLevel.Error,
+            Message = "Upstream {Slug}: Der Fehlversuch konnte nicht vollständig verbucht werden — etwa weil das Audit ihn nicht annahm. Die Wiederverbindung läuft trotzdem weiter. [{ExceptionTypes}] Nächster Versuch in {Delay}.")]
+        public static partial void UpstreamBookkeepingFailed(
+            ILogger logger, string slug, string exceptionTypes, TimeSpan? delay);
+
+        [LoggerMessage(Level = LogLevel.Error,
+            Message = "Upstream {Slug}: Die Wiederverbindungsschleife war an einem Fehler geendet. [{ExceptionTypes}]")]
+        public static partial void UpstreamLoopFaulted(ILogger logger, string slug, string exceptionTypes);
 
         [LoggerMessage(Level = LogLevel.Warning,
             Message = "Upstream {Slug}: Drain-Frist {Grace} abgelaufen, {InFlight} Calls werden abgebrochen.")]
