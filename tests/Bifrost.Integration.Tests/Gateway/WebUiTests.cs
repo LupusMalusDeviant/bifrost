@@ -30,6 +30,54 @@ public sealed class WebUiTests : IClassFixture<GatewayFixture>
         login.StatusCode.Should().Be(HttpStatusCode.OK, "die Login-Seite ist anonym erreichbar");
     }
 
+    /// <summary>
+    /// <b>Anmeldung und Erstzugang gehören nicht dem Circuit.</b> Beide Seiten sind gewöhnliche
+    /// Formulare, die der Browser selbst abschickt. Übernimmt der Blazor-Circuit eine solche
+    /// Seite, baut er sie nach dem Verbindungsaufbau neu auf und ersetzt die Eingabefelder durch
+    /// leere — was bis dahin getippt oder von einem Passwortmanager eingetragen wurde, ist weg,
+    /// und die richtige Anmeldung endet mit „Benutzername oder Passwort falsch".
+    /// <para>
+    /// Gefunden am 2026-11-16 über die Browserwege: In Firefox und WebKit scheiterte jede
+    /// Anmeldung, in Chromium ein wechselnder Teil. Der Marker <c>&lt;!--Blazor:</c> ist das, woran
+    /// der Browser eine Stelle erkennt, die er dem Circuit übergibt; hier darf keiner stehen.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("/login")]
+    [InlineData("/setup")]
+    public async Task Native_form_pages_are_not_handed_to_the_circuit(string path)
+    {
+        using var client = _gw.CreateUiClient();
+
+        var html = await client.GetStringAsync(path, TestContext.Current.CancellationToken);
+
+        html.Should().Contain("<form", "die Seite ist ein Formular — sonst prüft dieser Test nichts");
+        html.Should().NotContain("<!--Blazor:",
+            "eine Seite, die der Circuit übernimmt, wird neu aufgebaut und verliert getippte Eingaben");
+    }
+
+    /// <summary>
+    /// Die Gegenprobe zum Test darüber, und ohne sie wäre er wertlos: Die übrige Oberfläche
+    /// <b>bleibt</b> interaktiv. Wer die Ausnahme versehentlich auf alles ausdehnt, bekommt eine
+    /// Oberfläche, in der kein Knopf mehr etwas tut — und der Test oben wäre dabei grün.
+    /// </summary>
+    [Fact]
+    public async Task Pages_behind_the_login_are_still_handed_to_the_circuit()
+    {
+        var name = $"circuit-{Guid.NewGuid():N}";
+        await _gw.UiUsers.CreateAsync(name, "passwort123", UiRole.Admin, TestContext.Current.CancellationToken);
+        using var client = await _gw.LoginUiAsync(name, "passwort123");
+
+        var html = await client.GetStringAsync("/", TestContext.Current.CancellationToken);
+
+        html.Should().Contain("<!--Blazor:", "das Dashboard lebt vom Circuit");
+
+        // Im ausgelieferten HTML steht "false": Die Seite ist da, aber noch nicht bedienbar. Auf
+        // "true" stellt sie erst der Circuit — und genau darauf warten die Browserwege.
+        html.Should().Contain("data-testid=\"circuit-state\" data-interactive=\"false\"",
+            "die Oberfläche sagt selbst, ab wann sie bedienbar ist");
+    }
+
     [Fact]
     public async Task Wrong_credentials_are_rejected_and_audited()
     {

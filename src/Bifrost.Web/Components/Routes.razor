@@ -1,5 +1,13 @@
 @using Microsoft.AspNetCore.Components.Authorization
 
+@* Sagt, ab wann die Seite bedienbar ist. Blazor Server liefert zuerst fertiges HTML und uebernimmt
+   die Seite erst mit der Verbindung; dazwischen sieht sie benutzbar aus, aber ein Klick laeuft ins
+   Leere, und getippte Eingaben gehen beim Uebernehmen verloren. "false" steht im ausgelieferten
+   HTML, "true" erst, wenn der Circuit die Seite hat. Auf Seiten ohne Circuit (Anmeldung,
+   Erstzugang) bleibt es "false" — dort gibt es nichts abzuwarten.
+   Die Browserwege warten auf diesen Wert, statt zu raten (Befund 2026-11-16). *@
+<span hidden data-testid="circuit-state" data-interactive="@(RendererInfo.IsInteractive ? "true" : "false")"></span>
+
 <CascadingAuthenticationState>
     <Router AppAssembly="typeof(Routes).Assembly">
         <Found Context="routeData">

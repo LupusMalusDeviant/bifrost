@@ -118,13 +118,22 @@ internal sealed class UiSession : IAsyncDisposable
     /// Blazor Server rendert zuerst statisch und wird erst mit der Verbindung bedienbar. Ein Klick
     /// davor läuft ins Leere — und der Test wäre nicht falsch, sondern <em>flatterig</em>, was
     /// schlimmer ist.
+    /// <para>
+    /// <b>Befund vom 2026-11-16.</b> Gewartet wurde hier auf <c>window.Blazor !== undefined</c>.
+    /// Das gilt, sobald das Skript geladen ist — also <em>bevor</em> der Circuit die Seite
+    /// übernommen hat. Der Test tippte in das vorgerenderte Formular, der Circuit ersetzte es
+    /// durch ein leeres, und abgeschickt wurde nichts („Slug '' ist ungültig", „Zielpfad fehlt.").
+    /// Aufgefallen ist es selten, weil die Anmeldeseite zuvor schon einen Circuit aufgebaut hatte
+    /// und der zweite schnell genug stand. Jetzt wartet der Weg auf das, was die Oberfläche selbst
+    /// meldet: <c>data-interactive="true"</c> an <c>circuit-state</c> (siehe <c>Routes.razor</c>).
+    /// </para>
     /// </summary>
     public async Task WaitForInteractivityAsync(string readySelector)
     {
+        await Page.WaitForSelectorAsync(
+            "[data-testid=circuit-state][data-interactive=true]",
+            new PageWaitForSelectorOptions { State = WaitForSelectorState.Attached, Timeout = 30000 });
         await Page.WaitForSelectorAsync(readySelector, new PageWaitForSelectorOptions { Timeout = 30000 });
-        await Page.WaitForFunctionAsync(
-            "() => window.Blazor !== undefined && document.readyState === 'complete'",
-            new PageWaitForFunctionOptions { Timeout = 30000 });
     }
 
     /// <summary>
