@@ -107,13 +107,54 @@ internal sealed class UiSession : IAsyncDisposable
         _ => playwright.Chromium.LaunchAsync(),
     };
 
-    /// <summary>Anmeldung über das ausgelieferte Formular.</summary>
+    /// <summary>
+    /// Anmeldung über das ausgelieferte Formular — und zwar bis zu ihrem Ende.
+    /// <para>
+    /// <b>Befund vom 2026-11-16.</b> Der Klick auf „Anmelden" kehrt nicht in jedem Browser erst
+    /// zurück, wenn die Antwort da ist. In WebKit stand die Seite danach noch auf <c>/login</c>;
+    /// das nächste <c>GotoAsync</c> des Tests brach die laufende Anmeldung ab („POST /auth/login —
+    /// Load request cancelled"), und der Weg landete unangemeldet wieder auf der Anmeldeseite.
+    /// Fertig ist die Anmeldung erst, wenn die Seite das Formular verlassen hat: nach <c>/</c>
+    /// bei Erfolg, nach <c>/login?failed=true</c> bei falschen Zugangsdaten.
+    /// </para>
+    /// </summary>
     public async Task LoginAsync(string? username = null, string? password = null)
     {
         await Page.GotoAsync("login");
+        var form = Page.Url;
         await Page.FillAsync("#username", username ?? Gateway.UiUsername!);
         await Page.FillAsync("#password", password ?? Gateway.UiPassword!);
-        await Page.ClickAsync("button[type=submit]");
+        await SubmitAndWaitToLeaveAsync("button[type=submit]", form);
+    }
+
+    /// <summary>
+    /// Klickt einen Knopf, der ein gewöhnliches Formular abschickt, und wartet, bis die Seite die
+    /// Adresse <paramref name="from"/> verlassen hat. Für alles, was der Browser selbst abschickt
+    /// (Anmelden, Abmelden) — dort gibt es keinen Circuit, der das Ende meldet.
+    /// <para>
+    /// Gewartet wird bis <c>DOMContentLoaded</c> der Zielseite, nicht bis <c>load</c>: Die Antwort
+    /// ist dann da und lesbar, mehr braucht kein Weg. In einem von 95 lokalen Läufen (Chromium,
+    /// 2026-11-16) hatte die Seite das Formular schon verlassen, und <c>load</c> kam trotzdem
+    /// 30 s lang nicht; warum, ist nicht geklärt. Läuft die Frist wieder ab, nennt der Fehler
+    /// jetzt den Zustand der Seite.
+    /// </para>
+    /// </summary>
+    public async Task SubmitAndWaitToLeaveAsync(string buttonSelector, string from)
+    {
+        await Page.ClickAsync(buttonSelector);
+
+        try
+        {
+            await Page.WaitForURLAsync(
+                url => url != from,
+                new PageWaitForURLOptions { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = 30000 });
+        }
+        catch (TimeoutException timeout)
+        {
+            throw new TimeoutException(
+                await DescribeStuckPageAsync($"Nach dem Abschicken ({buttonSelector}) kam die Seite in 30 s nicht an."),
+                timeout);
+        }
     }
 
     /// <summary>
@@ -144,13 +185,14 @@ internal sealed class UiSession : IAsyncDisposable
             // die Seite die falsche war (zurueck auf der Anmeldung), ob das Skript fehlt oder ob
             // die Verbindung nicht zustande kam. Trace und Bildschirmfoto fehlen im Fehlerfall
             // ebenfalls (siehe DisposeAsync) — also sagt es der Fehler selbst.
-            throw new TimeoutException(await DescribeStuckPageAsync(), timeout);
+            throw new TimeoutException(
+                await DescribeStuckPageAsync("Die Seite wurde in 30 s nicht bedienbar."), timeout);
         }
 
         await Page.WaitForSelectorAsync(readySelector, new PageWaitForSelectorOptions { Timeout = 30000 });
     }
 
-    private async Task<string> DescribeStuckPageAsync()
+    private async Task<string> DescribeStuckPageAsync(string what)
     {
         string state;
         try
@@ -176,7 +218,7 @@ internal sealed class UiSession : IAsyncDisposable
             seen = [.. _browserLog];
         }
 
-        return $"Die Seite wurde in 30 s nicht bedienbar. Adresse: {new Uri(Page.Url).PathAndQuery}; {state}. "
+        return $"{what} Adresse: {new Uri(Page.Url).PathAndQuery}; {state}. "
             + (seen.Length == 0
                 ? "Der Browser hat nichts gemeldet."
                 : "Vom Browser gemeldet:\n  " + string.Join("\n  ", seen));
