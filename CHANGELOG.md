@@ -40,6 +40,32 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
 
 ### Behoben
 
+- **Die Anmeldeseite leerte getippte Zugangsdaten** (Befund vom 2026-11-16 aus den Browserwegen).
+  Anmeldung und Erstzugang (`/login`, `/setup`) sind gewöhnliche Formulare, wurden aber wie der Rest
+  der Oberfläche vom Blazor-Circuit übernommen. Der baute die Seite rund eine Zehntelsekunde nach
+  dem Laden neu auf und ersetzte die Eingabefelder durch leere. Wer bis dahin getippt hatte und
+  danach abschickte, sendete ein leeres Formular und las „Benutzername oder Passwort falsch" — bei
+  richtigen Zugangsdaten. In Firefox und WebKit scheiterte daran jede Anmeldung der Browserwege
+  (Nachtlauf vom 2026-11-16: 14 von 18 Wegen je Browser), in Chromium ein wechselnder Teil. Beide Seiten sind
+  jetzt vom Circuit ausgenommen; die übrige Oberfläche bleibt interaktiv. Ein Test hält beides fest,
+  ein Browserweg tippt absichtlich *vor* dem Abschicken und wartet dazwischen.
+- **Die Browserwege warteten nicht auf den Circuit, sondern auf sein Skript.** `window.Blazor` gibt
+  es, sobald die Datei geladen ist — bevor die Seite bedienbar ist. Die Wege tippten deshalb in das
+  vorgerenderte Formular, der Circuit ersetzte es durch ein leeres, und abgeschickt wurde nichts
+  („Slug '' ist ungültig", „Zielpfad fehlt."). Verdeckt war das, solange die Anmeldeseite vorher
+  schon einen Circuit aufgebaut hatte; ohne ihn fielen lokal 8 bis 9 von 19 Wegen. Die Oberfläche
+  sagt jetzt selbst, ab wann sie bedienbar ist (`data-interactive` an `circuit-state`), und die Wege
+  warten auf diesen Wert.
+- **Der Skip-Wächter der CI brach ab, wenn kein Test übersprungen war** (Befund vom 2026-11-16).
+  `grep` endet mit 1, wenn es nichts findet, und die Shell des Runners läuft mit `-e -o pipefail`:
+  Der Schritt scheiterte also genau im Sollzustand, ohne Zählzeile und ohne Meldung. Verdeckt war
+  das, solange der Testschritt davor rot war. Null Treffer gelten jetzt als null Skips; fehlende
+  Ergebnisdateien und ein echter Lesefehler brechen weiter ab.
+- **Der Rückverfolgungstest las eine Datei, die es im Repository nie gab.** Das Lastenheft liegt
+  bewusst außerhalb der Versionierung; der Test bestand deshalb nur dort, wo es liegt, und war in
+  jedem CI-Lauf rot. Er prüft die Matrix jetzt gegen die versionierte Id-Liste
+  `docs/acceptance/lastenheft-anforderungen.txt`; der Abgleich der Liste mit dem Lastenheft läuft,
+  wo das Lastenheft vorhanden ist.
 - **Der Skip-Wächter der CI zählte nur eine einzige Testassembly** (Befund aus dem M5-Audit). Der
   Testlauf schrieb alle Suiten in dieselbe `results.trx`, und mit festem Dateinamen überschreibt
   jede Assembly die vorige — geprüft wurde also die Skipzahl der zuletzt geschriebenen. Acht

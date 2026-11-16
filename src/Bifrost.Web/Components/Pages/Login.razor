@@ -1,8 +1,11 @@
 @page "/login"
 @layout EmptyLayout
 @attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
 
-@* Cookie-Login: nativer Form-POST an /auth/login, weil ein Blazor-Circuit keine Cookies setzen kann (WP6.1). *@
+@* Cookie-Login: nativer Form-POST an /auth/login, weil ein Blazor-Circuit keine Cookies setzen kann (WP6.1).
+   Die Seite ist vom Circuit ausgenommen: Er baute sie nach dem Verbindungsaufbau neu auf und
+   leerte dabei die Felder (Befund 2026-11-16, siehe App.razor). *@
 <div class="login-wrap">
     <div class="card login-card">
         <BrandMark Tagline="Die Brücke zu deinen Werkzeugen." />

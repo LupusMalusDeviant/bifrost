@@ -1,10 +1,13 @@
 @page "/setup"
 @layout EmptyLayout
 @attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
 
 @*
     Erstzugang (WP3.4). Bewusst genauso gebaut wie die Anmeldung: nativer Form-POST an
     /auth/setup, weil am Ende ein Cookie gesetzt wird und ein Blazor-Circuit das nicht kann.
+    Aus demselben Grund wie die Anmeldung vom Circuit ausgenommen: Er leerte die Felder beim
+    Neuaufbau (Befund 2026-11-16, siehe App.razor).
 
     Die Seite weiss NICHT, ob gerade ein Token aussteht — sie ist eine reine Eingabemaske. Das ist
     Absicht: Eine Seite, die "hier ist gerade ein Erstzugang offen" verraet, ist ein Hinweis fuer

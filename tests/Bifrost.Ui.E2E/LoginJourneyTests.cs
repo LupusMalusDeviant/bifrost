@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Bifrost.Ui.E2E.Harness;
+using Microsoft.Playwright;
 using Xunit;
 
 namespace Bifrost.Ui.E2E;
@@ -45,6 +46,47 @@ public sealed class LoginJourneyTests
 
         await session.Page.GotoAsync("servers");
         session.Page.Url.Should().Contain("login", "ohne Sitzung fuehrt jede geschuetzte Seite zurueck zur Anmeldung");
+    }
+
+    /// <summary>
+    /// <b>Was getippt wurde, wird auch abgeschickt</b> — gleich, wie lange die Seite danach noch
+    /// steht.
+    /// <para>
+    /// Befund vom 2026-11-16: Die Anmeldeseite wurde vom Blazor-Circuit übernommen. Rund eine
+    /// Zehntelsekunde nach dem Laden baute er sie neu auf und ersetzte die Felder durch leere. Wer
+    /// schneller abschickte, kam durch; wer langsamer war — Firefox und WebKit immer, Chromium auf
+    /// einem belasteten Rechner manchmal, ein Passwortmanager vermutlich auch —, schickte ein
+    /// leeres Formular ab und las „Benutzername oder Passwort falsch".
+    /// </para>
+    /// <para>
+    /// Der Test wartet deshalb absichtlich <em>zwischen</em> Tippen und Abschicken, bis das Netz
+    /// ruhig ist: Baut die Seite noch eine Verbindung auf, ist sie dann aufgebaut. Das ist die
+    /// Reihenfolge, die den Fehler zeigt — nicht die schnelle, die ihn meistens verdeckt.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Credentials_typed_right_after_loading_are_still_there_when_they_are_sent()
+    {
+        Assert.SkipUnless(UiSession.Enabled, "Browserwege nur mit BIFROST_RUN_E2E=1.");
+
+        await using var session = await UiSession.StartAsync(
+            nameof(Credentials_typed_right_after_loading_are_still_there_when_they_are_sent),
+            TestContext.Current.CancellationToken);
+
+        await session.Page.GotoAsync("login");
+        await session.Page.FillAsync("#username", session.Gateway.UiUsername!);
+        await session.Page.FillAsync("#password", session.Gateway.UiPassword!);
+
+        await session.Page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+
+        (await session.Page.InputValueAsync("#username")).Should().Be(
+            session.Gateway.UiUsername, "ein getippter Benutzername verschwindet nicht von selbst");
+        (await session.Page.InputValueAsync("#password")).Should().NotBeEmpty(
+            "ein getipptes Passwort verschwindet nicht von selbst");
+
+        await session.Page.ClickAsync("button[type=submit]");
+
+        session.Page.Url.Should().NotContain("login", "richtige Zugangsdaten führen in die Oberfläche");
     }
 
     /// <summary>

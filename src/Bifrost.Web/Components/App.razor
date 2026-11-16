@@ -646,10 +646,10 @@
             }
         };
     </script>
-    <HeadOutlet @rendermode="InteractiveServer" />
+    <HeadOutlet @rendermode="PageRenderMode" />
 </head>
 <body>
-    <Routes @rendermode="InteractiveServer" />
+    <Routes @rendermode="PageRenderMode" />
     <script src="_framework/blazor.web.js"></script>
     <script>
         window.bifrostDownload = (filename, mime, base64) => {
@@ -663,3 +663,21 @@
     </script>
 </body>
 </html>
+
+@code {
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    // Die Oberflaeche ist interaktiv — bis auf die Seiten, die sich mit
+    // [ExcludeFromInteractiveRouting] ausnehmen. Das sind die gewoehnlichen Formulare, die der
+    // Browser selbst abschickt (Anmeldung, Erstzugang).
+    //
+    // BEFUND 2026-11-16: Uebernimmt der Circuit eine solche Seite, baut er sie nach dem
+    // Verbindungsaufbau neu auf und ersetzt die Eingabefelder durch leere. Was bis dahin getippt
+    // oder von einem Passwortmanager eingetragen wurde, ist weg; die richtige Anmeldung endet mit
+    // "Benutzername oder Passwort falsch". In Firefox und WebKit traf das jede Anmeldung der
+    // Browserwege, in Chromium einen wechselnden Teil. Eine Seite ohne Circuit wird nicht neu
+    // aufgebaut — und braucht ihn hier auch nicht.
+    private IComponentRenderMode? PageRenderMode =>
+        HttpContext.AcceptsInteractiveRouting() ? InteractiveServer : null;
+}
