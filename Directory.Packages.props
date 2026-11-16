@@ -60,11 +60,11 @@
          unter kommerzieller Xceed-Lizenz; auf 7.x zu bleiben wäre zwar lizenzrechtlich sauber,
          aber eine tote Linie ohne Weiterentwicklung. AwesomeAssertions ist der Apache-2.0-Fork
          des Codes von vor dem Lizenzwechsel, API-gleich — nur Paketname und Namespace ändern sich. -->
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.10" />
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
-    <PackageVersion Include="coverlet.collector" Version="10.0.1" />
+    <PackageVersion Include="coverlet.collector" Version="10.1.0" />
     <PackageVersion Include="AwesomeAssertions" Version="9.5.0" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.8.0" />
     <!-- 4.14 statt 4.13: 4.13 zieht SSH.NET 2025.1.0 (GHSA-mggc-4xg6-vcxf, GHSA-q939-rpr3-3284);
