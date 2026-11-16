@@ -109,8 +109,19 @@ jobs:
         shell: bash
         run: |
           TRX=$(find coverage -name '*.trx')
+          # Ohne Ergebnisdateien gaebe es nichts zu zaehlen, und null Skips saehen aus wie ein
+          # bestandenes Gate. Das ist ein Fehler, kein Sollzustand.
+          if [ -z "$TRX" ]; then
+            echo "::error::Keine Ergebnisdateien unter coverage/ gefunden — das Skip-Gate haette nichts geprueft."
+            exit 1
+          fi
           echo "Ergebnisdateien: $(echo "$TRX" | wc -l)"
-          SKIPPED=$(grep -o 'outcome="NotExecuted"' $TRX | wc -l)
+          # BEFUND 2026-11-16: grep endet mit 1, wenn es nichts findet, und die Shell des Runners
+          # laeuft mit -e -o pipefail. Der Schritt brach deshalb genau dann ab, wenn KEIN Test
+          # uebersprungen war — im Sollzustand, ohne Zaehlzeile und ohne Meldung. Aufgefallen ist
+          # es erst, als der Testschritt davor wieder gruen wurde. Ende 1 heisst hier "nichts
+          # gefunden" und ist in Ordnung; alles darueber (Datei nicht lesbar) bricht weiter ab.
+          SKIPPED=$( { grep -o 'outcome="NotExecuted"' $TRX || [ $? -eq 1 ]; } | wc -l)
           echo "Übersprungene Tests: $SKIPPED"
           # Erlaubt ist genau der Benchmark, der bewusst einen eigenen Job hat.
           if [ "$SKIPPED" -gt 1 ]; then
