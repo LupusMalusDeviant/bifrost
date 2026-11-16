@@ -1,4 +1,5 @@
 @page "/servers"
+@implements IDisposable
 @attribute [Authorize(Policy = UiPolicies.Operator)]
 @using System.Text.Json
 @using System.Text.Json.Serialization
@@ -30,12 +31,32 @@
                     {
                         @* Die Zeile traegt Slug und Zustand als Daten, damit ein Browsertest den
                            Zustand EINES Servers pruefen kann statt Text auf der ganzen Seite. *@
-                        <tr data-testid="server-row" data-slug="@s.Slug" data-state="@s.State">
+                        <tr data-testid="server-row" data-slug="@s.Slug" data-state="@s.State"
+                            data-failure-kind="@(s.Reconnect?.Kind.ToString())"
+                            data-reconnect-attempt="@(s.Reconnect?.Attempt)"
+                            data-next-attempt-at="@(s.Reconnect?.NextAttemptAt?.ToString("O"))">
                             <td class="mono">@s.Slug</td>
-                            <td><StateBadge State="s.State" /></td>
+                            <td>
+                                <StateBadge State="s.State" />
+                                @if (s.Reconnect is { } reconnect)
+                                {
+                                    @* Ein Upstream auf Failed ist kein Endzustand mehr: Hier steht,
+                                       wann es weitergeht. Ohne diese Zeile sähe ein Upstream, der
+                                       gleich wieder verbindet, genauso aus wie einer, der liegt. *@
+                                    <div class="muted" data-testid="server-reconnect"
+                                         style="font-size:.85em;margin-top:.25rem;white-space:nowrap">
+                                        @ReconnectText(reconnect)
+                                    </div>
+                                }
+                            </td>
                             <td>@s.ToolCount</td>
                             <td class="muted" style="max-width:260px">@(s.LastError ?? "—")</td>
                             <td style="white-space:nowrap">
+                                @if (s.State == UpstreamState.Failed)
+                                {
+                                    <button class="btn-sm" data-testid="server-connect-now"
+                                            @onclick="() => ConnectNow(s.Id)">Jetzt verbinden</button>
+                                }
                                 @if (s.State == UpstreamState.Stopped)
                                 {
                                     <button class="btn-sm btn-ghost" @onclick="() => SetEnabled(s.Id, true)">Aktivieren</button>
@@ -62,7 +83,10 @@
                                     @* Echte Navigation statt Blazor-Klick: Der Autorisierungsvorgang
                                        endet in einer Weiterleitung aus dem Browser zurück, und ein
                                        Circuit kann das nicht. *@
-                                    <a class="btn-sm btn-ghost" href="@($"/oauth/upstream/{s.Id.Value}/connect")">Verbinden</a>
+                                    @* „Autorisieren", nicht „Verbinden": Daneben steht bei einem
+                                       ausgefallenen Upstream „Jetzt verbinden", und das ist etwas
+                                       anderes — hier beginnt die OAuth-Zustimmung im Browser. *@
+                                    <a class="btn-sm btn-ghost" href="@($"/oauth/upstream/{s.Id.Value}/connect")">Autorisieren</a>
                                 }
                                 <ConfirmButton Label="Entfernen" What="@($"Upstream {s.Slug}")" OnConfirmed="() => Remove(s.Id, s.Slug)" />
                             </td>
@@ -517,7 +541,83 @@
             RequireImageDigest: _requireImageDigest)
         : new IsolationOptions(IsolationMode.Host);
 
-    protected override void OnInitialized() => Reload();
+    private Timer? _statusTimer;
+
+    protected override void OnInitialized()
+    {
+        Reload();
+
+        // Die Frist bis zum nächsten Verbindungsversuch zählt sichtbar herunter, und ein Upstream,
+        // der von selbst zurückkommt, soll ohne Neuladen der Seite grün werden. Gelesen wird nur
+        // der Status aus dem Speicher — nicht die Konfiguration aus der Datenbank wie in Reload().
+        _statusTimer = new Timer(_ => _ = InvokeAsync(RefreshStatuses), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+    }
+
+    public void Dispose() => _statusTimer?.Dispose();
+
+    private void RefreshStatuses()
+    {
+        var fresh = Supervisor.Statuses.OrderBy(s => s.Slug).ToList();
+
+        // Neu zeichnen nur, wenn es etwas zu sehen gibt: eine laufende Frist oder ein geänderter
+        // Stand. Eine Seite, auf der alles gesund ist, bleibt still.
+        if (fresh.Any(s => s.Reconnect is not null) || !fresh.SequenceEqual(_statuses))
+        {
+            _statuses = fresh;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Der Stand der Wiederverbindung in einer Zeile (Vertrag „Selbsttätige Wiederverbindung", 5.4).
+    /// </summary>
+    private string ReconnectText(UpstreamReconnectInfo reconnect)
+    {
+        if (reconnect.Exhausted)
+        {
+            return $"Wiederverbindung nach {reconnect.Attempt} Versuchen eingestellt (so konfiguriert)";
+        }
+
+        var lead = reconnect.Kind == UpstreamFailureKind.Authentication
+            ? "Authentifizierung abgelehnt"
+            : $"Versuch {reconnect.Attempt}";
+        if (reconnect.NextAttemptAt is not { } next)
+        {
+            return $"{lead} · verbindet …";
+        }
+
+        var remaining = next - Time.GetUtcNow();
+        if (remaining < TimeSpan.Zero)
+        {
+            remaining = TimeSpan.Zero;
+        }
+
+        // Ab anderthalb Minuten in Minuten: „in 847 s" liest niemand.
+        var wait = remaining.TotalSeconds < 90
+            ? $"{(int)Math.Ceiling(remaining.TotalSeconds)} s"
+            : $"{(int)Math.Round(remaining.TotalMinutes)} min";
+        return $"{lead} · nächster Versuch in {wait}";
+    }
+
+    private async Task ConnectNow(ServerId id)
+    {
+        try
+        {
+            await Supervisor.ConnectNowAsync(id, CancellationToken.None);
+            UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged, "server-connect-requested", id);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _ok = false;
+            _message = ex.Message;
+        }
+        catch (KeyNotFoundException)
+        {
+            // Inzwischen entfernt — die Liste unten zeigt es.
+        }
+
+        RefreshStatuses();
+    }
 
     private void Reload()
     {

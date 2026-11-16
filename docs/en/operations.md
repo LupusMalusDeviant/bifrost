@@ -149,6 +149,9 @@ the same secret is a rule you would misremember, and then you would be running w
 | `BIFROST_MCP_STATELESS` | `1` | `0`/`false` reverts to the session-based operation of the previous protocol revision |
 | `BIFROST_MCP_LIST_TTL_SECONDS` | `60` | How long a client may treat tool/resource/prompt lists as fresh. `0` = no hint |
 | `BIFROST_MAX_RESULT_CHARS` | *(off)* | Truncates tool results above this character count (FR-16) |
+| `BIFROST_UPSTREAM_RECONNECT_INITIAL_SECONDS` | `5` | Delay after the first failed connection attempt to an upstream; doubles from there. Allowed 1 – 300. Retries never stop while the upstream is enabled |
+| `BIFROST_UPSTREAM_RECONNECT_MAX_SECONDS` | `300` | Cap of that delay. Allowed: initial delay – 3600 |
+| `BIFROST_UPSTREAM_RECONNECT_AUTH_SECONDS` | `900` | Fixed delay after an upstream **rejected authentication** (401/403, missing OAuth token). Long on purpose, so the gateway never loops against a key. Allowed: cap – 86400 |
 | `BIFROST_GUARD_ENABLED` | `1` | `0`/`false` disables the secret guardrail globally (emergency stop) |
 | `BIFROST_GUARD_MAX_SCAN_CHARS` | `262144` | Payloads above this are **rejected**, not passed unscanned |
 | `BIFROST_GUARD_ALLOW_CUSTOM_PATTERNS` | *(off)* | Allows admins to enter free-form regex in the UI |

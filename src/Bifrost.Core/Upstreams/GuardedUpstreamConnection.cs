@@ -14,15 +14,33 @@ public sealed class GuardedUpstreamConnection
     private readonly IUpstreamConnection _inner;
     private readonly TimeSpan _callTimeout;
     private readonly TimeProvider _time;
+    private readonly IUpstreamSessionRecovery? _recovery;
     private int _inFlight;
 
-    public GuardedUpstreamConnection(IUpstreamConnection inner, TimeSpan callTimeout, TimeProvider? timeProvider = null)
+    /// <summary>
+    /// Gesetzt, sobald der Upstream diese Sitzung einmal abgewiesen hat. Danach geht über diese
+    /// Verbindung nichts mehr hinaus: Der SDK-Client ist nach dem ersten 404 tot (gemessen — jeder
+    /// weitere Aufruf endet sofort in einer TaskCanceledException), und wer die Hülle noch in der
+    /// Hand hält, wartet stattdessen auf den Neuaufbau.
+    /// </summary>
+    private volatile bool _sessionLost;
+
+    /// <param name="recovery">
+    /// Der Weg zum Neuaufbau einer verlorenen Sitzung. Ohne ihn verhält sich die Hülle wie bisher:
+    /// Der Fehler geht an den Aufrufer.
+    /// </param>
+    public GuardedUpstreamConnection(
+        IUpstreamConnection inner,
+        TimeSpan callTimeout,
+        TimeProvider? timeProvider = null,
+        IUpstreamSessionRecovery? recovery = null)
     {
         ArgumentNullException.ThrowIfNull(inner);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(callTimeout, TimeSpan.Zero);
         _inner = inner;
         _callTimeout = callTimeout;
         _time = timeProvider ?? TimeProvider.System;
+        _recovery = recovery;
     }
 
     public ServerId Id => _inner.Id;
@@ -71,7 +89,12 @@ public sealed class GuardedUpstreamConnection
     /// <see cref="PublisherKeyId"/>: Verschluckte der Decorator das Merkmal, fielen alle Aufrufer
     /// auf denselben Namen zusammen — und die Handle-Trennung wäre still abgeschaltet.
     /// </summary>
-    public async Task<JsonElement> CallToolAsync(
+    public Task<JsonElement> CallToolAsync(
+        string caller, string toolName, JsonElement args, CancellationToken ct)
+        => WithRecoveryAsync(
+            connection => connection.CallToolOnceAsync(caller, toolName, args, ct), toolName, ct);
+
+    private async Task<JsonElement> CallToolOnceAsync(
         string caller, string toolName, JsonElement args, CancellationToken ct)
     {
         Interlocked.Increment(ref _inFlight);
@@ -91,10 +114,75 @@ public sealed class GuardedUpstreamConnection
     }
 
     public Task<JsonElement> ReadResourceAsync(Uri uri, CancellationToken ct)
-        => WithTimeoutAsync((inner, token) => inner.ReadResourceAsync(uri, token), "resources/read", ct);
+        => WithRecoveryAsync(
+            connection => connection.WithTimeoutAsync(
+                (inner, token) => inner.ReadResourceAsync(uri, token), "resources/read", ct),
+            toolName: null,
+            ct);
 
     public Task<JsonElement> GetPromptAsync(string promptName, JsonElement? args, CancellationToken ct)
-        => WithTimeoutAsync((inner, token) => inner.GetPromptAsync(promptName, args, token), "prompts/get", ct);
+        => WithRecoveryAsync(
+            connection => connection.WithTimeoutAsync(
+                (inner, token) => inner.GetPromptAsync(promptName, args, token), "prompts/get", ct),
+            toolName: null,
+            ct);
+
+    /// <summary>
+    /// Führt einen Aufruf aus und wiederholt ihn <b>genau einmal</b>, wenn der Upstream die Sitzung
+    /// nicht mehr kennt (Vertrag Abschnitt 4).
+    /// <para>
+    /// <b>Nur dieser eine Fehler wird wiederholt.</b> Beim 404 auf die Sitzung steht fest, dass der
+    /// Upstream nichts ausgeführt hat. Bei einer abgerissenen Verbindung, einer Zeitüberschreitung
+    /// oder einem 5xx ist das nicht zu wissen — und ein Werkzeug zweimal auszuführen ist schlimmer,
+    /// als einen Fehler zu melden.
+    /// </para>
+    /// <para>
+    /// <paramref name="attempt"/> bekommt die Verbindung, auf der es laufen soll, und ruft dort den
+    /// Weg <b>ohne</b> Wiederholung. So kann der zweite Versuch keinen dritten auslösen.
+    /// </para>
+    /// </summary>
+    private async Task<JsonElement> WithRecoveryAsync(
+        Func<GuardedUpstreamConnection, Task<JsonElement>> attempt, string? toolName, CancellationToken ct)
+    {
+        if (_recovery is null)
+        {
+            return await attempt(this).ConfigureAwait(false);
+        }
+
+        if (!_sessionLost)
+        {
+            try
+            {
+                return await attempt(this).ConfigureAwait(false);
+            }
+            catch (UpstreamSessionLostException)
+            {
+                _sessionLost = true;
+            }
+        }
+
+        var replacement = await _recovery.RebuildAsync(this, ct).ConfigureAwait(false);
+        if (toolName is not null && !_recovery.IsToolAvailable(toolName))
+        {
+            throw new InvalidOperationException(
+                $"Die Sitzung zum Upstream ging verloren und wurde neu aufgebaut. Das Werkzeug "
+                + $"'{toolName}' steht danach nicht mehr im geprüften Katalog — es wurde entfernt, "
+                + "oder seine Definition hat sich geändert und wird bis zur Annahme zurückgehalten. "
+                + "Der Aufruf wurde nicht ausgeführt.");
+        }
+
+        try
+        {
+            return await attempt(replacement).ConfigureAwait(false);
+        }
+        catch (UpstreamSessionLostException)
+        {
+            // Die Wiederholung selbst wird nicht wiederholt. Die neue Verbindung merkt sich aber,
+            // dass auch ihre Sitzung fort ist — der nächste Aufrufer baut dann neu auf.
+            replacement._sessionLost = true;
+            throw;
+        }
+    }
 
     public Task PingAsync(CancellationToken ct)
         => WithTimeoutAsync(
@@ -140,6 +228,22 @@ public sealed class GuardedUpstreamConnection
         {
             throw new TimeoutException(
                 $"Upstream-Operation '{operationName}' auf '{Id}' überschritt den Timeout von {_callTimeout}.");
+        }
+        catch (OperationCanceledException exception)
+            when (!ct.IsCancellationRequested && !timeoutCts.IsCancellationRequested)
+        {
+            // Weder der Aufrufer noch die Frist haben abgebrochen: Die Verbindung wurde unter der
+            // laufenden Operation abgebaut. Gemessen am MCP-SDK: Bekommt eine Anfrage ein 404 auf
+            // die Sitzung, bricht der Client alle anderen ab, die gerade unterwegs sind — sie sehen
+            // kein eigenes 404, sondern eine nackte „The operation was canceled".
+            //
+            // Wiederholt wird hier bewusst NICHT (Vertrag Abschnitt 4): Eine Anfrage, die schon
+            // unterwegs war, kann der Upstream ausgeführt haben, bevor seine Sitzung endete.
+            throw new UpstreamConnectionLostException(
+                $"Die Verbindung zum Upstream wurde während der Operation '{operationName}' abgebaut — "
+                + "etwa weil seine Sitzung verloren ging. Ob der Upstream sie noch ausgeführt hat, ist "
+                + "nicht bekannt; sie wurde deshalb nicht wiederholt.",
+                exception);
         }
     }
 }

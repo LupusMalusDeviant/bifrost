@@ -22,6 +22,22 @@ public enum UpstreamState
     Failed = 4,
 }
 
+/// <summary>
+/// Warum ein Upstream <see cref="UpstreamState.Failed"/> ist — die Angabe, an der die Frist bis zum
+/// nächsten Verbindungsversuch hängt (Vertrag „Selbsttätige Wiederverbindung", Abschnitt 2).
+/// <para>
+/// Zwei Arten und nicht mehr: Alles, was von selbst vorübergehen kann, wird mit wachsender Frist
+/// erneut versucht. Eine abgelehnte Anmeldung geht nicht von selbst vorüber — dort wäre eine
+/// schnelle Wiederholung eine Schleife gegen den Schlüssel.
+/// </para>
+/// </summary>
+public enum UpstreamFailureKind
+{
+    None = 0,
+    Unreachable = 1,
+    Authentication = 2,
+}
+
 public enum OpenApiAuthKind
 {
     None = 0,
@@ -333,13 +349,27 @@ public sealed record CliParameterSpec(
     IReadOnlyList<string>? ConflictsWith = null,
     IReadOnlyList<string>? Requires = null);
 
+/// <summary>
+/// Fristen der Wiederverbindung (Vertrag „Selbsttätige Wiederverbindung", Abschnitt 3).
+/// </summary>
+/// <param name="MaxRetries">
+/// <c>null</c> heißt <b>unbegrenzt</b> — und das ist die Vorgabe. Bis 0.12.0 stand hier eine
+/// Fünf: Nach rund 31 Sekunden gab der Supervisor einen Upstream endgültig auf, und ein Deploy, der
+/// länger dauerte, ließ ihn bis zum nächsten Eingriff von Hand liegen.
+/// <para>
+/// Eine <b>ausdrücklich</b> gesetzte Zahl gilt weiter: Sie ist eine Entscheidung des Betreibers.
+/// Ist sie erreicht, sagt der Status das (<see cref="UpstreamReconnectInfo.Exhausted"/>), statt
+/// still stehenzubleiben.
+/// </para>
+/// </param>
 public sealed record RestartPolicy(
-    int MaxRetries,
+    int? MaxRetries,
     TimeSpan InitialBackoff,
     double BackoffMultiplier,
     TimeSpan MaxBackoff)
 {
-    public static RestartPolicy Default { get; } = new(5, TimeSpan.FromSeconds(1), 2.0, TimeSpan.FromMinutes(1));
+    public static RestartPolicy Default { get; } =
+        new(null, TimeSpan.FromSeconds(5), 2.0, TimeSpan.FromMinutes(5));
 }
 
 /// <summary>
@@ -491,7 +521,31 @@ public sealed record UpstreamStatus(
     /// zurückgehalten werden (Rug-Pull-Schutz). Sie zählen nicht in <see cref="ToolCount"/> — sie
     /// sind weder sichtbar noch aufrufbar, bis jemand die neue Fassung annimmt.
     /// </summary>
-    IReadOnlyList<string>? QuarantinedTools = null);
+    IReadOnlyList<string>? QuarantinedTools = null,
+    /// <summary>
+    /// Stand der Wiederverbindung — nur gesetzt, solange der Upstream
+    /// <see cref="UpstreamState.Failed"/> ist.
+    /// </summary>
+    UpstreamReconnectInfo? Reconnect = null);
+
+/// <summary>
+/// Was ein Upstream im Zustand <see cref="UpstreamState.Failed"/> über seine Wiederverbindung sagt.
+/// </summary>
+/// <param name="Kind">Die Fehlerart des letzten Versuchs.</param>
+/// <param name="Attempt">Fehlversuche in Folge.</param>
+/// <param name="NextAttemptAt">
+/// Wann der nächste Versuch beginnt. <c>null</c> heißt: Ein Versuch läuft gerade — oder es kommt
+/// keiner mehr (<paramref name="Exhausted"/>).
+/// </param>
+/// <param name="Exhausted">
+/// Die ausdrücklich konfigurierte Obergrenze ist erreicht. Von selbst folgt kein Versuch mehr;
+/// „Jetzt verbinden" funktioniert weiter.
+/// </param>
+public sealed record UpstreamReconnectInfo(
+    UpstreamFailureKind Kind,
+    int Attempt,
+    DateTimeOffset? NextAttemptAt,
+    bool Exhausted);
 
 /// <summary>Drain-Verhalten beim Entfernen/Stoppen unter Last (WP1.4): Gnadenfrist für In-Flight-Calls, danach Cancel.</summary>
 public sealed record DrainPolicy(TimeSpan GracePeriod)
@@ -772,6 +826,23 @@ public interface IUpstreamSupervisor
     Task<ConfigVersionId> ReconfigureAsync(ServerId id, UpstreamServerConfig config, CancellationToken ct);
 
     Task RollbackAsync(ServerId id, ConfigVersionId version, CancellationToken ct);
+
+    /// <summary>
+    /// Stößt für einen Upstream im Zustand <see cref="UpstreamState.Failed"/> sofort einen
+    /// Verbindungsversuch an, statt die laufende Frist abzuwarten. Wartet nicht auf das Ergebnis —
+    /// es zeigt sich über <see cref="Changed"/>.
+    /// <para>
+    /// Der Zähler der Fehlversuche bleibt stehen: Scheitert der Versuch, geht es an der alten
+    /// Stelle der Fristenfolge weiter. Ein Knopf darf die Bremse nicht lösen.
+    /// </para>
+    /// </summary>
+    /// <returns>
+    /// <c>true</c>, wenn ein Versuch angestoßen wurde; <c>false</c>, wenn nichts zu tun war
+    /// (verbunden, oder ein Versuch läuft bereits).
+    /// </returns>
+    /// <exception cref="KeyNotFoundException">Der Upstream ist nicht registriert.</exception>
+    /// <exception cref="InvalidOperationException">Der Upstream ist deaktiviert — er bleibt aus.</exception>
+    Task<bool> ConnectNowAsync(ServerId id, CancellationToken ct);
 }
 
 /// <summary>

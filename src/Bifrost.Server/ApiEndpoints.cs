@@ -177,8 +177,40 @@ internal static class ApiEndpoints
                 toolCount = s.ToolCount,
                 lastError = s.LastError,
                 lastHealthyAt = s.LastHealthyAt,
+                // Stand der Wiederverbindung — nur im Zustand Failed gefuellt. Vier flache Felder
+                // statt eines verschachtelten Objekts: Wer die Liste mit jq oder in einem Skript
+                // liest, soll nicht erst pruefen muessen, ob der Knoten da ist.
+                failureKind = s.Reconnect?.Kind.ToString(),
+                reconnectAttempt = s.Reconnect?.Attempt ?? 0,
+                nextAttemptAt = s.Reconnect?.NextAttemptAt,
+                reconnectExhausted = s.Reconnect?.Exhausted ?? false,
             }),
         }));
+
+        // „Jetzt verbinden": stoesst fuer einen Upstream im Zustand Failed sofort einen Versuch an,
+        // statt die laufende Frist abzuwarten. Wartet nicht auf das Ergebnis — das steht danach in
+        // der Liste. Ein deaktivierter Upstream bleibt aus (409).
+        servers.MapPost("/{id:guid}/connect", async (
+            Guid id, HttpContext ctx, IUpstreamSupervisor supervisor, IAuditSink audit, TimeProvider time,
+            CancellationToken ct) =>
+        {
+            var serverId = new ServerId(id);
+            try
+            {
+                var triggered = await supervisor.ConnectNowAsync(serverId, ct);
+                AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, serverId, "server-connect-requested");
+                return Results.Accepted(
+                    value: new { triggered, state = supervisor.GetStatus(serverId)?.State.ToString() });
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+        });
 
         servers.MapPost("/", async (
             UpstreamServerConfig config, HttpContext ctx, UpstreamSupervisor supervisor, IAuditSink audit,

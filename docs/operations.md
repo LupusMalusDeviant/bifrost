@@ -285,11 +285,58 @@ Sicherung zurückholen.
 | `BIFROST_GUARD_ALLOW_CUSTOM_PATTERNS` | *(aus)* | Erlaubt Admins eigene Regex in der UI (siehe [Guardrails](#guardrails)) |
 | `BIFROST_MCP_STATELESS` | `1` | `0`/`false` schaltet auf den Sitzungsbetrieb der alten Protokollrevision zurück (siehe [Protokollstand](#protokollstand-sessionlos-oder-mit-sitzung)) |
 | `BIFROST_MCP_LIST_TTL_SECONDS` | `60` | Wie lange ein Client die Werkzeug-, Resource- und Prompt-Listen für frisch halten darf. `0` = kein Hinweis |
+| `BIFROST_UPSTREAM_RECONNECT_INITIAL_SECONDS` | `5` | Frist nach dem ersten gescheiterten Verbindungsversuch zu einem Upstream; danach verdoppelt sie sich. Erlaubt 1 – 300 (siehe [Wiederverbindung von Upstreams](#wiederverbindung-von-upstreams)) |
+| `BIFROST_UPSTREAM_RECONNECT_MAX_SECONDS` | `300` | Deckel dieser Frist. Versucht wird ohne Ende weiter, nur nicht öfter als so. Erlaubt: Anfangsfrist – 3600 |
+| `BIFROST_UPSTREAM_RECONNECT_AUTH_SECONDS` | `900` | Feste Frist, nachdem ein Upstream die **Anmeldung abgelehnt** hat (401/403, fehlendes OAuth-Token). Lang, damit keine Schleife gegen den Schlüssel entsteht. Erlaubt: Deckel – 86400 |
 | `BIFROST_BACKUP_PASSPHRASE` | *(nicht gesetzt)* | Verschlüsselt die **automatischen** Sicherungen vor einer Migration. Ohne sie entstehen sie unverschlüsselt — mit ihr sind sie ohne die Passphrase wertlos (siehe [Backup](#backup)) |
 | `BIFROST_ALLOW_HOST_EXECUTION` | *(aus)* | **Die schärfste Option des Produkts.** `true` erlaubt es, Upstream-Programme nativ mit den Rechten des Gateways zu starten — sie lesen dann alles, was diesem Benutzer offensteht, einschließlich der API-Keys aller Agenten und der Secrets aller anderen Upstreams. Vorgabe für eine frische Instanz ist `false` (ADR-0025 E2). Empfehlung: aus lassen und Container-Isolation nutzen; ein Zugriff des Programms auf Dateien der Maschine erscheint in **keinem** Log dieses Gateways |
 | `BIFROST_APPROVAL_WEBHOOK_URL` | *(nicht gesetzt)* | Ziel für die Benachrichtigung über wartende Freigaben (siehe [Freigabe-Flows](#freigabe-flows-approval)). Ohne hinterlegtes Geheimnis startet der Gateway damit **nicht** — eine unsignierte Benachrichtigung kann jeder fälschen |
 | `BIFROST_APPROVAL_WEBHOOK_SECRET` | *(nicht gesetzt)* | Signaturgeheimnis derselben Benachrichtigung, dasselbe Verfahren wie bei eingehenden Webhooks (ADR-0013). Pflicht, sobald ein Ziel gesetzt ist |
 | `BIFROST_APPROVAL_WEBHOOK_ALLOW_PRIVATE` | *(aus)* | Erlaubt ein Ziel im **eigenen Netz**. Jedes Ziel geht sonst durch dieselbe SSRF-Prüfung wie ein Schemaimport; dieser Schalter ist der ausdrückliche Weg daran vorbei und gehört nur gesetzt, wenn das Ziel wirklich im eigenen Netz steht |
+
+## Wiederverbindung von Upstreams
+
+Ein Upstream, der ausfällt, wird **von selbst und ohne Obergrenze** wieder verbunden, solange er
+aktiviert ist. Bis 0.12.0 gab der Gateway nach sechs Versuchen in rund 31 Sekunden auf; ein Deploy
+des Upstreams, der länger dauerte, ließ ihn auf `Failed` liegen, bis jemand ihn von Hand aus- und
+wieder einschaltete.
+
+| Fehlerart | Wann | Nächster Versuch |
+|---|---|---|
+| nicht erreichbar | abgelehnte Verbindung, Zeitüberschreitung, 404, 5xx, Programm startet nicht | nach 5 s, dann 10, 20, 40, 80, 160 s, danach alle 300 s |
+| Anmeldung abgelehnt | HTTP 401/403, fehlendes oder nicht erneuerbares OAuth-Token | alle 15 min |
+
+Jede Frist wird zufällig um bis zu 20 % **verkürzt**, damit mehrere Gateways denselben Upstream
+nicht im Gleichschritt treffen. Nach einer gesunden Minute beginnt die Folge wieder bei 5 s.
+
+- **Deaktiviert bleibt aus.** Für einen deaktivierten Upstream läuft kein Versuch und kein Zeitgeber.
+- **Die Server-Verwaltung zeigt** Fehlerart, Zahl der Versuche und die Zeit bis zum nächsten. Der
+  Knopf „Jetzt verbinden" versucht es sofort; die Fristenfolge läuft danach an der alten Stelle
+  weiter. Über REST: `POST /api/v1/servers/{id}/connect`.
+- **Nach jeder Wiederverbindung** wird der Katalog neu geholt und jede Werkzeugdefinition gegen den
+  festgehaltenen Stand geprüft — genau wie beim ersten Anschluss. Eine geänderte Definition bleibt
+  zurückgehalten, bis jemand sie annimmt.
+- **Im Audit steht ein Ausfall mit zwei Zeilen:** dem Eintritt in `Failed` mit dem Grund und der
+  Rückkehr auf `Healthy` mit Dauer und Zahl der Versuche. Die einzelnen Wiederholungen stehen dort
+  nicht (im Log nur auf Stufe `Debug`).
+- **Fehlertexte enthalten nie den Antwortkörper des Upstreams** und keine hinterlegten Zugangsdaten,
+  auch nicht deren Anfang.
+
+**Verlorene Sitzung.** Ein Upstream mit `Mcp-Session-Id`, der neu gestartet wurde, kennt die Sitzung
+des Gateways nicht mehr und beantwortet den nächsten Aufruf mit HTTP 404. Der Gateway baut die
+Sitzung dann einmal neu auf und wiederholt **diesen einen** Aufruf. Bei jedem anderen Fehler mitten
+im Aufruf — abgerissene Verbindung, Zeitüberschreitung, 5xx — wird nicht wiederholt: Dort ist nicht
+zu wissen, ob der Upstream den Aufruf schon ausgeführt hat. Das gilt auch für Aufrufe, die im selben
+Augenblick **schon unterwegs** waren: Der MCP-Client bricht sie ab, sobald einer das 404 bekommt, und
+sie enden mit „Die Verbindung zum Upstream wurde während der Operation … abgebaut … nicht
+wiederholt". Aufrufe, die danach beginnen, warten auf den einen Neuaufbau und laufen dann normal.
+Ein sessionloser Upstream (Revision `2026-07-28`) übersteht seinen Neustart ohne Zutun.
+
+**Obergrenze je Upstream.** Das Feld `restart` der Upstream-Konfiguration überschreibt die Fristen
+für einen einzelnen Upstream. Eine dort **ausdrücklich** gesetzte `maxRetries` gilt weiter; ist sie
+erreicht, steht in der Server-Verwaltung „Wiederverbindung nach N Versuchen eingestellt (so
+konfiguriert)". Fehlt das Feld — der Regelfall, die Oberfläche setzt es nie —, wird unbegrenzt
+versucht.
 
 ## Protokollstand: sessionlos oder mit Sitzung
 
@@ -712,8 +759,10 @@ Standard abgelöst, und Client-ID-Metadata-Documents verlangen ein öffentlich a
 ein selbst gehosteter Gateway steht oft nicht im Netz. Vorregistrierung ist deshalb der Weg, der
 ohne öffentliche Erreichbarkeit funktioniert.
 
-**Verbinden** ist ein einmaliger Schritt eines Administrators: In der Server-Verwaltung *Verbinden*
-klicken, beim Authorization Server zustimmen, fertig. Danach erneuert der Gateway das Token selbst,
+**Autorisieren** ist ein einmaliger Schritt eines Administrators: In der Server-Verwaltung
+*Autorisieren* klicken, beim Authorization Server zustimmen, fertig. (Der Link hieß bis 0.12.0
+*Verbinden*; umbenannt, weil daneben jetzt *Jetzt verbinden* steht — siehe „Wiederverbindung von
+Upstreams".) Danach erneuert der Gateway das Token selbst,
 mit zwei Minuten Sicherheitsabstand vor dem Ablauf.
 
 Was dabei passiert, in der Reihenfolge des Standards: unautorisiert anfragen → `WWW-Authenticate`

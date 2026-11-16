@@ -143,8 +143,14 @@ internal sealed class FakeUpstreamConnection : IUpstreamConnection
 
     public string? LastToolName { get; private set; }
 
+    /// <summary>Wie oft ein Werkzeugaufruf diese Verbindung erreicht hat — auch die gescheiterten.</summary>
+    public int CallCount => Volatile.Read(ref _callCount);
+
+    private int _callCount;
+
     public async Task<JsonElement> CallToolAsync(string toolName, JsonElement args, CancellationToken ct)
     {
+        Interlocked.Increment(ref _callCount);
         LastToolName = toolName;
         if (CallException is { } ex)
         {
@@ -218,10 +224,21 @@ internal sealed class FakeUpstreamConnector : IUpstreamConnector
     public void Enqueue(Func<ServerId, UpstreamServerConfig, IUpstreamConnection> factory)
         => _scripted.Enqueue(factory);
 
-    public Task<IUpstreamConnection> ConnectAsync(ServerId id, UpstreamServerConfig config, CancellationToken ct)
+    /// <summary>
+    /// Wenn gesetzt, wartet jeder Verbindungsaufbau erst darauf — für Versuche, die hängen. Der
+    /// Haken bekommt das Abbruchsignal und darf es beachten oder ignorieren; beides gibt es in echt.
+    /// </summary>
+    public Func<CancellationToken, Task>? ConnectHook { get; set; }
+
+    public async Task<IUpstreamConnection> ConnectAsync(ServerId id, UpstreamServerConfig config, CancellationToken ct)
     {
         Interlocked.Increment(ref _connectCalls);
         LastConfig = config;
+        if (ConnectHook is { } hook)
+        {
+            await hook(ct).ConfigureAwait(false);
+        }
+
         var factory = _scripted.TryDequeue(out var scripted) ? scripted : DefaultBehavior;
         var connection = factory(id, config);
         if (connection is FakeUpstreamConnection fake)
@@ -232,6 +249,6 @@ internal sealed class FakeUpstreamConnector : IUpstreamConnector
             }
         }
 
-        return Task.FromResult(connection);
+        return connection;
     }
 }

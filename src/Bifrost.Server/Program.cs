@@ -221,7 +221,10 @@ builder.Services.AddBifrostHostExecution(dataDir, builder.Configuration[HostExec
 builder.Services.AddSingleton<IUpstreamConnectionTester>(sp => new UpstreamConnectionTester(
     sp.GetServices<IUpstreamConnector>(),
     sp.GetRequiredService<IHostExecutionPolicy>()));
-builder.Services.AddSingleton(new SupervisorOptions());
+// Fristen der Wiederverbindung. Ein ungueltiger Wert setzt die Vorgabe und wird weiter unten
+// einmal gemeldet — er haelt den Start nicht auf.
+var (supervisorOptions, reconnectWarnings) = UpstreamReconnectSettings.Read(key => builder.Configuration[key]);
+builder.Services.AddSingleton(supervisorOptions);
 // Rug-Pull-Schutz: festgehaltene Tool-Definitionen. Der Supervisor prueft jede Discovery dagegen.
 builder.Services.AddSingleton<ToolDefinitionPinStore>(sp => new ToolDefinitionPinStore(
     sp.GetRequiredService<IDbContextFactory<BifrostDbContext>>(), sp.GetRequiredService<TimeProvider>()));
@@ -551,6 +554,15 @@ if (adoptedLegacyVariables.Count > 0)
         + "Umbenennung BIFROST_ (frueher MCPMCP_); bitte umstellen. Die alten Namen werden noch "
         + "gelesen, sind aber nicht mehr dokumentiert.",
         string.Join(", ", adoptedLegacyVariables));
+#pragma warning restore CA1848
+}
+
+foreach (var reconnectWarning in reconnectWarnings)
+{
+    // Hoechstens drei Zeilen, einmal beim Start: Ein LoggerMessage-Delegat lohnt dafuer nicht, und
+    // Top-Level-Anweisungen haben keinen Ort fuer eine partielle Log-Klasse.
+#pragma warning disable CA1848
+    app.Logger.LogWarning("Wiederverbindung von Upstreams: {Warning}", reconnectWarning);
 #pragma warning restore CA1848
 }
 

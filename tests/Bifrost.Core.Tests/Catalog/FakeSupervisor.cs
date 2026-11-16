@@ -63,4 +63,6 @@ internal sealed class FakeSupervisor : IUpstreamSupervisor
         => Task.FromResult(new ConfigVersionId(1));
 
     public Task RollbackAsync(ServerId id, ConfigVersionId version, CancellationToken ct) => Task.CompletedTask;
+
+    public Task<bool> ConnectNowAsync(ServerId id, CancellationToken ct) => Task.FromResult(false);
 }

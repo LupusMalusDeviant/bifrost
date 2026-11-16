@@ -42,4 +42,38 @@ public sealed record SupervisorOptions
     public TimeSpan CatalogPollInterval { get; init; } = TimeSpan.FromMinutes(1);
 
     public RestartPolicy DefaultRestartPolicy { get; init; } = RestartPolicy.Default;
+
+    /// <summary>
+    /// Frist bis zum nächsten Versuch, nachdem die Gegenstelle die Anmeldung abgelehnt hat
+    /// (<see cref="UpstreamFailureKind.Authentication"/>). Fest statt wachsend: Ein falscher
+    /// Schlüssel wird durch Warten nicht richtig, und jeder Versuch steht beim Upstream als
+    /// abgelehnte Anmeldung im Log.
+    /// </summary>
+    public TimeSpan AuthenticationRetryInterval { get; init; } = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// Wie lange ein Verbindungsversuch samt Katalogabfrage dauern darf. Die Frist steht hier und
+    /// nicht nur im Transport: Mit unbegrenzten Wiederholungen ist ein Versuch, der hängt, derselbe
+    /// stille Stillstand wie ein Supervisor, der aufgegeben hat.
+    /// </summary>
+    public TimeSpan ConnectAttemptTimeout { get; init; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Wie lange der Neuaufbau einer verlorenen Sitzung dauern darf. Kürzer als ein gewöhnlicher
+    /// Versuch, weil darauf ein Aufrufer wartet.
+    /// </summary>
+    public TimeSpan SessionRebuildTimeout { get; init; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// Anteil, um den eine Frist höchstens <b>verkürzt</b> wird. Nur nach unten: Der Deckel bleibt
+    /// Deckel, und zwei Gateways, die denselben Upstream verloren haben, treffen ihn trotzdem nicht
+    /// im Gleichschritt.
+    /// </summary>
+    public double ReconnectJitter { get; init; } = 0.2;
+
+    /// <summary>
+    /// Zufallsquelle des Jitters, Werte in [0, 1). Eine Eigenschaft und kein fester Aufruf, damit
+    /// Tests die Fristen auf die Millisekunde prüfen können.
+    /// </summary>
+    public Func<double> JitterSource { get; init; } = static () => Random.Shared.NextDouble();
 }

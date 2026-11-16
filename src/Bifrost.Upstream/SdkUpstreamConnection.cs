@@ -29,10 +29,18 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection
     private readonly McpClient _client;
     private readonly List<IAsyncDisposable> _registrations = [];
 
+    /// <summary>
+    /// Hatte diese Verbindung beim Aufbau eine Sitzung? Festgehalten, weil die Frage nach dem
+    /// ersten 404 gestellt wird — und dann nicht davon abhängen soll, was ein Client, der sich
+    /// gerade abbaut, über sich sagt.
+    /// </summary>
+    private readonly bool _hadSession;
+
     public SdkUpstreamConnection(ServerId id, McpClient client)
     {
         Id = id;
         _client = client;
+        _hadSession = client.SessionId is not null;
         foreach (var method in ForwardedNotifications)
         {
             _registrations.Add(_client.RegisterNotificationHandler(method, (notification, _) =>
@@ -80,7 +88,69 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection
 
     public event EventHandler<UpstreamNotificationEventArgs>? NotificationReceived;
 
-    public async Task<UpstreamInventory> DiscoverAsync(CancellationToken ct)
+    public Task<UpstreamInventory> DiscoverAsync(CancellationToken ct)
+        => WithSessionCheckAsync(() => DiscoverCoreAsync(ct));
+
+    public Task<JsonElement> CallToolAsync(string toolName, JsonElement args, CancellationToken ct)
+        => WithSessionCheckAsync(() => CallToolCoreAsync(toolName, args, ct));
+
+    public Task<JsonElement> ReadResourceAsync(Uri uri, CancellationToken ct)
+        => WithSessionCheckAsync(() => ReadResourceCoreAsync(uri, ct));
+
+    public Task<JsonElement> GetPromptAsync(string promptName, JsonElement? args, CancellationToken ct)
+        => WithSessionCheckAsync(() => GetPromptCoreAsync(promptName, args, ct));
+
+    public Task PingAsync(CancellationToken ct)
+        => WithSessionCheckAsync(async () =>
+        {
+            await PingCoreAsync(ct).ConfigureAwait(false);
+            return true;
+        });
+
+    /// <summary>
+    /// Übersetzt „HTTP 404 auf eine Anfrage, während eine Sitzung besteht" in
+    /// <see cref="UpstreamSessionLostException"/> — den einen Fehler, nach dem ein Aufruf
+    /// wiederholt werden darf.
+    /// <para>
+    /// <b>Beide Bedingungen zählen.</b> Ein 404 ohne Sitzung beweist nichts: Auf der Revision
+    /// 2026-07-28 beantwortet ein Server auch ein unbekanntes Verfahren mit HTTP 404 (gemessen an
+    /// <c>ping</c>). Und nach diesem ersten 404 ist der SDK-Client tot — er baut die Sitzung nicht
+    /// selbst neu auf, jeder weitere Aufruf endet sofort in einer TaskCanceledException. Der
+    /// Neuaufbau ist Sache des Supervisors.
+    /// </para>
+    /// </summary>
+    private async Task<T> WithSessionCheckAsync<T>(Func<Task<T>> call)
+    {
+        try
+        {
+            return await call().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (IsSessionLost(exception))
+        {
+            throw new UpstreamSessionLostException(
+                "Der Upstream kennt die Sitzung nicht mehr (HTTP 404 auf die Mcp-Session-Id).", exception);
+        }
+    }
+
+    private bool IsSessionLost(Exception exception)
+    {
+        if (!_hadSession && _client.SessionId is null)
+        {
+            return false;
+        }
+
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is HttpRequestException { StatusCode: System.Net.HttpStatusCode.NotFound })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private async Task<UpstreamInventory> DiscoverCoreAsync(CancellationToken ct)
     {
         IList<McpClientTool> tools;
         try
@@ -124,7 +194,7 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection
         return new UpstreamInventory(toolDescriptors, resources, prompts);
     }
 
-    public async Task<JsonElement> CallToolAsync(string toolName, JsonElement args, CancellationToken ct)
+    private async Task<JsonElement> CallToolCoreAsync(string toolName, JsonElement args, CancellationToken ct)
     {
         CallToolResult result;
         try
@@ -155,14 +225,14 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection
         return JsonSerializer.SerializeToElement(result, McpJsonUtilities.DefaultOptions);
     }
 
-    public async Task<JsonElement> ReadResourceAsync(Uri uri, CancellationToken ct)
+    private async Task<JsonElement> ReadResourceCoreAsync(Uri uri, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(uri);
         var result = await _client.ReadResourceAsync(uri, cancellationToken: ct).ConfigureAwait(false);
         return JsonSerializer.SerializeToElement(result, McpJsonUtilities.DefaultOptions);
     }
 
-    public async Task<JsonElement> GetPromptAsync(string promptName, JsonElement? args, CancellationToken ct)
+    private async Task<JsonElement> GetPromptCoreAsync(string promptName, JsonElement? args, CancellationToken ct)
     {
         IReadOnlyDictionary<string, object?>? arguments = args is { } a ? JsonArguments.ToDictionary(a) : null;
         var result = await _client.GetPromptAsync(promptName, arguments, cancellationToken: ct).ConfigureAwait(false);
@@ -183,7 +253,7 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection
     /// ihn falsch zu stellen.
     /// </para>
     /// </summary>
-    public async Task PingAsync(CancellationToken ct)
+    private async Task PingCoreAsync(CancellationToken ct)
     {
         if (!SpeaksJuly2026OrLater(_client.NegotiatedProtocolVersion))
         {

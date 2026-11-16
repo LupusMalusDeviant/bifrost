@@ -169,8 +169,11 @@ public sealed class UpstreamSupervisorTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Permanent_failure_after_exhausted_retries_stops_restarting()
+    public async Task An_explicitly_set_retry_limit_stops_restarting_and_says_so()
     {
+        // Seit dem Vertrag „Selbsttätige Wiederverbindung" ist die Vorgabe unbegrenzt. Diese
+        // Klasse setzt MaxRetries ausdrücklich (TestPolicy) — und eine ausdrücklich gesetzte
+        // Grenze gilt weiter, nur steht sie jetzt sichtbar im Status.
         _connector.DefaultBehavior = static (_, _) => throw new IOException("dauerhaft kaputt (Test)");
 
         var id = await _supervisor.AddAsync(TestData.StdioConfig(), TestContext.Current.CancellationToken);
@@ -190,6 +193,8 @@ public sealed class UpstreamSupervisorTests : IAsyncDisposable
         _connector.ConnectCalls.Should().Be(3, "nach Erschöpfen der RestartPolicy darf kein weiterer Versuch folgen");
         _supervisor.GetStatus(id)!.State.Should().Be(UpstreamState.Failed);
         _supervisor.GetStatus(id)!.LastError.Should().Contain("dauerhaft kaputt");
+        _supervisor.GetStatus(id)!.Reconnect.Should().BeEquivalentTo(
+            new UpstreamReconnectInfo(UpstreamFailureKind.Unreachable, Attempt: 3, NextAttemptAt: null, Exhausted: true));
     }
 
     [Fact]

@@ -94,6 +94,38 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   jedem CI-Lauf rot. Er prüft die Matrix jetzt gegen die versionierte Id-Liste
   `docs/acceptance/lastenheft-anforderungen.txt`; der Abgleich der Liste mit dem Lastenheft läuft,
   wo das Lastenheft vorhanden ist.
+- **Ein ausgefallener Upstream blieb für immer auf `Failed`** (Vorfall vom 2026-11-16: ein Upstream
+  war bei einem Deploy für Sekunden weg und danach zwölf Stunden nicht verbunden). Der Gateway gab
+  nach sechs Versuchen in rund 31 Sekunden auf; danach half nur Deaktivieren und Aktivieren. Jetzt
+  wird **ohne Obergrenze** erneut verbunden, solange der Upstream aktiviert ist
+  ([Vertrag](docs/contracts/upstream-wiederverbindung.md), Betrieb: „Wiederverbindung von
+  Upstreams" in `docs/operations.md`).
+  - **Fristen:** 5 s, dann 10, 20, 40, 80, 160 s, danach alle 300 s, jeweils um bis zu 20 % verkürzt.
+    Nach einer abgelehnten Anmeldung (401/403, fehlendes OAuth-Token) fest 15 min — keine Schleife
+    gegen den Schlüssel. Einstellbar über `BIFROST_UPSTREAM_RECONNECT_INITIAL_SECONDS`,
+    `…_MAX_SECONDS`, `…_AUTH_SECONDS`.
+  - **Geändertes Verhalten:** Die Vorgabe von `restart.maxRetries` ist nicht mehr 5, sondern
+    unbegrenzt. Eine **ausdrücklich** gesetzte Grenze gilt weiter und steht jetzt sichtbar im
+    Status. Ein Versuch, der hängt, endet nach 60 s; der Zähler der Fehlversuche fällt erst nach
+    einer gesunden Minute (bisher sofort beim Verbinden).
+  - **Verlorene Sitzung:** Beantwortet ein neu gestarteter Upstream einen Aufruf mit HTTP 404 auf
+    die `Mcp-Session-Id`, baut der Gateway die Sitzung einmal neu auf und wiederholt diesen einen
+    Aufruf. Jeder andere Fehler mitten im Aufruf wird nicht wiederholt — auch nicht bei Aufrufen,
+    die im selben Augenblick schon unterwegs waren.
+  - **Server-Verwaltung:** Fehlerart, Zahl der Versuche und Zeit bis zum nächsten stehen in der
+    Zeile; neu ist der Knopf **„Jetzt verbinden"** (REST: `POST /api/v1/servers/{id}/connect`,
+    `GET /api/v1/servers` nennt `failureKind`, `reconnectAttempt`, `nextAttemptAt`,
+    `reconnectExhausted`). Der OAuth-Link daneben heißt jetzt **„Autorisieren"** statt „Verbinden".
+  - **Audit und Log:** ein Ausfall sind zwei Zeilen (Eintritt in `Failed`, Rückkehr auf `Healthy` mit
+    Dauer und Versuchszahl) statt zweier Zeilen je Versuch.
+- **Fehlertexte eines Upstreams konnten dessen Antwortkörper enthalten.** Das MCP-SDK hängt an eine
+  HTTP-Fehlermeldung den Antwortkörper der Gegenstelle an; der Text ging ungefiltert in `lastError`,
+  Audit und Log. Zitiert ein Upstream in seiner 401-Antwort den vorgelegten Schlüssel, stand er dort.
+  Der Grund wird jetzt vom Gateway formuliert (Fehlerart, Status, Rechner und Port), der
+  Antwortkörper wird nie übernommen, hinterlegte Zugangsdaten werden auch als Anfangsstück ab sechs
+  Zeichen maskiert, und das Ausnahmeobjekt geht für diese Ereignisse nicht mehr an den Logger.
+  *Nicht erfasst:* die Fehlermeldung eines **Werkzeugaufrufs** (`Upstream-Fehler: …` an den Agenten
+  und ins Audit) trägt weiterhin die ungefilterte Meldung — gefunden, hier nicht geändert.
 - **Der Skip-Wächter der CI zählte nur eine einzige Testassembly** (Befund aus dem M5-Audit). Der
   Testlauf schrieb alle Suiten in dieselbe `results.trx`, und mit festem Dateinamen überschreibt
   jede Assembly die vorige — geprüft wurde also die Skipzahl der zuletzt geschriebenen. Acht

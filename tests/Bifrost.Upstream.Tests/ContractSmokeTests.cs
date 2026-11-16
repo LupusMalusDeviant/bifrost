@@ -12,7 +12,12 @@ public class ContractSmokeTests
     {
         var policy = RestartPolicy.Default;
 
-        policy.MaxRetries.Should().Be(5);
+        // Vertrag „Selbsttätige Wiederverbindung": ohne Obergrenze, 5 s Anfang, Deckel 5 min.
+        // Die alte Vorgabe (5 Versuche in rund 31 s, dann für immer Failed) war der Vorfall
+        // vom 2026-11-16.
+        policy.MaxRetries.Should().BeNull();
+        policy.InitialBackoff.Should().Be(TimeSpan.FromSeconds(5));
+        policy.MaxBackoff.Should().Be(TimeSpan.FromMinutes(5));
         policy.BackoffMultiplier.Should().BeGreaterThan(1.0);
         policy.MaxBackoff.Should().BeGreaterThan(policy.InitialBackoff);
     }

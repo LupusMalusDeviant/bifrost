@@ -81,13 +81,15 @@ public static partial class UpstreamConfigValidator
 
         if (config.Restart is { } restart)
         {
-            if (restart.MaxRetries < 0 ||
+            // MaxRetries darf fehlen: 'null' heißt unbegrenzt und ist die Vorgabe.
+            if (restart.MaxRetries is < 0 ||
                 restart.InitialBackoff <= TimeSpan.Zero ||
                 restart.BackoffMultiplier < 1.0 ||
                 restart.MaxBackoff < restart.InitialBackoff)
             {
                 throw new ArgumentException(
-                    "RestartPolicy ungültig: MaxRetries ≥ 0, InitialBackoff > 0, Multiplier ≥ 1, MaxBackoff ≥ InitialBackoff.",
+                    "RestartPolicy ungültig: MaxRetries ≥ 0 oder nicht gesetzt (unbegrenzt), "
+                    + "InitialBackoff > 0, Multiplier ≥ 1, MaxBackoff ≥ InitialBackoff.",
                     nameof(config));
             }
         }

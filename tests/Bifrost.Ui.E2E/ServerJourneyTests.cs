@@ -89,6 +89,83 @@ public sealed class ServerJourneyTests
     }
 
     /// <summary>
+    /// Vertrag „Selbsttätige Wiederverbindung", Abschnitt 5.4: Ein Upstream, der nicht hochkommt,
+    /// zeigt in seiner Zeile, der wievielte Versuch es war und wann der nächste folgt — und
+    /// „Jetzt verbinden" wartet diese Frist nicht ab.
+    /// <para>
+    /// Geprüft werden die <c>data-</c>Attribute der Zeile, nicht der Fließtext. Und die Seite wird
+    /// nach dem Anschließen <b>nicht</b> neu geladen: Sie aktualisiert die Zeile jetzt selbst.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_failed_server_shows_its_next_attempt_and_can_be_connected_now()
+    {
+        Assert.SkipUnless(UiSession.Enabled, "Browserwege nur mit BIFROST_RUN_E2E=1.");
+
+        var ct = TestContext.Current.CancellationToken;
+        await using var session = await UiSession.StartAsync(
+            nameof(A_failed_server_shows_its_next_attempt_and_can_be_connected_now), ct);
+
+        await session.LoginAsync();
+        await session.Page.GotoAsync("servers");
+        await session.WaitForInteractivityAsync("[data-testid=server-slug]");
+
+        await FillFormAsync(session, "weg", command: Path.Combine(
+            Path.GetDirectoryName(TestServerPaths.GatewayExecutable)!, "gibt-es-nicht.exe"));
+        await session.Page.ClickAsync("button:text-is('Anschließen')");
+
+        const string rowSelector = "[data-testid=server-row][data-slug=weg]";
+        var row = session.Page.Locator(rowSelector);
+        await row.WaitForAsync(new LocatorWaitForOptions { Timeout = 60000 });
+
+        // Bis zum vierten Fehlversuch warten: Danach liegt der nächste planmäßige Versuch mehr als
+        // eine halbe Minute entfernt. Nur so beweist ein Versuch kurz nach dem Klick den Knopf —
+        // und nicht bloß, dass ohnehin gerade einer fällig war.
+        await session.Page.WaitForFunctionAsync(
+            """
+            selector => {
+                const row = document.querySelector(selector);
+                return row !== null
+                    && row.getAttribute('data-state') === 'Failed'
+                    && Number(row.getAttribute('data-reconnect-attempt')) >= 4
+                    && (row.getAttribute('data-next-attempt-at') ?? '') !== '';
+            }
+            """,
+            rowSelector,
+            new PageWaitForFunctionOptions { Timeout = 120000 });
+
+        (await row.GetAttributeAsync("data-failure-kind")).Should().Be("Unreachable");
+        var attempt = int.Parse(
+            (await row.GetAttributeAsync("data-reconnect-attempt"))!, System.Globalization.CultureInfo.InvariantCulture);
+        var nextAttemptAt = DateTimeOffset.Parse(
+            (await row.GetAttributeAsync("data-next-attempt-at"))!, System.Globalization.CultureInfo.InvariantCulture);
+        _output.WriteLine($"Versuch {attempt}, nächster planmäßig um {nextAttemptAt:O}.");
+        (nextAttemptAt - DateTimeOffset.UtcNow).Should().BeGreaterThan(
+            TimeSpan.FromSeconds(20), "sonst wäre der folgende Versuch kein Beweis für den Knopf");
+
+        var reconnect = row.Locator("[data-testid=server-reconnect]");
+        (await reconnect.TextContentAsync()).Should().Contain($"Versuch {attempt}")
+            .And.Contain("nächster Versuch in");
+
+        await row.Locator("[data-testid=server-connect-now]").ClickAsync();
+
+        await session.Page.WaitForFunctionAsync(
+            """
+            ([selector, before]) => {
+                const row = document.querySelector(selector);
+                return row !== null && Number(row.getAttribute('data-reconnect-attempt')) > before;
+            }
+            """,
+            new object[] { rowSelector, attempt },
+            new PageWaitForFunctionOptions { Timeout = 15000 });
+
+        DateTimeOffset.UtcNow.Should().BeBefore(
+            nextAttemptAt, "der Versuch kam durch den Klick, nicht durch den Ablauf der Frist");
+        (await row.GetAttributeAsync("data-state")).Should().Be(
+            "Failed", "das Programm gibt es weiterhin nicht — der Knopf verbindet, er zaubert nicht");
+    }
+
+    /// <summary>
     /// Laedt die Seite so lange neu, bis der Server den erwarteten Zustand meldet — und gibt sonst
     /// den zuletzt gesehenen zurueck, damit ein Fehlschlag beantwortbar ist statt nur rot.
     /// </summary>

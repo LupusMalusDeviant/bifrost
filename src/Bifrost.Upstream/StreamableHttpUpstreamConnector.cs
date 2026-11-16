@@ -104,10 +104,14 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector
                 + "gibt es keine Token-Ablage.");
         }
 
+        // Fehlt das Token oder lässt es sich nicht erneuern, ist das eine Sache der Anmeldung und
+        // keine der Erreichbarkeit: Der Supervisor wartet darauf lange statt im Sekundentakt
+        // (UpstreamFailureKind.Authentication) — von selbst wird hier nichts besser, es braucht
+        // einen Menschen, der neu autorisiert.
         var token = await _tokens.GetAsync(id, ct).ConfigureAwait(false)
-            ?? throw new InvalidOperationException(
+            ?? throw new UpstreamAuthenticationException(
                 $"Für '{config.Slug}' liegt kein Zugriffstoken vor. Der Upstream muss einmal "
-                + "verbunden werden (Server-Verwaltung → Verbinden).");
+                + "autorisiert werden (Server-Verwaltung → Autorisieren).");
 
         var now = _time.GetUtcNow();
         if (!token.NeedsRefresh(now, RefreshSkew))
@@ -118,8 +122,24 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector
         var resource = config.Http!.Endpoint.GetLeftPart(UriPartial.Path).TrimEnd('/');
         var metadata = await OAuthDiscovery.FetchAuthorizationServerMetadataAsync(
             new Uri(token.Issuer), oauth.AllowPrivateTargets, ct).ConfigureAwait(false);
-        var refreshed = await OAuthFlow.RefreshAsync(
-            token, metadata.TokenEndpoint, oauth, resource, now, ct).ConfigureAwait(false);
+        UpstreamOAuthToken refreshed;
+        try
+        {
+            refreshed = await OAuthFlow.RefreshAsync(
+                token, metadata.TokenEndpoint, oauth, resource, now, ct).ConfigureAwait(false);
+        }
+        catch (OAuthDiscoveryException exception)
+        {
+            // Der Token-Endpunkt hat geantwortet und abgelehnt (oder es gibt kein Refresh-Token).
+            // Ein Netzfehler auf dem Weg dorthin ist KEIN Fall für diesen Zweig — der kommt als
+            // HttpRequestException durch und wird wie jede Unerreichbarkeit bald erneut versucht.
+            // Die Meldung nennt bewusst nicht, was der Token-Endpunkt geschrieben hat.
+            throw new UpstreamAuthenticationException(
+                $"Das Zugriffstoken für '{config.Slug}' ließ sich nicht erneuern. Der Upstream muss "
+                + "neu autorisiert werden (Server-Verwaltung → Autorisieren).",
+                exception);
+        }
+
         await _tokens.SaveAsync(refreshed, ct).ConfigureAwait(false);
         return refreshed.AccessToken;
     }
