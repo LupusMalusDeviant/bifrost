@@ -26,6 +26,7 @@ internal sealed class UiSession : IAsyncDisposable
     private readonly IBrowser _browser;
     private readonly IBrowserContext _context;
     private readonly string _artifactDirectory;
+    private readonly List<string> _browserLog = [];
 
     private UiSession(
         GatewayProcess gateway, IPlaywright playwright, IBrowser browser, IBrowserContext context,
@@ -37,6 +38,7 @@ internal sealed class UiSession : IAsyncDisposable
         _context = context;
         Page = page;
         _artifactDirectory = artifactDirectory;
+        ListenToBrowser();
     }
 
     public GatewayProcess Gateway { get; }
@@ -130,10 +132,102 @@ internal sealed class UiSession : IAsyncDisposable
     /// </summary>
     public async Task WaitForInteractivityAsync(string readySelector)
     {
-        await Page.WaitForSelectorAsync(
-            "[data-testid=circuit-state][data-interactive=true]",
-            new PageWaitForSelectorOptions { State = WaitForSelectorState.Attached, Timeout = 30000 });
+        try
+        {
+            await Page.WaitForSelectorAsync(
+                "[data-testid=circuit-state][data-interactive=true]",
+                new PageWaitForSelectorOptions { State = WaitForSelectorState.Attached, Timeout = 30000 });
+        }
+        catch (TimeoutException timeout)
+        {
+            // Ohne das hier ist der Fehlschlag nur rot: "Timeout 30000ms exceeded" sagt nicht, ob
+            // die Seite die falsche war (zurueck auf der Anmeldung), ob das Skript fehlt oder ob
+            // die Verbindung nicht zustande kam. Trace und Bildschirmfoto fehlen im Fehlerfall
+            // ebenfalls (siehe DisposeAsync) — also sagt es der Fehler selbst.
+            throw new TimeoutException(await DescribeStuckPageAsync(), timeout);
+        }
+
         await Page.WaitForSelectorAsync(readySelector, new PageWaitForSelectorOptions { Timeout = 30000 });
+    }
+
+    private async Task<string> DescribeStuckPageAsync()
+    {
+        string state;
+        try
+        {
+            state = await Page.EvaluateAsync<string>(
+                """
+                () => {
+                    const marker = document.querySelector('[data-testid=circuit-state]');
+                    return 'circuit-state: ' + (marker ? marker.getAttribute('data-interactive') : 'fehlt')
+                        + '; Blazor-Skript geladen: ' + (window.Blazor !== undefined)
+                        + '; readyState: ' + document.readyState;
+                }
+                """);
+        }
+        catch (PlaywrightException e)
+        {
+            state = $"Zustand nicht lesbar ({e.Message})";
+        }
+
+        string[] seen;
+        lock (_browserLog)
+        {
+            seen = [.. _browserLog];
+        }
+
+        return $"Die Seite wurde in 30 s nicht bedienbar. Adresse: {new Uri(Page.Url).PathAndQuery}; {state}. "
+            + (seen.Length == 0
+                ? "Der Browser hat nichts gemeldet."
+                : "Vom Browser gemeldet:\n  " + string.Join("\n  ", seen));
+    }
+
+    /// <summary>
+    /// Hält fest, was der Browser an Fehlern meldet: Konsole, gescheiterte Anfragen, WebSockets.
+    /// Begrenzt auf die letzten Einträge — genug für eine Ursache, zu wenig für ein Protokoll.
+    /// </summary>
+    private void ListenToBrowser()
+    {
+        Page.Console += (_, message) =>
+        {
+            if (message.Type is "error" or "warning")
+            {
+                Note($"Konsole ({message.Type}): {message.Text}");
+            }
+        };
+        Page.PageError += (_, error) => Note($"Skriptfehler: {error}");
+        Page.RequestFailed += (_, request) =>
+            Note($"Anfrage gescheitert: {request.Method} {PathOf(request.Url)} — {request.Failure}");
+        Page.Response += (_, response) =>
+        {
+            if (response.Status >= 400)
+            {
+                Note($"Antwort {response.Status}: {response.Request.Method} {PathOf(response.Url)}");
+            }
+        };
+        Page.WebSocket += (_, socket) =>
+        {
+            Note($"WebSocket geöffnet: {PathOf(socket.Url)}");
+            socket.SocketError += (_, error) => Note($"WebSocket-Fehler: {error}");
+            socket.Close += (_, _) => Note($"WebSocket geschlossen: {PathOf(socket.Url)}");
+        };
+    }
+
+    // Nur der Pfad: In der Abfrage stehen Verbindungskennungen, die niemandem helfen.
+    private static string PathOf(string url)
+        => Uri.TryCreate(url, UriKind.Absolute, out var parsed) ? parsed.AbsolutePath : url;
+
+    private void Note(string entry)
+    {
+        lock (_browserLog)
+        {
+            if (_browserLog.Count == 40)
+            {
+                _browserLog.RemoveAt(0);
+            }
+
+            _browserLog.Add(entry.Length > 300 ? entry[..300] : entry);
+        }
     }
 
     /// <summary>
