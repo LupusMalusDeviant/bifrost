@@ -69,6 +69,36 @@ Offen aus demselben Durchgang, **nicht** eingearbeitet:
   Änderung; die Verweigerung der Aktion im Compliance-Modus ist gewollt, der halbe Zustand danach
   nicht. `[Claude-prüfbar]`
 
+**Dritter Lesedurchgang vom 2026-11-17** (über R1 – R5; Codex war am Nutzungslimit, geprüft hat
+ersatzweise ein unabhängiges Claude-Review; kein kritischer oder hoher Befund). Eingearbeitet auf
+Entscheidung des Nutzers vom 2026-11-17:
+
+- **S1** (mittel) — Warf auch die Logzeile im Auffangpfad (etwa eine Log-Ausgabe, die wirft), endete
+  der Loop doch. Die Meldungen dort sind jetzt abgefangen; der Zustand wird vorher gesetzt.
+  `[Claude-prüfbar]`, erledigt.
+- **S2** (mittel) — Eine zurückgestellte Zeile wartete bis zum nächsten echten Wechsel, im Zweifel
+  tagelang, und ging beim Entfernen oder Beenden spurlos verloren. Jetzt bei jedem Versuch und jedem
+  Lebenszeichen nachgereicht; was am Ende übrig ist, steht als Fehler im Log. `[Claude-prüfbar]`,
+  erledigt.
+- **S4** (niedrig) — Brach `MarkFailed` nach dem Zustandswechsel, fehlte die Zeile „eingestellt";
+  scheiterte schon das Aufräumen, fehlten die Failed-Zeile und die Fehlerart. Jetzt schreibt
+  `MarkFailed` alle Audit-Zeilen vor dem Log, und der Auffangpfad holt Eintritt, Grenze und
+  Fehlerart nach. `[Claude-prüfbar]`, erledigt.
+- **S5** (niedrig) — An der Grenze von 32 fiel die neueste Zeile heraus; jetzt die älteste.
+  `[Claude-prüfbar]`, erledigt.
+
+Offen aus demselben Durchgang, **nicht** eingearbeitet:
+
+- **S3** (mittel) — `ChannelAuditSink` zählt jede Abweisung als Verlust. Ein nachgereichter Versuch
+  zählt erneut (durch S2 bei vollem Kanal je Versuch und Lebenszeichen), eine an der Grenze
+  verworfene oder beim Entfernen verlorene Zeile dagegen nie. Das verfälscht `AuditLossFacts` und
+  die Diagnose BFR-DB-0007. Die saubere Lösung ändert `IAuditSink` (etwa ein `TryRecord`, das nicht
+  als Verlust zählt) und braucht deshalb zuerst eine Vertragsänderung. `[braucht Nutzer]` für den
+  Vertrag, danach `[Claude-prüfbar]`
+- **S6** (niedrig) — Die Audit-Zeile zu einer geänderten Tool-Definition geht direkt ans Audit; bei
+  vollem Kanal im Compliance-Modus scheitert damit jeder Verbindungsversuch. Ob das als Sicherheits-
+  ereignis so gewollt ist, gehört in den Vertrag. `[braucht Nutzer]`
+
 ## Arbeitspakete
 
 | # | Inhalt | Marke |

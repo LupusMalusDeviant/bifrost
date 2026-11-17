@@ -528,6 +528,9 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         var line = _log.Entries.Single(e => e.Message.Contains("nicht vollständig verbucht", StringComparison.Ordinal));
         line.Level.Should().Be(LogLevel.Error);
         line.Message.Should().Contain("eingestellt").And.NotContain("läuft trotzdem weiter");
+        Lifecycle.Should().ContainSingle(
+            l => l.StartsWith("begrenzt-gestoert:", StringComparison.Ordinal) && l.Contains("eingestellt", StringComparison.Ordinal),
+            "die Audit-Zeile zur Grenze hängt nicht an der Logzeile davor");
 
         // Der Loop lebt: „Jetzt verbinden" wird angenommen und führt zu genau einem Versuch.
         _log.Throws = null;
@@ -557,6 +560,154 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         var info = supervisor.GetStatus(server)!.Reconnect!;
         info.Kind.Should().Be(UpstreamFailureKind.Authentication);
         (info.NextAttemptAt!.Value - _time.GetUtcNow()).Should().Be(TimeSpan.FromMinutes(15));
+    }
+
+    [Fact]
+    public async Task A_logger_that_throws_on_every_line_does_not_end_the_loop()
+    {
+        // Z1 auch dann, wenn selbst die Meldung über die gescheiterte Buchführung scheitert: Der
+        // .NET-Logger reicht Ausnahmen seiner Ausgaben weiter.
+        _log.Throws = m => m.Contains("log-kaputt", StringComparison.Ordinal);
+        var connector = new FakeUpstreamConnector();
+        var available = false;
+        connector.DefaultBehavior = (id, _) => Volatile.Read(ref available)
+            ? new FakeUpstreamConnection { Id = id }
+            : throw new IOException("weg (Test)");
+        await using var supervisor = Create(connector, jitter: 0d);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("log-kaputt"), Ct);
+
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => connector.ConnectCalls >= 3,
+            step: TimeSpan.FromSeconds(30), timeoutMs: 15000,
+            because: "der Loop versucht es weiter, obwohl jede seiner Logzeilen wirft");
+        supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Failed);
+
+        _log.Throws = null;
+        Volatile.Write(ref available, true);
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => supervisor.GetStatus(server)?.State == UpstreamState.Healthy,
+            step: TimeSpan.FromSeconds(30), timeoutMs: 15000,
+            because: "ist das Log wieder in Ordnung und der Upstream da, verbindet der Loop");
+    }
+
+    [Fact]
+    public async Task A_refused_failed_line_reaches_the_audit_while_the_outage_lasts()
+    {
+        // Ein Versuch, der wieder scheitert, schreibt keine neue Zeile (Abschnitt 6). Die
+        // zurückgestellte Failed-Zeile darf deshalb nicht auf den nächsten Wechsel warten — der
+        // kann Tage entfernt sein, und gerade in dieser Zeit fragt jemand das Audit.
+        var full = true;
+        var audit = new RefusingAuditSink
+        {
+            Refuses = e => Volatile.Read(ref full) && e.Detail?.Contains("Failed", StringComparison.Ordinal) == true,
+        };
+        var connector = new FakeUpstreamConnector { DefaultBehavior = (_, _) => throw new IOException("weg (Test)") };
+        await using var supervisor = Create(connector, jitter: 0d, audit);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("lange-weg"), Ct);
+
+        await FailedAttemptAsync(supervisor, server, 1);
+        audit.Refused.Should().BeGreaterThan(0, "sonst hätte der Test den Fall gar nicht hergestellt");
+        Volatile.Write(ref full, false);
+
+        await TestData.WaitUntilAdvancingAsync(
+            _time,
+            () => audit.Accepted.Any(e => e.Detail!.StartsWith("lange-weg: Failed — ", StringComparison.Ordinal)),
+            step: TimeSpan.FromSeconds(30), timeoutMs: 15000,
+            because: "die Zeile wird beim nächsten Versuch nachgereicht, ohne dass sich etwas ändert");
+        supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Failed);
+    }
+
+    [Fact]
+    public async Task Lines_the_audit_never_takes_are_reported_when_the_upstream_is_removed()
+    {
+        var audit = new RefusingAuditSink { Refuses = e => e.Detail?.Contains("Failed", StringComparison.Ordinal) == true };
+        var connector = new FakeUpstreamConnector { DefaultBehavior = (_, _) => throw new IOException("weg (Test)") };
+        await using var supervisor = Create(connector, jitter: 0d, audit);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("entfernt"), Ct);
+        await FailedAttemptAsync(supervisor, server, 1);
+
+        await supervisor.RemoveAsync(server, DrainPolicy.Immediate, Ct);
+
+        _log.Entries.Should().Contain(
+            e => e.Level == LogLevel.Error
+                && e.Message.Contains("entfernt", StringComparison.Ordinal)
+                && e.Message.Contains("verloren", StringComparison.Ordinal),
+            "eine Zeile, die nie ins Audit kam, verschwindet nicht still");
+    }
+
+    [Fact]
+    public async Task A_broken_cleanup_still_records_the_failure_and_its_kind()
+    {
+        // Scheitert das Aufräumen der alten Verbindung, kommt MarkFailed gar nicht zum Zug. Der
+        // Eintritt in Failed muss trotzdem im Audit stehen, und die Fehlerart darf nicht None
+        // bleiben — sonst meldete der nächste Versuch einen Wechsel „von None".
+        _log.Throws = m => m.Contains("Fehler beim Schließen", StringComparison.Ordinal);
+        var first = new FakeUpstreamConnection { DisposeException = new IOException("Schließen klemmt (Test)") };
+        var connector = new FakeUpstreamConnector();
+        connector.DefaultBehavior = (id, _) => connector.ConnectCalls <= 1
+            ? first
+            : throw new IOException("weg (Test)");
+        await using var supervisor = Create(connector, jitter: 0d);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("aufraeumen"), Ct);
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => supervisor.GetStatus(server)?.State == UpstreamState.Healthy,
+            step: TimeSpan.FromMilliseconds(500), timeoutMs: 15000);
+
+        first.FailPing = true;
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => connector.ConnectCalls >= 3,
+            step: TimeSpan.FromSeconds(5), timeoutMs: 15000,
+            because: "nach dem gescheiterten Aufräumen folgen weitere Versuche");
+
+        Lifecycle.Where(l => l.StartsWith("aufraeumen: Failed — ", StringComparison.Ordinal)
+                && !l.Contains("Fehlerart wechselt", StringComparison.Ordinal))
+            .Should().ContainSingle("der Eintritt in Failed steht genau einmal im Audit");
+        Lifecycle.Should().NotContain(l => l.Contains("von None", StringComparison.Ordinal));
+        supervisor.GetStatus(server)!.Reconnect!.Kind.Should().Be(UpstreamFailureKind.Unreachable);
+    }
+
+    [Fact]
+    public async Task A_full_deferral_queue_drops_its_oldest_line()
+    {
+        // Die neueren Zeilen beschreiben den Zustand, in dem der Upstream jetzt ist — fällt eine
+        // heraus, dann die älteste.
+        var full = true;
+        var audit = new RefusingAuditSink
+        {
+            Refuses = e => Volatile.Read(ref full) && e.Detail?.StartsWith("grenze:", StringComparison.Ordinal) == true,
+        };
+        var calls = 0;
+        var connector = new FakeUpstreamConnector
+        {
+            // Abwechselnd nicht erreichbar und abgewiesen: Jeder Versuch ist ein Wechsel der
+            // Fehlerart und schreibt eine Zeile.
+            DefaultBehavior = (_, _) => Interlocked.Increment(ref calls) % 2 == 0
+                ? throw new HttpRequestException(
+                    "Response status code does not indicate success: 401 (Unauthorized).", null, HttpStatusCode.Unauthorized)
+                : throw new IOException("weg (Test)"),
+        };
+        await using var supervisor = Create(connector, jitter: 0d, audit);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("grenze"), Ct);
+
+        // Starting, Eintritt in Failed und 39 Wechsel: 41 Zeilen für 32 Plätze.
+        await FailedAttemptAsync(supervisor, server, 1);
+        for (var attempt = 2; attempt <= 40; attempt++)
+        {
+            await ConnectNowAsync(supervisor, server);
+            await FailedAttemptAsync(supervisor, server, attempt);
+        }
+
+        _log.Entries.Should().Contain(e => e.Message.Contains("älteste zurückgestellte", StringComparison.Ordinal));
+
+        Volatile.Write(ref full, false);
+        await ConnectNowAsync(supervisor, server);
+        await FailedAttemptAsync(supervisor, server, 41);
+
+        var lines = audit.Accepted.Where(e => e.Detail!.StartsWith("grenze:", StringComparison.Ordinal)).ToList();
+        lines.Should().HaveCount(UpstreamSupervisor.MaxDeferredLifecycleLines);
+        lines.Should().NotContain(e => e.Detail == "grenze: Starting", "die älteste Zeile ist herausgefallen");
+        lines.Select(e => e.Timestamp).Should().BeInAscendingOrder();
+        lines[^1].Detail.Should().Contain("Fehlerart wechselt", "die neueste Zeile ist angekommen");
     }
 
     [Fact]

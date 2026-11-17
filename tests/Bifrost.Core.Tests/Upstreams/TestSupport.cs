@@ -190,10 +190,13 @@ internal sealed class FakeUpstreamConnection : IUpstreamConnection
             ? Task.FromException(ex)
             : _failPing ? Task.FromException(new IOException("Verbindung tot (Test).")) : Task.CompletedTask;
 
+    /// <summary>Wenn gesetzt, wirft DisposeAsync diese Exception — ein Aufräumen, das scheitert.</summary>
+    public Exception? DisposeException { get; set; }
+
     public ValueTask DisposeAsync()
     {
         Interlocked.Increment(ref _disposeCount);
-        return ValueTask.CompletedTask;
+        return DisposeException is { } ex ? ValueTask.FromException(ex) : ValueTask.CompletedTask;
     }
 
     public void RaiseNotification(string method)
