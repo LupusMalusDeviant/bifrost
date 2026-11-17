@@ -89,7 +89,23 @@ public static class UpstreamProcessLookup
 
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         {
-            return Process.GetProcessesByName(executableName).Select(p => p.Id).ToArray();
+            // Nur, was noch läuft. Die Prozessliste enthält einen beendeten Prozess noch kurz,
+            // solange jemand ein Handle auf ihn hält — im CI-Lauf vom 2026-11-16 (Windows) zählte
+            // die Aufräumprobe so den eigenen, bereits beendeten Upstream mit und meldete ihn im
+            // selben Atemzug als „beim Nachsehen bereits beendet".
+            var running = new List<int>();
+            foreach (var process in Process.GetProcessesByName(executableName))
+            {
+                using (process)
+                {
+                    if (IsRunning(process))
+                    {
+                        running.Add(process.Id);
+                    }
+                }
+            }
+
+            return running;
         }
 
         // Unter Linux über die Kommandozeile statt über den gekürzten Namen. `/proc/<pid>/cmdline`
@@ -122,6 +138,22 @@ public static class UpstreamProcessLookup
         }
 
         return found;
+    }
+
+    /// <summary>
+    /// Läuft der Prozess noch? Lässt er sich nicht befragen, zählt er weiter mit: Die Aufräumprobe
+    /// darf zu viel finden, aber nichts übersehen.
+    /// </summary>
+    private static bool IsRunning(Process process)
+    {
+        try
+        {
+            return !process.HasExited;
+        }
+        catch (Exception e) when (e is InvalidOperationException or SystemException)
+        {
+            return true;
+        }
     }
 
     /// <summary>
