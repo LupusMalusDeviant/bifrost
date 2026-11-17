@@ -80,6 +80,10 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   roten CI-Laufs ist nicht nachgestellt; er passt zu diesem Vorgang. Die Verbindung liest jetzt
   einmal, und der Test leert die Pools selbst, damit ein Rückfall immer auffällt statt selten. An
   der Sicherung selbst war nichts falsch.
+- **Die Aufräumprobe der Prozesstests zählte beendete Prozesse mit** (Befund vom 2026-11-16, CI
+  unter Windows). Die Prozessliste enthält einen beendeten Prozess noch kurz; die Probe meldete
+  so den eigenen, schon beendeten Upstream als übrig. Gezählt wird unter Windows jetzt nur, was
+  noch läuft. Am Aufräumen des Produkts war nichts falsch.
 - **Der Skip-Wächter der CI brach ab, wenn kein Test übersprungen war** (Befund vom 2026-11-16).
   `grep` endet mit 1, wenn es nichts findet, und die Shell des Runners läuft mit `-e -o pipefail`:
   Der Schritt scheiterte also genau im Sollzustand, ohne Zählzeile und ohne Meldung. Verdeckt war
