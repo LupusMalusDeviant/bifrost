@@ -129,7 +129,9 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     im Audit kein „wieder verbunden" ohne den vorherigen Eintritt in `Failed` steht; das Log nennt
     das Zurückstellen. Je Upstream warten höchstens 32 Zeilen, darüber fällt die älteste heraus.
     Was beim Entfernen des Upstreams oder beim Beenden noch aussteht, steht als Fehler im Log.
-    Auch eine Log-Ausgabe, die wirft, beendet die Wiederverbindung nicht. Verwaltungsaktionen
+    Auch eine Log-Ausgabe, die wirft, beendet die Wiederverbindung nicht und kostet keine
+    Audit-Zeile. Scheitert das Schließen einer Upstream-Verbindung, nennt das Log nur noch die
+    Typnamen, nicht mehr die Meldung, die Text des Upstreams tragen kann. Verwaltungsaktionen
     (Ein- und Ausschalten, Umkonfigurieren) werden im Compliance-Modus weiter verweigert, wenn das
     Audit nicht annimmt. Scheitert die Buchführung eines Fehlversuchs aus anderem Grund, gilt die
     schon bestimmte Frist — nach abgelehnter Anmeldung also weiter 15 min — und an einer

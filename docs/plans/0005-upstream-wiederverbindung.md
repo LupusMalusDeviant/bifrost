@@ -99,6 +99,31 @@ Offen aus demselben Durchgang, **nicht** eingearbeitet:
   vollem Kanal im Compliance-Modus scheitert damit jeder Verbindungsversuch. Ob das als Sicherheits-
   ereignis so gewollt ist, gehört in den Vertrag. `[braucht Nutzer]`
 
+**Vierter Lesedurchgang vom 2026-11-17** (über S1, S2, S4, S5; Codex wieder am Nutzungslimit,
+ersatzweise ein unabhängiges Claude-Review; kein kritischer oder hoher Befund). Eingearbeitet auf
+Entscheidung des Nutzers vom 2026-11-17:
+
+- **T1** (mittel) — `RecordLoopLifecycle` konnte über seine eigenen Logzeilen doch werfen; bei
+  vollem Audit und gestörtem Logger ging die Zeile „eingestellt" verloren. Die Logzeilen dort sind
+  jetzt abgefangen. `[Claude-prüfbar]`, erledigt.
+- **T3** (mittel) — Ein scheiterndes Schließen loggte das Ausnahmeobjekt, das Text des Upstreams
+  tragen kann (P1 – P4). Jetzt nur noch Typnamen. `[Claude-prüfbar]`, erledigt.
+- **T5, T6, T7** (niedrig) — Text der Zurückstellen-Meldung; `LastError` übernimmt im Auffangpfad
+  den schon bereinigten Grund; die Meldung beim Verwerfen nennt die verworfene Zeile.
+  `[Claude-prüfbar]`, erledigt.
+- Test für das Nachreichen per Lebenszeichen ergänzt (vorher ungedeckt).
+
+Offen aus demselben Durchgang, **nicht** eingearbeitet:
+
+- **T2** (mittel) — Ist eine ausdrücklich gesetzte Obergrenze erreicht, wartet der Loop nur auf
+  „Jetzt verbinden"; zurückgestellte Zeilen kommen bis zu einem Eingriff nicht an (ebenso, schwächer,
+  bei sehr großer `restart.maxBackoff`). Abhilfe: in Abschnitten warten und dazwischen nachreichen.
+  Betrifft nur nicht voreingestellte Konfigurationen. `[Claude-prüfbar]`
+- **T4** (niedrig) — Das Nachreichen je Versuch und Lebenszeichen treibt den Verlustzähler des
+  Audits; gehört zu S3. `[braucht Nutzer]` über S3
+- **T8** (niedrig) — `DisposeAsync` bricht bei einem werfenden Logger mitten in der Schleife über
+  die Upstreams ab. Älter als diese Änderung. `[Claude-prüfbar]`
+
 ## Arbeitspakete
 
 | # | Inhalt | Marke |

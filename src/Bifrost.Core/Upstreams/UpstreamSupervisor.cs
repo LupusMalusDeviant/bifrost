@@ -446,7 +446,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
 
                     // Erst der Zustand — er kann nicht scheitern. Was danach meldet (Audit,
                     // Ereignisse, Log), kann es; daran darf der Loop nicht enden (Z1).
-                    var report = SetFailedState(entry, kind, delay);
+                    var report = SetFailedState(entry, kind, reason, delay);
                     try
                     {
                         ReportFailedWithoutDetail(entry, report, reason, attempt, delay, ex);
@@ -830,7 +830,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     /// gesetzt hat, bleibt stehen; eine schon bestimmte Fehlerart wird übernommen, damit der nächste
     /// Versuch keinen Wechsel „von None" meldet.
     /// </summary>
-    private FailedTransition SetFailedState(Entry entry, UpstreamFailureKind? kind, TimeSpan? delay)
+    private FailedTransition SetFailedState(Entry entry, UpstreamFailureKind? kind, string? reason, TimeSpan? delay)
     {
         var now = _time.GetUtcNow();
         lock (entry.Gate)
@@ -843,7 +843,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             }
 
             entry.State = UpstreamState.Failed;
-            entry.LastError ??= BookkeepingFailedText;
+            // Der schon bereinigte Grund geht vor: Sonst stünde nach Degraded noch der Text des
+            // gescheiterten Lebenszeichens da, während das Audit den eigentlichen Grund nennt.
+            entry.LastError = reason ?? entry.LastError ?? BookkeepingFailedText;
             entry.FailureKind = kind
                 ?? (entry.FailureKind == UpstreamFailureKind.None ? UpstreamFailureKind.Unreachable : entry.FailureKind);
             entry.NextAttemptAt = delay is { } wait ? now + wait : null;
@@ -1268,7 +1270,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         }
         catch (Exception ex)
         {
-            Log.DisposeFailed(_logger, ex);
+            // Nur die Typnamen: Die Meldung einer Transport-Ausnahme kann Text des Upstreams oder
+            // eine URL mit Token tragen (P1 – P4).
+            var types = UpstreamFailure.TypeChain(ex);
+            Log.DisposeFailed(_logger, types);
         }
     }
 
@@ -1372,15 +1377,15 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             return;
         }
 
-        var dropped = false;
+        string? droppedDetail = null;
         Exception? refusal = null;
         int pending;
         lock (entry.AuditGate)
         {
             if (entry.DeferredLifecycle.Count >= MaxDeferredLifecycleLines)
             {
+                droppedDetail = entry.DeferredLifecycle[0].Detail;
                 entry.DeferredLifecycle.RemoveAt(0);
-                dropped = true;
             }
 
             entry.DeferredLifecycle.Add(LifecycleEvent(entry, detail));
@@ -1397,14 +1402,25 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             pending = entry.DeferredLifecycle.Count;
         }
 
-        if (dropped)
+        // Auch die Meldungen hier dürfen nicht werfen: Der Aufrufer schreibt danach womöglich noch
+        // eine Audit-Zeile (etwa „eingestellt" nach dem Eintritt in Failed), und die ginge sonst
+        // mit verloren — ein späterer Versuch sähe keinen Wechsel mehr, den er nachholen könnte.
+        try
         {
-            Log.UpstreamAuditLineDropped(_logger, entry.Config.Slug, pending);
-        }
+            if (droppedDetail is not null)
+            {
+                // Der Text ist eine Audit-Zeile und damit schon bereinigt (P1 – P4).
+                Log.UpstreamAuditLineDropped(_logger, entry.Config.Slug, pending, droppedDetail);
+            }
 
-        if (refusal is not null)
+            if (refusal is not null)
+            {
+                Log.UpstreamAuditDeferred(_logger, entry.Config.Slug, UpstreamFailure.TypeChain(refusal), pending);
+            }
+        }
+        catch (Exception)
         {
-            Log.UpstreamAuditDeferred(_logger, entry.Config.Slug, UpstreamFailure.TypeChain(refusal), pending);
+            // Die Zeile selbst steht in der Warteschlange; nur ihre Erwähnung im Log fehlt.
         }
     }
 
@@ -1707,13 +1723,13 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             ILogger logger, string slug, string exceptionTypes, int attempts);
 
         [LoggerMessage(Level = LogLevel.Warning,
-            Message = "Upstream {Slug}: Das Audit hat eine Zustandszeile nicht angenommen; sie wird mit dem nächsten Wechsel nachgereicht ({Pending} zurückgestellt). [{ExceptionTypes}]")]
+            Message = "Upstream {Slug}: Das Audit hat eine Zustandszeile nicht angenommen; sie wird bei jedem Versuch, jedem Lebenszeichen und vor der nächsten Zeile erneut angeboten ({Pending} zurückgestellt). [{ExceptionTypes}]")]
         public static partial void UpstreamAuditDeferred(
             ILogger logger, string slug, string exceptionTypes, int pending);
 
         [LoggerMessage(Level = LogLevel.Error,
-            Message = "Upstream {Slug}: Die älteste zurückgestellte Zustandszeile fürs Audit ist verworfen — zu viele warten aufs Nachreichen ({Pending}).")]
-        public static partial void UpstreamAuditLineDropped(ILogger logger, string slug, int pending);
+            Message = "Upstream {Slug}: Die älteste zurückgestellte Zustandszeile fürs Audit ist verworfen — zu viele warten aufs Nachreichen ({Pending}). Verworfen: {Detail}")]
+        public static partial void UpstreamAuditLineDropped(ILogger logger, string slug, int pending, string? detail);
 
         [LoggerMessage(Level = LogLevel.Error,
             Message = "Upstream {Slug}: {Count} Zustandszeilen fürs Audit sind verloren — das Audit nahm sie bis zum Entfernen oder Beenden nicht an.")]
@@ -1728,8 +1744,8 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         public static partial void DrainExpired(ILogger logger, string slug, TimeSpan grace, int inFlight);
 
         [LoggerMessage(Level = LogLevel.Debug,
-            Message = "Fehler beim Schließen einer Upstream-Verbindung (ignoriert).")]
-        public static partial void DisposeFailed(ILogger logger, Exception ex);
+            Message = "Fehler beim Schließen einer Upstream-Verbindung (ignoriert). [{ExceptionTypes}]")]
+        public static partial void DisposeFailed(ILogger logger, string exceptionTypes);
 
         [LoggerMessage(Level = LogLevel.Error,
             Message = "Changed-Handler warf eine Exception — Handler müssen exception-frei sein.")]

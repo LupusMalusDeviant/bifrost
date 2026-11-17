@@ -481,7 +481,7 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
             e => e.Level == LogLevel.Warning && e.Message.Contains("audit-voll: Failed (Unreachable)", StringComparison.Ordinal),
             "die Logzeile zum Eintritt in Failed hängt nicht daran, dass das Audit annimmt");
         _log.Entries.Should().Contain(
-            e => e.Level == LogLevel.Warning && e.Message.Contains("nachgereicht", StringComparison.Ordinal),
+            e => e.Level == LogLevel.Warning && e.Message.Contains("erneut angeboten", StringComparison.Ordinal),
             "dass eine Audit-Zeile zurückgestellt ist, steht im Log");
 
         Volatile.Write(ref full, false);
@@ -664,6 +664,100 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
             .Should().ContainSingle("der Eintritt in Failed steht genau einmal im Audit");
         Lifecycle.Should().NotContain(l => l.Contains("von None", StringComparison.Ordinal));
         supervisor.GetStatus(server)!.Reconnect!.Kind.Should().Be(UpstreamFailureKind.Unreachable);
+    }
+
+    [Fact]
+    public async Task A_throwing_log_line_about_the_deferral_does_not_cost_the_limit_line()
+    {
+        // Audit voll und Logger gestört zugleich: Wirft die Logzeile über das Zurückstellen der
+        // Failed-Zeile, darf die Zeile „eingestellt" dahinter nicht verloren gehen — ein späterer
+        // Versuch sähe keinen Wechsel mehr, den er nachholen könnte.
+        var full = true;
+        var audit = new RefusingAuditSink
+        {
+            Refuses = e => Volatile.Read(ref full) && e.Detail?.Contains("Failed", StringComparison.Ordinal) == true,
+        };
+        _log.Throws = m => m.Contains("grenze-stumm", StringComparison.Ordinal)
+            && m.Contains("nicht angenommen", StringComparison.Ordinal);
+        var connector = new FakeUpstreamConnector { DefaultBehavior = (_, _) => throw new IOException("weg (Test)") };
+        await using var supervisor = Create(connector, jitter: 0d, audit);
+        var limited = new RestartPolicy(MaxRetries: 0, TimeSpan.FromSeconds(5), 2.0, TimeSpan.FromMinutes(5));
+        var server = await supervisor.AddAsync(TestData.StdioConfig("grenze-stumm", restart: limited), Ct);
+        await TestData.WaitUntilAsync(
+            () => supervisor.GetStatus(server)?.Reconnect?.Exhausted == true,
+            because: "ohne Wiederholungen ist die Grenze nach dem Erstversuch erreicht");
+
+        _log.Throws = null;
+        Volatile.Write(ref full, false);
+        await ConnectNowAsync(supervisor, server);
+        await TestData.WaitUntilAsync(
+            () => audit.Accepted.Any(e => e.Detail!.StartsWith("grenze-stumm:", StringComparison.Ordinal)
+                && e.Detail.Contains("eingestellt", StringComparison.Ordinal)),
+            because: "die Zeile zur Grenze wird nachgereicht, sobald das Audit wieder annimmt");
+        audit.Accepted.Where(e => e.Detail!.StartsWith("grenze-stumm: Failed — ", StringComparison.Ordinal)
+                && !e.Detail.Contains("eingestellt", StringComparison.Ordinal))
+            .Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task A_refused_reconnect_line_arrives_with_a_later_health_ping()
+    {
+        // Bleibt der Upstream gesund, gibt es keinen nächsten Wechsel. Ein abgewiesenes „wieder
+        // verbunden" kommt dann mit einem der folgenden Lebenszeichen an.
+        var full = true;
+        var audit = new RefusingAuditSink
+        {
+            Refuses = e => Volatile.Read(ref full) && e.Detail?.Contains("wieder verbunden", StringComparison.Ordinal) == true,
+        };
+        var connector = new FakeUpstreamConnector();
+        var available = false;
+        connector.DefaultBehavior = (id, _) => Volatile.Read(ref available)
+            ? new FakeUpstreamConnection { Id = id }
+            : throw new IOException("weg (Test)");
+        await using var supervisor = Create(connector, jitter: 0d, audit);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("gesund-still"), Ct);
+        await FailedAttemptAsync(supervisor, server, 1);
+
+        Volatile.Write(ref available, true);
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => supervisor.GetStatus(server)?.State == UpstreamState.Healthy,
+            step: TimeSpan.FromSeconds(1), timeoutMs: 15000);
+        audit.Refused.Should().BeGreaterThan(0, "sonst hätte der Test den Fall gar nicht hergestellt");
+
+        Volatile.Write(ref full, false);
+        await TestData.WaitUntilAdvancingAsync(
+            _time,
+            () => audit.Accepted.Any(e => e.Detail!.StartsWith("gesund-still:", StringComparison.Ordinal)
+                && e.Detail.Contains("wieder verbunden", StringComparison.Ordinal)),
+            step: TimeSpan.FromSeconds(1), timeoutMs: 15000,
+            because: "das nächste Lebenszeichen reicht die Zeile nach");
+        supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Healthy);
+    }
+
+    [Fact]
+    public async Task A_failing_close_logs_type_names_only()
+    {
+        // Die Meldung einer Transport-Ausnahme kann Text des Upstreams tragen — auch beim Schließen.
+        var first = new FakeUpstreamConnection { DisposeException = new IOException($"Schließen klemmt: {Secret}") };
+        var connector = new FakeUpstreamConnector();
+        connector.DefaultBehavior = (id, _) => connector.ConnectCalls <= 1
+            ? first
+            : throw new IOException("weg (Test)");
+        await using var supervisor = Create(connector, jitter: 0d);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("schliessen"), Ct);
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => supervisor.GetStatus(server)?.State == UpstreamState.Healthy,
+            step: TimeSpan.FromMilliseconds(500), timeoutMs: 15000);
+
+        first.FailPing = true;
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => _log.Entries.Any(e => e.Message.Contains("Fehler beim Schließen", StringComparison.Ordinal)),
+            step: TimeSpan.FromSeconds(1), timeoutMs: 15000);
+
+        var line = _log.Entries.First(e => e.Message.Contains("Fehler beim Schließen", StringComparison.Ordinal));
+        line.Exception.Should().BeNull("das Ausnahmeobjekt trüge die ungefilterte Meldung");
+        line.Message.Should().Contain(nameof(IOException));
+        _log.Entries.Should().NotContain(e => e.Message.Contains(Secret, StringComparison.Ordinal));
     }
 
     [Fact]
