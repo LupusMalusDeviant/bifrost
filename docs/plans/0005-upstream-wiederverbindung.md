@@ -44,6 +44,31 @@ Offen aus demselben Review, **nicht** eingearbeitet:
   Verbindungsversuch an; die Audit-Zeile beim Eintritt in `Failed` nennt die Fehlerart nicht.
   `[Claude-prüfbar]`
 
+**Review der Korrekturen vom 2026-11-16** (zweiter Lesedurchgang über M1, M2, M4; kein kritischer
+oder hoher Befund). Eingearbeitet auf Entscheidung des Nutzers vom 2026-11-17:
+
+- **R1** (mittel) — Wies das Audit die Zeile zum Eintritt in `Failed` ab, ging sie verloren, und die
+  Logzeile dazu fehlte auch. Jetzt werden Zeilen des Loops zurückgestellt und in Reihenfolge
+  nachgereicht. `[Claude-prüfbar]`, erledigt.
+- **R2** (niedrig) — Der Grenztest bestand auch mit totem Loop; er endet jetzt mit „Jetzt
+  verbinden" und genau einem weiteren Versuch. `[Claude-prüfbar]`, erledigt.
+- **R3** (niedrig) — Scheiterte die Buchführung, ersetzte der Deckel die schon berechnete Frist
+  (nach 401: 5 statt 15 min). `[Claude-prüfbar]`, erledigt.
+- **R4** (niedrig) — An der Obergrenze sagte die Logzeile „läuft trotzdem weiter". Eigene Meldung.
+  `[Claude-prüfbar]`, erledigt.
+- **R5** (niedrig) — Der Z1-Test konnte die Frist mitten in einem Versuch lesen. Er wartet jetzt
+  auf die verbuchte Frist. `[Claude-prüfbar]`, erledigt.
+
+Offen aus demselben Durchgang, **nicht** eingearbeitet:
+
+- **R6** — Bemerkt die Katalog-Neuabfrage den Sitzungsverlust, fordert niemand den Neuaufbau an;
+  das Lebenszeichen auf dem toten Client endet in `Failed` mit Backoff statt in einem Neuaufbau.
+  Älter als diese Änderung. `[Claude-prüfbar]`
+- **R7** — Wirft das Audit beim Einschalten oder Umkonfigurieren (Zeile `Starting`), startet der
+  Loop nicht: Der Upstream ist eingeschaltet, zeigt `Starting` und hat keinen Loop. Älter als diese
+  Änderung; die Verweigerung der Aktion im Compliance-Modus ist gewollt, der halbe Zustand danach
+  nicht. `[Claude-prüfbar]`
+
 ## Arbeitspakete
 
 | # | Inhalt | Marke |

@@ -453,7 +453,12 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         // Das Audit darf werfen — im Compliance-Modus tut es das, wenn sein Kanal voll ist. Trifft
         // das die Zeile über den Eintritt in Failed, darf daran nicht die Wiederverbindung hängen:
         // Ein Loop, der hier stirbt, hinterlässt Failed ohne jeden weiteren Versuch.
-        var audit = new RefusingAuditSink { Refuses = e => e.Detail?.Contains("Failed", StringComparison.Ordinal) == true };
+        // Abgewiesen werden nur die Failed-Zeilen, solange der Kanal „voll" ist.
+        var full = true;
+        var audit = new RefusingAuditSink
+        {
+            Refuses = e => Volatile.Read(ref full) && e.Detail?.Contains("Failed", StringComparison.Ordinal) == true,
+        };
         var connector = new FakeUpstreamConnector();
         var available = false;
         connector.DefaultBehavior = (id, _) => Volatile.Read(ref available)
@@ -462,40 +467,54 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         await using var supervisor = Create(connector, jitter: 0d, audit);
         var server = await supervisor.AddAsync(TestData.StdioConfig("audit-voll"), Ct);
 
+        // Auf die verbuchte Frist warten, nicht nur auf den Versuch: Während eines Versuchs ist
+        // die Frist leer, und erst danach steht die neue.
         await TestData.WaitUntilAdvancingAsync(
-            _time, () => connector.ConnectCalls >= 4,
+            _time,
+            () => connector.ConnectCalls >= 4 && supervisor.GetStatus(server)?.Reconnect?.NextAttemptAt is not null,
             step: TimeSpan.FromSeconds(30), timeoutMs: 15000,
             because: "nach der abgewiesenen Audit-Zeile folgen weitere Versuche");
 
         audit.Refused.Should().BeGreaterThan(0, "sonst hätte der Test den Fall gar nicht hergestellt");
-        var status = supervisor.GetStatus(server)!;
-        status.State.Should().Be(UpstreamState.Failed);
-        status.Reconnect!.NextAttemptAt.Should().NotBeNull("der Zustand nennt weiter eine Frist");
+        supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Failed);
         _log.Entries.Should().Contain(
-            e => e.Level == LogLevel.Error && e.Message.Contains("nicht vollständig verbucht", StringComparison.Ordinal),
-            "eine verlorene Audit-Zeile steht wenigstens im Log");
+            e => e.Level == LogLevel.Warning && e.Message.Contains("audit-voll: Failed (Unreachable)", StringComparison.Ordinal),
+            "die Logzeile zum Eintritt in Failed hängt nicht daran, dass das Audit annimmt");
+        _log.Entries.Should().Contain(
+            e => e.Level == LogLevel.Warning && e.Message.Contains("nachgereicht", StringComparison.Ordinal),
+            "dass eine Audit-Zeile zurückgestellt ist, steht im Log");
 
+        Volatile.Write(ref full, false);
         Volatile.Write(ref available, true);
         await TestData.WaitUntilAdvancingAsync(
             _time, () => supervisor.GetStatus(server)?.State == UpstreamState.Healthy,
             step: TimeSpan.FromSeconds(30), timeoutMs: 15000,
             because: "kommt der Upstream zurück, verbindet der Loop von selbst");
+
+        // Die abgewiesene Zeile ist nachgereicht: genau einmal, mit ihrem Zeitpunkt, vor dem
+        // „wieder verbunden".
+        var lines = audit.Accepted.Where(e => e.Kind == AuditEventKind.ServerLifecycle).ToList();
+        var failed = lines.Where(e => e.Detail!.StartsWith("audit-voll: Failed — ", StringComparison.Ordinal)).ToList();
+        failed.Should().ContainSingle("jeder Wechsel steht genau einmal im Audit");
+        var back = lines.Single(e => e.Detail!.Contains("wieder verbunden", StringComparison.Ordinal));
+        lines.IndexOf(failed[0]).Should().BeLessThan(lines.IndexOf(back));
+        failed[0].Timestamp.Should().BeBefore(back.Timestamp, "die Zeile trägt den Zeitpunkt des Wechsels");
     }
 
     [Fact]
-    public async Task A_refused_audit_line_does_not_lift_an_explicit_limit()
+    public async Task Failed_bookkeeping_does_not_lift_an_explicit_limit()
     {
-        // E1 gilt auch im Ausnahmefall: Die Ersatzfrist darf eine ausdrücklich gesetzte Obergrenze
-        // nicht in „weiter versuchen" verwandeln.
-        var audit = new RefusingAuditSink { Refuses = e => e.Detail?.Contains("Failed", StringComparison.Ordinal) == true };
+        // E1 gilt auch im Ausnahmefall: Scheitert die Buchführung, darf daraus weder ein „weiter
+        // versuchen" werden noch ein toter Loop. Gebrochen wird sie hier an der Logzeile.
+        _log.Throws = m => m.Contains("begrenzt-gestoert: Failed (", StringComparison.Ordinal);
         var connector = new FakeUpstreamConnector { DefaultBehavior = (_, _) => throw new IOException("weg (Test)") };
-        await using var supervisor = Create(connector, jitter: 0d, audit);
+        await using var supervisor = Create(connector, jitter: 0d);
         var limited = new RestartPolicy(MaxRetries: 0, TimeSpan.FromSeconds(5), 2.0, TimeSpan.FromMinutes(5));
-        var server = await supervisor.AddAsync(TestData.StdioConfig("begrenzt-audit-voll", restart: limited), Ct);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("begrenzt-gestoert", restart: limited), Ct);
 
         await TestData.WaitUntilAsync(
-            () => supervisor.GetStatus(server)?.Reconnect?.Exhausted == true,
-            because: "ohne Wiederholungen ist die Grenze nach dem Erstversuch erreicht");
+            () => _log.Entries.Any(e => e.Message.Contains("nicht vollständig verbucht", StringComparison.Ordinal)),
+            because: "der Test muss die Buchführung wirklich gebrochen haben");
         for (var i = 0; i < 12; i++)
         {
             _time.Advance(TimeSpan.FromMinutes(30));
@@ -503,7 +522,41 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         }
 
         connector.ConnectCalls.Should().Be(1);
-        supervisor.GetStatus(server)!.Reconnect!.NextAttemptAt.Should().BeNull();
+        var info = supervisor.GetStatus(server)!.Reconnect!;
+        info.Exhausted.Should().BeTrue();
+        info.NextAttemptAt.Should().BeNull();
+        var line = _log.Entries.Single(e => e.Message.Contains("nicht vollständig verbucht", StringComparison.Ordinal));
+        line.Level.Should().Be(LogLevel.Error);
+        line.Message.Should().Contain("eingestellt").And.NotContain("läuft trotzdem weiter");
+
+        // Der Loop lebt: „Jetzt verbinden" wird angenommen und führt zu genau einem Versuch.
+        _log.Throws = null;
+        await ConnectNowAsync(supervisor, server);
+        await TestData.WaitUntilAsync(
+            () => connector.ConnectCalls == 2, because: "der Anstoß führt zu einem Versuch");
+    }
+
+    [Fact]
+    public async Task Failed_bookkeeping_keeps_the_long_wait_after_a_rejected_login()
+    {
+        // E2 auch im Ausnahmefall: Die Frist ist schon bestimmt, wenn die Buchführung bricht — nach
+        // abgelehnter Anmeldung bleibt es bei 15 min, nicht beim Deckel der Policy (5 min).
+        _log.Throws = m => m.Contains("anmeldung-gestoert: Failed (Authentication)", StringComparison.Ordinal);
+        var connector = new FakeUpstreamConnector
+        {
+            DefaultBehavior = static (_, _) => throw new HttpRequestException(
+                "Response status code does not indicate success: 401 (Unauthorized).", null, HttpStatusCode.Unauthorized),
+        };
+        await using var supervisor = Create(connector, jitter: 0d);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("anmeldung-gestoert"), Ct);
+
+        await TestData.WaitUntilAsync(
+            () => _log.Entries.Any(e => e.Message.Contains("nicht vollständig verbucht", StringComparison.Ordinal)),
+            because: "der Test muss die Buchführung wirklich gebrochen haben");
+
+        var info = supervisor.GetStatus(server)!.Reconnect!;
+        info.Kind.Should().Be(UpstreamFailureKind.Authentication);
+        (info.NextAttemptAt!.Value - _time.GetUtcNow()).Should().Be(TimeSpan.FromMinutes(15));
     }
 
     [Fact]
@@ -859,11 +912,23 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
     /// </summary>
     private sealed class RefusingAuditSink : IAuditSink
     {
+        private readonly List<AuditEvent> _accepted = [];
         private int _refused;
 
         public required Func<AuditEvent, bool> Refuses { get; init; }
 
         public int Refused => Volatile.Read(ref _refused);
+
+        public IReadOnlyList<AuditEvent> Accepted
+        {
+            get
+            {
+                lock (_accepted)
+                {
+                    return [.. _accepted];
+                }
+            }
+        }
 
         public void Record(AuditEvent evt)
         {
@@ -871,6 +936,11 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
             {
                 Interlocked.Increment(ref _refused);
                 throw new InvalidOperationException("Audit-Kanal voll (Test).");
+            }
+
+            lock (_accepted)
+            {
+                _accepted.Add(evt);
             }
         }
     }
@@ -896,15 +966,27 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
             where TState : notnull
             => null;
 
+        /// <summary>
+        /// Lässt das Schreiben bestimmter Zeilen scheitern — der Hebel, mit dem ein Test die
+        /// Buchführung eines Fehlversuchs mitten im Gang brechen lässt.
+        /// </summary>
+        public Func<string, bool>? Throws { get; set; }
+
         public bool IsEnabled(LogLevel logLevel) => true;
 
         public void Log<TState>(
             LogLevel logLevel, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
+            var message = formatter(state, exception);
+            if (Throws?.Invoke(message) == true)
+            {
+                throw new InvalidOperationException("Logger gestört (Test).");
+            }
+
             lock (_entries)
             {
-                _entries.Add(new LogEntry(logLevel, formatter(state, exception), exception));
+                _entries.Add(new LogEntry(logLevel, message, exception));
             }
         }
     }

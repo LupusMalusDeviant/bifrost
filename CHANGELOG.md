@@ -122,10 +122,17 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     `reconnectExhausted`). Der OAuth-Link daneben heißt jetzt **„Autorisieren"** statt „Verbinden".
   - **Audit und Log:** ein Ausfall sind zwei Zeilen (Eintritt in `Failed`, Rückkehr auf `Healthy` mit
     Dauer und Versuchszahl) statt zweier Zeilen je Versuch.
-  - **Die Wiederverbindung hängt nicht am Audit.** Nimmt das Audit die Zeile über den Ausfall nicht
-    an (im Compliance-Modus bei vollem Kanal wirft es), läuft die Wiederholung trotzdem weiter; der
-    Vorgang steht dann als Fehler im Log. Eine `restart.maxBackoff` jenseits von rund 49 Tagen wird
-    auf diese Grenze gekürzt, statt den Timer scheitern zu lassen.
+  - **Die Wiederverbindung hängt nicht am Audit.** Nimmt das Audit eine Zustandszeile des Loops
+    nicht an (im Compliance-Modus bei vollem Kanal wirft es), läuft die Wiederholung trotzdem weiter.
+    Die Zeile geht nicht verloren: Sie wird mit ihrem Zeitpunkt zurückgestellt und vor der nächsten
+    Zeile desselben Upstreams nachgereicht, sodass im Audit kein „wieder verbunden" ohne den
+    vorherigen Eintritt in `Failed` steht; das Log nennt das Zurückstellen. Verwaltungsaktionen
+    (Ein- und Ausschalten, Umkonfigurieren) werden im Compliance-Modus weiter verweigert, wenn das
+    Audit nicht annimmt. Scheitert die Buchführung eines Fehlversuchs aus anderem Grund, gilt die
+    schon bestimmte Frist — nach abgelehnter Anmeldung also weiter 15 min — und an einer
+    ausdrücklich gesetzten Obergrenze sagt das Log, dass die Wiederverbindung eingestellt ist. Eine
+    `restart.maxBackoff` jenseits von rund 49 Tagen wird auf diese Grenze gekürzt, statt den Timer
+    scheitern zu lassen.
   - **Bemerkt das Lebenszeichen die verlorene Sitzung**, warten Aufrufe, die während des Neuaufbaus
     ankommen, auf die neue Verbindung — wie nach einem 404 auf einen Aufruf.
 - **Fehlertexte eines Upstreams konnten dessen Antwortkörper enthalten.** Das MCP-SDK hängt an eine

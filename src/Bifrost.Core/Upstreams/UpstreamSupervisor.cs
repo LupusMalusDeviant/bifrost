@@ -170,13 +170,13 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
 
             if (enabled)
             {
-                SetState(entry, UpstreamState.Starting, null);
+                SetState(entry, UpstreamState.Starting, null, fromAdmin: true);
                 StartLoop(entry);
             }
             else
             {
                 await StopLoopAsync(entry, DrainPolicy.Graceful(_options.DefaultDrainGrace), ct).ConfigureAwait(false);
-                SetState(entry, UpstreamState.Stopped, null);
+                SetState(entry, UpstreamState.Stopped, null, fromAdmin: true);
                 Raise(entry, UpstreamChangeKind.InventoryChanged);
             }
         }
@@ -282,12 +282,12 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
 
         if (config.Enabled)
         {
-            SetState(entry, UpstreamState.Starting, null);
+            SetState(entry, UpstreamState.Starting, null, fromAdmin: true);
             StartLoop(entry);
         }
         else
         {
-            SetState(entry, UpstreamState.Stopped, null);
+            SetState(entry, UpstreamState.Stopped, null, fromAdmin: true);
         }
 
         return entry.Version;
@@ -418,23 +418,38 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
                 // Vor dem geschützten Block bestimmt: Eine ausdrücklich gesetzte Obergrenze (E1) gilt
                 // auch dann, wenn die Buchführung scheitert.
                 var exhausted = policy.MaxRetries is { } max && attempt > max;
-                TimeSpan? delay;
+                TimeSpan? delay = null;
+                var planned = false;
                 try
                 {
-                    await CleanupConnectionAsync(entry).ConfigureAwait(false);
-
+                    // Erst die Frist, dann alles andere: Scheitert danach etwas, gilt trotzdem die
+                    // Frist, die zur Fehlerart gehört — nach abgelehnter Anmeldung also die lange
+                    // aus E2, nicht der Deckel der Policy.
                     var kind = UpstreamFailure.Classify(failure);
                     var reason = UpstreamFailure.Describe(failure, entry.Config);
                     delay = exhausted ? null : ComputeDelay(policy, kind, attempt);
+                    planned = true;
 
+                    await CleanupConnectionAsync(entry).ConfigureAwait(false);
                     MarkFailed(entry, kind, reason, attempt, delay, failure);
                 }
                 catch (Exception ex)
                 {
-                    delay = exhausted ? null : FallbackDelay(policy);
+                    if (!planned)
+                    {
+                        delay = exhausted ? null : FallbackDelay(policy);
+                    }
+
                     MarkFailedWithoutReport(entry, delay);
-                    Log.UpstreamBookkeepingFailed(
-                        _logger, entry.Config.Slug, UpstreamFailure.TypeChain(ex), delay);
+                    var types = UpstreamFailure.TypeChain(ex);
+                    if (delay is { } wait)
+                    {
+                        Log.UpstreamBookkeepingFailed(_logger, entry.Config.Slug, types, wait);
+                    }
+                    else
+                    {
+                        Log.UpstreamBookkeepingFailedAtLimit(_logger, entry.Config.Slug, types, attempt);
+                    }
                 }
 
                 try
@@ -789,9 +804,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     private static TimeSpan FallbackDelay(RestartPolicy policy) => Waitable(policy.MaxBackoff);
 
     /// <summary>
-    /// Setzt nur den Zustand — ohne Audit und ohne Log über den Fehlversuch. Für den Fall, dass
-    /// genau diese Meldungen gescheitert sind: Der Zustand soll trotzdem stimmen und die nächste
-    /// Frist sichtbar sein. Was <see cref="MarkFailed"/> schon gesetzt hat, bleibt stehen.
+    /// Setzt nur den Zustand — ohne Audit und ohne Log über den Fehlversuch. Für den Fall, dass die
+    /// Buchführung selbst gescheitert ist: Der Zustand soll trotzdem stimmen und die nächste Frist
+    /// sichtbar sein. Was <see cref="MarkFailed"/> schon gesetzt hat, bleibt stehen.
     /// </summary>
     private void MarkFailedWithoutReport(Entry entry, TimeSpan? delay)
     {
@@ -905,16 +920,19 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             }
         }
 
+        // Die Audit-Zeilen gehen über RecordLoopLifecycle, das nicht wirft: Weist das Audit eine
+        // Zeile ab, wird sie zurückgestellt und mit dem nächsten Wechsel nachgereicht — die Logzeile
+        // dahinter wird trotzdem geschrieben.
         var slug = entry.Config.Slug;
         var types = UpstreamFailure.TypeChain(failure);
         if (entered)
         {
-            AuditLifecycle(entry, $"{slug}: {UpstreamState.Failed} — {reason}");
+            RecordLoopLifecycle(entry, $"{slug}: {UpstreamState.Failed} — {reason}");
             Log.UpstreamFailed(_logger, slug, kind, reason, types, delay);
         }
         else if (kindChanged)
         {
-            AuditLifecycle(entry,
+            RecordLoopLifecycle(entry,
                 $"{slug}: {UpstreamState.Failed} — Fehlerart wechselt von {previousKind} auf {kind}: {reason}");
             Log.UpstreamFailureKindChanged(_logger, slug, previousKind, kind, reason, types, delay);
         }
@@ -925,7 +943,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
 
         if (exhaustedNow)
         {
-            AuditLifecycle(entry,
+            RecordLoopLifecycle(entry,
                 $"{slug}: {UpstreamState.Failed} — Wiederverbindung nach {attempt} Versuchen eingestellt (so konfiguriert).");
             Log.UpstreamRetriesExhausted(_logger, slug, attempt);
         }
@@ -1190,7 +1208,13 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     /// jeder Änderung.
     /// </para>
     /// </summary>
-    private void SetState(Entry entry, UpstreamState state, string? error, string? auditDetail = null)
+    /// <param name="fromAdmin">
+    /// Wechsel aus einer Verwaltungsaktion: Deren Audit-Zeile darf werfen — im Compliance-Modus
+    /// wird die Aktion dann verweigert. Wechsel des Loops dagegen sind geschehen, ob das Audit sie
+    /// annimmt oder nicht; ihre Zeilen werden zurückgestellt statt den Loop zu beenden.
+    /// </param>
+    private void SetState(
+        Entry entry, UpstreamState state, string? error, string? auditDetail = null, bool fromAdmin = false)
     {
         bool stateChanged;
         bool anythingChanged;
@@ -1215,24 +1239,116 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
 
         if (stateChanged)
         {
-            AuditLifecycle(entry, auditDetail ?? (error is null
+            var detail = auditDetail ?? (error is null
                 ? $"{entry.Config.Slug}: {state}"
-                : $"{entry.Config.Slug}: {state} — {error}"));
+                : $"{entry.Config.Slug}: {state} — {error}");
+            if (fromAdmin)
+            {
+                AuditLifecycle(entry, detail);
+            }
+            else
+            {
+                RecordLoopLifecycle(entry, detail);
+            }
         }
 
         Raise(entry, UpstreamChangeKind.StateChanged);
     }
 
     /// <summary>
+    /// Wie viele abgewiesene Zeilen eines Upstreams höchstens auf das Nachreichen warten. Je Ausfall
+    /// entstehen nur eine Handvoll (Eintritt, Wechsel der Fehlerart, Grenze, Rückkehr); die Grenze
+    /// hält nur ein Audit, das nie wieder annimmt, davon ab, den Speicher zu füllen.
+    /// </summary>
+    internal const int MaxDeferredLifecycleLines = 32;
+
+    /// <summary>
     /// FR-22: Der Zustandswechsel eines Upstreams ist ein Systemereignis und gehört ins Audit-Log,
     /// nicht nur in den ILogger — sonst fehlt beim Nachvollziehen eines Ausfalls die Spur.
+    /// Für Verwaltungsaktionen: wirft, wenn das Audit nicht annimmt. Zurückgestellte Zeilen des
+    /// Loops gehen vorher hinaus, damit die Reihenfolge im Audit stimmt.
     /// </summary>
     private void AuditLifecycle(Entry entry, string detail)
-        => _audit?.Record(new AuditEvent(
+    {
+        if (_audit is null)
+        {
+            return;
+        }
+
+        lock (entry.AuditGate)
+        {
+            FlushDeferredLifecycle(entry);
+            _audit.Record(LifecycleEvent(entry, detail));
+        }
+    }
+
+    /// <summary>
+    /// Die Audit-Zeile eines Wechsels, den der Loop festgestellt hat. Wirft nie: Weist das Audit
+    /// die Zeile ab (im Compliance-Modus bei vollem Kanal), wird sie mit ihrem Zeitpunkt
+    /// zurückgestellt und vor der nächsten Zeile dieses Upstreams nachgereicht. So fehlt im Audit
+    /// kein Eintritt in Failed vor dem „wieder verbunden", und der Loop hängt nicht am Audit (Z1).
+    /// </summary>
+    private void RecordLoopLifecycle(Entry entry, string detail)
+    {
+        if (_audit is null)
+        {
+            return;
+        }
+
+        var dropped = false;
+        Exception? refusal = null;
+        int pending;
+        lock (entry.AuditGate)
+        {
+            if (entry.DeferredLifecycle.Count < MaxDeferredLifecycleLines)
+            {
+                entry.DeferredLifecycle.Add(LifecycleEvent(entry, detail));
+            }
+            else
+            {
+                dropped = true;
+            }
+
+            try
+            {
+                FlushDeferredLifecycle(entry);
+            }
+            catch (Exception ex)
+            {
+                refusal = ex;
+            }
+
+            pending = entry.DeferredLifecycle.Count;
+        }
+
+        if (dropped)
+        {
+            Log.UpstreamAuditLineDropped(_logger, entry.Config.Slug, pending);
+        }
+
+        if (refusal is not null)
+        {
+            Log.UpstreamAuditDeferred(_logger, entry.Config.Slug, UpstreamFailure.TypeChain(refusal), pending);
+        }
+    }
+
+    /// <summary>Reicht zurückgestellte Zeilen in ihrer Reihenfolge nach; wirft bei der ersten Abweisung.</summary>
+    private void FlushDeferredLifecycle(Entry entry)
+    {
+        var deferred = entry.DeferredLifecycle;
+        while (deferred.Count > 0)
+        {
+            _audit!.Record(deferred[0]);
+            deferred.RemoveAt(0);
+        }
+    }
+
+    private AuditEvent LifecycleEvent(Entry entry, string detail)
+        => new(
             _time.GetUtcNow(), Caller: null, CallOrigin.System, AuditEventKind.ServerLifecycle,
             entry.Id, Tool: null, Status: null, RedactedArguments: null,
             RequestBytes: null, ResponseBytes: null, Duration: null,
-            Detail: detail));
+            Detail: detail);
 
     private void Raise(Entry entry, UpstreamChangeKind kind)
     {
@@ -1305,6 +1421,12 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         public ServerId Id { get; }
 
         public object Gate { get; } = new();
+
+        /// <summary>Hält die Audit-Zeilen dieses Upstreams in Reihenfolge, auch beim Nachreichen.</summary>
+        public object AuditGate { get; } = new();
+
+        /// <summary>Zeilen des Loops, die das Audit abgewiesen hat — in Reihenfolge, mit ihrem Zeitpunkt.</summary>
+        public List<AuditEvent> DeferredLifecycle { get; } = [];
 
         /// <summary>Über dieses Objekt lässt eine Verbindung ihre verlorene Sitzung neu aufbauen.</summary>
         public IUpstreamSessionRecovery Recovery { get; }
@@ -1439,9 +1561,23 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         public static partial void UpstreamRetriesExhausted(ILogger logger, string slug, int attempts);
 
         [LoggerMessage(Level = LogLevel.Error,
-            Message = "Upstream {Slug}: Der Fehlversuch konnte nicht vollständig verbucht werden — etwa weil das Audit ihn nicht annahm. Die Wiederverbindung läuft trotzdem weiter. [{ExceptionTypes}] Nächster Versuch in {Delay}.")]
+            Message = "Upstream {Slug}: Der Fehlversuch konnte nicht vollständig verbucht werden. Die Wiederverbindung läuft trotzdem weiter. [{ExceptionTypes}] Nächster Versuch in {Delay}.")]
         public static partial void UpstreamBookkeepingFailed(
-            ILogger logger, string slug, string exceptionTypes, TimeSpan? delay);
+            ILogger logger, string slug, string exceptionTypes, TimeSpan delay);
+
+        [LoggerMessage(Level = LogLevel.Error,
+            Message = "Upstream {Slug}: Der Fehlversuch konnte nicht vollständig verbucht werden. [{ExceptionTypes}] Die Wiederverbindung ist nach {Attempts} Versuchen eingestellt — die Obergrenze ist ausdrücklich so konfiguriert. Weiter geht es nur über „Jetzt verbinden“.")]
+        public static partial void UpstreamBookkeepingFailedAtLimit(
+            ILogger logger, string slug, string exceptionTypes, int attempts);
+
+        [LoggerMessage(Level = LogLevel.Warning,
+            Message = "Upstream {Slug}: Das Audit hat eine Zustandszeile nicht angenommen; sie wird mit dem nächsten Wechsel nachgereicht ({Pending} zurückgestellt). [{ExceptionTypes}]")]
+        public static partial void UpstreamAuditDeferred(
+            ILogger logger, string slug, string exceptionTypes, int pending);
+
+        [LoggerMessage(Level = LogLevel.Error,
+            Message = "Upstream {Slug}: Eine Zustandszeile fürs Audit ist verworfen — schon {Pending} warten aufs Nachreichen.")]
+        public static partial void UpstreamAuditLineDropped(ILogger logger, string slug, int pending);
 
         [LoggerMessage(Level = LogLevel.Error,
             Message = "Upstream {Slug}: Die Wiederverbindungsschleife war an einem Fehler geendet. [{ExceptionTypes}]")]
