@@ -47,9 +47,6 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
     /// </summary>
     private readonly IUpstreamOAuthTokenStore? _oauthTokens;
 
-    /// <summary>Das Herunterfahren hat nicht auf eine hängende Zulassung gewartet (E8).</summary>
-    private bool _admissionAbandoned;
-
     /// <param name="hostExecution">
     /// Die Ausführungs-Policy (ADR-0025). <c>null</c> heißt <b>nicht</b> „keine Prüfung", sondern
     /// „nicht ermittelt" — dann kommt kein nativ laufender Upstream hoch. Ein vergessener
@@ -438,6 +435,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
             entry.Exhausted = false;
             entry.FailedSince = null;
             entry.Wake = null;
+
+            // Ein abgelöster Loop setzt das nicht mehr zurück (F2) — es gehört ab hier dem neuen.
+            entry.LoopWaiting = false;
             entry.CredentialsChanged = false;
             entry.CatalogRefused = null;
             entry.RenewalUnconfirmed = false;
@@ -551,6 +551,30 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
     }
 
     /// <summary>
+    /// Das Schließen einer verlorenen oder ersetzten Verbindung im laufenden Loop — befristet wie
+    /// beim Stoppen (F2, Z1). Ein Prozess oder Container, der beim Beenden hängt, läuft im
+    /// Hintergrund zu Ende; der Loop macht nach höchstens <see cref="StopJoinTimeout"/> weiter. Ein
+    /// Abbruch des Loops beendet das Warten sofort — der Aufrufer prüft danach, ob er abgelöst ist.
+    /// </summary>
+    private async Task WithinCloseTimeoutAsync(Entry entry, Task close, CancellationToken ct)
+    {
+        try
+        {
+            await close.WaitAsync(StopJoinTimeout, _time, ct).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            Quietly(() => Log.UpstreamCloseHung(_logger, entry.Config.Slug, StopJoinTimeout));
+            Observe(close);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Der Loop ist abgebrochen; das Schließen läuft im Hintergrund zu Ende.
+            Observe(close);
+        }
+    }
+
+    /// <summary>
     /// Der Lebenszyklus eines Upstreams: verbinden, bedienen, bei Verlust nach einer Frist erneut
     /// versuchen — ohne Ende, solange der Upstream aktiviert ist.
     /// <para>
@@ -587,7 +611,13 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
 
                     firstAttempt = false;
                     var session = await EstablishAsync(entry, _options.ConnectAttemptTimeout, ct).ConfigureAwait(false);
-                    Publish(entry, session, afterSessionLoss: false, ct);
+                    if (!Publish(entry, session, afterSessionLoss: false, ct))
+                    {
+                        // F6: Der Upstream wird gerade gestoppt; die neue Verbindung ist schon geschlossen.
+                        // Der Loop wartet nur noch auf seinen Abbruch.
+                        await Task.Delay(Timeout.InfiniteTimeSpan, _time, ct).ConfigureAwait(false);
+                    }
+
                     await ServeAsync(entry, session.Connection, ct).ConfigureAwait(false);
                     continue;
                 }
@@ -635,11 +665,26 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
                     delay = exhausted ? null : ComputeDelay(policy, kind.Value, attempt);
                     planned = true;
 
-                    await CleanupConnectionAsync(entry).ConfigureAwait(false);
-                    MarkFailed(entry, kind.Value, reason, attempt, delay, failure);
+                    // Befristet (F2, Z1): Ein Prozess oder Container, der beim Beenden hängt, hielte
+                    // sonst jeden weiteren Versuch für immer auf.
+                    await WithinCloseTimeoutAsync(entry, CleanupConnectionAsync(entry), ct).ConfigureAwait(false);
+
+                    // F2, N20: Nach dem Warten zuerst prüfen, ob dieser Loop abgelöst ist. Hat das
+                    // Stoppen nach seiner Frist aufgegeben, gehört der Eintrag schon einem Nachfolger.
+                    if (ct.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    MarkFailed(entry, kind.Value, reason, attempt, delay, failure, ct);
                 }
                 catch (Exception ex)
                 {
+                    if (ct.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
                     if (!planned)
                     {
                         delay = exhausted ? null : FallbackDelay(policy);
@@ -647,7 +692,11 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
 
                     // Erst der Zustand — er kann nicht scheitern. Was danach meldet (Audit,
                     // Ereignisse, Log), kann es; daran darf der Loop nicht enden (Z1).
-                    var report = SetFailedState(entry, kind, reason, delay);
+                    if (SetFailedState(entry, kind, reason, delay, ct) is not { } report)
+                    {
+                        return;
+                    }
+
                     try
                     {
                         ReportFailedWithoutDetail(entry, report, reason, attempt, delay, ex);
@@ -759,9 +808,20 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
             // Rug-Pull-Erkennung: Was der Upstream jetzt meldet, wird gegen den festgehaltenen
             // Stand geprüft. Geänderte Tools erreichen den Katalog gar nicht erst — Filtern an
             // der Quelle statt einer zweiten Prüfung im Aufrufpfad.
-            var (screened, quarantined) = await ScreenInventoryAsync(entry, inventory, ct)
+            var (screened, quarantined) = await ScreenInventoryAsync(entry, inventory, guarded, standing: false, ct)
                 .ConfigureAwait(false);
             return new Session(guarded, screened, quarantined, inventory.Tools.Count);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await DisposeQuietlyAsync(guarded).ConfigureAwait(false);
+
+            // F1: Ab hier hat die Verbindung Zugangsdaten vorgelegt — ein OAuth-Token, das in keiner
+            // Konfiguration steht. Zitiert der Upstream es in seiner Fehlermeldung (etwa einem
+            // JSON-RPC-Fehler auf tools/list), kennt es außerhalb dieser Methode niemand mehr: Status,
+            // Audit, Log und der auf den Neuaufbau wartende Agent bekämen es ungefiltert. Deshalb wird
+            // HIER bereinigt, mit den Zugangsdaten genau dieser Verbindung; die Fehlerart bleibt.
+            throw UpstreamFailure.Sanitize(ex, guarded.DescribeFailure(ex));
         }
         catch
         {
@@ -809,7 +869,11 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
     }
 
     /// <summary>Macht eine aufgebaute Verbindung zur aktuellen und meldet den Wechsel.</summary>
-    private void Publish(Entry entry, Session session, bool afterSessionLoss, CancellationToken ct)
+    /// <returns>
+    /// <c>false</c>, wenn der Upstream gerade gestoppt wird (F6): Die Verbindung ist dann schon
+    /// geschlossen und nie veröffentlicht worden. Ist der Loop abgebrochen, wirft die Methode.
+    /// </returns>
+    private bool Publish(Entry entry, Session session, bool afterSessionLoss, CancellationToken ct)
     {
         var now = _time.GetUtcNow();
         bool inventoryChanged;
@@ -820,7 +884,12 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
         {
             // Wird der Loop gerade gestoppt, veröffentlicht er nichts mehr (Plan 0005 D4): Die
             // Prüfung steht unter derselben Sperre wie das Aufräumen beim Stoppen.
-            refused = ct.IsCancellationRequested;
+            //
+            // Das gilt schon ab dem Beginn des Stoppens, nicht erst ab dem Abbruch (F6): Der Drain
+            // wartet vor dem Abbruch auf laufende Aufrufe der alten Verbindung. Eine Verbindung, die
+            // in dieser Zeit veröffentlicht würde, nähme neue Anfragen an und würde nach der
+            // Gnadenfrist mitten im Aufruf geschlossen.
+            refused = ct.IsCancellationRequested || entry.Stopping;
             inventoryChanged = false;
             failedSince = null;
             attempts = 0;
@@ -857,6 +926,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
             // Nicht veröffentlicht heißt: auch nicht offen gelassen.
             _ = DisposeQuietlyAsync(session.Connection);
             ct.ThrowIfCancellationRequested();
+            return false;
         }
 
         if (failedSince is { } since)
@@ -889,6 +959,8 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
         {
             Raise(entry, UpstreamChangeKind.InventoryChanged);
         }
+
+        return true;
     }
 
     /// <summary>
@@ -1104,19 +1176,37 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
             }
 
             var previous = connection;
-            connection = replacement.Connection;
+            bool published;
             try
             {
-                Publish(entry, replacement, afterSessionLoss: true, ct);
-
-                Complete(entry, rebuild, pending => pending.TrySetResult(connection));
+                published = Publish(entry, replacement, afterSessionLoss: true, ct);
             }
-            finally
+            catch
             {
                 // Die tote Verbindung wird geschlossen, was immer beim Veröffentlichen geschah —
                 // sonst bliebe ihr Prozess oder ihr Socket bis zum Ende des Gateways offen (U4).
-                await DisposeQuietlyAsync(previous).ConfigureAwait(false);
+                await WithinCloseTimeoutAsync(entry, DisposeQuietlyAsync(previous), ct).ConfigureAwait(false);
+                throw;
             }
+
+            if (!published)
+            {
+                // F6: Das Stoppen hat begonnen, während der Neuaufbau lief. Die neue Verbindung ist
+                // schon geschlossen; wer auf sie wartet, bekommt „Verbindung verloren" wie bei jedem
+                // anderen gescheiterten Neuaufbau. Die alte bleibt dem Drain: Er wartet noch auf ihre
+                // laufenden Aufrufe und schließt sie danach selbst.
+                Complete(entry, rebuild, pending => pending.TrySetException(new UpstreamConnectionLostException(
+                    "Der Upstream wird gestoppt; die Sitzung wird nicht mehr neu aufgebaut.")));
+                await Task.Delay(Timeout.InfiniteTimeSpan, _time, ct).ConfigureAwait(false);
+            }
+
+            var current = replacement.Connection;
+            connection = current;
+            Complete(entry, rebuild, pending => pending.TrySetResult(current));
+
+            // Befristet (F2): Ein Schließen, das hängt, hielte sonst die Lebenszeichen der neuen
+            // Verbindung für immer an.
+            await WithinCloseTimeoutAsync(entry, DisposeQuietlyAsync(previous), ct).ConfigureAwait(false);
         }
     }
 
@@ -1324,12 +1414,22 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
     /// Kann nicht werfen: nur Zuweisungen unter der Sperre. Was <see cref="MarkFailed"/> schon
     /// gesetzt hat, bleibt stehen; eine schon bestimmte Fehlerart wird übernommen, damit der nächste
     /// Versuch keinen Wechsel „von None" meldet.
+    /// <para>
+    /// <c>null</c>, wenn der Loop inzwischen abgelöst ist (F2): Dann wird nichts gesetzt.
+    /// </para>
     /// </summary>
-    private FailedTransition SetFailedState(Entry entry, UpstreamFailureKind? kind, string? reason, TimeSpan? delay)
+    private FailedTransition? SetFailedState(
+        Entry entry, UpstreamFailureKind? kind, string? reason, TimeSpan? delay, CancellationToken ct)
     {
         var now = _time.GetUtcNow();
         lock (entry.Gate)
         {
+            // Unter derselben Sperre, unter der ein Nachfolger seinen Zustand bekommt (StartLoop).
+            if (ct.IsCancellationRequested)
+            {
+                return null;
+            }
+
             var entered = entry.State != UpstreamState.Failed;
             var exhaustedNow = delay is null && !entry.Exhausted;
             if (entered)
@@ -1490,8 +1590,14 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
         {
             lock (entry.Gate)
             {
-                entry.Wake = null;
-                entry.LoopWaiting = false;
+                // Nur das eigene Wecksignal (F2): Ein abgelöster Loop, der erst nach dem Start seines
+                // Nachfolgers hier ankommt, räumte sonst dessen Signal weg — „Jetzt verbinden" erreichte
+                // den wartenden Nachfolger nicht mehr.
+                if (ReferenceEquals(entry.Wake, wake))
+                {
+                    entry.Wake = null;
+                    entry.LoopWaiting = false;
+                }
             }
         }
     }
@@ -1513,7 +1619,8 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
     /// der konfigurierten Obergrenze. Ein Versuch, der wieder scheitert, ist keine Nachricht.
     /// </summary>
     private void MarkFailed(
-        Entry entry, UpstreamFailureKind kind, string reason, int attempt, TimeSpan? delay, Exception failure)
+        Entry entry, UpstreamFailureKind kind, string reason, int attempt, TimeSpan? delay, Exception failure,
+        CancellationToken ct)
     {
         var now = _time.GetUtcNow();
         bool entered;
@@ -1522,6 +1629,13 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
         UpstreamFailureKind previousKind;
         lock (entry.Gate)
         {
+            // F2: Ein abgelöster Loop bucht nichts — geprüft unter derselben Sperre, unter der ein
+            // Nachfolger seinen Zustand bekommt (StartLoop).
+            if (ct.IsCancellationRequested)
+            {
+                return;
+            }
+
             entered = entry.State != UpstreamState.Failed;
             previousKind = entry.FailureKind;
             kindChanged = !entered && previousKind != kind;
@@ -1804,7 +1918,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
         Entry entry, GuardedUpstreamConnection connection, bool raiseAlways, CancellationToken ct)
     {
         var inventory = await connection.DiscoverAsync(ct).ConfigureAwait(false);
-        var (screened, quarantined) = await ScreenInventoryAsync(entry, inventory, ct, standing: connection)
+        var (screened, quarantined) = await ScreenInventoryAsync(entry, inventory, connection, standing: true, ct)
             .ConfigureAwait(false);
 
         bool changed;
@@ -1854,21 +1968,61 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
     /// <para>
     /// Ohne Pin-Store passiert nichts — dann verhält sich der Supervisor wie vorher.
     /// </para>
+    /// <para>
+    /// <b>Eine Prüfung nach der anderen</b> (F7): Prüfungen beim Verbindungsaufbau und bei der
+    /// Neuabfrage schreiben dieselben Pins fort. Hielte eine veraltete Neuabfrage erst im Schreiben
+    /// an — nach dem Blick auf die Verbindung —, überschriebe sie sonst das Urteil, das der Neuaufbau
+    /// inzwischen geschrieben hat. Die Sperre umfasst nur die Prüfung, nicht die Katalogabfrage: Eine
+    /// hängende Abfrage hält keinen Neuaufbau auf. Reihenfolge der Sperren: erst
+    /// <see cref="Entry.RediscoveryLock"/>, dann <see cref="Entry.ScreeningLock"/>; der
+    /// Verbindungsaufbau nimmt nur die zweite. Das Warten darauf bricht mit dem Abbruch des Aufbaus ab.
+    /// </para>
     /// </summary>
+    /// <param name="connection">Die Verbindung, deren Katalog geprüft wird.</param>
     /// <param name="standing">
-    /// Die stehende Verbindung, deren Katalog gerade neu abgefragt wird — ihr Inventar ist das, aus
-    /// dem ein geändertes Werkzeug sofort verschwinden muss. <c>null</c> beim Verbindungsaufbau: Dessen
-    /// Inventar ist noch nicht veröffentlicht, und das geltende gehört einer anderen Verbindung.
+    /// <c>true</c>, wenn <paramref name="connection"/> die stehende Verbindung ist, deren Katalog gerade
+    /// neu abgefragt wird — ihr Inventar ist das, aus dem ein geändertes Werkzeug sofort verschwinden
+    /// muss. <c>false</c> beim Verbindungsaufbau: Dessen Inventar ist noch nicht veröffentlicht, und das
+    /// geltende gehört einer anderen Verbindung.
     /// </param>
     private async Task<(UpstreamInventory Inventory, IReadOnlyList<string> Quarantined)>
         ScreenInventoryAsync(
-            Entry entry, UpstreamInventory inventory, CancellationToken ct, GuardedUpstreamConnection? standing = null)
+            Entry entry, UpstreamInventory inventory, GuardedUpstreamConnection connection, bool standing,
+            CancellationToken ct)
     {
         if (_pins is null)
         {
             return (inventory, []);
         }
 
+        await entry.ScreeningLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (!standing)
+            {
+                // Ab jetzt ist das Urteil über den Katalog dieser Verbindung das jüngste. Eine Neuabfrage
+                // der alten, die danach erst zum Prüfen kommt, ist veraltet — auch wenn die alte noch
+                // veröffentlicht ist, weil der Neuaufbau einer Sitzung sie erst beim Veröffentlichen ersetzt.
+                lock (entry.Gate)
+                {
+                    entry.ScreenedConnection = connection;
+                }
+            }
+
+            return await ScreenInventoryCoreAsync(entry, inventory, standing ? connection : null, ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            entry.ScreeningLock.Release();
+        }
+    }
+
+    private async Task<(UpstreamInventory Inventory, IReadOnlyList<string> Quarantined)>
+        ScreenInventoryCoreAsync(
+            Entry entry, UpstreamInventory inventory, GuardedUpstreamConnection? standing, CancellationToken ct)
+    {
+        var pins = _pins!;
         var kept = new List<ToolDescriptor>(inventory.Tools.Count);
         var quarantined = new List<string>();
         foreach (var tool in inventory.Tools)
@@ -1882,7 +2036,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
             {
                 lock (entry.Gate)
                 {
-                    if (!ReferenceEquals(entry.Connection, standing))
+                    // F7: auch dann veraltet, wenn ein Neuaufbau den Katalog seiner neuen Verbindung
+                    // schon geprüft, aber noch nicht veröffentlicht hat.
+                    if (!ReferenceEquals(entry.Connection, standing)
+                        || !ReferenceEquals(entry.ScreenedConnection, standing))
                     {
                         throw new UpstreamConnectionLostException(
                             "Die Verbindung wurde während der Katalogprüfung ersetzt; diese Prüfung ist veraltet.");
@@ -1891,7 +2048,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
             }
 
             var hash = ToolDefinitionHash.Compute(tool);
-            var verdict = await _pins.VerifyAsync(entry.Id, tool.Name, hash, ct).ConfigureAwait(false);
+            var verdict = await pins.VerifyAsync(entry.Id, tool.Name, hash, ct).ConfigureAwait(false);
             if (verdict is ToolDefinitionVerdict.Changed)
             {
                 quarantined.Add(tool.Name);
@@ -2278,9 +2435,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
 
     /// <summary>
     /// Eine Zulassung umspannt Speichern und Registrieren eines neuen Upstreams (Plan 0005 E8).
-    /// Beginnt das Herunterfahren dazwischen, wartet es, bis die Zulassung endet — der Upstream ist
-    /// dann gespeichert, registriert und wird mit den übrigen gestoppt. Wer nach dem Beginn kommt,
-    /// wird vor dem Speichern abgewiesen.
+    /// Beginnt das Herunterfahren dazwischen, wartet es (höchstens <see cref="StopJoinTimeout"/>), bis
+    /// die Zulassung endet — der Upstream ist dann gespeichert, wird aber nicht mehr eingetragen und
+    /// kommt erst nach dem Neustart (F10). Wer nach dem Beginn kommt, wird vor dem Speichern abgewiesen.
     /// </summary>
     private void EnterAdmission()
     {
@@ -2329,8 +2486,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
         catch (TimeoutException)
         {
             // Ein Speichern, das hängt, hält das Herunterfahren nicht fest; was danach noch
-            // registriert wird, startet keinen Loop mehr (Register prüft das).
-            Volatile.Write(ref _admissionAbandoned, true);
+            // gespeichert wird, wird nicht mehr eingetragen (Register prüft das, F10).
         }
 
         return true;
@@ -2344,9 +2500,17 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
     /// </summary>
     private void Register(Entry entry, string collision)
     {
-        // Läuft immer innerhalb einer Zulassung (E8): Das Herunterfahren wartet, bis sie endet, und
-        // stoppt danach auch diesen Eintrag. Hier wird darum nicht mehr abgewiesen — eine
-        // Abweisung nach dem Speichern hinterließe einen Server, der nach dem Neustart wiederkommt.
+        // Läuft immer innerhalb einer Zulassung (E8). Hat das Herunterfahren inzwischen begonnen,
+        // wird nichts mehr eingetragen (F10): Kein Status, kein Added-Ereignis, kein Loop — wartet
+        // das Herunterfahren nicht mehr (die Frist aus E8 ist um), sähe es den Eintrag nie, und ein
+        // Upstream stünde im Status eines Supervisors, der schon beendet ist. Das Speichern davor
+        // ist geschehen und wird nicht zurückgenommen: Der Upstream kommt nach dem Neustart wieder.
+        // AddAsync meldet deshalb seine Id, ohne zu werfen — die Zusage „gespeichert" stimmt.
+        if (Volatile.Read(ref _disposing) != 0)
+        {
+            return;
+        }
+
         entry.AdminLock.Wait(CancellationToken.None);
         try
         {
@@ -2356,7 +2520,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
             }
 
             Raise(entry, UpstreamChangeKind.Added);
-            if (entry.Config.Enabled && !Volatile.Read(ref _admissionAbandoned))
+            if (entry.Config.Enabled)
             {
                 StartLoop(entry);
             }
@@ -2436,6 +2600,18 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
 
         /// <summary>Eine Katalog-Neuabfrage nach der anderen (Plan 0005 D3).</summary>
         public SemaphoreSlim RediscoveryLock { get; } = new(1, 1);
+
+        /// <summary>
+        /// Eine Pin-Prüfung nach der anderen, beim Aufbau wie bei der Neuabfrage (F7). Wird nach
+        /// <see cref="RediscoveryLock"/> genommen, nie davor.
+        /// </summary>
+        public SemaphoreSlim ScreeningLock { get; } = new(1, 1);
+
+        /// <summary>
+        /// Die Verbindung, deren Katalog zuletzt beim Verbindungsaufbau geprüft wurde (F7). Eine
+        /// Neuabfrage auf einer anderen ist veraltet. Nur unter <see cref="Gate"/>.
+        /// </summary>
+        public GuardedUpstreamConnection? ScreenedConnection { get; set; }
 
         public UpstreamServerConfig Config { get; set; }
 
@@ -2642,6 +2818,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
         [LoggerMessage(Level = LogLevel.Error,
             Message = "Upstream {Slug}: {Step} beim Stoppen endete nicht binnen {Timeout}; er läuft im Hintergrund zu Ende. Der Upstream gilt trotzdem als gestoppt.")]
         public static partial void UpstreamStopStepHung(ILogger logger, string slug, string step, TimeSpan timeout);
+
+        [LoggerMessage(Level = LogLevel.Error,
+            Message = "Upstream {Slug}: Das Schließen der verlorenen Verbindung endete nicht binnen {Timeout}; es läuft im Hintergrund zu Ende. Die Wiederverbindung geht weiter.")]
+        public static partial void UpstreamCloseHung(ILogger logger, string slug, TimeSpan timeout);
 
         [LoggerMessage(Level = LogLevel.Warning,
             Message = "Upstream {Slug}: Drain-Frist {Grace} abgelaufen, {InFlight} Calls werden abgebrochen.")]

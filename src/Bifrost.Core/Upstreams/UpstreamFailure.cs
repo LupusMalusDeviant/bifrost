@@ -90,7 +90,8 @@ public static class UpstreamFailure
 
     /// <summary>
     /// Die Typnamen der Ausnahmekette. Das geht ins Log anstelle des Ausnahmeobjekts — dessen
-    /// Textform trüge die ungefilterte Meldung.
+    /// Textform trüge die ungefilterte Meldung. Bei einer bereinigten Ausnahme (<see cref="Sanitize"/>)
+    /// stehen danach die Typnamen der ursprünglichen Kette.
     /// </summary>
     [NoHostExecution("Liest Typnamen; startet nichts.")]
     public static string TypeChain(Exception exception)
@@ -100,9 +101,40 @@ public static class UpstreamFailure
         for (var current = exception; current is not null && names.Count < 6; current = current.InnerException)
         {
             names.Add(current.GetType().Name);
+            if (current.Data[OriginalTypesKey] is string original)
+            {
+                names.Add(original);
+                break;
+            }
         }
 
         return string.Join(" → ", names);
+    }
+
+    /// <summary>Unter diesem Schlüssel trägt eine bereinigte Ausnahme die Typnamen der ursprünglichen Kette.</summary>
+    private const string OriginalTypesKey = "Bifrost.UpstreamFailure.OriginalTypes";
+
+    /// <summary>
+    /// Ersetzt den Fehlschlag einer schon aufgebauten Verbindung durch einen mit bereinigter Meldung
+    /// (Plan 0005 F1). Die Meldung kann das Token zitieren, das genau diese Verbindung vorgelegt hat;
+    /// außerhalb des Verbindungsaufbaus kennt es niemand mehr. Die ursprüngliche Ausnahme hängt
+    /// deshalb <b>nicht</b> als innere daran — über den Neuaufbau einer Sitzung erreichte sie sonst
+    /// auch den wartenden Agenten. Erhalten bleiben die Fehlerart (<see cref="Classify"/>) und die
+    /// Typnamen der Kette (<see cref="TypeChain"/>).
+    /// </summary>
+    /// <param name="exception">Der ursprüngliche Fehlschlag.</param>
+    /// <param name="sanitizedMessage">Der Grund, schon bereinigt — mit den vorgelegten Zugangsdaten der Verbindung.</param>
+    [NoHostExecution("Verpackt eine Ausnahme; startet nichts.")]
+    public static Exception Sanitize(Exception exception, string sanitizedMessage)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        ArgumentNullException.ThrowIfNull(sanitizedMessage);
+
+        Exception sanitized = Classify(exception) == UpstreamFailureKind.Authentication
+            ? new UpstreamAuthenticationException(sanitizedMessage)
+            : new UpstreamConnectionLostException(sanitizedMessage);
+        sanitized.Data[OriginalTypesKey] = TypeChain(exception);
+        return sanitized;
     }
 
     /// <summary>

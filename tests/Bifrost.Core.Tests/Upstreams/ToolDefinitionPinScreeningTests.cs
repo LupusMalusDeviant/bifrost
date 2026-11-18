@@ -183,17 +183,22 @@ public sealed class ToolDefinitionPinScreeningTests : IAsyncDisposable
             _connector.DefaultBehavior = (server, _) =>
                 new FakeUpstreamConnection { Id = server, Inventory = Inventory("Original") };
             first.FailPing = true;
+
+            // Die Prüfung des Neuaufbaus wartet auf die angehaltene (F7) — erst freigeben, wenn er
+            // seinen Katalog hat.
             await TestData.WaitUntilAdvancingAsync(
-                _time,
-                () => _connector.Connections.Count == 2 && _supervisor.GetStatus(id)?.State == UpstreamState.Healthy
-                    && _supervisor.GetInventory(id)?.Tools.Count == 1,
-                step: TimeSpan.FromSeconds(5), timeoutMs: 15000, because: "die neue Verbindung steht");
+                _time, () => _connector.Connections.Count == 2 && _connector.Connections[1].DiscoverCalls >= 1,
+                step: TimeSpan.FromSeconds(5), timeoutMs: 15000, because: "der Neuaufbau hat seinen Katalog");
         }
         finally
         {
             stalled.TrySetResult();
         }
 
+        await TestData.WaitUntilAdvancingAsync(
+            _time,
+            () => _supervisor.GetStatus(id)?.State == UpstreamState.Healthy && _supervisor.GetInventory(id)?.Tools.Count == 1,
+            step: TimeSpan.FromSeconds(1), timeoutMs: 15000, because: "die neue Verbindung steht");
         await rediscover.Invoking(t => t).Should().NotThrowAsync();
         _supervisor.GetInventory(id)!.Tools.Select(t => t.Name).Should().Equal(
             ["read_file"], "die späte Neuabfrage der alten Verbindung zieht aus der neuen nichts zurück");
@@ -236,6 +241,70 @@ public sealed class ToolDefinitionPinScreeningTests : IAsyncDisposable
 
         await rediscover.Invoking(t => t).Should().ThrowAsync<UpstreamConnectionLostException>("die Prüfung ist veraltet");
         _pins.Pin("read_file").HasPendingChange.Should().BeFalse("nichts Neues steht zur Annahme an");
+        _supervisor.GetInventory(id)!.Tools.Should().ContainSingle();
+    }
+
+    /// <summary>
+    /// F7: Eine veraltete Neuabfrage, die erst IM Schreiben ihrer Pins anhält (nach dem Blick auf die
+    /// Verbindung), schreibt nicht nach der jüngeren Prüfung des Neuaufbaus. Die Prüfungen laufen
+    /// nacheinander; was zuletzt steht, ist das Urteil der neuen Verbindung.
+    /// </summary>
+    [Fact]
+    public async Task A_stale_rediscovery_stalled_inside_the_pin_write_does_not_outlast_the_newer_screening()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (id, first) = await StartAsync("Original");
+
+        var stalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var armed = 1;
+        _pins.VerifyHook = _ =>
+        {
+            if (Interlocked.Exchange(ref armed, 0) == 0)
+            {
+                return null;
+            }
+
+            reached.TrySetResult();
+            return stalled.Task;
+        };
+        first.Inventory = Inventory("Verändert");
+        var rediscover = _supervisor.RediscoverAsync(id, ct);
+        try
+        {
+            await reached.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+
+            // Der Upstream wird neu aufgebaut und meldet wieder den angenommenen Stand.
+            _connector.DefaultBehavior = (server, _) =>
+                new FakeUpstreamConnection { Id = server, Inventory = Inventory("Original") };
+            first.FailPing = true;
+            await TestData.WaitUntilAdvancingAsync(
+                _time, () => _connector.Connections.Count == 2 && _connector.Connections[1].DiscoverCalls >= 1,
+                step: TimeSpan.FromSeconds(5), timeoutMs: 15000, because: "der Neuaufbau hat seinen Katalog");
+
+            // Ohne Reihenfolge prüfte der Neuaufbau jetzt und wäre fertig, bevor die veraltete Prüfung
+            // ihr Urteil schreibt. Mit ihr wartet er darauf.
+            await Task.Delay(200, ct);
+        }
+        finally
+        {
+            stalled.TrySetResult();
+        }
+
+        try
+        {
+            await rediscover;
+        }
+        catch (UpstreamConnectionLostException)
+        {
+            // Eine veraltete Prüfung darf das melden; hier zählt nur, was in den Pins steht.
+        }
+
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => _supervisor.GetStatus(id)?.State == UpstreamState.Healthy && _supervisor.GetInventory(id) is not null,
+            step: TimeSpan.FromSeconds(1), timeoutMs: 15000, because: "die neue Verbindung steht");
+        _pins.Pin("read_file").HasPendingChange.Should().BeFalse(
+            "die jüngere Prüfung meldet den angenommenen Stand; die veraltete schreibt nicht danach");
         _supervisor.GetInventory(id)!.Tools.Should().ContainSingle();
     }
 

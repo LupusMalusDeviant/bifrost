@@ -1473,8 +1473,12 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         connector.ConnectHook = _ => gate.Task;
 
         connector.Connections[0].PingException = Unauthorized();
-        _time.Advance(TimeSpan.FromSeconds(1));
-        await TestData.WaitUntilAsync(() => connector.ConnectCalls == 2, because: "die Erneuerung baut neu auf");
+
+        // In kleinen Schritten: Ein einzelnes Vorstellen der Uhr kann vor dem Anmelden des
+        // Lebenszeichen-Takts liegen und verpufft dann (im Einzellauf gemessen, rund jeder zweite).
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => connector.ConnectCalls == 2, step: TimeSpan.FromMilliseconds(100),
+            because: "die Erneuerung baut neu auf");
         _time.Advance(TimeSpan.FromSeconds(10));
         connector.ConnectHook = null;
         gate.SetResult();
@@ -2189,6 +2193,325 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         var late = () => supervisor.AddAsync(TestData.StdioConfig("danach"), Ct);
         await late.Should().ThrowAsync<ObjectDisposedException>();
         (await _store.GetAllLatestAsync(Ct)).Should().HaveCount(1, "das späte Hinzufügen hat nichts gespeichert");
+    }
+
+    // ── Viertes Codex-Review (F1, F2, F6, F10) ───────────────────────────────────────────────
+
+    /// <summary>
+    /// F1: Scheitert der Katalog nach dem Verbinden mit einer Meldung, die das eben vorgelegte Token
+    /// zitiert, steht es weder im Status noch im Audit noch im Log — und die Fehlerart bleibt, was sie war.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_discovery_error_after_connecting_does_not_show_the_presented_token(bool refusedLogin)
+    {
+        var token = "at-" + Guid.NewGuid().ToString("N");
+        _connector.DefaultBehavior = (id, _) => new FakeUpstreamConnection
+        {
+            Id = id,
+            PresentedCredentials = [token],
+            DiscoverException = refusedLogin
+                ? new UpstreamAuthenticationException($"Anmeldung abgelehnt: Bearer {token}")
+                : new InvalidOperationException($"{{\"error\":{{\"message\":\"Token {token} unbekannt\"}}}}"),
+        };
+
+        var server = await _supervisor.AddAsync(TestData.StdioConfig("katalog-zitiert"), Ct);
+        var info = await FailedAttemptAsync(server, 1);
+
+        info.Kind.Should().Be(
+            refusedLogin ? UpstreamFailureKind.Authentication : UpstreamFailureKind.Unreachable,
+            "die Bereinigung ändert nichts an der Einordnung");
+        _supervisor.GetStatus(server)!.LastError.Should().NotContain(token);
+        Lifecycle.Should().NotContain(l => l.Contains(token, StringComparison.Ordinal));
+        _log.Entries.Should().NotContain(e => e.Message.Contains(token, StringComparison.Ordinal));
+        _log.Entries.Should().OnlyContain(e => e.Exception == null);
+    }
+
+    /// <summary>
+    /// F1: Scheitert der Neuaufbau einer Sitzung am Katalog der neuen Verbindung, sieht der wartende
+    /// Aufrufer deren Token nicht — weder in der Meldung noch in einer inneren Ausnahme.
+    /// </summary>
+    [Fact]
+    public async Task A_failed_rebuild_does_not_show_the_token_of_the_new_connection()
+    {
+        var token = "at-" + Guid.NewGuid().ToString("N");
+        var server = await _supervisor.AddAsync(TestData.StdioConfig("neuaufbau-zitiert"), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        _connector.Connections[0].CallException = new UpstreamSessionLostException("404 (Test)");
+        _connector.DefaultBehavior = (id, _) => new FakeUpstreamConnection
+        {
+            Id = id,
+            PresentedCredentials = [token],
+            DiscoverException = new InvalidOperationException($"Token {token} ist unbekannt"),
+        };
+
+        var act = () => _supervisor.GetConnection(server)!.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+
+        var thrown = (await act.Should().ThrowAsync<UpstreamConnectionLostException>()).Which;
+        for (Exception? current = thrown; current is not null; current = current.InnerException)
+        {
+            current.Message.Should().NotContain(token, "auch keine innere Ausnahme trägt das Token zum Agenten");
+        }
+
+        await FailedAttemptAsync(server, 1);
+        _supervisor.GetStatus(server)!.LastError.Should().NotContain(token);
+        Lifecycle.Should().NotContain(l => l.Contains(token, StringComparison.Ordinal));
+        _log.Entries.Should().NotContain(e => e.Message.Contains(token, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// F2: Ein Loop hängt beim Schließen seiner verlorenen Verbindung und wird darüber abgelöst
+    /// (Umkonfigurieren nach <see cref="UpstreamSupervisor.StopJoinTimeout"/>). Kommt das Schließen
+    /// danach doch zurück, bucht er nichts beim Nachfolger — weder Zustand noch Audit, und
+    /// „Jetzt verbinden" erreicht den wartenden Nachfolger weiterhin.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_loop_retired_while_closing_does_not_book_on_its_successor(bool successorConnects)
+    {
+        var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var connector = new FakeUpstreamConnector();
+        await using var supervisor = Create(connector, jitter: 0d);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("schliesst-langsam"), Ct);
+        await TestData.WaitUntilAsync(() => supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        try
+        {
+            var dying = connector.Connections[0];
+            dying.DisposeHang = hang.Task;
+            dying.FailPing = true;
+            await TestData.WaitUntilAdvancingAsync(
+                _time, () => dying.DisposeCount == 1, step: TimeSpan.FromSeconds(1),
+                because: "der Loop schließt die verlorene Verbindung und hängt dabei");
+
+            if (!successorConnects)
+            {
+                connector.DefaultBehavior = static (_, _) => throw new IOException("weg (Test)");
+            }
+
+            var reconfigure = supervisor.ReconfigureAsync(
+                server, TestData.StdioConfig("schliesst-langsam") with { DisplayName = "Neu" }, Ct);
+            await TestData.WaitUntilAdvancingAsync(
+                _time, () => reconfigure.IsCompleted, step: TimeSpan.FromSeconds(1), timeoutMs: 15000,
+                because: "das Umkonfigurieren wartet höchstens die Frist auf den alten Loop");
+            await reconfigure;
+
+            if (successorConnects)
+            {
+                await TestData.WaitUntilAsync(
+                    () => connector.Connections.Count == 2 && supervisor.GetStatus(server)?.State == UpstreamState.Healthy,
+                    because: "der Nachfolger steht");
+            }
+            else
+            {
+                await TestData.WaitUntilAsync(
+                    () => supervisor.GetStatus(server)?.Reconnect is { NextAttemptAt: not null }
+                        && supervisor.IsWaitingForNextAttempt(server),
+                    because: "der Nachfolger wartet auf seinen nächsten Versuch");
+            }
+
+            var lines = Lifecycle.Count;
+            hang.SetResult();
+            await Task.Delay(200, Ct);
+
+            Lifecycle.Skip(lines).Should().BeEmpty("der abgelöste Loop schreibt keine Zeile");
+            if (successorConnects)
+            {
+                var status = supervisor.GetStatus(server)!;
+                status.State.Should().Be(UpstreamState.Healthy, "der alte Loop setzt keinen Zustand des neuen");
+                status.Reconnect.Should().BeNull();
+                supervisor.GetConnection(server).Should().NotBeNull();
+                connector.Connections[1].DisposeCount.Should().Be(0, "die neue Verbindung bleibt offen");
+            }
+            else
+            {
+                // Das Wecksignal gehört dem Nachfolger; der alte Loop darf es nicht wegräumen.
+                await ConnectNowAsync(supervisor, server);
+            }
+        }
+        finally
+        {
+            hang.TrySetResult();
+        }
+    }
+
+    /// <summary>
+    /// F2 / Z1: Hängt das Schließen der verlorenen Verbindung, folgt der nächste Versuch trotzdem —
+    /// nach höchstens <see cref="UpstreamSupervisor.StopJoinTimeout"/>, ohne dass jemand eingreift.
+    /// </summary>
+    [Fact]
+    public async Task A_close_that_hangs_does_not_stop_the_next_attempt()
+    {
+        var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var server = await _supervisor.AddAsync(TestData.StdioConfig("haengt-beim-wiederverbinden"), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        try
+        {
+            var dying = _connector.Connections[0];
+            dying.DisposeHang = hang.Task;
+            dying.FailPing = true;
+
+            await TestData.WaitUntilAdvancingAsync(
+                _time, () => _connector.ConnectCalls == 2 && _supervisor.GetStatus(server)?.State == UpstreamState.Healthy,
+                step: TimeSpan.FromSeconds(1), timeoutMs: 15000,
+                because: "das Schließen ist befristet, danach geht die Wiederverbindung weiter");
+
+            dying.DisposeCount.Should().Be(1);
+            _log.Entries.Should().Contain(
+                e => e.Message.Contains("verlorenen Verbindung", StringComparison.Ordinal), "das Hängen steht im Log");
+        }
+        finally
+        {
+            hang.TrySetResult();
+        }
+    }
+
+    /// <summary>
+    /// F2: Auch nach einem Neuaufbau der Sitzung hält ein hängendes Schließen der alten Verbindung
+    /// die Lebenszeichen der neuen nicht auf.
+    /// </summary>
+    [Fact]
+    public async Task A_hanging_close_after_a_rebuild_does_not_stop_the_health_checks()
+    {
+        var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var server = await _supervisor.AddAsync(TestData.StdioConfig("haengt-nach-neuaufbau"), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        try
+        {
+            var old = _connector.Connections[0];
+            old.DisposeHang = hang.Task;
+            old.CallException = new UpstreamSessionLostException("404 (Test)");
+            await _supervisor.GetConnection(server)!.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+            await TestData.WaitUntilAsync(() => old.DisposeCount == 1, because: "die alte Verbindung wird geschlossen");
+
+            _connector.Connections[1].FailPing = true;
+            await TestData.WaitUntilAdvancingAsync(
+                _time,
+                () => _supervisor.GetStatus(server)?.State is UpstreamState.Degraded or UpstreamState.Failed
+                    || _connector.ConnectCalls >= 3,
+                step: TimeSpan.FromSeconds(1), timeoutMs: 15000,
+                because: "die Lebenszeichen der neuen Verbindung laufen weiter");
+        }
+        finally
+        {
+            hang.TrySetResult();
+        }
+    }
+
+    /// <summary>
+    /// F6: Wird ein Neuaufbau erst fertig, während das Abschalten auf einen laufenden Aufruf wartet,
+    /// wird die neue Verbindung nicht veröffentlicht: Sie bedient nichts, wird sofort geschlossen,
+    /// und wer auf den Neuaufbau wartet, bekommt „Verbindung verloren".
+    /// </summary>
+    [Fact]
+    public async Task A_rebuild_finished_during_the_drain_is_not_published()
+    {
+        var server = await _supervisor.AddAsync(TestData.StdioConfig("drain-neuaufbau"), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        var first = _connector.Connections[0];
+        var stale = _supervisor.GetConnection(server)!;
+        first.CallGate = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var running = stale.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+        await TestData.WaitUntilAsync(() => first.CallCount == 1, because: "der Aufruf läuft und hält den Drain offen");
+
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _connector.ConnectHook = _ => release.Task;
+        first.PingException = new UpstreamSessionLostException("404 auf die Sitzung (Test)");
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => _connector.ConnectCalls == 2, step: TimeSpan.FromMilliseconds(500), timeoutMs: 15000,
+            because: "das Lebenszeichen bemerkt den Verlust und stößt den Neuaufbau an");
+
+        // Wer jetzt kommt, wartet auf den Neuaufbau.
+        var waiting = stale.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+        await TestData.StaysFalseAsync(() => waiting.IsCompleted, because: "der Aufruf wartet auf den Neuaufbau");
+
+        var disabling = _supervisor.SetEnabledAsync(server, enabled: false, Ct);
+        try
+        {
+            for (var i = 0; i < 200 && await LatestEnabledAsync(server); i++)
+            {
+                await Task.Delay(10, Ct);
+            }
+
+            await Task.Delay(50, Ct);
+            disabling.IsCompleted.Should().BeFalse("der laufende Aufruf hält den Drain offen");
+
+            release.SetResult();
+            var outcome = () => waiting.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+            await outcome.Should().ThrowAsync<UpstreamConnectionLostException>(
+                "der Upstream wird gestoppt; der Wartende bekommt keine Verbindung, die gleich wieder geschlossen wird");
+            await TestData.WaitUntilAsync(
+                () => _connector.Connections.Count == 2 && _connector.Connections[1].DisposeCount >= 1,
+                because: "die Ersatzverbindung wird sofort geschlossen, nicht erst nach dem Drain");
+            disabling.IsCompleted.Should().BeFalse("der Drain wartet weiter auf den laufenden Aufruf");
+
+            if (_supervisor.GetConnection(server) is { } current)
+            {
+                var late = () => current.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+                await late.Should().ThrowAsync<UpstreamConnectionLostException>("während des Drains wird nichts Neues angenommen");
+            }
+
+            _connector.Connections[1].CallCount.Should().Be(0, "die Ersatzverbindung hat nie etwas bedient");
+        }
+        finally
+        {
+            // Auch wenn eine Prüfung oben scheitert: Der Drain muss enden, sonst hängt das Aufräumen.
+            release.TrySetResult();
+            first.CallGate.TrySetResult(JsonSerializer.SerializeToElement(new { ok = true }));
+            await TestData.WaitUntilAdvancingAsync(
+                _time, () => disabling.IsCompleted, step: TimeSpan.FromMilliseconds(100), because: "danach endet der Drain");
+        }
+
+        await running.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await disabling;
+
+        _supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Stopped);
+        _connector.Connections[1].CallCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// F10: Dauert das Speichern eines Hinzufügens länger als das Herunterfahren auf es wartet, ist
+    /// der Upstream gespeichert (er kommt nach dem Neustart), wird aber nicht mehr eingetragen: kein
+    /// Status, kein Added-Ereignis, kein Loop.
+    /// </summary>
+    [Fact]
+    public async Task An_add_that_outlasts_the_shutdown_is_saved_but_not_registered()
+    {
+        var store = new FailingStore(_store) { AppendGate = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        var connector = new FakeUpstreamConnector();
+        var supervisor = new UpstreamSupervisor(
+            [connector], store, new SupervisorOptions { HealthCheckInterval = TimeSpan.FromSeconds(1) }, _time,
+            hostExecution: HostExecutionPolicy.AllowedByOperator());
+        var events = new List<UpstreamChangedEventArgs>();
+        supervisor.Changed += (_, e) =>
+        {
+            lock (events)
+            {
+                events.Add(e);
+            }
+        };
+
+        var add = supervisor.AddAsync(TestData.StdioConfig("zu-spaet"), Ct);
+        await store.AppendReached.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+        var dispose = supervisor.DisposeAsync().AsTask();
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => dispose.IsCompleted, step: TimeSpan.FromSeconds(1), timeoutMs: 15000,
+            because: "das Herunterfahren wartet höchstens StopJoinTimeout auf das Speichern");
+        await dispose;
+
+        store.AppendGate!.SetResult();
+        var id = await add.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        (await _store.GetAllLatestAsync(Ct)).Should().ContainKey(id, "gespeichert ist gespeichert; nach dem Neustart kommt er wieder");
+        supervisor.Statuses.Should().BeEmpty("nach dem Herunterfahren wird nichts mehr eingetragen");
+        supervisor.GetStatus(id).Should().BeNull();
+        lock (events)
+        {
+            events.Should().NotContain(e => e.Kind == UpstreamChangeKind.Added);
+        }
+
+        connector.ConnectCalls.Should().Be(0);
     }
 
     // ── Späte Verbindungen (W17) ─────────────────────────────────────────────────────────────
