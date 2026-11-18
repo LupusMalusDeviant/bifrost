@@ -1086,6 +1086,38 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
     /// Ablaufzeit und Issuer stehen im Klartext daneben, damit ohne Entschlüsselung entschieden
     /// werden kann, ob erneuert werden muss.
     /// </summary>
+    /// <summary>
+    /// Codex M3: Eine Erneuerung ersetzt nur das Token, das sie gelesen hat. Liegt inzwischen ein
+    /// anderes (neu autorisiert) oder gar keins (getrennt), bleibt die Ablage, wie sie ist.
+    /// </summary>
+    [Fact]
+    public async Task UpstreamOAuthTokens_are_replaced_only_while_unchanged()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = new UpstreamOAuthTokenStore(Factory, DataProtection);
+        var server = ServerId.New();
+        UpstreamOAuthToken Token(int second) => new(
+            server, "at-" + Guid.NewGuid().ToString("N"), "rt-" + Guid.NewGuid().ToString("N"),
+            DateTimeOffset.UnixEpoch.AddHours(1), ["mcp:read"], "https://as.example.com",
+            DateTimeOffset.UnixEpoch.AddSeconds(second));
+
+        var read = Token(1);
+        await store.SaveAsync(read, ct);
+        var refreshed = Token(2);
+        (await store.ReplaceAsync(read, refreshed, ct)).Should().BeTrue();
+        (await store.GetAsync(server, ct))!.AccessToken.Should().Be(refreshed.AccessToken);
+
+        // Wer noch das alte Token gelesen hat, ersetzt das neue nicht.
+        (await store.ReplaceAsync(read, Token(3), ct)).Should().BeFalse();
+        (await store.GetAsync(server, ct))!.AccessToken.Should().Be(refreshed.AccessToken);
+
+        // Nach dem Trennen legt eine späte Erneuerung kein Token wieder an.
+        await store.RemoveAsync(server, ct);
+        (await store.ReplaceAsync(refreshed, Token(4), ct)).Should().BeFalse();
+        (await store.GetAsync(server, ct)).Should().BeNull();
+    }
+
     [Fact]
     public async Task UpstreamOAuthTokens_are_stored_encrypted_and_roundtrip()
     {

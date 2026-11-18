@@ -17,8 +17,16 @@ namespace Bifrost.Upstream;
 /// </summary>
 public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstreamCredentialRenewal
 {
-    /// <summary>Upstreams, deren nächster Verbindungsaufbau das Token erneuert, gleich wie lange es noch gälte (V1).</summary>
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<ServerId, byte> _renew = new();
+    /// <summary>
+    /// Upstreams, deren Token abgewiesen wurde und erneuert werden muss, gleich wie lange es noch
+    /// gälte (V1) — mit dem abgewiesenen Token, sobald es beim nächsten Aufbau gelesen ist. Der
+    /// Vermerk bleibt, bis ein anderes Token gespeichert ist: Ein gestörter Token-Endpunkt darf ihn
+    /// nicht verbrauchen, sonst legte der nächste Versuch das abgewiesene Token wieder vor (Codex H3).
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<ServerId, string> _renew = new();
+
+    /// <summary>Platzhalter, solange das abgewiesene Token noch nicht gelesen ist.</summary>
+    private const string RejectedTokenUnknown = "";
 
     /// <summary>Sicherheitsabstand vor dem Ablauf — ein Token, das während des Aufrufs verfällt, ist keins.</summary>
     private static readonly TimeSpan RefreshSkew = TimeSpan.FromMinutes(2);
@@ -40,7 +48,7 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstr
     public UpstreamTransportKind Kind => UpstreamTransportKind.StreamableHttp;
 
     /// <inheritdoc />
-    public void RequestCredentialRenewal(ServerId id) => _renew[id] = 0;
+    public void RequestCredentialRenewal(ServerId id) => _renew[id] = RejectedTokenUnknown;
 
     public async Task<IUpstreamConnection> ConnectAsync(ServerId id, UpstreamServerConfig config, CancellationToken ct)
     {
@@ -122,7 +130,27 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstr
         // Verlangt der Supervisor die Erneuerung (der Upstream hat das Token abgewiesen), wird
         // erneuert, auch wenn die Ablaufzeit noch nicht erreicht ist — sie ist dann offenbar falsch
         // oder das Token widerrufen (V1).
-        var renewalRequested = _renew.TryRemove(id, out _);
+        var renewalRequested = false;
+        if (_renew.TryGetValue(id, out var rejected))
+        {
+            if (rejected.Length == 0)
+            {
+                // Die Anforderung kam vom abgewiesenen Lebenszeichen; das gespeicherte Token ist das
+                // abgewiesene.
+                _renew.TryUpdate(id, token.AccessToken, rejected);
+                renewalRequested = true;
+            }
+            else if (rejected == token.AccessToken)
+            {
+                renewalRequested = true;
+            }
+            else
+            {
+                // Inzwischen liegt ein anderes Token (neu autorisiert): Das ist nicht abgewiesen.
+                _renew.TryRemove(new KeyValuePair<ServerId, string>(id, rejected));
+            }
+        }
+
         var now = _time.GetUtcNow();
         if (!renewalRequested && !token.NeedsRefresh(now, RefreshSkew))
         {
@@ -160,7 +188,19 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstr
                 exception);
         }
 
-        await _tokens.SaveAsync(refreshed, ct).ConfigureAwait(false);
+        // Nur speichern, wenn noch das gelesene Token gilt (Codex M3): Wer inzwischen neu autorisiert
+        // oder getrennt hat, hat Vorrang vor dieser Erneuerung.
+        if (!await _tokens.ReplaceAsync(token, refreshed, ct).ConfigureAwait(false))
+        {
+            var current = await _tokens.GetAsync(id, ct).ConfigureAwait(false)
+                ?? throw new UpstreamAuthenticationException(
+                    $"Für '{config.Slug}' liegt kein Zugriffstoken mehr vor — die Verbindung wurde "
+                    + "getrennt. Der Upstream muss neu autorisiert werden (Server-Verwaltung → Autorisieren).");
+            _renew.TryRemove(id, out _);
+            return current.AccessToken;
+        }
+
+        _renew.TryRemove(id, out _);
         return refreshed.AccessToken;
     }
 }

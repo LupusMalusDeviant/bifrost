@@ -192,10 +192,13 @@ public static class OAuthFlow
         var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            // Der Fehlertext des Servers kann Details enthalten, aber kein Token — die Antwort
-            // eines gescheiterten Token-Requests trägt `error`/`error_description`.
+            // Nur Status und bekannter Fehlercode, nie der Antwortkörper (Codex H1): Ein Server oder
+            // Proxy, der die Anfrage spiegelt, gäbe sonst Code, Verifier oder den Basic-Header mit
+            // dem Client-Secret wieder — und die Meldung landet in der Antwort an den Browser.
+            var code = KnownErrorCode(body);
             throw new OAuthDiscoveryException(
-                $"Token-Anfrage scheiterte mit {(int)response.StatusCode}: {Shorten(body)}")
+                $"Token-Anfrage scheiterte mit HTTP {(int)response.StatusCode}"
+                + (code is null ? "." : $" ({code})."))
             {
                 StatusCode = response.StatusCode,
             };
@@ -207,9 +210,9 @@ public static class OAuthFlow
             using var document = JsonDocument.Parse(body);
             json = document.RootElement.Clone();
         }
-        catch (JsonException exception)
+        catch (JsonException)
         {
-            throw new OAuthDiscoveryException($"Token-Antwort ist kein gültiges JSON: {exception.Message}");
+            throw new OAuthDiscoveryException("Token-Antwort ist kein gültiges JSON.");
         }
 
         var accessToken = json.TryGetProperty("access_token", out var at) ? at.GetString() : null;
@@ -239,8 +242,46 @@ public static class OAuthFlow
 
     private static Exception Fail(string message) => new OAuthDiscoveryException(message);
 
-    private static string Shorten(string value)
-        => value.Length <= 500 ? value : value[..500] + "…";
+    /// <summary>
+    /// Die Fehlercodes aus RFC 6749 (5.2, 4.1.2.1) und RFC 8707. Nur sie werden aus einer Antwort
+    /// übernommen; alles andere, auch <c>error_description</c>, ist Fremdtext.
+    /// </summary>
+    private static readonly HashSet<string> KnownErrorCodes = new(StringComparer.Ordinal)
+    {
+        "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
+        "unsupported_grant_type", "invalid_scope", "access_denied", "unsupported_response_type",
+        "server_error", "temporarily_unavailable", "invalid_target",
+    };
+
+    /// <summary>Der Fehlercode einer OAuth-Antwort, wenn er bekannt ist — sonst <c>null</c>.</summary>
+    public static string? KnownErrorCode(string? codeOrBody)
+    {
+        if (string.IsNullOrEmpty(codeOrBody))
+        {
+            return null;
+        }
+
+        if (KnownErrorCodes.Contains(codeOrBody))
+        {
+            return codeOrBody;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(codeOrBody);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("error", out var error)
+                && error.ValueKind == JsonValueKind.String
+                && error.GetString() is { } code
+                && KnownErrorCodes.Contains(code)
+                    ? code
+                    : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     private static string Base64Url(byte[] bytes)
         => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');

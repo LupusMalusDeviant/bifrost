@@ -196,7 +196,35 @@ bekommt zuerst eine Vertragsänderung (V-Pakete); gebaut wird es erst nach deine
 | V3 | S3, T4 | Verlustzählung des Audits: `IAuditSink` bekommt einen Weg, eine Zeile anzubieten, ohne dass eine Abweisung als Verlust zählt; verworfene Zeilen zählen dafür. | Vertrag abgenommen am 2026-11-18; `[Claude-prüfbar]`, erledigt |
 | V4 | S6 | Audit-Zeile der Rug-Pull-Prüfung bei vollem Audit: heute scheitert jeder Verbindungsversuch. Entscheidung: so lassen (fail-closed) oder zurückstellen wie die Zustandszeilen. | entschieden am 2026-11-18: so lassen (fail-closed), im Vertrag festgeschrieben |
 | V5 | M3 | Fremdtext unbekannter Ausnahmetypen: so lassen (P3 bereinigt, rund 140 Gateway-Stellen werfen Standardtypen mit nützlichem Text) oder nur noch Gateway-Text. | entschieden am 2026-11-18: so lassen, P3 verschärft (W14) |
-| — | außerhalb | `ToolInvoker` reicht Fremdtext eines gescheiterten Aufrufs an Agent und Audit; der lastempfindliche p95-Test steht in der funktionalen Suite. Eigene Aufgaben, nicht Teil dieses Vertrags. | `[braucht Nutzer]` |
+| — | außerhalb | `ToolInvoker` reicht Fremdtext eines gescheiterten Aufrufs an Agent und Audit (jetzt C7); der lastempfindliche p95-Test steht in der funktionalen Suite. Eigene Aufgabe, nicht Teil dieses Vertrags. | `[braucht Nutzer]` |
+
+### Codex-Review vom 2026-11-18 (`0140a3b..0a4543e`)
+
+Codex (gpt-6.2-sol) hat 15 Befunde gemeldet; alle sind am Code nachgeprüft, 13 echt, zwei teilweise
+(C1, C2). Die Einstufung ist die nachgeprüfte, nicht die von Codex. „Neu" heißt: aus diesen Commits.
+Auf deinen Wunsch werden alle 15 sofort behoben. Stand: alle 15 gebaut und getestet; wo eine
+Zusage präzisiert wird, steht es im Vertrag Abschnitt 10 (N1 – N8) zur Abnahme. Gegenprobe gegen
+`0a4543e`: 22 von 25 neuen Tests rot; grün bleiben die Kontrolle „neue Autorisierung erledigt die
+Anforderung" und die beiden C13-Tests (Testlücke, kein Produktfehler — der alte Code schickte den
+Aufruf nie doppelt).
+
+| # | Codex | Inhalt | Herkunft | Marke |
+|---|---|---|---|---|
+| C1 | H1 | Rückruf zeigt Antworttext des Token-Endpunkts und `error_description` ungefiltert (nur Admin, nicht in Log/Audit). Fehlertext nur aus Status und bekanntem OAuth-Fehlercode. | alt | `[Claude-prüfbar]`, erledigt |
+| C2 | H2 | Neuabfrage: Die Audit-Zeile einer geänderten Definition kann (Compliance, voller Kanal) werfen, bevor das geprüfte Inventar steht — das Werkzeug bleibt unter altem Namen aufrufbar. | alt | `[Claude-prüfbar]`, erledigt |
+| C3 | H3 | Die Erneuerungsanforderung (V1) geht bei einem gestörten Token-Endpunkt verloren; der nächste Versuch legt das abgewiesene Token wieder vor. | neu | `[Claude-prüfbar]`, erledigt |
+| C4 | H4 | Abgebrochenes Abschalten während des Drains lässt den Upstream laufen; Umkonfigurieren stoppt vor dem Speichern. | alt | `[Claude-prüfbar]`, erledigt |
+| C5 | H5 | Eine hinter dem Löschen wartende Admin-Anfrage holt den Upstream zurück (unsichtbare Schleife, nach Neustart wieder da). | alt | `[Claude-prüfbar]`, erledigt |
+| C6 | H6 | Die Frist (Z4) begrenzt nur `ConnectAsync`, nicht Abfrage und Pin-Prüfung; ein spätes Ergebnis wird noch veröffentlicht. | alt | `[Claude-prüfbar]`, erledigt |
+| C7 | H7 | `ToolInvoker` gibt den Fremdtext eines gescheiterten Aufrufs an Client, Task-Ablage und Trace. | alt | `[Claude-prüfbar]`, erledigt |
+| C8 | M1 | V1 erneuert auch bei 403, und die gesunde Minute läuft ab der Erneuerung statt ab der gesunden neuen Verbindung. | neu | `[Claude-prüfbar]`, erledigt |
+| C9 | M2 | Der Anstoß im OAuth-Rückruf verpufft, wenn gerade ein Versuch läuft. | neu | `[Claude-prüfbar]`, erledigt |
+| C10 | M3 | Eine späte Token-Erneuerung überschreibt eine neue Autorisierung oder macht „Trennen" rückgängig. | alt | `[Claude-prüfbar]`, erledigt |
+| C11 | M4 | Eine frisch veröffentlichte Verbindung schließt sich dem Neuaufbau der alten an. | alt | `[Claude-prüfbar]`, erledigt |
+| C12 | M5 | Die V2-Bremse leert beim Auslösen ihr eigenes Fenster. | neu | `[Claude-prüfbar]`, erledigt |
+| C13 | M6 | Der W15-Test kann die doppelte Ausführung nicht entdecken (kein Event-Store, Sitzungen nach Neustart frisch). | neu | `[Claude-prüfbar]`, erledigt |
+| C14 | M7 | Beim Herunterfahren schließt das Audit vor dem letzten Nachreichen des Supervisors. | alt | `[Claude-prüfbar]`, erledigt |
+| C15 | L1 | Die volle Warteschlange zurückgestellter Zeilen verwirft die älteste, bevor sie nachreicht. | alt | `[Claude-prüfbar]`, erledigt |
 
 ## Prüfliste für den Nutzer
 

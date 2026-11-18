@@ -29,11 +29,16 @@ public sealed class GuardedUpstreamConnection
     /// Der Weg zum Neuaufbau einer verlorenen Sitzung. Ohne ihn verhält sich die Hülle wie bisher:
     /// Der Fehler geht an den Aufrufer.
     /// </param>
+    /// <param name="config">
+    /// Die Konfiguration des Upstreams — damit ein gescheiterter Aufruf mit bereinigtem Grund an den
+    /// Agenten geht (ohne Antwortkörper und ohne Geheimwerte der Konfiguration, Codex H7).
+    /// </param>
     public GuardedUpstreamConnection(
         IUpstreamConnection inner,
         TimeSpan callTimeout,
         TimeProvider? timeProvider = null,
-        IUpstreamSessionRecovery? recovery = null)
+        IUpstreamSessionRecovery? recovery = null,
+        UpstreamServerConfig? config = null)
     {
         ArgumentNullException.ThrowIfNull(inner);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(callTimeout, TimeSpan.Zero);
@@ -41,7 +46,11 @@ public sealed class GuardedUpstreamConnection
         _callTimeout = callTimeout;
         _time = timeProvider ?? TimeProvider.System;
         _recovery = recovery;
+        Config = config;
     }
+
+    /// <summary>Die Konfiguration, unter der diese Verbindung aufgebaut wurde, falls bekannt.</summary>
+    internal UpstreamServerConfig? Config { get; }
 
     public ServerId Id => _inner.Id;
 

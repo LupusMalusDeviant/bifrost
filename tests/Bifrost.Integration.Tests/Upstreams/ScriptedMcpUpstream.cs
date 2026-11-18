@@ -49,6 +49,24 @@ internal sealed class ScriptedMcpUpstream : IAsyncDisposable
     /// <summary>Wie oft ein Client eine Sitzung begonnen hat.</summary>
     public int Initializes => Volatile.Read(ref _initializes);
 
+    private int _toolCallPosts;
+    private int _resumes;
+
+    /// <summary>
+    /// Wie oft ein <c>tools/call</c> beim Upstream <b>ankam</b> — gezählt vor jeder Sitzungsprüfung.
+    /// Eine wiederholte Anfrage zählt hier auch dann, wenn der Upstream sie abweist.
+    /// </summary>
+    public int ToolCallPosts => Volatile.Read(ref _toolCallPosts);
+
+    /// <summary>Wie oft ein Client einen Antwortstrom mit <c>Last-Event-ID</c> wieder aufnehmen wollte.</summary>
+    public int Resumes => Volatile.Read(ref _resumes);
+
+    /// <summary>
+    /// Mit Ereignisspeicher: Der Server vergibt Ereignis-IDs, ein Client kann einen abgerissenen
+    /// Antwortstrom wieder aufnehmen. Vor <see cref="StartAsync"/> setzen.
+    /// </summary>
+    public bool Resumable { get; init; }
+
     /// <summary>Wie oft ein Werkzeug wirklich <b>ausgeführt</b> wurde.</summary>
     public int Executions => Volatile.Read(ref _executions);
 
@@ -73,7 +91,18 @@ internal sealed class ScriptedMcpUpstream : IAsyncDisposable
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
-        builder.Services.AddMcpServer()
+        var mcp = builder.Services.AddMcpServer();
+        if (Resumable)
+        {
+            builder.Services.AddDistributedMemoryCache();
+            // Die Wiederaufnahme gibt es nur im zustandsbehafteten Modus, den das SDK als Altlast
+            // führt — genau den sprechen Upstreams mit Sitzungen, und um die geht es hier.
+#pragma warning disable MCP9006
+            mcp.WithDistributedCacheEventStreamStore();
+#pragma warning restore MCP9006
+        }
+
+        mcp
             .WithHttpTransport(options => options.Stateless = false)
             .WithListToolsHandler((_, _) => ValueTask.FromResult(new ListToolsResult
             {
@@ -173,8 +202,13 @@ internal sealed class ScriptedMcpUpstream : IAsyncDisposable
 
             if (body.Contains("\"method\":\"tools/call\"", StringComparison.Ordinal))
             {
+                Interlocked.Increment(ref _toolCallPosts);
                 Volatile.Write(ref _callInFlight, context);
             }
+        }
+        else if (HttpMethods.IsGet(context.Request.Method) && context.Request.Headers.ContainsKey("Last-Event-ID"))
+        {
+            Interlocked.Increment(ref _resumes);
         }
 
         context.Response.OnStarting(() =>

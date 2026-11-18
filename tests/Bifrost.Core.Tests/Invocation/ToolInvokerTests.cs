@@ -2,6 +2,7 @@ using System.Text.Json;
 using AwesomeAssertions;
 using Bifrost.Abstractions;
 using Bifrost.Core.Tests.Upstreams;
+using Bifrost.Core.Upstreams;
 using Xunit;
 
 namespace Bifrost.Core.Tests.Invocation;
@@ -129,6 +130,66 @@ public class ToolInvokerTests
 
         result.Status.Should().Be(InvocationStatus.UpstreamError);
         result.ErrorMessage.Should().Contain("Rohr geplatzt");
+    }
+
+    /// <summary>
+    /// Codex H7: Der Antwortkörper des Upstreams geht nicht an den Agenten — er kann den vorgelegten
+    /// Schlüssel zitieren. Weder in der Meldung noch im Trace-Status.
+    /// </summary>
+    [Fact]
+    public async Task An_upstream_failure_does_not_pass_the_response_body_on()
+    {
+        var secret = "sk-" + Guid.NewGuid().ToString("N");
+        var admin = _w.RegisterAdmin();
+        _w.Connection.CallException = new HttpRequestException(
+            "Response status code does not indicate success: 500 (Internal Server Error). Response body: "
+            + $"{{\"error\":\"kaputt mit Bearer {secret}\"}}",
+            null, System.Net.HttpStatusCode.InternalServerError);
+
+        var result = await _w.Invoker.InvokeAsync(
+            InvokerTestWorld.Request(admin, _w.Echo, new { message = "hi" }), TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(InvocationStatus.UpstreamError);
+        result.ErrorMessage.Should().NotContain(secret).And.Contain("HTTP 500");
+    }
+
+    /// <summary>Codex H7: Auch ein Fremdtext ohne Statuscode wird auf eine Zeile ohne Antwortkörper gebracht.</summary>
+    [Fact]
+    public async Task An_upstream_error_text_is_cut_at_the_response_body()
+    {
+        var secret = "sk-" + Guid.NewGuid().ToString("N");
+        var admin = _w.RegisterAdmin();
+        _w.Connection.CallException = new IOException($"Rohr geplatzt.\nResponse body: {secret}");
+
+        var result = await _w.Invoker.InvokeAsync(
+            InvokerTestWorld.Request(admin, _w.Echo, new { message = "hi" }), TestContext.Current.CancellationToken);
+
+        result.ErrorMessage.Should().Contain("Rohr geplatzt").And.NotContain(secret).And.NotContain("\n");
+    }
+
+    /// <summary>
+    /// Codex H7: Hinter einer echten Verbindung des Supervisors ist die Konfiguration bekannt — dann
+    /// werden auch ihre Geheimwerte maskiert, wo der Upstream sie ohne Kennzeichnung zitiert.
+    /// </summary>
+    [Fact]
+    public async Task A_guarded_connection_masks_the_configured_secret()
+    {
+        var secret = "sk-" + Guid.NewGuid().ToString("N");
+        var config = new UpstreamServerConfig(
+            "geheim", "Geheim", UpstreamTransportKind.StreamableHttp, true,
+            Http: new HttpTransportOptions(
+                new Uri("https://upstream.invalid/mcp"),
+                Headers: new Dictionary<string, string> { ["Authorization"] = "Bearer " + secret }));
+        var guarded = new GuardedUpstreamConnection(
+            new FakeUpstreamConnection { Id = _w.Server, CallException = new IOException($"abgelehnt: {secret}") },
+            TimeSpan.FromSeconds(30), config: config);
+        _w.Supervisor.SetConnection(_w.Server, guarded);
+        var admin = _w.RegisterAdmin();
+
+        var result = await _w.Invoker.InvokeAsync(
+            InvokerTestWorld.Request(admin, _w.Echo, new { message = "hi" }), TestContext.Current.CancellationToken);
+
+        result.ErrorMessage.Should().Contain("abgelehnt").And.NotContain(secret);
     }
 
     [Fact]

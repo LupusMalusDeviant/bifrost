@@ -1315,6 +1315,309 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         _connector.ConnectCalls.Should().Be(7, "jeder Verlust ein Neuaufbau, keiner zu viel in fünf Minuten");
     }
 
+    // ── Codex-Review 2026-11-18 (C-Pakete im Plan 0005) ──────────────────────────────────────
+
+    /// <summary>C12: Die Bremse leert beim Auslösen ihr Fenster nicht — der nächste Verlust im selben Fenster geht wieder in die Frist.</summary>
+    [Fact]
+    public async Task The_rebuild_brake_keeps_its_window_after_tripping()
+    {
+        var server = await _supervisor.AddAsync(TestData.StdioConfig("bremse"), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        for (var i = 0; i < UpstreamSupervisor.MaxRebuildsPerWindow; i++)
+        {
+            await LoseSessionAsync(server);
+            _time.Advance(TimeSpan.FromSeconds(10));
+        }
+
+        var tripping = () => LoseSessionAsync(server);
+        await tripping.Should().ThrowAsync<UpstreamConnectionLostException>();
+        await FailedAttemptAsync(server, 1);
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy,
+            step: TimeSpan.FromSeconds(1), because: "nach der Frist wird neu verbunden");
+        var connects = _connector.ConnectCalls;
+
+        var again = () => LoseSessionAsync(server);
+
+        await again.Should().ThrowAsync<UpstreamConnectionLostException>().WithMessage("*wiederholt verloren*",
+            "die drei Neuaufbauten liegen noch im Fenster");
+        _connector.ConnectCalls.Should().Be(connects, "kein sofortiger Neuaufbau");
+    }
+
+    /// <summary>C8: Ein 403 sagt „darf das nicht" — ein neues Token derselben Anmeldung darf es auch nicht. Keine Erneuerung.</summary>
+    [Fact]
+    public async Task A_forbidden_ping_does_not_renew_the_token()
+    {
+        var (connector, supervisor) = CreateOAuth();
+        await using var _ = supervisor;
+        var server = await supervisor.AddAsync(OAuthConfig("verboten"), Ct);
+        await TestData.WaitUntilAsync(() => supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+
+        connector.Connections[0].PingException = new HttpRequestException("403", null, HttpStatusCode.Forbidden);
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => supervisor.GetStatus(server)?.Reconnect is { NextAttemptAt: not null },
+            step: TimeSpan.FromSeconds(1), because: "ein 403 ist eine abgelehnte Anmeldung");
+
+        connector.CredentialRenewals.Should().Be(0);
+        supervisor.GetStatus(server)!.Reconnect!.Kind.Should().Be(UpstreamFailureKind.Authentication);
+    }
+
+    /// <summary>
+    /// C8: Die gesunde Minute nach einer Erneuerung zählt ab der neuen Verbindung. Dauert der
+    /// Neuaufbau, ist ein 401 eine Minute nach dem Entschluss, aber vor einer gesunden Minute, eine
+    /// abgelehnte Anmeldung (E2) — keine zweite Erneuerung.
+    /// </summary>
+    [Fact]
+    public async Task The_healthy_minute_after_a_renewal_starts_with_the_new_connection()
+    {
+        var (connector, supervisor) = CreateOAuth();
+        await using var _ = supervisor;
+        var server = await supervisor.AddAsync(OAuthConfig("langsam"), Ct);
+        await TestData.WaitUntilAsync(() => supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        connector.ConnectHook = _ => gate.Task;
+
+        connector.Connections[0].PingException = Unauthorized();
+        _time.Advance(TimeSpan.FromSeconds(1));
+        await TestData.WaitUntilAsync(() => connector.ConnectCalls == 2, because: "die Erneuerung baut neu auf");
+        _time.Advance(TimeSpan.FromSeconds(10));
+        connector.ConnectHook = null;
+        gate.SetResult();
+        await TestData.WaitUntilAsync(
+            () => connector.Connections.Count == 2 && supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+
+        connector.Connections[1].PingException = Unauthorized();
+        _time.Advance(TimeSpan.FromSeconds(52));
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => supervisor.GetStatus(server)?.Reconnect is { NextAttemptAt: not null },
+            step: TimeSpan.FromSeconds(1), because: "keine gesunde Minute seit der neuen Verbindung");
+
+        connector.CredentialRenewals.Should().Be(1, "63 s nach dem Entschluss, aber unter einer Minute gesund");
+        supervisor.GetStatus(server)!.Reconnect!.Kind.Should().Be(UpstreamFailureKind.Authentication);
+    }
+
+    /// <summary>C9: „Jetzt verbinden" während eines laufenden Versuchs verpufft nicht — scheitert er, folgt der nächste ohne Frist.</summary>
+    [Fact]
+    public async Task Connect_now_during_a_running_attempt_is_not_lost()
+    {
+        var connector = new FakeUpstreamConnector();
+        connector.EnqueueConnectFailure("weg (Test)");
+        await using var supervisor = Create(connector, jitter: 0d);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("rueckruf"), Ct);
+        await FailedAttemptAsync(supervisor, server, 1);
+
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        connector.ConnectHook = _ => gate.Task;
+        connector.EnqueueConnectFailure("noch mit dem alten Token (Test)");
+        await ConnectNowAsync(supervisor, server);
+        await TestData.WaitUntilAsync(() => connector.ConnectCalls == 2);
+
+        (await supervisor.ConnectNowAsync(server, Ct)).Should().BeFalse("ein Versuch läuft schon");
+        connector.ConnectHook = null;
+        gate.SetResult();
+
+        await TestData.WaitUntilAsync(
+            () => connector.ConnectCalls == 3 && supervisor.GetStatus(server)?.State == UpstreamState.Healthy,
+            because: "der Anstoß während des Versuchs führt gleich zum nächsten, ohne die Frist abzuwarten");
+        supervisor.GetStatus(server)!.ToolCount.Should().Be(1);
+    }
+
+    /// <summary>C6: Die Frist gilt für den ganzen Aufbau — auch eine Katalogabfrage, die ihren Abbruch ignoriert, hält den Loop nicht fest.</summary>
+    [Fact]
+    public async Task A_discovery_that_ignores_cancellation_does_not_hold_the_loop()
+    {
+        var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var connector = new FakeUpstreamConnector();
+        connector.Enqueue((id, _) => new FakeUpstreamConnection { Id = id, DiscoverHook = () => hang.Task });
+        await using var supervisor = Create(connector, jitter: 0d);
+        try
+        {
+            var server = await supervisor.AddAsync(TestData.StdioConfig("haengt"), Ct);
+            await TestData.WaitUntilAsync(() => connector.ConnectCalls == 1);
+
+            _time.Advance(TimeSpan.FromSeconds(61));
+            var info = await FailedAttemptAsync(supervisor, server, 1);
+            supervisor.GetStatus(server)!.LastError.Should().Contain("Frist");
+
+            // Kommt die Abfrage doch noch zurück, wird die späte Verbindung geschlossen, nicht veröffentlicht.
+            hang.SetResult();
+            await TestData.WaitUntilAsync(() => connector.Connections[0].DisposeCount == 1);
+            supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Failed);
+            info.Kind.Should().Be(UpstreamFailureKind.Unreachable);
+        }
+        finally
+        {
+            // Sonst wartete das Aufräumen auf die hängende Abfrage (gegen einen Stand ohne die Frist).
+            hang.TrySetResult();
+        }
+    }
+
+    /// <summary>C11: Wer die frisch veröffentlichte Verbindung sofort wieder verliert, schließt sich nicht dem alten Neuaufbau an.</summary>
+    [Fact]
+    public async Task A_loss_on_the_just_published_connection_gets_its_own_rebuild()
+    {
+        var server = await _supervisor.AddAsync(TestData.StdioConfig("gleich-wieder"), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        Task<JsonElement>? second = null;
+        _supervisor.Changed += (_, e) =>
+        {
+            // Mitten im Veröffentlichen der zweiten Verbindung: Sie ist schon die aktuelle, der alte
+            // Neuaufbau aber noch nicht abgeschlossen.
+            if (e.Server == server && e.State == UpstreamState.Healthy
+                && _connector.Connections.Count == 2 && second is null)
+            {
+                _connector.Connections[1].CallException = new UpstreamSessionLostException("404 (Test)");
+                second = _supervisor.GetConnection(server)!.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+            }
+        };
+
+        // Der erste Verlust kommt über das Lebenszeichen — so hat nur der zweite Aufrufer einen Versuch.
+        _connector.Connections[0].PingException = new UpstreamSessionLostException("404 (Test)");
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => second is not null, step: TimeSpan.FromSeconds(1), because: "die zweite Verbindung wird veröffentlicht");
+        await second!.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        _connector.Connections.Should().HaveCount(3, "der Verlust der zweiten Verbindung bekam einen eigenen Neuaufbau");
+        _connector.Connections[2].CallCount.Should().Be(1);
+    }
+
+    /// <summary>C4: Ein abgebrochenes Abschalten wird zu Ende geführt, sobald es gespeichert ist.</summary>
+    [Fact]
+    public async Task A_cancelled_disable_still_stops_the_upstream()
+    {
+        var server = await _supervisor.AddAsync(TestData.StdioConfig("abschalten"), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        var connection = _connector.Connections[0];
+        connection.CallGate = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var call = _supervisor.GetConnection(server)!.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+        using var cts = new CancellationTokenSource();
+
+        var disable = _supervisor.SetEnabledAsync(server, false, cts.Token);
+        await TestData.WaitUntilAsync(() => !LatestEnabledAsync(server).GetAwaiter().GetResult());
+        await cts.CancelAsync();
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => disable.IsCompleted, step: TimeSpan.FromSeconds(1), because: "der Drain endet mit der Gnadenfrist");
+
+        await disable.Invoking(t => t).Should().NotThrowAsync("ab dem Speichern ist das Abschalten beschlossen");
+        _supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Stopped);
+        await TestData.WaitUntilAsync(() => connection.DisposeCount == 1, because: "die Verbindung ist geschlossen");
+        connection.CallGate.TrySetResult(TestData.EmptySchema());
+        await Task.WhenAny(call);
+    }
+
+    /// <summary>C4: Scheitert das Speichern einer neuen Konfiguration, läuft der alte Stand weiter.</summary>
+    [Fact]
+    public async Task A_failed_reconfiguration_keeps_the_old_loop()
+    {
+        var store = new FailingStore(_store);
+        var supervisor = new UpstreamSupervisor(
+            [_connector], store, new SupervisorOptions { HealthCheckInterval = TimeSpan.FromSeconds(1) }, _time,
+            hostExecution: HostExecutionPolicy.AllowedByOperator());
+        await using var _ = supervisor;
+        var server = await supervisor.AddAsync(TestData.StdioConfig("umbau"), Ct);
+        await TestData.WaitUntilAsync(() => supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        store.FailAppend = true;
+
+        var act = () => supervisor.ReconfigureAsync(server, TestData.StdioConfig("umbau") with { DisplayName = "Neu" }, Ct);
+
+        await act.Should().ThrowAsync<IOException>();
+        supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Healthy, "der alte Loop läuft weiter");
+        supervisor.GetConnection(server).Should().NotBeNull();
+        _connector.Connections[0].DisposeCount.Should().Be(0);
+    }
+
+    /// <summary>C5: Eine Anfrage, die hinter dem Entfernen gewartet hat, holt den Upstream nicht zurück.</summary>
+    [Fact]
+    public async Task A_request_queued_behind_removal_does_not_resurrect_the_upstream()
+    {
+        var server = await _supervisor.AddAsync(TestData.StdioConfig("weg"), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        var connection = _connector.Connections[0];
+        connection.CallGate = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var call = _supervisor.GetConnection(server)!.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+
+        var remove = _supervisor.RemoveAsync(server, DrainPolicy.Graceful(TimeSpan.FromMinutes(1)), Ct);
+        await Task.Delay(50, Ct);
+        var reconfigure = _supervisor.ReconfigureAsync(server, TestData.StdioConfig("weg") with { DisplayName = "Zurück" }, Ct);
+        var enable = _supervisor.SetEnabledAsync(server, false, Ct);
+        await Task.Delay(50, Ct);
+        connection.CallGate.SetResult(TestData.EmptySchema());
+        await call;
+        // Der Drain prüft in Testzeit, ob es leer ist.
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => remove.IsCompleted, step: TimeSpan.FromMilliseconds(50), because: "das Entfernen endet nach dem Drain");
+        await remove;
+
+        await reconfigure.Invoking(t => t).Should().ThrowAsync<KeyNotFoundException>();
+        await enable.Invoking(t => t).Should().ThrowAsync<KeyNotFoundException>();
+        (await _store.GetAllLatestAsync(Ct)).Should().NotContainKey(server, "nach einem Neustart stünde er sonst wieder da");
+        _connector.ConnectCalls.Should().Be(1, "kein Loop auf dem entfernten Eintrag");
+    }
+
+    /// <summary>C15: Ist die Warteschlange voll, hat das Audit inzwischen aber Platz, geht keine Zeile verloren.</summary>
+    [Fact]
+    public async Task A_full_deferral_queue_offers_before_it_drops()
+    {
+        var full = true;
+        var audit = new RefusingAuditSink
+        {
+            Refuses = e => Volatile.Read(ref full) && e.Detail?.StartsWith("platz:", StringComparison.Ordinal) == true,
+        };
+        var calls = 0;
+        var connector = new FakeUpstreamConnector
+        {
+            DefaultBehavior = (_, _) => Interlocked.Increment(ref calls) % 2 == 0
+                ? throw new HttpRequestException("401", null, HttpStatusCode.Unauthorized)
+                : throw new IOException("weg (Test)"),
+        };
+        await using var supervisor = Create(connector, jitter: 0d, audit);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("platz"), Ct);
+
+        // Eintritt in Failed und 31 Wechsel: 32 Zeilen, die Warteschlange ist voll.
+        await FailedAttemptAsync(supervisor, server, 1);
+        for (var attempt = 2; attempt <= 32; attempt++)
+        {
+            await ConnectNowAsync(supervisor, server);
+            await FailedAttemptAsync(supervisor, server, attempt);
+        }
+
+        audit.Discarded.Should().Be(0);
+
+        // Während des nächsten Versuchs bekommt das Audit wieder Platz — nach dem Nachreichen zu
+        // Beginn des Versuchs, vor dessen eigener Zeile.
+        connector.ConnectHook = _ =>
+        {
+            Volatile.Write(ref full, false);
+            return Task.CompletedTask;
+        };
+        await ConnectNowAsync(supervisor, server);
+        await FailedAttemptAsync(supervisor, server, 33);
+
+        audit.Discarded.Should().Be(0, "erst nachreichen, dann verdrängen");
+        var accepted = audit.Accepted.Where(e => e.Detail!.StartsWith("platz:", StringComparison.Ordinal))
+            .Select(e => e.Detail!).ToList();
+        accepted.Should().HaveCount(UpstreamSupervisor.MaxDeferredLifecycleLines + 1, string.Join(" | ", accepted));
+    }
+
+    private sealed class FailingStore(IUpstreamConfigStore inner) : IUpstreamConfigStore
+    {
+        public volatile bool FailAppend;
+
+        public Task<ConfigVersionId> AppendVersionAsync(ServerId id, UpstreamServerConfig config, CancellationToken ct)
+            => FailAppend ? throw new IOException("Speicher voll (Test).") : inner.AppendVersionAsync(id, config, ct);
+
+        public Task<UpstreamServerConfig?> GetVersionAsync(ServerId id, ConfigVersionId version, CancellationToken ct)
+            => inner.GetVersionAsync(id, version, ct);
+
+        public Task<IReadOnlyList<UpstreamConfigVersion>> GetHistoryAsync(ServerId id, CancellationToken ct)
+            => inner.GetHistoryAsync(id, ct);
+
+        public Task<IReadOnlyDictionary<ServerId, UpstreamConfigVersion>> GetAllLatestAsync(CancellationToken ct)
+            => inner.GetAllLatestAsync(ct);
+
+        public Task RemoveAsync(ServerId id, CancellationToken ct) => inner.RemoveAsync(id, ct);
+    }
+
     // ── Späte Verbindungen (W17) ─────────────────────────────────────────────────────────────
 
     [Fact]
