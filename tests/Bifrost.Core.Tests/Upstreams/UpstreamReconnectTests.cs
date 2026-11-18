@@ -161,7 +161,8 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         // Ein Ausfall, zwei Zeilen: sein Anfang und sein Ende. Nicht 42.
         await TestData.WaitUntilAsync(() => Lifecycle.Any(d => d.Contains("wieder verbunden", StringComparison.Ordinal)));
         Lifecycle.Should().HaveCount(2);
-        Lifecycle[0].Should().Contain("Failed").And.Contain("Verbindung verweigert");
+        // Die Fehlerart steht schon in der Zeile zum Eintritt, nicht erst in der zum Wechsel (L6).
+        Lifecycle[0].Should().Contain("Failed (Unreachable)").And.Contain("Verbindung verweigert");
         Lifecycle[1].Should().Contain("Healthy").And.Contain("20 Fehlversuchen").And.Contain("1 Werkzeuge");
     }
 
@@ -510,7 +511,7 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
             () => audit.Accepted.Any(e => e.Detail!.Contains("wieder verbunden", StringComparison.Ordinal)),
             because: "die Zeile zur Rückkehr folgt dem Zustand");
         var lines = audit.Accepted.Where(e => e.Kind == AuditEventKind.ServerLifecycle).ToList();
-        var failed = lines.Where(e => e.Detail!.StartsWith("audit-voll: Failed — ", StringComparison.Ordinal)).ToList();
+        var failed = lines.Where(e => e.Detail!.StartsWith("audit-voll: Failed (", StringComparison.Ordinal)).ToList();
         failed.Should().ContainSingle("jeder Wechsel steht genau einmal im Audit");
         var back = lines.Single(e => e.Detail!.Contains("wieder verbunden", StringComparison.Ordinal));
         lines.IndexOf(failed[0]).Should().BeLessThan(lines.IndexOf(back));
@@ -627,7 +628,7 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
 
         await TestData.WaitUntilAdvancingAsync(
             _time,
-            () => audit.Accepted.Any(e => e.Detail!.StartsWith("lange-weg: Failed — ", StringComparison.Ordinal)),
+            () => audit.Accepted.Any(e => e.Detail!.StartsWith("lange-weg: Failed (", StringComparison.Ordinal)),
             step: TimeSpan.FromSeconds(30), timeoutMs: 15000,
             because: "die Zeile wird beim nächsten Versuch nachgereicht, ohne dass sich etwas ändert");
         supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Failed);
@@ -675,7 +676,7 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
             step: TimeSpan.FromSeconds(5), timeoutMs: 15000,
             because: "nach dem gescheiterten Aufräumen folgen weitere Versuche");
 
-        Lifecycle.Where(l => l.StartsWith("aufraeumen: Failed — ", StringComparison.Ordinal)
+        Lifecycle.Where(l => l.StartsWith("aufraeumen: Failed (", StringComparison.Ordinal)
                 && !l.Contains("Fehlerart wechselt", StringComparison.Ordinal))
             .Should().ContainSingle("der Eintritt in Failed steht genau einmal im Audit");
         Lifecycle.Should().NotContain(l => l.Contains("von None", StringComparison.Ordinal));
@@ -712,7 +713,7 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
             () => audit.Accepted.Any(e => e.Detail!.StartsWith("grenze-stumm:", StringComparison.Ordinal)
                 && e.Detail.Contains("eingestellt", StringComparison.Ordinal)),
             because: "die Zeile zur Grenze wird nachgereicht, sobald das Audit wieder annimmt");
-        audit.Accepted.Where(e => e.Detail!.StartsWith("grenze-stumm: Failed — ", StringComparison.Ordinal)
+        audit.Accepted.Where(e => e.Detail!.StartsWith("grenze-stumm: Failed (", StringComparison.Ordinal)
                 && !e.Detail.Contains("eingestellt", StringComparison.Ordinal))
             .Should().ContainSingle();
     }
@@ -819,10 +820,112 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         await FailedAttemptAsync(supervisor, server, 41);
 
         var lines = audit.Accepted.Where(e => e.Detail!.StartsWith("grenze:", StringComparison.Ordinal)).ToList();
-        lines.Should().HaveCount(UpstreamSupervisor.MaxDeferredLifecycleLines);
+        // Die 32 zurückgestellten Zeilen kommen beim Aufwachen an, danach die des 41. Versuchs.
+        lines.Should().HaveCount(UpstreamSupervisor.MaxDeferredLifecycleLines + 1);
         lines.Should().NotContain(e => e.Detail == "grenze: Starting", "die älteste Zeile ist herausgefallen");
         lines.Select(e => e.Timestamp).Should().BeInAscendingOrder();
         lines[^1].Detail.Should().Contain("Fehlerart wechselt", "die neueste Zeile ist angekommen");
+    }
+
+    // ── Zustandspflege im Loop (W10) ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Connect_now_from_the_failed_event_is_not_lost()
+    {
+        // Wer auf das Ereignis „Failed" sofort „Jetzt verbinden" drückt, drückt in der Lücke
+        // zwischen dem Verbuchen und dem Warten. Der Klick darf dort nicht verpuffen (L1).
+        var connector = new FakeUpstreamConnector();
+        connector.EnqueueConnectFailure("weg (Test)");
+        await using var supervisor = Create(connector, jitter: 0d);
+        bool? clicked = null;
+        supervisor.Changed += (_, e) =>
+        {
+            if (e.Kind == UpstreamChangeKind.StateChanged && e.State == UpstreamState.Failed && clicked is null)
+            {
+                clicked = supervisor.ConnectNowAsync(e.Server, Ct).GetAwaiter().GetResult();
+            }
+        };
+
+        var server = await supervisor.AddAsync(TestData.StdioConfig("sofort"), Ct);
+
+        // Ohne die Uhr vorzustellen: Die Frist von 5 s läuft nie ab, nur der Klick führt weiter.
+        await TestData.WaitUntilAsync(
+            () => supervisor.GetStatus(server)?.State == UpstreamState.Healthy,
+            because: "der Klick im Ereignis stößt den nächsten Versuch an");
+        clicked.Should().BeTrue();
+        connector.ConnectCalls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task After_connect_now_the_loop_is_no_longer_reported_as_waiting()
+    {
+        _connector.DefaultBehavior = static (_, _) => throw new IOException("weg (Test)");
+        var server = await _supervisor.AddAsync(TestData.StdioConfig("klick"), Ct);
+        await FailedAttemptAsync(server, 1);
+
+        // Der nächste Versuch hängt, bis der Test ihn freigibt.
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _connector.ConnectHook = _ => release.Task;
+
+        (await _supervisor.ConnectNowAsync(server, Ct)).Should().BeTrue();
+        _supervisor.IsWaitingForNextAttempt(server).Should().BeFalse(
+            "der Loop hat den Anstoß angenommen, auch wenn er die Sperre noch nicht zurück hat");
+        (await _supervisor.ConnectNowAsync(server, Ct)).Should().BeFalse("ein zweiter Klick findet keinen wartenden Loop");
+
+        release.SetResult();
+        await FailedAttemptAsync(server, 2);
+    }
+
+    [Fact]
+    public async Task Deferred_lines_arrive_at_the_limit_without_a_click()
+    {
+        // An der gesetzten Obergrenze wartet der Loop nur noch auf den Knopf. Zurückgestellte
+        // Audit-Zeilen dürfen nicht mit ihm warten (T2).
+        var full = true;
+        var audit = new RefusingAuditSink
+        {
+            Refuses = e => Volatile.Read(ref full) && e.Detail?.StartsWith("still:", StringComparison.Ordinal) == true,
+        };
+        var connector = new FakeUpstreamConnector { DefaultBehavior = static (_, _) => throw new IOException("weg (Test)") };
+        await using var supervisor = Create(connector, jitter: 0d, audit);
+        var limited = new RestartPolicy(MaxRetries: 1, TimeSpan.FromSeconds(5), 2.0, TimeSpan.FromMinutes(5));
+        var server = await supervisor.AddAsync(TestData.StdioConfig("still", restart: limited), Ct);
+
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => supervisor.GetStatus(server)?.Reconnect?.Exhausted == true && supervisor.IsWaitingForNextAttempt(server),
+            step: TimeSpan.FromSeconds(1), because: "1 Erstversuch + 1 Wiederholung, dann ist die Grenze erreicht");
+        audit.Refused.Should().BeGreaterThan(0, "sonst hätte der Test den Fall gar nicht hergestellt");
+        audit.Accepted.Should().NotContain(e => e.Detail!.StartsWith("still: Failed", StringComparison.Ordinal));
+
+        Volatile.Write(ref full, false);
+        await TestData.WaitUntilAdvancingAsync(
+            _time,
+            () => audit.Accepted.Any(e => e.Detail!.StartsWith("still: Failed (Unreachable)", StringComparison.Ordinal)),
+            step: TimeSpan.FromSeconds(1), timeoutMs: 15000,
+            because: "der wartende Loop reicht im Takt des Lebenszeichens nach");
+
+        connector.ConnectCalls.Should().Be(2, "nachgereicht wurde ohne neuen Versuch");
+        supervisor.GetStatus(server)!.Reconnect!.Exhausted.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Disabling_during_a_rebuild_answers_the_waiting_caller_with_a_lost_connection()
+    {
+        // Der Aufrufer hat das Gateway nie verlassen; er bekommt „Verbindung verloren" wie bei
+        // jedem anderen gescheiterten Neuaufbau, keinen Abbruch, den er für seinen eigenen hielte (U8).
+        var server = await _supervisor.AddAsync(TestData.StdioConfig(), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        _connector.Connections[0].CallException = new UpstreamSessionLostException("404 (Test)");
+        _connector.ConnectHook = ct => Task.Delay(Timeout.Infinite, ct);
+        var stale = _supervisor.GetConnection(server)!;
+
+        var call = stale.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+        await TestData.WaitUntilAsync(() => _connector.ConnectCalls == 2, because: "der Neuaufbau läuft");
+
+        await _supervisor.SetEnabledAsync(server, enabled: false, Ct);
+
+        var act = () => call;
+        await act.Should().ThrowExactlyAsync<UpstreamConnectionLostException>();
     }
 
     [Fact]
