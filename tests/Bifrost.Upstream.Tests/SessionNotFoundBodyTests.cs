@@ -26,4 +26,20 @@ public sealed class SessionNotFoundBodyTests
     [InlineData(Prefix + """{"jsonrpc":"2.0","error":{"code":-32001""")]
     public void Anything_else_is_not(string message)
         => SdkUpstreamConnection.IsMcpErrorBody(message).Should().BeFalse();
+
+    /// <summary>
+    /// Ein JSON-RPC-Fehlerobjekt hat eine ganzzahlige <c>code</c> und eine Zeichenkette
+    /// <c>message</c> (JSON-RPC 2.0, 5.1). Ein Zwischenglied, das irgendein Objekt unter
+    /// <c>error</c> liefert, ist nicht der MCP-Server.
+    /// </summary>
+    [Theory]
+    [InlineData(Prefix + """{"jsonrpc":"2.0","error":{}}""")]
+    [InlineData(Prefix + """{"jsonrpc":"2.0","error":{"message":"Session not found"}}""")]
+    [InlineData(Prefix + """{"jsonrpc":"2.0","error":{"code":"-32001","message":"Session not found"}}""")]
+    [InlineData(Prefix + """{"jsonrpc":"2.0","error":{"code":-32001.5,"message":"Session not found"}}""")]
+    [InlineData(Prefix + """{"jsonrpc":"2.0","error":{"code":-32001}}""")]
+    [InlineData(Prefix + """{"jsonrpc":"2.0","error":{"code":-32001,"message":null}}""")]
+    [InlineData(Prefix + """{"jsonrpc":"2.0","error":{"code":-32001,"message":42}}""")]
+    public void An_error_object_without_integer_code_and_string_message_is_not(string message)
+        => SdkUpstreamConnection.IsMcpErrorBody(message).Should().BeFalse();
 }

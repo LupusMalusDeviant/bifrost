@@ -58,6 +58,11 @@ internal sealed class ScriptedMcpUpstream : IAsyncDisposable
     /// </summary>
     public int ToolCallPosts => Volatile.Read(ref _toolCallPosts);
 
+    private int _stallPosts;
+
+    /// <summary>Wie oft ein <c>tools/call</c> für <c>stall</c> ankam — wie <see cref="ToolCallPosts"/>, nur für dieses Werkzeug.</summary>
+    public int StallPosts => Volatile.Read(ref _stallPosts);
+
     /// <summary>Wie oft ein Client einen Antwortstrom mit <c>Last-Event-ID</c> wieder aufnehmen wollte.</summary>
     public int Resumes => Volatile.Read(ref _resumes);
 
@@ -204,6 +209,11 @@ internal sealed class ScriptedMcpUpstream : IAsyncDisposable
             if (body.Contains("\"method\":\"tools/call\"", StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref _toolCallPosts);
+                if (body.Contains("\"name\":\"stall\"", StringComparison.Ordinal))
+                {
+                    Interlocked.Increment(ref _stallPosts);
+                }
+
                 Volatile.Write(ref _callInFlight, context);
             }
         }

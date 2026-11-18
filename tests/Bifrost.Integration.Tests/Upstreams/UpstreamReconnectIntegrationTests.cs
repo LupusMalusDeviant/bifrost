@@ -243,6 +243,35 @@ public sealed class UpstreamReconnectIntegrationTests : IAsyncLifetime
         _upstream.Initializes.Should().Be(2);
     }
 
+    /// <summary>
+    /// Plan 0005 F15: Der Fall aus Abschnitt 4, dritte Zeile, deterministisch. Ein Aufruf läuft
+    /// schon beim Upstream (und wurde ausgeführt), als ein zweiter das 404 auf die Sitzung bekommt.
+    /// Das SDK bricht den laufenden ab; er wird <b>nicht</b> wiederholt, denn er kann gearbeitet
+    /// haben. Der zweite wird nach dem einen Neuaufbau wiederholt und gelingt.
+    /// </summary>
+    [Fact]
+    public async Task A_call_in_flight_when_another_gets_the_404_is_not_repeated()
+    {
+        var supervisor = CreateSupervisor(healthCheck: TimeSpan.FromMinutes(5));
+        var id = await AddHealthyAsync(supervisor, callTimeout: TimeSpan.FromSeconds(10));
+        var connection = supervisor.GetConnection(id)!;
+
+        var stalled = connection.CallToolAsync("stall", Hello, Ct);
+        await _upstream.Stalled.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        _upstream.Executions.Should().Be(1, "der erste Aufruf läuft beim Upstream");
+
+        _upstream.RevokeSessions();
+        var second = await connection.CallToolAsync("echo", Hello, Ct);
+
+        Text(second).Should().Be("Echo");
+        (await stalled.Invoking(t => t).Should().ThrowAsync<UpstreamConnectionLostException>(
+                "das SDK bricht den laufenden Aufruf ab, und abgebrochen heißt: nicht wiederholt"))
+            .Which.Message.Should().Contain("nicht wiederholt");
+        _upstream.StallPosts.Should().Be(1, "der laufende Aufruf wurde kein zweites Mal geschickt");
+        _upstream.Initializes.Should().Be(2, "genau ein Neuaufbau");
+        _upstream.Executions.Should().Be(2, "der laufende Aufruf einmal, der wiederholte einmal");
+    }
+
     [Fact]
     public async Task A_call_cut_off_in_the_middle_is_not_repeated()
     {

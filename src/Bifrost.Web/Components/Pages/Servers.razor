@@ -937,16 +937,41 @@
         {
             // Angenommen wird die Fassung, die beim Anzeigen anstand (E7). Steht inzwischen eine
             // andere an, zeigt das Neuladen sie — angenommen wird sie erst nach einem neuen Klick.
-            if (pendingHash is null
-                || !await ToolPins.AcceptAsync(id, tool, pendingHash, CancellationToken.None))
+            if (pendingHash is null)
             {
                 return;
             }
 
-            // Erst das Audit, dann die Neuabfrage (E5): Die Annahme gilt, auch wenn die
+            var expected = pendingHash.ToLowerInvariant();
+            var user = await UserAsync();
+
+            // Erst das Audit, dann die Annahme (Plan 0005 F4): Weist das Audit ab (Compliance-Modus,
+            // voller Kanal), wird nichts vertraut. Die Zeile nennt die Fassung; nimmt der
+            // Vergleich-und-Tausch sie danach nicht an, folgt eine Zeile, die das sagt.
+            try
+            {
+                UiAudit.Record(Audit, Time, user, AuditEventKind.ConfigChanged,
+                    $"tool-definition-accepted:{slug}__{tool}@{expected}", id);
+            }
+            catch (Exception)
+            {
+                _ok = false;
+                _message = $"Das Audit nimmt gerade nicht an; die neue Fassung von '{tool}' wurde nicht angenommen.";
+                return;
+            }
+
+            if (!await ToolPins.AcceptAsync(id, tool, expected, CancellationToken.None))
+            {
+                // Nichts ist vertraut geworden; die Zeile berichtigt nur die vorige.
+                Audit.TryRecord(new AuditEvent(
+                    Time.GetUtcNow(), null, CallOrigin.Ui, AuditEventKind.ConfigChanged, id,
+                    $"ui:{user}:tool-definition-accept-conflict:{slug}__{tool}@{expected}",
+                    null, null, null, null, null));
+                return;
+            }
+
+            // Die Neuabfrage nach Annahme und Audit (E5): Die Annahme gilt, auch wenn die
             // Neuabfrage scheitert.
-            UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged,
-                $"tool-definition-accepted:{slug}__{tool}", id);
             try
             {
                 await ConcreteSupervisor.RediscoverAsync(id, CancellationToken.None);
