@@ -258,15 +258,25 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     {
         foreach (var entry in _entries.Values)
         {
-            await entry.AdminLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            // Jeder Upstream für sich: Scheitert das Stoppen des einen, laufen die übrigen sonst
+            // weiter — mit Prozessen und Sockets bis zum Ende des Prozesses (T8).
             try
             {
-                await StopLoopAsync(entry, DrainPolicy.Immediate, CancellationToken.None).ConfigureAwait(false);
-                ReleaseDeferredLifecycle(entry);
+                await entry.AdminLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+                try
+                {
+                    await StopLoopAsync(entry, DrainPolicy.Immediate, CancellationToken.None).ConfigureAwait(false);
+                    ReleaseDeferredLifecycle(entry);
+                }
+                finally
+                {
+                    entry.AdminLock.Release();
+                }
             }
-            finally
+            catch (Exception ex)
             {
-                entry.AdminLock.Release();
+                var types = UpstreamFailure.TypeChain(ex);
+                Quietly(() => Log.UpstreamDisposeFailed(_logger, entry.Config.Slug, types));
             }
         }
 
@@ -599,18 +609,19 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             SetState(entry, UpstreamState.Healthy, null,
                 $"{entry.Config.Slug}: {UpstreamState.Healthy} — wieder verbunden nach {downtime} und "
                 + $"{attempts} Fehlversuchen, {session.Inventory.Tools.Count} Werkzeuge.");
-            Log.UpstreamReconnected(_logger, entry.Config.Slug, downtime, attempts, session.Inventory.Tools.Count);
+            Quietly(() => Log.UpstreamReconnected(
+                _logger, entry.Config.Slug, downtime, attempts, session.Inventory.Tools.Count));
         }
         else
         {
             SetState(entry, UpstreamState.Healthy, null);
             if (afterSessionLoss)
             {
-                Log.UpstreamSessionRebuilt(_logger, entry.Config.Slug, session.Inventory.Tools.Count);
+                Quietly(() => Log.UpstreamSessionRebuilt(_logger, entry.Config.Slug, session.Inventory.Tools.Count));
             }
             else
             {
-                Log.UpstreamHealthy(_logger, entry.Config.Slug, session.ReportedToolCount);
+                Quietly(() => Log.UpstreamHealthy(_logger, entry.Config.Slug, session.ReportedToolCount));
             }
         }
 
@@ -639,7 +650,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             var rebuild = await WatchAsync(entry, connection, ct).ConfigureAwait(false);
 
             SetState(entry, UpstreamState.Degraded, "Sitzung verloren, wird neu aufgebaut.");
-            Log.UpstreamSessionLost(_logger, entry.Config.Slug);
+            Quietly(() => Log.UpstreamSessionLost(_logger, entry.Config.Slug));
 
             Session replacement;
             try
@@ -669,9 +680,17 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
 
             var previous = connection;
             connection = replacement.Connection;
-            Publish(entry, replacement, afterSessionLoss: true);
-            Complete(entry, rebuild, pending => pending.TrySetResult(connection));
-            await DisposeQuietlyAsync(previous).ConfigureAwait(false);
+            try
+            {
+                Publish(entry, replacement, afterSessionLoss: true);
+                Complete(entry, rebuild, pending => pending.TrySetResult(connection));
+            }
+            finally
+            {
+                // Die tote Verbindung wird geschlossen, was immer beim Veröffentlichen geschah —
+                // sonst bliebe ihr Prozess oder ihr Socket bis zum Ende des Gateways offen (U4).
+                await DisposeQuietlyAsync(previous).ConfigureAwait(false);
+            }
         }
     }
 
@@ -1361,7 +1380,24 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             // Nur die Typnamen: Die Meldung einer Transport-Ausnahme kann Text des Upstreams oder
             // eine URL mit Token tragen (P1 – P4).
             var types = UpstreamFailure.TypeChain(ex);
-            Log.DisposeFailed(_logger, types);
+            Quietly(() => Log.DisposeFailed(_logger, types));
+        }
+    }
+
+    /// <summary>
+    /// Schreibt eine Logzeile, deren Scheitern nichts weiter aufhalten darf: Was sie meldet, ist
+    /// schon geschehen, und eine Log-Ausgabe, die wirft, ist kein Grund, eine Verbindung aufzugeben
+    /// oder eine alte offen zu lassen (U4).
+    /// </summary>
+    private static void Quietly(Action write)
+    {
+        try
+        {
+            write();
+        }
+        catch (Exception)
+        {
+            // Bewusst verschluckt: Es gibt keinen zweiten Kanal, auf dem sich das melden ließe.
         }
     }
 
@@ -1603,7 +1639,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         }
         catch (Exception ex)
         {
-            Log.ChangedHandlerThrew(_logger, ex);
+            // Nur die Typnamen: Die Meldung stammt aus fremdem Code und kann alles tragen, was der
+            // Handler gerade in der Hand hatte (U6).
+            var types = UpstreamFailure.TypeChain(ex);
+            Quietly(() => Log.ChangedHandlerThrew(_logger, types));
         }
     }
 
@@ -1842,7 +1881,11 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         public static partial void DisposeFailed(ILogger logger, string exceptionTypes);
 
         [LoggerMessage(Level = LogLevel.Error,
-            Message = "Changed-Handler warf eine Exception — Handler müssen exception-frei sein.")]
-        public static partial void ChangedHandlerThrew(ILogger logger, Exception ex);
+            Message = "Changed-Handler warf eine Exception — Handler müssen exception-frei sein. [{ExceptionTypes}]")]
+        public static partial void ChangedHandlerThrew(ILogger logger, string exceptionTypes);
+
+        [LoggerMessage(Level = LogLevel.Error,
+            Message = "Upstream {Slug} ließ sich beim Beenden des Gateways nicht sauber stoppen. [{ExceptionTypes}]")]
+        public static partial void UpstreamDisposeFailed(ILogger logger, string slug, string exceptionTypes);
     }
 }

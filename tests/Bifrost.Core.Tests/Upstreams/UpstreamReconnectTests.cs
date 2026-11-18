@@ -928,6 +928,104 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         await act.Should().ThrowExactlyAsync<UpstreamConnectionLostException>();
     }
 
+    // ── Werfende Log-Ausgabe (W11) ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task A_throwing_log_line_on_connect_does_not_give_up_the_connection()
+    {
+        _log.Throws = m => m.Contains("Healthy mit", StringComparison.Ordinal);
+        var server = await _supervisor.AddAsync(TestData.StdioConfig("laut"), Ct);
+        await TestData.WaitUntilAsync(() => _log.Thrown > 0, because: "der Fall muss eintreten");
+
+        for (var i = 0; i < 5; i++)
+        {
+            _time.Advance(TimeSpan.FromMinutes(1));
+            await Task.Delay(5, Ct);
+        }
+
+        _supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Healthy);
+        _connector.ConnectCalls.Should().Be(1, "die Verbindung steht; eine gescheiterte Logzeile ist kein Fehlversuch");
+        _connector.Connections[0].DisposeCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task A_throwing_log_line_during_the_rebuild_still_serves_the_caller_and_closes_the_old_connection()
+    {
+        var server = await _supervisor.AddAsync(TestData.StdioConfig(), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        _log.Throws = m => m.Contains("Sitzung verloren", StringComparison.Ordinal)
+            || m.Contains("Sitzung neu aufgebaut", StringComparison.Ordinal);
+        var old = _connector.Connections[0];
+        old.CallException = new UpstreamSessionLostException("404 (Test)");
+
+        var result = await _supervisor.GetConnection(server)!.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+
+        result.GetProperty("tool").GetString().Should().Be("echo");
+        _log.Thrown.Should().BeGreaterThan(0, "sonst hätte der Test den Fall gar nicht hergestellt");
+        await TestData.WaitUntilAsync(() => old.DisposeCount == 1, because: "die tote Verbindung wird geschlossen");
+        _supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Healthy);
+    }
+
+    [Fact]
+    public async Task A_throwing_log_line_about_a_failed_close_does_not_break_the_rebuild()
+    {
+        var server = await _supervisor.AddAsync(TestData.StdioConfig(), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        _log.Throws = m => m.Contains("Fehler beim Schließen", StringComparison.Ordinal);
+        var old = _connector.Connections[0];
+        old.DisposeException = new IOException("Prozess schon fort (Test)");
+        old.CallException = new UpstreamSessionLostException("404 (Test)");
+
+        await _supervisor.GetConnection(server)!.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+        await TestData.WaitUntilAsync(() => _log.Thrown > 0, because: "der Fall muss eintreten");
+
+        // Ein zweiter Verlust zeigt, dass der Loop die Verbindung weiter bedient.
+        _connector.Connections[1].CallException = new UpstreamSessionLostException("404 (Test)");
+        var result = await _supervisor.GetConnection(server)!.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+
+        result.GetProperty("tool").GetString().Should().Be("echo");
+        _connector.ConnectCalls.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task A_throwing_changed_handler_is_logged_with_type_names_only()
+    {
+        _supervisor.Changed += (_, _) => throw new InvalidOperationException("Handler kaputt: " + Secret);
+        await _supervisor.AddAsync(TestData.StdioConfig(), Ct);
+
+        await TestData.WaitUntilAsync(
+            () => _log.Entries.Any(e => e.Message.Contains("Changed-Handler", StringComparison.Ordinal)));
+        var line = _log.Entries.First(e => e.Message.Contains("Changed-Handler", StringComparison.Ordinal));
+        line.Exception.Should().BeNull("das Ausnahmeobjekt trüge die Meldung des Handlers");
+        line.Message.Should().Contain(nameof(InvalidOperationException));
+        _log.Entries.Should().NotContain(e => e.Message.Contains(Secret, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Disposing_stops_every_upstream_even_when_closing_one_fails_loudly()
+    {
+        var connector = new FakeUpstreamConnector
+        {
+            DefaultBehavior = static (id, _) => new FakeUpstreamConnection
+            {
+                Id = id,
+                DisposeException = new IOException("Prozess schon fort (Test)"),
+            },
+        };
+        var supervisor = Create(connector, jitter: 0d);
+        var first = await supervisor.AddAsync(TestData.StdioConfig("eins"), Ct);
+        var second = await supervisor.AddAsync(TestData.StdioConfig("zwei"), Ct);
+        await TestData.WaitUntilAsync(
+            () => supervisor.GetStatus(first)?.State == UpstreamState.Healthy
+                && supervisor.GetStatus(second)?.State == UpstreamState.Healthy);
+        _log.Throws = m => m.Contains("Fehler beim Schließen", StringComparison.Ordinal);
+
+        var act = async () => await supervisor.DisposeAsync();
+
+        await act.Should().NotThrowAsync();
+        connector.Connections.Should().HaveCount(2).And.OnlyContain(c => c.DisposeCount == 1);
+    }
+
     [Fact]
     public void A_delay_never_exceeds_what_a_timer_accepts()
     {
