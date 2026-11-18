@@ -181,6 +181,7 @@ public sealed class GuardedUpstreamConnection
         }
 
         var replacement = await _recovery.RebuildAsync(this, ct).ConfigureAwait(false);
+        _replacement = replacement;
         if (toolName is not null && !_recovery.IsToolAvailable(toolName))
         {
             throw new InvalidOperationException(
@@ -209,6 +210,32 @@ public sealed class GuardedUpstreamConnection
     /// statt in die alte zu laufen.
     /// </summary>
     internal void MarkReplaced() => _sessionLost = true;
+
+    /// <summary>Die Verbindung, auf der ein Aufruf über diese Hülle zuletzt wiederholt wurde.</summary>
+    private volatile GuardedUpstreamConnection? _replacement;
+
+    /// <summary>
+    /// Was diese Verbindung dem Upstream an Zugangsdaten vorgelegt hat — und die Verbindung, auf der
+    /// zuletzt wiederholt wurde, denn ein erneuertes OAuth-Token steht in keiner Konfiguration.
+    /// </summary>
+    internal IReadOnlyList<string> PresentedCredentials
+    {
+        get
+        {
+            var own = _inner is IPresentedCredentials presented ? presented.PresentedCredentials : [];
+            return _replacement is { } replacement ? [.. own, .. replacement.PresentedCredentials] : own;
+        }
+    }
+
+    /// <summary>
+    /// Der Grund eines gescheiterten Aufrufs, wie er an Agent, Vorgangsablage und Trace geht: ohne
+    /// Antwortkörper, ohne die Geheimwerte der Konfiguration und ohne das vorgelegte Token (Plan 0005
+    /// C7, D1).
+    /// </summary>
+    internal string DescribeFailure(Exception exception)
+        => Config is { } config
+            ? UpstreamFailure.Describe(exception, config, PresentedCredentials)
+            : UpstreamFailure.DescribeWithoutConfig(exception, PresentedCredentials);
 
     public Task PingAsync(CancellationToken ct)
         => WithTimeoutAsync(
@@ -275,6 +302,13 @@ public sealed class GuardedUpstreamConnection
             //
             // Wiederholt wird hier bewusst NICHT (Vertrag Abschnitt 4): Eine Anfrage, die schon
             // unterwegs war, kann der Upstream ausgeführt haben, bevor seine Sitzung endete.
+            //
+            // Gemerkt wird der Verlust aber (Plan 0005 D13): Ein Client, der seine Anfragen selbst
+            // abbricht, ist tot — gemessen nach einer Wiederaufnahme, die der Upstream mit 404
+            // abwies. Ohne diese Zeile liefe jeder weitere Aufruf in denselben toten Client und
+            // bekäme „nicht wiederholt", obwohl nichts das Gateway verlassen hat, bis irgendwann
+            // das Lebenszeichen den Verlust bemerkt. So baut der nächste Aufrufer neu auf.
+            _sessionLost = true;
             throw new UpstreamConnectionLostException(
                 $"Die Verbindung zum Upstream wurde während der Operation '{operationName}' abgebaut — "
                 + "etwa weil seine Sitzung verloren ging. Ob der Upstream sie noch ausgeführt hat, ist "

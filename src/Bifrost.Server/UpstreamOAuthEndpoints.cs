@@ -133,14 +133,11 @@ internal static class UpstreamOAuthEndpoints
 
             // Wartet der Upstream gerade auf seinen nächsten Versuch — nach abgelehnter Anmeldung
             // bis zu 15 min —, verbindet er jetzt mit dem neuen Token, statt die Frist abzusitzen
-            // (L5). Läuft er oder ist er abgeschaltet, ändert sich nichts.
-            try
+            // (L5). Läuft gerade ein Versuch mit dem alten Token, folgt auf sein Scheitern der
+            // nächste ohne Frist (D11). Verbunden, abgeschaltet oder entfernt: nichts.
+            if (supervisor is IUpstreamCredentialObserver observer)
             {
-                await supervisor.ConnectNowAsync(attempt.Server, ct);
-            }
-            catch (Exception exception) when (exception is InvalidOperationException or KeyNotFoundException)
-            {
-                // Abgeschaltet oder inzwischen entfernt: Das Token liegt trotzdem bereit.
+                observer.CredentialsChanged(attempt.Server);
             }
 
             // Zurück in die Verwaltung.

@@ -181,13 +181,8 @@ internal sealed class ScriptedMcpUpstream : IAsyncDisposable
             return;
         }
 
-        var session = context.Request.Headers["Mcp-Session-Id"].ToString();
-        if (session.Length > 0 && _revoked.ContainsKey(session))
-        {
-            context.Response.StatusCode = StatusCodes.Status404NotFound;
-            return;
-        }
-
+        // Erst zählen, dann die Sitzung prüfen: Auch eine Anfrage auf eine verworfene Sitzung ist
+        // angekommen — sonst übersähe der Test genau den wiederholten Aufruf, den er sucht (D13).
         if (HttpMethods.IsPost(context.Request.Method))
         {
             context.Request.EnableBuffering();
@@ -209,6 +204,13 @@ internal sealed class ScriptedMcpUpstream : IAsyncDisposable
         else if (HttpMethods.IsGet(context.Request.Method) && context.Request.Headers.ContainsKey("Last-Event-ID"))
         {
             Interlocked.Increment(ref _resumes);
+        }
+
+        var session = context.Request.Headers["Mcp-Session-Id"].ToString();
+        if (session.Length > 0 && _revoked.ContainsKey(session))
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
         }
 
         context.Response.OnStarting(() =>

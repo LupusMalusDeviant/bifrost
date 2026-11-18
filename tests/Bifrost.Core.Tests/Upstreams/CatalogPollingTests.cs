@@ -134,4 +134,30 @@ public sealed class CatalogPollingTests : IAsyncDisposable
         connection.DiscoverCalls.Should().Be(discoveries,
             "wer seine Aenderungen meldet, muss nicht gefragt werden");
     }
+
+    /// <summary>
+    /// Plan 0005 D10: Weist der Upstream die Katalogabfrage ab (401/403), steht er nicht weiter als
+    /// gesund da — die Verbindung gilt als verloren, und der nächste Aufbau zeigt die Fehlerart.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_catalog_poll_does_not_stay_healthy()
+    {
+        FakeUpstreamConnection? connection = null;
+        _connector.DefaultBehavior = (id, _) =>
+            connection = new FakeUpstreamConnection { Id = id, PushesCatalogChanges = false };
+
+        var id = await _supervisor.AddAsync(TestData.StdioConfig("abgewiesen"), TestContext.Current.CancellationToken);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(id)?.State == UpstreamState.Healthy);
+
+        _connector.DefaultBehavior = (_, _) => throw new System.Net.Http.HttpRequestException(
+            "403 (Test)", null, System.Net.HttpStatusCode.Forbidden);
+        connection!.DiscoverException = new System.Net.Http.HttpRequestException(
+            "403 (Test)", null, System.Net.HttpStatusCode.Forbidden);
+
+        await TestData.WaitUntilAdvancingAsync(
+            _time,
+            () => _supervisor.GetStatus(id) is { State: UpstreamState.Failed, Reconnect.Kind: UpstreamFailureKind.Authentication },
+            because: "eine abgewiesene Katalogabfrage beendet die Verbindung");
+        connection.DisposeCount.Should().Be(1, "die abgewiesene Verbindung ist geschlossen");
+    }
 }

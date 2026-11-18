@@ -642,6 +642,27 @@ public interface IUpstreamConnector
 }
 
 /// <summary>
+/// Eine Verbindung, die dem Upstream Zugangsdaten vorlegt, die in keiner Konfiguration stehen — ein
+/// OAuth-Zugriffstoken. Zitiert der Upstream es in einer Fehlermeldung, wird es damit maskiert wie
+/// ein Geheimwert der Konfiguration (Vertrag „Selbsttätige Wiederverbindung", Abschnitt 10, N8).
+/// </summary>
+public interface IPresentedCredentials
+{
+    IReadOnlyList<string> PresentedCredentials { get; }
+}
+
+/// <summary>
+/// Erfährt, dass für einen Upstream neue Zugangsdaten gespeichert sind — etwa nach dem Autorisieren
+/// (Vertrag „Selbsttätige Wiederverbindung", Abschnitt 10, N4). Anders als „Jetzt verbinden" wirkt das
+/// auch auf einen Versuch, der gerade läuft: Scheitert er noch mit den alten Zugangsdaten, folgt der
+/// nächste ohne Frist. Ein deaktivierter oder verbundener Upstream bleibt unberührt.
+/// </summary>
+public interface IUpstreamCredentialObserver
+{
+    void CredentialsChanged(ServerId id);
+}
+
+/// <summary>
 /// Ein Connector, dessen Zugangsdaten sich vor dem nächsten Verbindungsaufbau erneuern lassen —
 /// etwa ein OAuth-Token, das der Upstream auf der stehenden Verbindung mit 401 abweist, obwohl es
 /// laut Ablaufzeit noch gälte (Vertrag „Selbsttätige Wiederverbindung", V1).

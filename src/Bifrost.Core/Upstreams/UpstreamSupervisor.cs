@@ -1,8 +1,10 @@
 ﻿using System.Collections.Concurrent;
 using System.Globalization;
+
 using Bifrost.Abstractions;
 using Bifrost.Abstractions.Execution;
 using Bifrost.Core.Execution;
+
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -20,7 +22,7 @@ namespace Bifrost.Core.Upstreams;
 /// </para>
 /// Alle Zeitläufe laufen über <see cref="TimeProvider"/> (testbar mit FakeTimeProvider).
 /// </summary>
-public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisposable
+public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamCredentialObserver, IAsyncDisposable
 {
     private readonly Dictionary<UpstreamTransportKind, IUpstreamConnector> _connectors;
     private readonly IUpstreamConfigStore _store;
@@ -31,6 +33,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     private readonly IToolDefinitionPinStore? _pins;
     private readonly IHostExecutionPolicy _hostExecution;
     private readonly ConcurrentDictionary<ServerId, Entry> _entries = new();
+
+    /// <summary>1, sobald <see cref="DisposeAsync"/> begonnen hat (Plan 0005 D12).</summary>
+    private int _disposing;
 
     /// <param name="hostExecution">
     /// Die Ausführungs-Policy (ADR-0025). <c>null</c> heißt <b>nicht</b> „keine Prüfung", sondern
@@ -73,26 +78,17 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     public async Task<ServerId> AddAsync(UpstreamServerConfig config, CancellationToken ct)
     {
         UpstreamConfigValidator.Validate(config, _hostExecution);
+        ThrowIfDisposing();
         EnsureSlugUnique(config.Slug, exclude: null);
 
         var id = ServerId.New();
         var version = await _store.AppendVersionAsync(id, config, ct).ConfigureAwait(false);
-        var entry = new Entry(id,config, version)
+        var entry = new Entry(id, config, version)
         {
             State = config.Enabled ? UpstreamState.Starting : UpstreamState.Stopped,
         };
 
-        if (!_entries.TryAdd(id, entry))
-        {
-            throw new InvalidOperationException($"ServerId-Kollision für '{config.Slug}' — sollte nie passieren.");
-        }
-
-        Raise(entry, UpstreamChangeKind.Added);
-        if (config.Enabled)
-        {
-            StartLoop(entry);
-        }
-
+        Register(entry, $"ServerId-Kollision für '{config.Slug}' — sollte nie passieren.");
         return id;
     }
 
@@ -105,24 +101,15 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     {
         ArgumentNullException.ThrowIfNull(persisted);
         UpstreamConfigValidator.Validate(persisted.Config, _hostExecution);
+        ThrowIfDisposing();
         EnsureSlugUnique(persisted.Config.Slug, exclude: id);
 
-        var entry = new Entry(id,persisted.Config, persisted.Version)
+        var entry = new Entry(id, persisted.Config, persisted.Version)
         {
             State = persisted.Config.Enabled ? UpstreamState.Starting : UpstreamState.Stopped,
         };
 
-        if (!_entries.TryAdd(id, entry))
-        {
-            throw new InvalidOperationException($"Server {id} ist bereits registriert — Restore doppelt aufgerufen?");
-        }
-
-        Raise(entry, UpstreamChangeKind.Added);
-        if (persisted.Config.Enabled)
-        {
-            StartLoop(entry);
-        }
-
+        Register(entry, $"Server {id} ist bereits registriert — Restore doppelt aufgerufen?");
         return Task.CompletedTask;
     }
 
@@ -133,18 +120,22 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         await AcquireAdminAsync(entry, ct).ConfigureAwait(false);
         try
         {
-            await StopLoopAsync(entry, drain, ct).ConfigureAwait(false);
+            // Erst löschen, dann stoppen (Plan 0005 D12) — wie beim Umkonfigurieren: Scheitert das
+            // Löschen oder bricht der Aufrufer davor ab, läuft der Upstream unverändert weiter. Ab
+            // hier ist das Entfernen beschlossen und wird auch ohne den Aufrufer zu Ende geführt;
+            // sonst bliebe ein gestoppter Server zurück, der nach dem Neustart wieder hochkommt.
+            await _store.RemoveAsync(id, ct).ConfigureAwait(false);
+            await StopLoopAsync(entry, drain, CancellationToken.None).ConfigureAwait(false);
             ReleaseDeferredLifecycle(entry);
             entry.Removed = true;
             _entries.TryRemove(id, out _);
-            await _store.RemoveAsync(id, ct).ConfigureAwait(false);
 
             // Mit dem Upstream gehen auch seine festgehaltenen Tool-Definitionen. Sonst bleiben
             // Pins auf einen Server zurück, den es nicht mehr gibt — sie wachsen mit jedem
             // Hinzufügen und Entfernen und stehen für immer in der Verwaltungsansicht.
             if (_pins is not null)
             {
-                await _pins.ForgetServerAsync(id, ct).ConfigureAwait(false);
+                await _pins.ForgetServerAsync(id, CancellationToken.None).ConfigureAwait(false);
             }
         }
         finally
@@ -247,21 +238,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
                     $"Upstream '{entry.Config.Slug}' ist deaktiviert und wird nicht verbunden. Erst aktivieren.");
             }
 
-            if (entry.State != UpstreamState.Failed)
+            // Kein wartender Loop heißt: verbunden, oder ein Versuch läuft bereits — dann geschieht
+            // nichts (Abschnitt 5.1). Für neue Zugangsdaten gibt es CredentialsChanged.
+            if (entry.State != UpstreamState.Failed || entry.Wake is not { } wake)
             {
-                return Task.FromResult(false);
-            }
-
-            // Ein Versuch läuft gerade. Er wird nicht doppelt angestoßen (false) — aber der Anstoß
-            // verpufft auch nicht: Scheitert der laufende Versuch, folgt der nächste ohne Frist. Der
-            // Fall ist der OAuth-Rückruf, der ein neues Token speichert, während der Versuch noch
-            // mit dem alten läuft; er wartete sonst die 15 min einer abgelehnten Anmeldung ab
-            // (Codex M2). Ein Erfolg verwirft den Vermerk (Publish).
-            if (entry.Wake is not { } wake)
-            {
-                var pending = NewWake();
-                pending.TrySetResult();
-                entry.Wake = pending;
                 return Task.FromResult(false);
             }
 
@@ -276,8 +256,65 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         }
     }
 
+    /// <inheritdoc />
+    public void CredentialsChanged(ServerId id)
+    {
+        if (!_entries.TryGetValue(id, out var entry))
+        {
+            return;
+        }
+
+        lock (entry.Gate)
+        {
+            if (!entry.Config.Enabled || entry.State is UpstreamState.Stopped or UpstreamState.Healthy
+                or UpstreamState.Degraded)
+            {
+                // Aus bleibt aus (Z2); eine stehende Verbindung braucht keinen Anstoß.
+                return;
+            }
+
+            if (entry.Wake is { } wake)
+            {
+                // Er wartet (oder ist gerade dabei): Die Frist endet jetzt.
+                if (wake.TrySetResult())
+                {
+                    entry.LoopWaiting = false;
+                }
+
+                return;
+            }
+
+            // Ein Versuch läuft — beim ersten Aufbau (Starting) oder als Wiederholung. Liest er noch
+            // das alte Token, scheitert er; dann folgt der nächste ohne Frist (Plan 0005 D11).
+            entry.CredentialsChanged = true;
+        }
+    }
+
+    /// <summary>
+    /// Das Wecksignal für das Warten nach einem Fehlversuch — schon ausgelöst, wenn während des
+    /// Versuchs neue Zugangsdaten gespeichert wurden. Nur unter <see cref="Entry.Gate"/>.
+    /// </summary>
+    private static TaskCompletionSource WakeAfterFailure(Entry entry)
+    {
+        var wake = NewWake();
+        if (entry.CredentialsChanged)
+        {
+            entry.CredentialsChanged = false;
+            wake.TrySetResult();
+        }
+
+        return wake;
+    }
+
     public async ValueTask DisposeAsync()
     {
+        // Der Zaun zuerst (Plan 0005 D12): Wer ab hier hinzufügt oder eine Verwaltungssperre will,
+        // wird abgewiesen, statt nach dem Aufräumen noch einen Loop zu starten.
+        if (Interlocked.Exchange(ref _disposing, 1) != 0)
+        {
+            return;
+        }
+
         foreach (var entry in _entries.Values)
         {
             // Jeder Upstream für sich: Scheitert das Stoppen des einen, laufen die übrigen sonst
@@ -355,6 +392,8 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             entry.Exhausted = false;
             entry.FailedSince = null;
             entry.Wake = null;
+            entry.CredentialsChanged = false;
+            entry.RenewalUnconfirmed = false;
         }
 
         var cts = new CancellationTokenSource();
@@ -397,7 +436,8 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             var idle = await connection.WaitForIdleAsync(drain.GracePeriod, ct).ConfigureAwait(false);
             if (!idle)
             {
-                Log.DrainExpired(_logger, entry.Config.Slug, drain.GracePeriod, connection.InFlightCount);
+                // Eine werfende Meldung darf den Abbruch nicht verhindern (Plan 0005 D4).
+                Quietly(() => Log.DrainExpired(_logger, entry.Config.Slug, drain.GracePeriod, connection.InFlightCount));
             }
         }
 
@@ -406,7 +446,15 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         {
             try
             {
-                await loop.ConfigureAwait(false);
+                // Begrenzt (Plan 0005 D4): Ein Loop, der seinen Abbruch ignoriert — etwa ein
+                // Lebenszeichen, das hängt —, hielte das Stoppen sonst für immer fest. Was er danach
+                // noch tut, kann nichts mehr veröffentlichen (Publish prüft den Abbruch).
+                await loop.WaitAsync(StopJoinTimeout, _time, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                Quietly(() => Log.UpstreamLoopHung(_logger, entry.Config.Slug, StopJoinTimeout));
+                Observe(loop);
             }
             catch (OperationCanceledException)
             {
@@ -464,7 +512,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
 
                     firstAttempt = false;
                     var session = await EstablishAsync(entry, _options.ConnectAttemptTimeout, ct).ConfigureAwait(false);
-                    Publish(entry, session, afterSessionLoss: false);
+                    Publish(entry, session, afterSessionLoss: false, ct);
                     await ServeAsync(entry, session.Connection, ct).ConfigureAwait(false);
                     continue;
                 }
@@ -578,8 +626,11 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         {
             return await work.WaitAsync(linked.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!work.IsCompleted)
+        catch (OperationCanceledException)
         {
+            // Der Versuch ist verlassen: Was er doch noch liefert — auch, wenn er im selben Augenblick
+            // fertig wurde, in dem die Frist ablief —, wird aufgeräumt und nie veröffentlicht
+            // (Plan 0005 D5). Ein gescheiterter oder abgebrochener Versuch hinterlässt nichts.
             _ = DisposeLateSessionAsync(entry, work);
             if (deadline.IsCancellationRequested && !ct.IsCancellationRequested)
             {
@@ -587,10 +638,6 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             }
 
             throw;
-        }
-        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !ct.IsCancellationRequested)
-        {
-            throw Expired(timeout);
         }
     }
 
@@ -628,6 +675,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     /// </summary>
     internal const int LateConnectWarningThreshold = 3;
 
+    /// <summary>So lange wartet das Stoppen nach dem Abbruch auf das Ende der Schleife (Plan 0005 D4).</summary>
+    internal static readonly TimeSpan StopJoinTimeout = TimeSpan.FromSeconds(10);
+
     /// <summary>
     /// Räumt eine Verbindung auf, die erst nach Ablauf der Frist doch noch zustande kam — und zählt,
     /// wie viele solcher Aufbauten je Upstream noch hängen (U7). Ein Connector, der seinen Abbruch
@@ -658,35 +708,53 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     }
 
     /// <summary>Macht eine aufgebaute Verbindung zur aktuellen und meldet den Wechsel.</summary>
-    private void Publish(Entry entry, Session session, bool afterSessionLoss)
+    private void Publish(Entry entry, Session session, bool afterSessionLoss, CancellationToken ct)
     {
         var now = _time.GetUtcNow();
         bool inventoryChanged;
         DateTimeOffset? failedSince;
         int attempts;
+        var refused = false;
         lock (entry.Gate)
         {
-            inventoryChanged = entry.Inventory is null || Signature(entry.Inventory) != Signature(session.Inventory);
-            entry.Connection = session.Connection;
-            entry.Inventory = session.Inventory;
-            entry.QuarantinedTools = session.Quarantined;
-            entry.ToolCount = session.Inventory.Tools.Count;
-            entry.LastHealthyAt = now;
-            entry.Wake = null;
-            entry.RebuildRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            // Mit der Verbindung wechselt auch der Platz für den Neuaufbau, im selben Schritt: Wer
-            // die neue Verbindung schon verliert, bevor ServeAsync den alten Neuaufbau abschließt,
-            // darf sich nicht ihm anschließen — der lieferte genau die Verbindung, die gerade starb
-            // (Codex M4). Den alten schließt ServeAsync gleich danach mit dem Ergebnis ab.
-            if (afterSessionLoss)
+            // Wird der Loop gerade gestoppt, veröffentlicht er nichts mehr (Plan 0005 D4): Die
+            // Prüfung steht unter derselben Sperre wie das Aufräumen beim Stoppen.
+            refused = ct.IsCancellationRequested;
+            inventoryChanged = false;
+            failedSince = null;
+            attempts = 0;
+            if (!refused)
             {
-                entry.Rebuild = null;
-            }
+                inventoryChanged = entry.Inventory is null || Signature(entry.Inventory) != Signature(session.Inventory);
+                entry.Connection = session.Connection;
+                entry.Inventory = session.Inventory;
+                entry.QuarantinedTools = session.Quarantined;
+                entry.ToolCount = session.Inventory.Tools.Count;
+                entry.LastHealthyAt = now;
+                entry.Wake = null;
+                entry.CredentialsChanged = false;
+                entry.RebuildRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            failedSince = entry.FailedSince;
-            entry.FailedSince = null;
-            attempts = entry.Attempt;
+                // Mit der Verbindung wechselt auch der Platz für den Neuaufbau, im selben Schritt: Wer
+                // die neue Verbindung schon verliert, bevor ServeAsync den alten Neuaufbau abschließt,
+                // darf sich nicht ihm anschließen — der lieferte genau die Verbindung, die gerade starb
+                // (Codex M4). Den alten schließt ServeAsync gleich danach mit dem Ergebnis ab.
+                if (afterSessionLoss)
+                {
+                    entry.Rebuild = null;
+                }
+
+                failedSince = entry.FailedSince;
+                entry.FailedSince = null;
+                attempts = entry.Attempt;
+            }
+        }
+
+        if (refused)
+        {
+            // Nicht veröffentlicht heißt: auch nicht offen gelassen.
+            _ = DisposeQuietlyAsync(session.Connection);
+            ct.ThrowIfCancellationRequested();
         }
 
         if (failedSince is { } since)
@@ -729,7 +797,12 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     /// gleich auf der neuen Verbindung ist eine abgelehnte Anmeldung (E2), ein Token, das eine Stunde
     /// später wieder abläuft, nicht.
     /// </summary>
-    private bool MayRenewCredentials(Entry entry, Exception exception)
+    /// <param name="healthySince">
+    /// Seit wann die stehende Verbindung ununterbrochen gesund ist (Plan 0005 D8): Zeit in Degraded
+    /// zählt nicht, und eine Erneuerung, deren Neuaufbau erst über gewöhnliche Wiederholungen gelang,
+    /// gilt bis zu einer gesunden Minute auf der so entstandenen Verbindung als nicht abgeschlossen.
+    /// </param>
+    private bool MayRenewCredentials(Entry entry, Exception exception, DateTimeOffset healthySince)
     {
         if (entry.Config.Http?.OAuth is null
             || !_connectors.TryGetValue(entry.Config.Kind, out var connector)
@@ -741,8 +814,8 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
 
         lock (entry.Gate)
         {
-            return entry.LastCredentialRenewalAt is not { } last
-                || _time.GetUtcNow() - last >= _options.HealthyResetWindow;
+            return !entry.RenewalUnconfirmed
+                || _time.GetUtcNow() - healthySince >= _options.HealthyResetWindow;
         }
     }
 
@@ -843,7 +916,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
                 entry.CredentialRenewalRequested = false;
                 if (renewing)
                 {
-                    entry.LastCredentialRenewalAt = _time.GetUtcNow();
+                    // Offen, bis eine Verbindung danach eine Minute ununterbrochen gesund war — auch
+                    // über gewöhnliche Wiederholungen hinweg (D8).
+                    entry.RenewalUnconfirmed = true;
                 }
             }
 
@@ -908,16 +983,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             connection = replacement.Connection;
             try
             {
-                Publish(entry, replacement, afterSessionLoss: true);
-                if (renewing)
-                {
-                    // Die gesunde Minute nach einer Erneuerung (V1) zählt ab der neuen Verbindung,
-                    // nicht ab dem Entschluss zu erneuern — der Neuaufbau selbst kann Sekunden dauern.
-                    lock (entry.Gate)
-                    {
-                        entry.LastCredentialRenewalAt = _time.GetUtcNow();
-                    }
-                }
+                Publish(entry, replacement, afterSessionLoss: true, ct);
 
                 Complete(entry, rebuild, pending => pending.TrySetResult(connection));
             }
@@ -981,7 +1047,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             {
                 return TakeRebuild(entry);
             }
-            catch (Exception ex) when (MayRenewCredentials(entry, ex))
+            catch (Exception ex) when (MayRenewCredentials(entry, ex, healthySince))
             {
                 // V1: abgewiesenes Token — ServeAsync erneuert es und verbindet sofort neu.
                 lock (entry.Gate)
@@ -1036,6 +1102,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
                 if (now - healthySince >= _options.HealthyResetWindow)
                 {
                     entry.Attempt = 0;
+
+                    // Eine Minute ununterbrochen gesund: Die letzte Erneuerung hat getragen (V1, D8).
+                    entry.RenewalUnconfirmed = false;
                 }
             }
 
@@ -1053,6 +1122,15 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
                 catch (UpstreamSessionLostException)
                 {
                     return TakeRebuild(entry);
+                }
+                catch (Exception ex) when (UpstreamFailure.Classify(ex) == UpstreamFailureKind.Authentication)
+                {
+                    // Eine abgewiesene Anmeldung bei der Katalogabfrage ist kein „Stand ist alt": Der
+                    // Upstream nimmt diese Zugangsdaten nicht mehr an, auch wenn das Lebenszeichen
+                    // noch durchkommt (Plan 0005 D10). Abschnitt 2 und 3: abgelehnte Anmeldung, feste
+                    // Frist. Die sofortige Erneuerung aus V1 bleibt dem Lebenszeichen vorbehalten.
+                    throw new UpstreamConnectionLostException(
+                        $"Katalogabfrage abgewiesen: {UpstreamFailure.Describe(ex, entry.Config)}", ex);
                 }
                 catch (Exception ex)
                 {
@@ -1130,7 +1208,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
                 ?? (entry.FailureKind == UpstreamFailureKind.None ? UpstreamFailureKind.Unreachable : entry.FailureKind);
             entry.NextAttemptAt = delay is { } wait ? now + wait : null;
             entry.Exhausted = delay is null;
-            entry.Wake ??= NewWake();
+            entry.Wake ??= WakeAfterFailure(entry);
             return new FailedTransition(entered, exhaustedNow, entry.FailureKind);
         }
     }
@@ -1322,7 +1400,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             }
 
             // Unter derselben Sperre wie die sichtbare Frist: Wer sie sieht, kann auch klicken (L1).
-            entry.Wake ??= NewWake();
+            entry.Wake ??= WakeAfterFailure(entry);
         }
 
         // Erst alle Audit-Zeilen, dann das Log. Die Audit-Zeilen gehen über RecordLoopLifecycle, das
@@ -1555,8 +1633,25 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     private async Task RefreshInventoryAsync(
         Entry entry, GuardedUpstreamConnection connection, CancellationToken ct, bool raiseAlways = false)
     {
+        // Eine Neuabfrage nach der anderen: Sonst überschriebe ein älterer Stand, der später fertig
+        // wird, das Inventar einer jüngeren Prüfung — samt ihrem Rückzug (Plan 0005 D3).
+        await entry.RediscoveryLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await RefreshInventoryCoreAsync(entry, connection, raiseAlways, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            entry.RediscoveryLock.Release();
+        }
+    }
+
+    private async Task RefreshInventoryCoreAsync(
+        Entry entry, GuardedUpstreamConnection connection, bool raiseAlways, CancellationToken ct)
+    {
         var inventory = await connection.DiscoverAsync(ct).ConfigureAwait(false);
-        var (screened, quarantined) = await ScreenInventoryAsync(entry, inventory, ct).ConfigureAwait(false);
+        var (screened, quarantined) = await ScreenInventoryAsync(entry, inventory, ct, standing: connection)
+            .ConfigureAwait(false);
 
         bool changed;
         lock (entry.Gate)
@@ -1606,8 +1701,14 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     /// Ohne Pin-Store passiert nichts — dann verhält sich der Supervisor wie vorher.
     /// </para>
     /// </summary>
+    /// <param name="standing">
+    /// Die stehende Verbindung, deren Katalog gerade neu abgefragt wird — ihr Inventar ist das, aus
+    /// dem ein geändertes Werkzeug sofort verschwinden muss. <c>null</c> beim Verbindungsaufbau: Dessen
+    /// Inventar ist noch nicht veröffentlicht, und das geltende gehört einer anderen Verbindung.
+    /// </param>
     private async Task<(UpstreamInventory Inventory, IReadOnlyList<string> Quarantined)>
-        ScreenInventoryAsync(Entry entry, UpstreamInventory inventory, CancellationToken ct)
+        ScreenInventoryAsync(
+            Entry entry, UpstreamInventory inventory, CancellationToken ct, GuardedUpstreamConnection? standing = null)
     {
         if (_pins is null)
         {
@@ -1623,6 +1724,14 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             if (verdict is ToolDefinitionVerdict.Changed)
             {
                 quarantined.Add(tool.Name);
+                // Sofort zurückziehen, nicht erst nach der Prüfung der übrigen (Plan 0005 D3): Hängt
+                // oder wirft eine davon, bliebe das geänderte Werkzeug sonst aufrufbar. Und vor dem
+                // Audit (C2): Weist das die Zeile ab, gilt der Rückzug trotzdem.
+                if (standing is not null)
+                {
+                    WithdrawTools(entry, [tool.Name], standing);
+                }
+
                 continue;
             }
 
@@ -1631,10 +1740,6 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
 
         if (quarantined.Count > 0)
         {
-            // Erst zurückziehen, dann berichten (Codex H2): Wirft die Audit-Zeile (Compliance-Modus,
-            // voller Kanal), stünde das geänderte Werkzeug sonst unter seinem alten Namen weiter im
-            // Inventar der stehenden Verbindung — und die Prüfung beim Aufruf ließe es durch.
-            WithdrawTools(entry, quarantined);
             foreach (var name in quarantined)
             {
                 Log.ToolDefinitionChanged(_logger, entry.Config.Slug, name);
@@ -1659,12 +1764,15 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     /// Nimmt Werkzeuge, deren Definition sich geändert hat, sofort aus dem geltenden Inventar — ehe
     /// irgendetwas anderes scheitern kann. Der Katalog erfährt es über <c>InventoryChanged</c>.
     /// </summary>
-    private void WithdrawTools(Entry entry, IReadOnlyList<string> names)
+    private void WithdrawTools(Entry entry, IReadOnlyList<string> names, GuardedUpstreamConnection standing)
     {
         bool withdrawn;
         lock (entry.Gate)
         {
-            withdrawn = entry.Inventory is { } current
+            // Nur aus dem Inventar der Verbindung, deren Katalog das gemeldet hat (Plan 0005 D5): Ist sie
+            // inzwischen ersetzt, hat die neue ihre Werkzeuge selbst geprüft.
+            withdrawn = ReferenceEquals(entry.Connection, standing)
+                && entry.Inventory is { } current
                 && current.Tools.Any(tool => names.Contains(tool.Name, StringComparer.Ordinal));
             if (withdrawn)
             {
@@ -1971,13 +2079,60 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     /// der nirgends mehr steht: Sie schriebe eine neue Version (der Server stünde nach dem Neustart
     /// wieder da) und startete einen Loop, den weder der Status noch das Herunterfahren sieht.
     /// </summary>
-    private static async Task AcquireAdminAsync(Entry entry, CancellationToken ct)
+    private async Task AcquireAdminAsync(Entry entry, CancellationToken ct)
     {
+        ThrowIfDisposing();
         await entry.AdminLock.WaitAsync(ct).ConfigureAwait(false);
         if (entry.Removed)
         {
             entry.AdminLock.Release();
             throw new KeyNotFoundException($"Upstream-Server {entry.Id} ist nicht registriert.");
+        }
+
+        // Hat hinter dem Herunterfahren gewartet: Ein Loop, der jetzt noch startete, liefe am
+        // Aufräumen vorbei weiter (Plan 0005 D12).
+        if (Volatile.Read(ref _disposing) != 0)
+        {
+            entry.AdminLock.Release();
+            ThrowIfDisposing();
+        }
+    }
+
+    private void ThrowIfDisposing()
+        => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposing) != 0, this);
+
+    /// <summary>
+    /// Trägt einen neuen Eintrag ein und startet seinen Loop — unter seiner Verwaltungssperre und
+    /// erst nach dem Blick auf das Herunterfahren. So sieht <see cref="DisposeAsync"/> den Eintrag
+    /// entweder und stoppt ihn (es wartet auf die Sperre), oder der Eintrag sieht das Herunterfahren
+    /// und startet nicht (Plan 0005 D12).
+    /// </summary>
+    private void Register(Entry entry, string collision)
+    {
+        entry.AdminLock.Wait(CancellationToken.None);
+        try
+        {
+            if (!_entries.TryAdd(entry.Id, entry))
+            {
+                throw new InvalidOperationException(collision);
+            }
+
+            if (Interlocked.CompareExchange(ref _disposing, 0, 0) != 0)
+            {
+                entry.Removed = true;
+                _entries.TryRemove(entry.Id, out _);
+                ThrowIfDisposing();
+            }
+
+            Raise(entry, UpstreamChangeKind.Added);
+            if (entry.Config.Enabled)
+            {
+                StartLoop(entry);
+            }
+        }
+        finally
+        {
+            entry.AdminLock.Release();
         }
     }
 
@@ -2048,6 +2203,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         /// <summary>Entfernt; gesetzt und gelesen nur unter <see cref="AdminLock"/>.</summary>
         public bool Removed { get; set; }
 
+        /// <summary>Eine Katalog-Neuabfrage nach der anderen (Plan 0005 D3).</summary>
+        public SemaphoreSlim RediscoveryLock { get; } = new(1, 1);
+
         public UpstreamServerConfig Config { get; set; }
 
         public ConfigVersionId Version { get; set; }
@@ -2093,8 +2251,15 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         /// <summary>Das Lebenszeichen hat ein abgewiesenes Token gemeldet; ServeAsync erneuert es (V1). Unter <see cref="Gate"/>.</summary>
         public bool CredentialRenewalRequested { get; set; }
 
-        /// <summary>Wann zuletzt wegen eines abgewiesenen Tokens erneuert wurde (V1). Unter <see cref="Gate"/>.</summary>
-        public DateTimeOffset? LastCredentialRenewalAt { get; set; }
+        /// <summary>
+        /// Eine Erneuerung wegen eines abgewiesenen Tokens (V1) hat noch nicht getragen: Seitdem war
+        /// keine Verbindung eine Minute ununterbrochen gesund. Ein 401 in diesem Zustand ist eine
+        /// abgelehnte Anmeldung (E2). Unter <see cref="Gate"/>; ein Eingriff (StartLoop) setzt zurück.
+        /// </summary>
+        public bool RenewalUnconfirmed { get; set; }
+
+        /// <summary>Neue Zugangsdaten sind gespeichert, während ein Versuch lief (Plan 0005 D11). Unter <see cref="Gate"/>.</summary>
+        public bool CredentialsChanged { get; set; }
 
         /// <summary>Zeitpunkte der Sitzungs-Neuaufbauten in den letzten fünf Minuten (V2); unter <see cref="Gate"/>.</summary>
         public Queue<DateTimeOffset> RecentRebuilds { get; } = new();
@@ -2223,6 +2388,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         [LoggerMessage(Level = LogLevel.Error,
             Message = "Upstream {Slug}: Die Wiederverbindungsschleife war an einem Fehler geendet. [{ExceptionTypes}]")]
         public static partial void UpstreamLoopFaulted(ILogger logger, string slug, string exceptionTypes);
+
+        [LoggerMessage(Level = LogLevel.Error,
+            Message = "Upstream {Slug}: Die Schleife endete nach dem Abbruch nicht binnen {Timeout} — sie beachtet ihren Abbruch nicht. Der Upstream gilt trotzdem als gestoppt.")]
+        public static partial void UpstreamLoopHung(ILogger logger, string slug, TimeSpan timeout);
 
         [LoggerMessage(Level = LogLevel.Warning,
             Message = "Upstream {Slug}: Drain-Frist {Grace} abgelaufen, {InFlight} Calls werden abgebrochen.")]

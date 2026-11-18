@@ -56,6 +56,13 @@ public sealed partial class AuditBatchWriter
         var reader = _sink.Reader;
         var batch = new List<AuditEvent>(_options.AuditMaxBatchSize);
 
+        // Ein Batch, der schon in die Kette gehängt ist, aber noch nicht geschrieben (Plan 0005
+        // D14). Bricht das Herunterfahren seine Schreibung ab, schreibt der Drain unten genau diese
+        // Zeilen — mit ihren Kettenstellen —, statt dieselben Ereignisse ein zweites Mal einzuhängen.
+        // Sonst stünden sie an späterer Stelle, und die übersprungenen Stellen sähen aus wie
+        // verlorene Zeilen, ohne dass ein Verlust gezählt wäre.
+        List<AuditEventRow>? pending = null;
+
         try
         {
             while (await reader.WaitToReadAsync(ct).ConfigureAwait(false))
@@ -82,13 +89,23 @@ public sealed partial class AuditBatchWriter
                     }
                 }
 
-                await WriteBatchAsync(batch, ct).ConfigureAwait(false);
-                batch.Clear();
+                if (batch.Count > 0)
+                {
+                    pending = Chain(batch);
+                    batch.Clear();
+                    await WriteRowsAsync(pending, ct).ConfigureAwait(false);
+                    pending = null;
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // Shutdown → Drain unten
+        }
+
+        if (pending is not null)
+        {
+            await WriteRowsAsync(pending, CancellationToken.None).ConfigureAwait(false);
         }
 
         while (_sink.Reader.TryRead(out var evt))
@@ -138,8 +155,12 @@ public sealed partial class AuditBatchWriter
         // gesperrten Schreib-Lock darf nicht dieselben Ereignisse ein zweites Mal einhängen —
         // sonst zählte der Abschnitt Positionen hoch, die nie in der Ablage landen, und der Prüfer
         // meldete Lücken, wo nur ein Wiederholungsversuch war.
-        var rows = Chain(batch);
+        await WriteRowsAsync(Chain(batch), ct).ConfigureAwait(false);
+    }
 
+    /// <summary>Schreibt schon verkettete Zeilen — mit den Versuchen aus <see cref="WriteBatchAsync"/>.</summary>
+    private async Task WriteRowsAsync(List<AuditEventRow> rows, CancellationToken ct)
+    {
         var attempt = 0;
         while (true)
         {
@@ -159,7 +180,7 @@ public sealed partial class AuditBatchWriter
             {
                 attempt++;
                 _sink.ReportPersistenceFailure();
-                Log.BatchWriteFailed(_logger, ex, batch.Count, _options.AuditMode.ToString(), attempt);
+                Log.BatchWriteFailed(_logger, ex, rows.Count, _options.AuditMode.ToString(), attempt);
 
                 if (_options.AuditMode == AuditDeliveryMode.BestEffort
                     && attempt >= _options.AuditMaxWriteAttempts)
@@ -167,8 +188,8 @@ public sealed partial class AuditBatchWriter
                     // Ab hier ist das Log nachweislich lückenhaft. Die Zahl geht in die
                     // Verlustauskunft der Senke und von dort in den Diagnosebericht — ein Verwerfen
                     // ohne Spur gibt es nicht mehr.
-                    _sink.ReportBatchDiscarded(batch.Count);
-                    Log.BatchDiscarded(_logger, batch.Count, attempt, _sink.UnwrittenCount);
+                    _sink.ReportBatchDiscarded(rows.Count);
+                    Log.BatchDiscarded(_logger, rows.Count, attempt, _sink.UnwrittenCount);
                     return;
                 }
 

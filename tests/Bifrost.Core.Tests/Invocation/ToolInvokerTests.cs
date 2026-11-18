@@ -192,6 +192,36 @@ public class ToolInvokerTests
         result.ErrorMessage.Should().Contain("abgelehnt").And.NotContain(secret);
     }
 
+    /// <summary>
+    /// Plan 0005 D1: Das vorgelegte OAuth-Token steht in keiner Konfiguration — maskiert wird es
+    /// trotzdem, auch im Zweig der Zeitüberschreitung.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_guarded_connection_masks_the_presented_token(bool timeout)
+    {
+        var token = "at-" + Guid.NewGuid().ToString("N");
+        var config = new UpstreamServerConfig(
+            "oauth", "OAuth", UpstreamTransportKind.StreamableHttp, true,
+            Http: new HttpTransportOptions(new Uri("https://upstream.invalid/mcp")));
+        Exception failure = timeout
+            ? new TimeoutException($"zu langsam mit {token}")
+            : new IOException($"{{\"jsonrpc\":\"2.0\",\"error\":{{\"message\":\"Bearer {token} abgelehnt\"}}}}");
+        var guarded = new GuardedUpstreamConnection(
+            new FakeUpstreamConnection { Id = _w.Server, CallException = failure, PresentedCredentials = [token] },
+            TimeSpan.FromSeconds(30), config: config);
+        _w.Supervisor.SetConnection(_w.Server, guarded);
+        var admin = _w.RegisterAdmin();
+
+        var result = await _w.Invoker.InvokeAsync(
+            InvokerTestWorld.Request(admin, _w.Echo, new { message = "hi" }), TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(timeout ? InvocationStatus.Timeout : InvocationStatus.UpstreamError);
+        result.ErrorMessage.Should().NotBeNullOrEmpty().And.NotContain(token);
+        _w.Audit.Events.Should().ContainSingle().Which.Detail.Should().NotContain(token);
+    }
+
     [Fact]
     public async Task Upstream_timeout_exception_maps_to_timeout()
     {

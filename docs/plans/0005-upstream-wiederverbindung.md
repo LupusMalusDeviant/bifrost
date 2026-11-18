@@ -196,7 +196,7 @@ bekommt zuerst eine Vertragsänderung (V-Pakete); gebaut wird es erst nach deine
 | V3 | S3, T4 | Verlustzählung des Audits: `IAuditSink` bekommt einen Weg, eine Zeile anzubieten, ohne dass eine Abweisung als Verlust zählt; verworfene Zeilen zählen dafür. | Vertrag abgenommen am 2026-11-18; `[Claude-prüfbar]`, erledigt |
 | V4 | S6 | Audit-Zeile der Rug-Pull-Prüfung bei vollem Audit: heute scheitert jeder Verbindungsversuch. Entscheidung: so lassen (fail-closed) oder zurückstellen wie die Zustandszeilen. | entschieden am 2026-11-18: so lassen (fail-closed), im Vertrag festgeschrieben |
 | V5 | M3 | Fremdtext unbekannter Ausnahmetypen: so lassen (P3 bereinigt, rund 140 Gateway-Stellen werfen Standardtypen mit nützlichem Text) oder nur noch Gateway-Text. | entschieden am 2026-11-18: so lassen, P3 verschärft (W14) |
-| — | außerhalb | `ToolInvoker` reicht Fremdtext eines gescheiterten Aufrufs an Agent und Audit (jetzt C7); der lastempfindliche p95-Test steht in der funktionalen Suite. Eigene Aufgabe, nicht Teil dieses Vertrags. | `[braucht Nutzer]` |
+| — | außerhalb | Der lastempfindliche p95-Test steht in der funktionalen Suite. Eigene Aufgabe, nicht Teil dieses Vertrags. (Der Fremdtext im `ToolInvoker` stand hier auch; er ist mit C7 und D1 in diesen Plan gewandert.) | `[braucht Nutzer]` |
 
 ### Codex-Review vom 2026-11-18 (`0140a3b..0a4543e`)
 
@@ -225,6 +225,32 @@ Aufruf nie doppelt).
 | C13 | M6 | Der W15-Test kann die doppelte Ausführung nicht entdecken (kein Event-Store, Sitzungen nach Neustart frisch). | neu | `[Claude-prüfbar]`, erledigt |
 | C14 | M7 | Beim Herunterfahren schließt das Audit vor dem letzten Nachreichen des Supervisors. | alt | `[Claude-prüfbar]`, erledigt |
 | C15 | L1 | Die volle Warteschlange zurückgestellter Zeilen verwirft die älteste, bevor sie nachreicht. | alt | `[Claude-prüfbar]`, erledigt |
+
+### Zweites Codex-Review vom 2026-11-18 (`385c3e4`)
+
+Codex (gpt-6.2-sol) hat 15 weitere Befunde gemeldet, die meisten tiefer an denselben Stellen. Auf
+deinen Wunsch sind alle behoben (Präzisierungen im Vertrag, Abschnitt 10, N9 – N19). „Alt" heißt:
+schon vor `0140a3b` so. Beim Test zu D13 fiel ein weiterer Fehler auf: Nach einer mit 404
+abgewiesenen Wiederaufnahme lief jeder weitere Aufruf in den beendeten SDK-Client und wurde als
+„nicht wiederholt" abgewiesen, bis das Lebenszeichen den Verlust bemerkte. Behoben unter D13 (N18).
+
+| # | Codex | Inhalt | Herkunft | Marke |
+|---|---|---|---|---|
+| D1 | H1 | Aufruffehler: Das vorgelegte OAuth-Token steht nicht in der Konfiguration und wird nicht maskiert; der Timeout-Zweig gibt `ex.Message` weiter; der äußere Fang loggt das Ausnahmeobjekt. | C7 | `[Claude-prüfbar]`, erledigt |
+| D2 | H2 | Rückruf: falscher `iss` steht wörtlich in der Antwort; das Request-Log von ASP.NET Core schreibt die Query samt Autorisierungscode. | C1 | `[Claude-prüfbar]`, erledigt |
+| D3 | H3 | Ein geändertes Werkzeug wird erst nach der Prüfung aller anderen zurückgezogen — hängt oder wirft eine davon, nie. | C2 | `[Claude-prüfbar]`, erledigt |
+| D4 | H4 | Das Stoppen wartet nach der Gnadenfrist unbegrenzt auf einen Loop, der seinen Abbruch ignoriert; eine werfende Drain-Meldung verhindert den Abbruch; späte Arbeit kann nach dem Stopp noch veröffentlichen. | alt | `[Claude-prüfbar]`, erledigt |
+| D5 | M1 | Rückzug geänderter Werkzeuge ohne Prüfung der Verbindung: Eine alte Neuabfrage oder ein verspäteter Aufbau trifft das Inventar einer neueren Verbindung; Aufräumen, wenn die Frist das Ergebnis knapp verliert. | C2, C6 | `[Claude-prüfbar]`, erledigt |
+| D6 | M2 | Die Erneuerungsanforderung markiert das nächste gelesene Token als abgewiesen, nicht das der abgewiesenen Verbindung. | C3 | `[Claude-prüfbar]`, erledigt |
+| D7 | M3 | `ReplaceAsync` erkennt das Token nur am Zeitpunkt des Erhalts; zwei Tokens mit gleichem Zeitpunkt überschreiben sich; die Standardumsetzung ist nicht atomar. | C10 | `[Claude-prüfbar]`, erledigt |
+| D8 | M4 | Die gesunde Minute aus V1 läuft über gewöhnliche Wiederholungen und Degraded hinweg nicht als ununterbrochene Gesundheit. | C8 | `[Claude-prüfbar]`, erledigt |
+| D9 | M5 | Eine Token-Erneuerung ohne neues Refresh-Token löscht das alte (RFC 6749 §6 erlaubt das Weglassen). | alt | `[Claude-prüfbar]`, erledigt |
+| D10 | M6 | Ein 401/403 bei der Katalogabfrage lässt den Upstream auf `Healthy`. | alt | `[Claude-prüfbar]`, erledigt |
+| D11 | M7 | N4 widerspricht Abschnitt 5.1 (`false` heißt „nichts getan"); der Rückruf während `Starting` verpufft weiter. Eigenes Signal für neue Zugangsdaten statt `ConnectNowAsync`. | C9 | `[Claude-prüfbar]`, erledigt |
+| D12 | M8 | Entfernen löscht erst im Speicher, dann in der Ablage (scheitert das, kehrt der Upstream nach dem Neustart zurück); beim Herunterfahren kann eine wartende Anfrage noch einen Loop starten. | C5 | `[Claude-prüfbar]`, erledigt |
+| D13 | M9 | Der SSE-Test verlangt keine Wiederaufnahme und keine ungültige Sitzung. | C13 | `[Claude-prüfbar]`, erledigt |
+| D14 | M10 | Bricht das Herunterfahren eine Audit-Schreibung ab, kann der Drain dieselben Zeilen an späterer Kettenstelle schreiben (Lücke ohne gezählten Verlust). | alt | `[Claude-prüfbar]`, erledigt |
+| D15 | L1 | Plan: C7 stand noch als „außerhalb". | Plan | `[Claude-prüfbar]`, erledigt |
 
 ## Prüfliste für den Nutzer
 

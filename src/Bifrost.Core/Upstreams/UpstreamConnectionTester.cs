@@ -85,8 +85,15 @@ public sealed class UpstreamConnectionTester : IUpstreamConnectionTester
     /// </summary>
     [NoHostExecution("Textersetzung auf einer Fehlermeldung; berührt weder Start noch Persistenz.")]
     public static string ScrubSecrets(string message, UpstreamServerConfig config)
+        => ScrubSecrets(message, config, presented: null);
+
+    /// <param name="presented">
+    /// Was die Verbindung dem Upstream zusätzlich vorgelegt hat und in keiner Konfiguration steht —
+    /// das OAuth-Zugriffstoken (Plan 0005 D1). Es wird wie ein Geheimwert der Konfiguration maskiert.
+    /// </param>
+    [NoHostExecution("Textersetzung auf einer Fehlermeldung; berührt weder Start noch Persistenz.")]
+    public static string ScrubSecrets(string message, UpstreamServerConfig? config, IReadOnlyList<string>? presented)
     {
-        ArgumentNullException.ThrowIfNull(config);
         if (string.IsNullOrEmpty(message))
         {
             return message;
@@ -94,10 +101,11 @@ public sealed class UpstreamConnectionTester : IUpstreamConnectionTester
 
         // Längste zuerst: Sonst zerlegt ein kurzer Wert einen längeren, der ihn enthält, und der
         // Rest des längeren bleibt stehen.
-        var candidates = Secrets(config)
+        var candidates = (config is null ? Enumerable.Empty<string>() : Secrets(config))
+            .Concat(presented ?? [])
             .Where(value => !string.IsNullOrEmpty(value))
             .SelectMany(Variants)
-            .Concat(SwitchSecrets(config))
+            .Concat(config is null ? Enumerable.Empty<(string Value, bool Prefixable)>() : SwitchSecrets(config))
             .Distinct()
             .OrderByDescending(candidate => candidate.Value.Length)
             .ToList();

@@ -94,6 +94,13 @@ if (!builder.Environment.IsDevelopment())
     builder.Logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Warning);
 }
 
+// Die Zeilen „Request starting/finished" schreiben die volle Adresse samt Abfragezeichenkette. Beim
+// Rückweg einer OAuth-Autorisierung steht darin der Autorisierungscode, und was ein Authorization
+// Server in die Adresse spiegelt, käme mit (Codex-Review, Plan 0005 D2). In jeder Umgebung, nicht
+// nur im Container. Wer die Zeilen zur Fehlersuche braucht, setzt
+// Logging__LogLevel__Microsoft_AspNetCore_Hosting_Diagnostics=Information — dann bewusst.
+builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+
 // ── Konfiguration (NFR-05: Env-Vars + Volume) ────────────────────────────────
 var dataDir = builder.Configuration["BIFROST_DATA_DIR"] ?? "data";
 Directory.CreateDirectory(dataDir);

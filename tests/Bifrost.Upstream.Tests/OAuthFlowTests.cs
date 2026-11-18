@@ -89,7 +89,8 @@ public sealed class OAuthFlowTests
 
         var act = () => OAuthFlow.EnsureIssuerMatches(attempt, "https://boese.example.com");
 
-        act.Should().Throw<OAuthDiscoveryException>().WithMessage("*erwartet war*");
+        var thrown = act.Should().Throw<OAuthDiscoveryException>().WithMessage("*nicht vom erwarteten Issuer*").Which;
+        thrown.Message.Should().NotContain("boese", "der empfangene Wert kommt aus der Adresszeile (Plan 0005 D2)");
     }
 
     /// <summary>
