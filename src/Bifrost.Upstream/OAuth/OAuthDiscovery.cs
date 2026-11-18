@@ -304,4 +304,10 @@ public sealed class OAuthDiscoveryException : Exception
 
     public OAuthDiscoveryException(string message, Exception innerException)
         : base(message, innerException) { }
+
+    /// <summary>
+    /// Der Statuscode, mit dem ein Token-Endpunkt abgelehnt hat — <c>null</c>, wenn die Ablehnung
+    /// nicht aus einer HTTP-Antwort stammt. Trennt „abgelehnt" (4xx) von „gerade gestört" (5xx).
+    /// </summary>
+    public System.Net.HttpStatusCode? StatusCode { get; init; }
 }

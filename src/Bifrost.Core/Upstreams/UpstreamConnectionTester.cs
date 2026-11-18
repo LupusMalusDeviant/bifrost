@@ -60,7 +60,9 @@ public sealed class UpstreamConnectionTester : IUpstreamConnectionTester
         }
         catch (Exception ex)
         {
-            return new UpstreamTestResult(false, 0, ScrubSecrets(ex.Message, config));
+            // Derselbe Weg wie Status, Audit und Log (M3): ohne Antwortkörper der Gegenstelle,
+            // ohne Geheimwerte, eine Zeile.
+            return new UpstreamTestResult(false, 0, UpstreamFailure.Describe(ex, config));
         }
     }
 
@@ -95,6 +97,7 @@ public sealed class UpstreamConnectionTester : IUpstreamConnectionTester
         var candidates = Secrets(config)
             .Where(value => !string.IsNullOrEmpty(value))
             .SelectMany(Variants)
+            .Concat(SwitchSecrets(config))
             .Distinct()
             .OrderByDescending(candidate => candidate.Value.Length)
             .ToList();
@@ -208,5 +211,51 @@ public sealed class UpstreamConnectionTester : IUpstreamConnectionTester
         {
             yield return credential;
         }
+
+        if (config.Http?.OAuth?.ClientSecret is { } clientSecret)
+        {
+            yield return clientSecret;
+        }
     }
+
+    /// <summary>
+    /// Geheimwerte in den Argumenten eines Stdio-Programms (M3): der Wert eines Schalters, dessen
+    /// Name nach einem Geheimnis klingt — <c>--token=…</c> ebenso wie <c>--api-key …</c>. Die
+    /// übrigen Argumente bleiben stehen: Paketnamen und Dateipfade machen eine Fehlermeldung erst
+    /// verständlich.
+    /// </summary>
+    private static IEnumerable<(string Value, bool Prefixable)> SwitchSecrets(UpstreamServerConfig config)
+    {
+        var arguments = config.Stdio?.Arguments ?? [];
+        for (var i = 0; i < arguments.Count; i++)
+        {
+            var argument = arguments[i];
+            if (string.IsNullOrEmpty(argument) || !argument.StartsWith('-'))
+            {
+                continue;
+            }
+
+            var equals = argument.IndexOf('=', StringComparison.Ordinal);
+            var name = equals > 0 ? argument[..equals] : argument;
+            if (!SecretSwitch(name))
+            {
+                continue;
+            }
+
+            if (equals > 0 && equals < argument.Length - 1)
+            {
+                yield return (argument[(equals + 1)..], true);
+            }
+            else if (equals < 0 && i + 1 < arguments.Count && !string.IsNullOrEmpty(arguments[i + 1]))
+            {
+                yield return (arguments[i + 1], true);
+            }
+        }
+    }
+
+    private static readonly string[] SecretSwitchWords =
+        ["token", "key", "secret", "password", "passwd", "pwd", "auth", "credential", "bearer"];
+
+    private static bool SecretSwitch(string name)
+        => SecretSwitchWords.Any(word => name.Contains(word, StringComparison.OrdinalIgnoreCase));
 }

@@ -129,8 +129,19 @@ internal static class UpstreamOAuthEndpoints
                 return Results.BadRequest(new { error = exception.Message });
             }
 
-            // Zurück in die Verwaltung; der Upstream startet beim nächsten Verbindungsaufbau mit
-            // dem Token.
+            // Wartet der Upstream gerade auf seinen nächsten Versuch — nach abgelehnter Anmeldung
+            // bis zu 15 min —, verbindet er jetzt mit dem neuen Token, statt die Frist abzusitzen
+            // (L5). Läuft er oder ist er abgeschaltet, ändert sich nichts.
+            try
+            {
+                await supervisor.ConnectNowAsync(attempt.Server, ct);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or KeyNotFoundException)
+            {
+                // Abgeschaltet oder inzwischen entfernt: Das Token liegt trotzdem bereit.
+            }
+
+            // Zurück in die Verwaltung.
             return Results.Redirect("/servers?oauth=verbunden");
         });
 

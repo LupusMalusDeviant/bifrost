@@ -239,6 +239,31 @@ public sealed class UpstreamReconnectIntegrationTests : IAsyncLifetime
         _upstream.Initializes.Should().Be(1, "und es wird auch keine Sitzung neu aufgebaut");
     }
 
+    /// <summary>
+    /// H2 (Plan 0005): Der Upstream startet neu, während ein Aufruf bei ihm läuft. Der SDK-Client
+    /// kann den Antwortstrom danach wieder aufnehmen wollen — wenn er dabei die Anfrage erneut
+    /// schickte, liefe das Werkzeug ein zweites Mal. Der Test zählt, was beim Upstream ankommt.
+    /// </summary>
+    [Fact]
+    public async Task A_call_running_while_the_upstream_restarts_is_executed_once()
+    {
+        var supervisor = CreateSupervisor(healthCheck: TimeSpan.FromMinutes(5));
+        var id = await AddHealthyAsync(supervisor, callTimeout: TimeSpan.FromSeconds(10));
+
+        var call = supervisor.GetConnection(id)!.CallToolAsync("stall", Hello, Ct);
+        await _upstream.Stalled.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+
+        await _upstream.StopAsync();
+        await _upstream.StartAsync();
+
+        var act = () => call;
+        await act.Should().ThrowAsync<Exception>("die Antwort kommt nie; der Aufrufer erfährt es");
+
+        // Dem SDK Zeit lassen, eine Wiederaufnahme zu versuchen, bevor gezählt wird.
+        await Task.Delay(TimeSpan.FromSeconds(2), Ct);
+        _upstream.Executions.Should().Be(1, "ein Aufruf, der schon beim Upstream war, läuft nicht ein zweites Mal");
+    }
+
     [Fact]
     public async Task A_tool_whose_definition_changed_across_the_rebuild_is_not_called()
     {

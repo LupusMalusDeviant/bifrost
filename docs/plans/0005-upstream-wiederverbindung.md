@@ -1,8 +1,8 @@
 # Plan 0005 — Selbsttätige Wiederverbindung von Upstreams
 
-**Stand:** 2026-11-16 · **Status:** W0 – W7 erledigt (Vertrag abgenommen am 2026-11-16, gebaut und
-getestet; die Präzisierung in Abschnitt 4 des Vertrags ist ebenfalls abgenommen); offen sind W8
-und W9
+**Stand:** 2026-11-18 · **Status:** W0 – W9 erledigt (gemergt als `0140a3b`, auf Badwolf
+abgenommen); von den Restarbeiten W10 – W13 und W15 – W17 erledigt, W14 und W18 teilweise;
+V1 – V5 liegen als Entwurf in Abschnitt 9 des Vertrags zur Abnahme
 **Vertrag:** [docs/contracts/upstream-wiederverbindung.md](../contracts/upstream-wiederverbindung.md)
 
 Gebaut wird erst, wenn der Vertrag abgenommen ist. Die Reihenfolge ist so gewählt, dass nach jedem
@@ -182,19 +182,20 @@ bekommt zuerst eine Vertragsänderung (V-Pakete); gebaut wird es erst nach deine
 
 | # | Funde | Inhalt | Marke |
 |---|---|---|---|
-| W10 | L1, L6, T2, U8, U9; Test-L2 | Zustandspflege im Loop: Wecksignal schon beim Verbuchen setzen und bei „Jetzt verbinden" sofort lösen (kein verpuffter Klick); Fehlerart in der Audit-Zeile zum Eintritt in `Failed` (Abschnitt 6); an der Obergrenze in Abschnitten warten und dazwischen nachreichen; wartende Aufrufer beim Stoppen mit „Verbindung verloren" statt einem unerklärten Abbruch; Kommentar und Logtext richtig. | `[Claude-prüfbar]` |
-| W11 | U4, T8, U6 | Werfende Log-Ausgabe: Meldungen in `Publish`, im Neuaufbau und in `DisposeQuietlyAsync` abfangen, die alte Verbindung im `finally` schließen; `DisposeAsync` je Upstream abgesichert; `ChangedHandlerThrew` nur mit Typnamen. | `[Claude-prüfbar]` |
-| W12 | L3, R6, U5 | Inventar: `RediscoverAsync` schreibt nur für die Verbindung, auf der es lief, und ein 404 dort fordert den Neuaufbau an; ein Aufruf an ein Werkzeug, das die Prüfung gerade zurückhält, wird auch beim ersten Versuch abgewiesen. | `[Claude-prüfbar]` |
-| W13 | L4, R7, U3 | Verwaltungsaktionen: Bei vollem Audit (Compliance) wird die Aktion verweigert, **bevor** sie gespeichert oder wirksam ist; ein abgeschalteter Upstream wird während des Drains nicht neu aufgebaut. | `[Claude-prüfbar]` |
-| W14 | M3 | Fremdtext: Für unbekannte Ausnahmetypen formuliert das Gateway den Grund selbst; der Verbindungstest über REST läuft durch dieselbe Bereinigung; die Maskierliste kennt auch OAuth-Token, OAuth-Client-Secret und Stdio-Argumente. | `[Claude-prüfbar]` |
-| W15 | H2 | SSE-Wiederaufnahme: Test, der „Aufruf läuft" mit „Sitzung fort" verbindet und genau eine Ausführung verlangt; Wiederaufnahme im SDK-Client für Upstreams abschalten, falls der Test sie zeigt. | `[Claude-prüfbar]` |
-| W16 | L5 | OAuth: Der Rückruf nach dem Autorisieren stößt sofort einen Verbindungsversuch an; ein 5xx des Token-Endpunkts zählt als „nicht erreichbar", nicht als abgelehnte Anmeldung. | `[Claude-prüfbar]` |
-| W17 | U7 | Späte Verbindungen eines Connectors, der seinen Abbruch ignoriert: je Upstream zählen, ab einer Schwelle einmal melden. | `[Claude-prüfbar]` |
-| W18 | L7 | Testlücken: freier Port, den ein paralleler Test belegen kann; WASI-Proben gegen den Stand auf `main` prüfen. | `[Claude-prüfbar]` |
+| W10 | L1, L6, T2, U8, U9; Test-L2 | Zustandspflege im Loop: Wecksignal schon beim Verbuchen setzen und bei „Jetzt verbinden" sofort lösen (kein verpuffter Klick); Fehlerart in der Audit-Zeile zum Eintritt in `Failed` (Abschnitt 6); an der Obergrenze in Abschnitten warten und dazwischen nachreichen; wartende Aufrufer beim Stoppen mit „Verbindung verloren" statt einem unerklärten Abbruch; Kommentar und Logtext richtig. | `[Claude-prüfbar]`, erledigt (`c44fc2d`) |
+| W11 | U4, T8, U6 | Werfende Log-Ausgabe: Meldungen in `Publish`, im Neuaufbau und in `DisposeQuietlyAsync` abfangen, die alte Verbindung im `finally` schließen; `DisposeAsync` je Upstream abgesichert; `ChangedHandlerThrew` nur mit Typnamen. | `[Claude-prüfbar]`, erledigt (`d88501d`) |
+| W12 | L3, R6, U5 | Inventar: `RediscoverAsync` schreibt nur für die Verbindung, auf der es lief, und ein 404 dort fordert den Neuaufbau an; ein Aufruf an ein Werkzeug, das die Prüfung gerade zurückhält, wird auch beim ersten Versuch abgewiesen. | `[Claude-prüfbar]`, erledigt |
+| W13 | L4, R7, U3 | Verwaltungsaktionen: Bei vollem Audit (Compliance) wird die Aktion verweigert, **bevor** sie gespeichert oder wirksam ist; ein abgeschalteter Upstream wird während des Drains nicht neu aufgebaut. | `[Claude-prüfbar]`, erledigt |
+| W14 | M3 | Fremdtext: Für unbekannte Ausnahmetypen formuliert das Gateway den Grund selbst; der Verbindungstest über REST läuft durch dieselbe Bereinigung; die Maskierliste kennt auch OAuth-Token, OAuth-Client-Secret und Stdio-Argumente. | `[Claude-prüfbar]`, teilweise: Verbindungstest und Maskierliste (OAuth-Client-Secret, geheimnisartige Stdio-Schalter) erledigt; Tokens stehen nicht in der Konfiguration und sind dort nicht maskierbar; „unbekannte Typen nur mit Gateway-Text" ist eine Vertragsfrage, siehe V5 |
+| W15 | H2 | SSE-Wiederaufnahme: Test, der „Aufruf läuft" mit „Sitzung fort" verbindet und genau eine Ausführung verlangt; Wiederaufnahme im SDK-Client für Upstreams abschalten, falls der Test sie zeigt. | `[Claude-prüfbar]`, erledigt: Der Test zeigt genau eine Ausführung; die Wiederaufnahme muss nicht abgeschaltet werden |
+| W16 | L5 | OAuth: Der Rückruf nach dem Autorisieren stößt sofort einen Verbindungsversuch an; ein 5xx des Token-Endpunkts zählt als „nicht erreichbar", nicht als abgelehnte Anmeldung. | `[Claude-prüfbar]`, erledigt; der Anstoß im Rückruf hat keinen eigenen Test (braucht einen echten Authorization Server, den es nur im Keycloak-Lauf gibt) |
+| W17 | U7 | Späte Verbindungen eines Connectors, der seinen Abbruch ignoriert: je Upstream zählen, ab einer Schwelle einmal melden. | `[Claude-prüfbar]`, erledigt |
+| W18 | L7 | Testlücken: freier Port, den ein paralleler Test belegen kann; WASI-Proben gegen den Stand auf `main` prüfen. | `[Claude-prüfbar]`, Port erledigt (gebundener Socket ohne `Listen`); die WASI-Proben sind offen |
 | V1 | H1 | OAuth-Token läuft auf stehender Verbindung ab → heute bis zu 15 min Ausfall. Vorschlag: ein 401 auf stehender Verbindung erneuert das Token und verbindet sofort einmal neu, erst ein zweites 401 gilt als abgelehnt (E2). | `[braucht Nutzer]` Vertrag, danach `[Claude-prüfbar]` |
 | V2 | L2 | Neuaufbauten der Sitzung ohne Bremse (Lastverteiler ohne feste Zuordnung). Vorschlag: mehr als drei Neuaufbauten in fünf Minuten gelten als Ausfall mit Backoff. | `[braucht Nutzer]` Vertrag, danach `[Claude-prüfbar]` |
 | V3 | S3, T4 | Verlustzählung des Audits: `IAuditSink` bekommt einen Weg, eine Zeile anzubieten, ohne dass eine Abweisung als Verlust zählt; verworfene Zeilen zählen dafür. | `[braucht Nutzer]` Vertrag, danach `[Claude-prüfbar]` |
 | V4 | S6 | Audit-Zeile der Rug-Pull-Prüfung bei vollem Audit: heute scheitert jeder Verbindungsversuch. Entscheidung: so lassen (fail-closed) oder zurückstellen wie die Zustandszeilen. | `[braucht Nutzer]` |
+| V5 | M3 | Fremdtext unbekannter Ausnahmetypen: so lassen (P3 bereinigt, rund 140 Gateway-Stellen werfen Standardtypen mit nützlichem Text) oder nur noch Gateway-Text. | `[braucht Nutzer]` |
 | — | außerhalb | `ToolInvoker` reicht Fremdtext eines gescheiterten Aufrufs an Agent und Audit; der lastempfindliche p95-Test steht in der funktionalen Suite. Eigene Aufgaben, nicht Teil dieses Vertrags. | `[braucht Nutzer]` |
 
 ## Prüfliste für den Nutzer

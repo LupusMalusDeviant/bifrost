@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Bifrost.Abstractions;
+using Bifrost.Core.Execution;
 using Bifrost.Core.Upstreams;
 using Xunit;
 
@@ -97,5 +98,52 @@ public class ConnectionTesterScrubTests
 
         UpstreamConnectionTester.ScrubSecrets("connection refused", config)
             .Should().Be("connection refused");
+    }
+
+    [Fact]
+    public void The_oauth_client_secret_is_removed()
+    {
+        var secret = "cs-" + Guid.NewGuid().ToString("N");
+        var config = new UpstreamServerConfig(
+            "o", "O", UpstreamTransportKind.StreamableHttp, true,
+            Http: new HttpTransportOptions(
+                new Uri("https://a.invalid/mcp"), OAuth: new UpstreamOAuthOptions("client", secret)));
+
+        UpstreamConnectionTester.ScrubSecrets($"invalid_client: {secret[..10]}… abgelehnt", config)
+            .Should().NotContain(secret[..10], "auch das Anfangsstück verrät den Wert (M3)");
+    }
+
+    [Fact]
+    public void Secret_values_in_stdio_arguments_are_removed_but_paths_stay()
+    {
+        var token = "tk-" + Guid.NewGuid().ToString("N");
+        var key = "ak-" + Guid.NewGuid().ToString("N");
+        var config = new UpstreamServerConfig(
+            "s", "S", UpstreamTransportKind.Stdio, true,
+            Stdio: new StdioTransportOptions("node", ["server.js", $"--token={token}", "--api-key", key, "--verbose"]));
+
+        var scrubbed = UpstreamConnectionTester.ScrubSecrets(
+            $"node server.js --token={token} --api-key {key}: Exit 1", config);
+
+        scrubbed.Should().NotContain(token).And.NotContain(key);
+        scrubbed.Should().Contain("server.js", "Pfade und Schalter machen die Meldung erst verständlich")
+            .And.Contain("--api-key");
+    }
+
+    [Fact]
+    public async Task The_connection_test_drops_the_response_body_of_the_upstream()
+    {
+        var connector = new FakeUpstreamConnector
+        {
+            DefaultBehavior = static (_, _) => throw new InvalidOperationException(
+                "Fehler beim Handshake. Response body: {\"echo\":\"geheim-aus-dem-upstream\"}"),
+        };
+        var tester = new UpstreamConnectionTester([connector], HostExecutionPolicy.AllowedByOperator());
+
+        var result = await tester.TestAsync(TestData.StdioConfig(), TestContext.Current.CancellationToken);
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().NotContain("geheim-aus-dem-upstream", "derselbe Weg wie Status und Audit (M3)")
+            .And.Contain("Fehler beim Handshake");
     }
 }

@@ -140,6 +140,29 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     scheitern zu lassen.
   - **Bemerkt das Lebenszeichen die verlorene Sitzung**, warten Aufrufe, die während des Neuaufbaus
     ankommen, auf die neue Verbindung — wie nach einem 404 auf einen Aufruf.
+  - **Nacharbeiten aus den Lesedurchgängen nach dem Merge** (Plan 0005, W10 – W18):
+    - „Jetzt verbinden" direkt im Moment des Ausfalls verpufft nicht mehr; die Audit-Zeile zum
+      Eintritt in `Failed` nennt die Fehlerart (`Failed (Unreachable)`); zurückgestellte
+      Audit-Zeilen kommen auch an einer ausdrücklich gesetzten Obergrenze ohne Eingriff an.
+    - Wer auf einen Neuaufbau wartet, während der Upstream abgeschaltet wird, bekommt „Verbindung
+      verloren" statt eines Abbruchs. Eine Sitzung, die während des Drains beim Abschalten verloren
+      geht, wird nicht mehr neu aufgebaut.
+    - Verwaltungsaktionen, die das Audit im Compliance-Modus nicht annimmt, sind jetzt wirklich
+      verweigert: nichts gespeichert, nichts wirksam. Bisher war ein abgeschalteter Upstream schon
+      aus, ein eingeschalteter stand ohne Loop auf `Starting`.
+    - Eine Log-Ausgabe, die wirft, kostet keine Verbindung mehr, und nach einem Neuaufbau wird die
+      alte Verbindung in jedem Fall geschlossen. Beim Beenden wird jeder Upstream für sich gestoppt.
+    - Die Katalog-Neuabfrage schreibt nur noch für die Verbindung, auf der sie lief; ein 404 dort
+      stößt den Neuaufbau an. Ein Aufruf an ein Werkzeug, das nicht im geprüften Katalog steht,
+      wird schon beim ersten Versuch abgewiesen.
+    - Ein gestörter Token-Endpunkt (5xx, 429) gilt beim Erneuern des OAuth-Tokens als „nicht
+      erreichbar" (kurze Frist) statt als abgelehnte Anmeldung (15 min). Nach dem Autorisieren
+      verbindet ein wartender Upstream sofort.
+    - Hängen drei Verbindungsaufbauten eines Upstreams nach ihrer Frist noch, sagt das Log einmal,
+      dass der Connector seinen Abbruch nicht beachtet.
+    - „Verbindung testen" bereinigt seine Fehlermeldung wie Status und Audit (ohne Antwortkörper);
+      maskiert werden zusätzlich das OAuth-Client-Secret und Werte geheimnisartiger Stdio-Schalter
+      (`--token=…`, `--api-key …`). Ein werfender Changed-Handler wird nur mit Typnamen geloggt.
 - **Fehlertexte eines Upstreams konnten dessen Antwortkörper enthalten.** Das MCP-SDK hängt an eine
   HTTP-Fehlermeldung den Antwortkörper der Gegenstelle an; der Text ging ungefiltert in `lastError`,
   Audit und Log. Zitiert ein Upstream in seiner 401-Antwort den vorgelegten Schlüssel, stand er dort.
