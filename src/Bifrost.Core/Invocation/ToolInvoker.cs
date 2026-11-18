@@ -142,7 +142,8 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         }
         catch (Exception ex)
         {
-            Log.UnexpectedPipelineError(_logger, ex, request.Tool.Value);
+            // Nur die Typnamen: Die Textform der Ausnahme trüge ihre ungefilterte Meldung ins Log (Plan 0005 D1).
+            Log.UnexpectedPipelineError(_logger, UpstreamFailure.TypeChain(ex), request.Tool.Value);
             result = Fail(InvocationStatus.UpstreamError,
                 $"Interner Gateway-Fehler: {UpstreamFailure.DescribeWithoutConfig(ex)}", started);
         }
@@ -267,7 +268,8 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         }
         catch (TimeoutException ex)
         {
-            return Fail(InvocationStatus.Timeout, ex.Message, started);
+            // Auch eine Zeitüberschreitung kann vom Upstream kommen und dessen Text tragen (Plan 0005 D1).
+            return Fail(InvocationStatus.Timeout, Reason(connection, ex), started);
         }
         catch (OperationCanceledException) when (overrideCts?.IsCancellationRequested == true && !ct.IsCancellationRequested)
         {
@@ -282,9 +284,7 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
             // Nicht die Meldung der Ausnahme: Sie kann den Antwortkörper des Upstreams tragen, und
             // der zitiert womöglich den vorgelegten Schlüssel. Sie ginge an den Agenten, in die
             // Vorgangsablage und in den Trace (Codex H7).
-            var reason = connection is GuardedUpstreamConnection { Config: { } config }
-                ? UpstreamFailure.Describe(ex, config)
-                : UpstreamFailure.DescribeWithoutConfig(ex);
+            var reason = Reason(connection, ex);
             return Fail(InvocationStatus.UpstreamError, $"Upstream-Fehler: {reason}", started);
         }
         }
@@ -308,6 +308,15 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     }
 
     /// <summary>Serverseitige Argument-Validierung — Pflicht für den Lazy-Pfad ohne Client-Schema (ADR-0003).</summary>
+    /// <summary>
+    /// Der Grund eines gescheiterten Aufrufs: über die echte Verbindung des Supervisors mit deren
+    /// Konfiguration und vorgelegtem Token bereinigt, sonst ohne Antwortkörper (Plan 0005 C7, D1).
+    /// </summary>
+    private static string Reason(IUpstreamConnection connection, Exception exception)
+        => connection is GuardedUpstreamConnection guarded
+            ? guarded.DescribeFailure(exception)
+            : UpstreamFailure.DescribeWithoutConfig(exception);
+
     private string? ValidateArguments(CatalogEntry entry, JsonElement args)
     {
         if (entry.InputSchema.ValueKind is not JsonValueKind.Object)
@@ -528,8 +537,8 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         public static partial void SchemaUnparseable(ILogger logger, string tool, string reason);
 
         [LoggerMessage(Level = LogLevel.Error,
-            Message = "Unerwarteter Fehler in der Invoker-Pipeline für {Tool}.")]
-        public static partial void UnexpectedPipelineError(ILogger logger, Exception ex, string tool);
+            Message = "Unerwarteter Fehler in der Invoker-Pipeline für {Tool}: {Types}.")]
+        public static partial void UnexpectedPipelineError(ILogger logger, string types, string tool);
 
         [LoggerMessage(Level = LogLevel.Information,
             Message = "Ergebnis von {Tool} gekürzt: {OriginalChars} → {TruncatedChars} Zeichen (FR-16).")]

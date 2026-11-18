@@ -51,6 +51,11 @@ public static class UpstreamFailure
     /// </summary>
     [NoHostExecution("Formuliert einen Text aus einer Ausnahme; startet nichts.")]
     public static string Describe(Exception exception, UpstreamServerConfig config)
+        => Describe(exception, config, presented: null);
+
+    /// <param name="presented">Vorgelegte Zugangsdaten, die in keiner Konfiguration stehen (OAuth-Token, Plan 0005 D1).</param>
+    [NoHostExecution("Formuliert einen Text aus einer Ausnahme; startet nichts.")]
+    public static string Describe(Exception exception, UpstreamServerConfig config, IReadOnlyList<string>? presented)
     {
         ArgumentNullException.ThrowIfNull(exception);
         ArgumentNullException.ThrowIfNull(config);
@@ -64,7 +69,7 @@ public static class UpstreamFailure
                 // Eine Zusage, die an einer Konvention hängt, ist keine.
                 case UpstreamAuthenticationException or UpstreamConnectionLostException
                     or UpstreamSessionLostException:
-                    return Clean(current.Message, config);
+                    return Clean(current.Message, config, presented);
 
                 case HttpRequestException { StatusCode: { } status }:
                     var code = (int)status;
@@ -80,7 +85,7 @@ public static class UpstreamFailure
             }
         }
 
-        return Clean(exception.Message, config);
+        return Clean(exception.Message, config, presented);
     }
 
     /// <summary>
@@ -107,7 +112,7 @@ public static class UpstreamFailure
     /// <see cref="Describe(Exception, UpstreamServerConfig)"/>.
     /// </summary>
     [NoHostExecution("Formuliert einen Text aus einer Ausnahme; startet nichts.")]
-    public static string DescribeWithoutConfig(Exception exception)
+    public static string DescribeWithoutConfig(Exception exception, IReadOnlyList<string>? presented = null)
     {
         ArgumentNullException.ThrowIfNull(exception);
         for (var current = exception; current is not null; current = current.InnerException)
@@ -121,12 +126,12 @@ public static class UpstreamFailure
             }
         }
 
-        return Shape(exception.Message);
+        return Shape(UpstreamConnectionTester.ScrubSecrets(CutBody(exception.Message), null, presented));
     }
 
     /// <summary>Fremdtext auf das bringen, was hinausdarf: kein Antwortkörper, keine Geheimwerte, eine Zeile.</summary>
     [NoHostExecution("Textbereinigung; startet nichts.")]
-    public static string Clean(string? message, UpstreamServerConfig config)
+    public static string Clean(string? message, UpstreamServerConfig config, IReadOnlyList<string>? presented = null)
     {
         ArgumentNullException.ThrowIfNull(config);
         if (string.IsNullOrWhiteSpace(message))
@@ -134,7 +139,7 @@ public static class UpstreamFailure
             return "Unbekannter Fehler.";
         }
 
-        return Shape(UpstreamConnectionTester.ScrubSecrets(CutBody(message), config));
+        return Shape(UpstreamConnectionTester.ScrubSecrets(CutBody(message), config, presented));
     }
 
     private static string CutBody(string message)

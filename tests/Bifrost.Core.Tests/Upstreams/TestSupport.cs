@@ -97,12 +97,15 @@ internal static class TestData
     }
 }
 
-internal sealed class FakeUpstreamConnection : IUpstreamConnection
+internal sealed class FakeUpstreamConnection : IUpstreamConnection, IPresentedCredentials
 {
     private int _disposeCount;
     private volatile bool _failPing;
 
     public ServerId Id { get; init; }
+
+    /// <summary>Was diese Verbindung dem Upstream vorgelegt hat — etwa ein OAuth-Token (Plan 0005 D1).</summary>
+    public IReadOnlyList<string> PresentedCredentials { get; init; } = [];
 
     public UpstreamInventory Inventory { get; set; } = TestData.InventoryWithTools("echo");
 
@@ -197,8 +200,12 @@ internal sealed class FakeUpstreamConnection : IUpstreamConnection
     /// </summary>
     public Exception? PingException { get; set; }
 
+    /// <summary>Wenn gesetzt, wartet das Lebenszeichen darauf — ohne seinen Abbruch zu beachten.</summary>
+    public Task? PingHang { get; set; }
+
     public Task PingAsync(CancellationToken ct)
-        => PingException is { } ex
+        => PingHang is { } hang ? hang
+        : PingException is { } ex
             ? Task.FromException(ex)
             : _failPing ? Task.FromException(new IOException("Verbindung tot (Test).")) : Task.CompletedTask;
 

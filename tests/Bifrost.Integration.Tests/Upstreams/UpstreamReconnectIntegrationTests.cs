@@ -272,12 +272,64 @@ public sealed class UpstreamReconnectIntegrationTests : IAsyncLifetime
     /// <summary>
     /// Codex M6: Derselbe Fall mit einem Upstream, der Antwortströme wieder aufnehmen kann und dabei
     /// läuft — nur der Strom des Aufrufs reißt ab. Hier könnte eine erneut geschickte Anfrage
-    /// tatsächlich ausgeführt werden. Verlangt: genau eine Anfrage, genau eine Ausführung.
+    /// tatsächlich ausgeführt werden. Verlangt: genau eine Anfrage, genau eine Ausführung — und
+    /// dass der Fall wirklich eintritt: Das SDK nimmt den Strom mit <c>Last-Event-ID</c> wieder auf
+    /// (Plan 0005 D13, gemessen am 2026-11-18). Ohne Wiederaufnahme bewiese der Test nichts.
     /// </summary>
     [Fact]
     public async Task A_call_whose_stream_breaks_on_a_resumable_upstream_is_executed_once()
     {
-        await using var upstream = new ScriptedMcpUpstream { Resumable = true };
+        var (upstream, supervisor, id) = await ResumableAsync();
+        await using var _ = upstream;
+
+        var call = supervisor.GetConnection(id)!.CallToolAsync("stall", Hello, Ct);
+        await upstream.Stalled.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        upstream.AbortCallInFlight();
+
+        await call.Invoking(t => t).Should().ThrowAsync<Exception>("die Antwort kommt nie");
+        await Task.Delay(TimeSpan.FromSeconds(2), Ct);
+
+        upstream.Resumes.Should().BeGreaterThan(0, "der Fall, um den es geht: Der Client nimmt den Strom wieder auf");
+        upstream.ToolCallPosts.Should().Be(1, "die Anfrage wurde nicht erneut geschickt");
+        upstream.Executions.Should().Be(1, "das Werkzeug lief genau einmal");
+    }
+
+    /// <summary>
+    /// D13: Derselbe Abriss, aber der Upstream kennt die Sitzung inzwischen nicht mehr — die
+    /// Wiederaufnahme scheitert mit 404. Auch dann wird der Aufruf weder neu geschickt noch ein
+    /// zweites Mal ausgeführt, und der Upstream bleibt danach benutzbar.
+    /// </summary>
+    [Fact]
+    public async Task A_call_whose_session_is_gone_during_the_resume_is_executed_once()
+    {
+        var (upstream, supervisor, id) = await ResumableAsync();
+        await using var _ = upstream;
+
+        var call = supervisor.GetConnection(id)!.CallToolAsync("stall", Hello, Ct);
+        await upstream.Stalled.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        upstream.RevokeSessions();
+        upstream.AbortCallInFlight();
+
+        await call.Invoking(t => t).Should().ThrowAsync<Exception>("die Antwort kommt nie");
+        await Task.Delay(TimeSpan.FromSeconds(2), Ct);
+
+        upstream.Resumes.Should().BeGreaterThan(0, "die Wiederaufnahme wurde versucht und an der Sitzung abgewiesen");
+        upstream.ToolCallPosts.Should().Be(1, "die Anfrage wurde nicht erneut geschickt");
+        upstream.Executions.Should().Be(1, "das Werkzeug lief genau einmal");
+
+        // Danach ist der Upstream sofort wieder benutzbar (D13): Der Client der alten Sitzung ist
+        // tot, und ein Aufruf, der erst jetzt beginnt, hat das Gateway nie verlassen — er baut die
+        // Sitzung neu auf, statt mit „nicht wiederholt" abgewiesen zu werden.
+        var next = await supervisor.GetConnection(id)!.CallToolAsync("echo", Hello, Ct);
+        next.ValueKind.Should().NotBe(System.Text.Json.JsonValueKind.Undefined);
+        upstream.Initializes.Should().Be(2, "genau ein Neuaufbau");
+        upstream.ToolCallPosts.Should().Be(2, "der abgerissene Aufruf blieb bei einer Anfrage");
+        upstream.Executions.Should().Be(2, "nur der neue Aufruf kam dazu");
+    }
+
+    private async Task<(ScriptedMcpUpstream Upstream, UpstreamSupervisor Supervisor, ServerId Id)> ResumableAsync()
+    {
+        var upstream = new ScriptedMcpUpstream { Resumable = true };
         await upstream.StartAsync();
         var supervisor = CreateSupervisor(healthCheck: TimeSpan.FromMinutes(5));
         var config = Config(TimeSpan.FromSeconds(5)) with
@@ -287,17 +339,7 @@ public sealed class UpstreamReconnectIntegrationTests : IAsyncLifetime
         };
         var id = await supervisor.AddAsync(config, Ct);
         await IntegrationSupport.WaitUntilAsync(() => supervisor.GetStatus(id)?.State == UpstreamState.Healthy);
-
-        var call = supervisor.GetConnection(id)!.CallToolAsync("stall", Hello, Ct);
-        await upstream.Stalled.WaitAsync(TimeSpan.FromSeconds(15), Ct);
-        upstream.AbortCallInFlight();
-
-        await call.Invoking(t => t).Should().ThrowAsync<Exception>("die Antwort kommt nie");
-        await Task.Delay(TimeSpan.FromSeconds(2), Ct);
-
-        upstream.ToolCallPosts.Should().Be(1, "die Anfrage wurde nicht erneut geschickt");
-        upstream.Executions.Should().Be(1, "das Werkzeug lief genau einmal");
-        TestContext.Current.SendDiagnosticMessage($"Wiederaufnahmen mit Last-Event-ID: {upstream.Resumes}");
+        return (upstream, supervisor, id);
     }
 
     [Fact]

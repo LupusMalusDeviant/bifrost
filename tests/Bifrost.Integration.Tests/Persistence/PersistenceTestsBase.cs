@@ -1112,6 +1112,15 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         (await store.ReplaceAsync(read, Token(3), ct)).Should().BeFalse();
         (await store.GetAsync(server, ct))!.AccessToken.Should().Be(refreshed.AccessToken);
 
+        // Plan 0005 D7: Ein neues Token mit demselben Zeitpunkt wie das gelesene (zweites Autorisieren
+        // in derselben Sekunde, grobe Uhr) wird trotzdem nicht für das gelesene gehalten.
+        var current = (await store.GetAsync(server, ct))!;
+        var sameTime = current with { AccessToken = "at-" + Guid.NewGuid().ToString("N") };
+        await store.SaveAsync(sameTime, ct);
+        (await store.ReplaceAsync(current, Token(9), ct)).Should().BeFalse(
+            "gespeichert ist inzwischen ein anderes Token, auch wenn es denselben Zeitpunkt trägt");
+        (await store.GetAsync(server, ct))!.AccessToken.Should().Be(sameTime.AccessToken);
+
         // Nach dem Trennen legt eine späte Erneuerung kein Token wieder an.
         await store.RemoveAsync(server, ct);
         (await store.ReplaceAsync(refreshed, Token(4), ct)).Should().BeFalse();

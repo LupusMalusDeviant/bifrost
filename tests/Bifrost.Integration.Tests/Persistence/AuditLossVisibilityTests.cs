@@ -144,6 +144,47 @@ public sealed class AuditLossVisibilityTests
         sink.IsHealthy.Should().BeFalse("im Compliance-Modus ist ein Verlust ein Befund");
     }
 
+    /// <summary>
+    /// Plan 0005 D14: Bricht das Herunterfahren eine Schreibung ab, schreibt der Drain denselben
+    /// Batch an seinen Kettenstellen — keine übersprungene Stelle, die wie ein Verlust aussähe.
+    /// </summary>
+    [Fact]
+    public async Task A_write_cancelled_by_shutdown_keeps_its_chain_positions()
+    {
+        var name = $"file:{Guid.NewGuid():N}?mode=memory&cache=shared";
+        await using var keepAlive = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={name}");
+        await keepAlive.OpenAsync(TestContext.Current.CancellationToken);
+        var factory = new FailingDbContextFactory(failuresBeforeSuccess: 1, dataSource: name);
+        var sink = new ChannelAuditSink(capacity: 100, mode: AuditDeliveryMode.Compliance);
+        var options = new PersistenceOptions
+        {
+            AuditMode = AuditDeliveryMode.Compliance,
+            AuditFlushInterval = TimeSpan.FromMilliseconds(10),
+            // Lang: Der Abbruch soll die Schreibung mitten im Warten auf den zweiten Versuch treffen.
+            AuditRetryInterval = TimeSpan.FromMinutes(5),
+        };
+        using var shutdown = new CancellationTokenSource();
+
+        sink.Record(NewEvent("erstes"));
+        var run = new AuditBatchWriter(sink, factory, options).RunAsync(shutdown.Token);
+        await IntegrationSupport.WaitUntilAsync(() => factory.Attempts == 1, because: "der erste Versuch ist gescheitert");
+        sink.Record(NewEvent("zweites"));
+        sink.Complete();
+        await shutdown.CancelAsync();
+        await run.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
+        await using var db = factory.CreateDbContext();
+        var rows = await db.AuditEvents.OrderBy(r => r.ChainIndex).ToListAsync(TestContext.Current.CancellationToken);
+        rows.Select(r => (r.ChainIndex, r.Tool)).Should().Equal(
+            [(0L, "erstes"), (1L, "zweites")],
+            "der abgebrochene Batch steht an der Stelle, an der er eingehängt war, und nichts dazwischen fehlt");
+        rows[1].PreviousHash.Should().Be(rows[0].EntryHash);
+    }
+
+    private static AuditEvent NewEvent(string tool) => new(
+        DateTimeOffset.UtcNow, IdentityId.New(), CallOrigin.Mcp, AuditEventKind.ToolCall,
+        ServerId.New(), tool, InvocationStatus.Success, null, 1, 2, TimeSpan.FromMilliseconds(1));
+
     private static AuditEvent NewEvent() => new(
         DateTimeOffset.UtcNow, IdentityId.New(), CallOrigin.Mcp, AuditEventKind.ToolCall,
         ServerId.New(), "srv__tool", InvocationStatus.Success, null, 1, 2, TimeSpan.FromMilliseconds(1));
@@ -156,10 +197,14 @@ public sealed class AuditLossVisibilityTests
     private sealed class FailingDbContextFactory : IDbContextFactory<BifrostDbContext>
     {
         private readonly int _failuresBeforeSuccess;
+        private readonly string? _dataSource;
         private int _attempts;
 
-        public FailingDbContextFactory(int failuresBeforeSuccess = int.MaxValue)
-            => _failuresBeforeSuccess = failuresBeforeSuccess;
+        public FailingDbContextFactory(int failuresBeforeSuccess = int.MaxValue, string? dataSource = null)
+        {
+            _failuresBeforeSuccess = failuresBeforeSuccess;
+            _dataSource = dataSource;
+        }
 
         public int Attempts => Volatile.Read(ref _attempts);
 
@@ -173,7 +218,9 @@ public sealed class AuditLossVisibilityTests
 
             // Der gelungene Versuch: eine Datenbank im Arbeitsspeicher, die den Batch annimmt.
             var options = new DbContextOptionsBuilder<BifrostDbContext>()
-                .UseBifrostDatabase(BifrostDbOptions.Sqlite, $"Data Source=file:{Guid.NewGuid():N}?mode=memory&cache=shared")
+                .UseBifrostDatabase(
+                    BifrostDbOptions.Sqlite,
+                    $"Data Source={_dataSource ?? $"file:{Guid.NewGuid():N}?mode=memory&cache=shared"}")
                 .Options;
             var db = new BifrostDbContext(options);
             db.Database.EnsureCreated();

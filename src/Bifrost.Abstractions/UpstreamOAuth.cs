@@ -72,25 +72,13 @@ public interface IUpstreamOAuthTokenStore
     /// — und nach einem Trennen stünde der Upstream wieder autorisiert da (Codex M3).
     /// </para>
     /// <para>
-    /// Die Standardumsetzung liest und schreibt nacheinander und ist darum nicht atomar; eine Ablage
-    /// mit Datenbank setzt das in einem Schritt um.
+    /// Muss atomar sein — es gibt bewusst keine Standardumsetzung aus Lesen und Schreiben, denn
+    /// zwischen beiden läge genau die Lücke, die diese Methode schließen soll (Plan 0005 D7). Erkannt
+    /// wird „noch dasselbe Token" an <see cref="UpstreamOAuthToken.ObtainedAt"/>: Jede Ablage sorgt
+    /// dafür, dass jedes gespeicherte Token einen anderen Zeitpunkt trägt als sein Vorgänger.
     /// </para>
     /// </summary>
-    async Task<bool> ReplaceAsync(UpstreamOAuthToken expected, UpstreamOAuthToken replacement, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(expected);
-        ArgumentNullException.ThrowIfNull(replacement);
-        var current = await GetAsync(expected.Server, ct).ConfigureAwait(false);
-        if (current is null
-            || current.AccessToken != expected.AccessToken
-            || current.ObtainedAt != expected.ObtainedAt)
-        {
-            return false;
-        }
-
-        await SaveAsync(replacement, ct).ConfigureAwait(false);
-        return true;
-    }
+    Task<bool> ReplaceAsync(UpstreamOAuthToken expected, UpstreamOAuthToken replacement, CancellationToken ct);
 }
 
 /// <summary>

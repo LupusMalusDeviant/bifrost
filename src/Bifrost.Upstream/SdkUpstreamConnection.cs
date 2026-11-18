@@ -11,7 +11,7 @@ namespace Bifrost.Upstream;
 /// oberhalb dieser Klasse existieren keine SDK-Typen (DON'T Nr. 1). Discovery ist teil-tolerant:
 /// Tools sind Pflicht, Resources/Prompts werden nur gelistet, wenn der Server die Capability meldet.
 /// </summary>
-internal sealed class SdkUpstreamConnection : IUpstreamConnection
+internal sealed class SdkUpstreamConnection : IUpstreamConnection, IPresentedCredentials
 {
     private static readonly string[] ForwardedNotifications =
     [
@@ -36,11 +36,15 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection
     /// </summary>
     private readonly bool _hadSession;
 
-    public SdkUpstreamConnection(ServerId id, McpClient client)
+    /// <summary>Das OAuth-Token, das diese Verbindung vorlegt — es steht in keiner Konfiguration (Plan 0005 D1).</summary>
+    public IReadOnlyList<string> PresentedCredentials { get; }
+
+    public SdkUpstreamConnection(ServerId id, McpClient client, IReadOnlyList<string>? presented = null)
     {
         Id = id;
         _client = client;
         _hadSession = client.SessionId is not null;
+        PresentedCredentials = presented ?? [];
         foreach (var method in ForwardedNotifications)
         {
             _registrations.Add(_client.RegisterNotificationHandler(method, (notification, _) =>
@@ -121,6 +125,18 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection
     /// </summary>
     private async Task<T> WithSessionCheckAsync<T>(Func<Task<T>> call)
     {
+        // Ist der Client der Sitzung schon beendet, verlässt diese Anfrage das Gateway gar nicht
+        // erst — sie darf über eine neue Sitzung laufen (Vertrag Abschnitt 4, „nach dem 404
+        // begonnen"). Gemessen (Plan 0005 D13): Weist der Upstream die Wiederaufnahme eines
+        // abgerissenen Antwortstroms mit 404 ab, endet der Client, ohne dass ein Aufruf ein 404
+        // sähe; der abgerissene endet mit „completed without a reply", jeder weitere mit einem
+        // nackten Abbruch.
+        if (_client.Completion.IsCompleted && (_hadSession || _client.SessionId is not null))
+        {
+            throw new UpstreamSessionLostException(
+                "Der Client der Sitzung zum Upstream ist beendet; die Anfrage wurde nicht gesendet.");
+        }
+
         try
         {
             return await call().ConfigureAwait(false);

@@ -164,6 +164,24 @@ public sealed class OAuthTokenEndpointFailureTests
         thrown.Message.Should().Contain("temporarily_unavailable", "ein bekannter Fehlercode darf stehen");
     }
 
+    /// <summary>
+    /// Plan 0005 D9: Nennt die Erneuerung kein neues Refresh-Token (RFC 6749 §6 erlaubt das), gilt
+    /// das alte weiter — sonst ließe sich das Token nur ein einziges Mal erneuern.
+    /// </summary>
+    [Fact]
+    public async Task A_refresh_without_a_new_refresh_token_keeps_the_old_one()
+    {
+        using var server = new AuthorizationServer(HttpStatusCode.OK) { OmitRefreshToken = true };
+        var token = ExpiredToken(new ServerId(Guid.NewGuid()), server.Issuer);
+
+        var refreshed = await OAuthFlow.RefreshAsync(
+            token, new Uri(server.Issuer, "/token"), new UpstreamOAuthOptions("gateway", AllowPrivateTargets: true),
+            "http://127.0.0.1/mcp", DateTimeOffset.UtcNow, TestContext.Current.CancellationToken);
+
+        refreshed.AccessToken.Should().NotBe(token.AccessToken);
+        refreshed.RefreshToken.Should().Be(token.RefreshToken);
+    }
+
     [Theory]
     [InlineData("invalid_grant", "invalid_grant")]
     [InlineData("""{"error":"invalid_client","error_description":"x"}""", "invalid_client")]
@@ -221,30 +239,49 @@ public sealed class OAuthTokenEndpointFailureTests
             _tokens.Remove(server);
             return Task.CompletedTask;
         }
+
+        public Task<bool> ReplaceAsync(UpstreamOAuthToken expected, UpstreamOAuthToken replacement, CancellationToken ct)
+        {
+            lock (_tokens)
+            {
+                if (!_tokens.TryGetValue(expected.Server, out var current)
+                    || current.AccessToken != expected.AccessToken || current.ObtainedAt != expected.ObtainedAt)
+                {
+                    return Task.FromResult(false);
+                }
+
+                _tokens[expected.Server] = replacement;
+                return Task.FromResult(true);
+            }
+        }
     }
 
     /// <summary>Metadaten unter dem Well-Known-Pfad, ein Token-Endpunkt mit festem Fehlerstatus.</summary>
     private sealed class AuthorizationServer : IDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly HttpListener _listener = null!;
 
         public AuthorizationServer(HttpStatusCode tokenStatus)
         {
             // Den Port vergibt das Betriebssystem erst beim Binden; ein vorher erfragter freier
             // Port kann bis dahin belegt sein. Darum: versuchen, bis einer frei bleibt.
+            // Ein HttpListener, dessen Start scheitert, ist danach entsorgt — jeder Versuch braucht
+            // einen neuen (im vollen Testlauf als ObjectDisposedException gemessen).
             for (var attempt = 0; ; attempt++)
             {
                 var port = Random.Shared.Next(20000, 60000);
-                _listener.Prefixes.Clear();
-                _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+                var listener = new HttpListener();
+                listener.Prefixes.Add($"http://127.0.0.1:{port}/");
                 try
                 {
-                    _listener.Start();
+                    listener.Start();
+                    _listener = listener;
                     Issuer = new Uri($"http://127.0.0.1:{port}");
                     break;
                 }
                 catch (HttpListenerException) when (attempt < 20)
                 {
+                    listener.Close();
                 }
             }
 
@@ -282,8 +319,9 @@ public sealed class OAuthTokenEndpointFailureTests
                     else if (tokenStatus == HttpStatusCode.OK)
                     {
                         OnTokenRequest?.Invoke();
-                        Write(context, HttpStatusCode.OK,
-                            $$"""{"access_token":"at-{{Guid.NewGuid():N}}","refresh_token":"rt-{{Guid.NewGuid():N}}","expires_in":3600}""");
+                        Write(context, HttpStatusCode.OK, OmitRefreshToken
+                            ? $$"""{"access_token":"at-{{Guid.NewGuid():N}}","expires_in":3600}"""
+                            : $$"""{"access_token":"at-{{Guid.NewGuid():N}}","refresh_token":"rt-{{Guid.NewGuid():N}}","expires_in":3600}""");
                     }
                     else
                     {
@@ -302,6 +340,9 @@ public sealed class OAuthTokenEndpointFailureTests
 
         /// <summary>Läuft, während der Token-Endpunkt antwortet — die Lücke, in der andere schreiben.</summary>
         public Action? OnTokenRequest { get; set; }
+
+        /// <summary>Antwortet ohne neues Refresh-Token — RFC 6749 §6 erlaubt das.</summary>
+        public bool OmitRefreshToken { get; set; }
 
         public void Dispose()
         {

@@ -80,7 +80,12 @@ public sealed class UpstreamOAuthTokenStore : IUpstreamOAuthTokenStore
             new Secrets(token.AccessToken, token.RefreshToken, token.Scopes)));
         row.Issuer = token.Issuer;
         row.ExpiresAtTicks = token.ExpiresAt?.UtcTicks;
-        row.ObtainedAtTicks = token.ObtainedAt.UtcTicks;
+        // Der Zeitpunkt ist zugleich die Kennung des gespeicherten Tokens (ReplaceAsync). Trägt das
+        // neue denselben wie das alte, wird er um einen Tick weitergestellt — sonst hielte eine späte
+        // Erneuerung das neue Token für das, das sie gelesen hat (Plan 0005 D7).
+        row.ObtainedAtTicks = row.ObtainedAtTicks >= token.ObtainedAt.UtcTicks && db.Entry(row).State != EntityState.Added
+            ? row.ObtainedAtTicks + 1
+            : token.ObtainedAt.UtcTicks;
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
@@ -97,7 +102,8 @@ public sealed class UpstreamOAuthTokenStore : IUpstreamOAuthTokenStore
             new Secrets(replacement.AccessToken, replacement.RefreshToken, replacement.Scopes)));
         var obtained = expected.ObtainedAt.UtcTicks;
         var expires = replacement.ExpiresAt?.UtcTicks;
-        var obtainedNew = replacement.ObtainedAt.UtcTicks;
+        // Immer ein anderer Zeitpunkt als der ersetzte (siehe SaveAsync).
+        var obtainedNew = Math.Max(replacement.ObtainedAt.UtcTicks, obtained + 1);
         await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
         var changed = await db.UpstreamOAuthTokens
             .Where(r => r.ServerId == expected.Server.Value && r.ObtainedAtTicks == obtained)

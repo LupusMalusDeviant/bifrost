@@ -197,6 +197,23 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
       dem Veröffentlichen verloren geht, bekommt ihren eigenen Neuaufbau. Eine volle Warteschlange
       zurückgestellter Audit-Zeilen reicht erst nach, bevor sie eine verwirft, und beim Beenden
       stoppt der Audit-Schreiber nach dem Gateway.
+  - **Befunde aus dem zweiten Codex-Review** (Plan 0005, D1 – D15; Vertrag Abschnitt 10, N9 – N19):
+    - **Sicherheit:** Das vorgelegte OAuth-Token wird in Fehlertexten maskiert, auch bei
+      Zeitüberschreitung (`IPresentedCredentials`). Der Rückruf nennt einen falschen Issuer nicht, und
+      das Request-Log von ASP.NET Core schreibt keine Query mit Autorisierungscode mehr. Ein
+      geändertes Werkzeug ist gesperrt, sobald sein Urteil vorliegt, auch wenn die Prüfung eines
+      anderen hängt; eine veraltete Neuabfrage zieht aus einer neueren Verbindung nichts zurück.
+    - **OAuth:** Neue Zugangsdaten nach dem Autorisieren laufen über ein eigenes Signal
+      (`IUpstreamCredentialObserver`) und gehen auch beim ersten Aufbau nicht verloren;
+      „Jetzt verbinden" bleibt wie vereinbart. Die Erneuerung gilt dem abgewiesenen Token, nicht einem
+      neueren. `ReplaceAsync` ist Pflicht und atomar. Eine Erneuerung ohne neues Refresh-Token behält
+      das alte. Eine Erneuerung zählt erst nach einer gesunden Minute als bestätigt.
+    - **Loop und Verwaltung:** Das Stoppen wartet höchstens 10 s auf einen Loop, der seinen Abbruch
+      ignoriert. Ein 401/403 auf die Katalogabfrage beendet die Verbindung. Entfernen löscht zuerst in
+      der Ablage; ab dem Herunterfahren startet nichts mehr.
+    - **Sitzungen:** Nach einer abgerissenen und mit 404 abgewiesenen Wiederaufnahme läuft der
+      nächste Aufruf über eine neue Sitzung, statt in den beendeten SDK-Client zu laufen.
+    - **Audit:** Ein beim Herunterfahren abgebrochener Batch landet im Drain an seinen Kettenstellen.
 - **Fehlertexte eines Upstreams konnten dessen Antwortkörper enthalten.** Das MCP-SDK hängt an eine
   HTTP-Fehlermeldung den Antwortkörper der Gegenstelle an; der Text ging ungefiltert in `lastError`,
   Audit und Log. Zitiert ein Upstream in seiner 401-Antwort den vorgelegten Schlüssel, stand er dort.

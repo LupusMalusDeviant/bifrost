@@ -48,7 +48,14 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstr
     public UpstreamTransportKind Kind => UpstreamTransportKind.StreamableHttp;
 
     /// <inheritdoc />
-    public void RequestCredentialRenewal(ServerId id) => _renew[id] = RejectedTokenUnknown;
+    public void RequestCredentialRenewal(ServerId id)
+        // Abgewiesen ist das Token, das die stehende Verbindung vorgelegt hat — nicht das, was beim
+        // nächsten Aufbau in der Ablage liegt: Hat jemand inzwischen neu autorisiert, ist dieses
+        // frisch und nicht abgewiesen (Plan 0005 D6).
+        => _renew[id] = _presented.TryGetValue(id, out var presented) ? presented : RejectedTokenUnknown;
+
+    /// <summary>Das Token, das die zuletzt aufgebaute Verbindung je Upstream vorgelegt hat.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<ServerId, string> _presented = new();
 
     public async Task<IUpstreamConnection> ConnectAsync(ServerId id, UpstreamServerConfig config, CancellationToken ct)
     {
@@ -77,10 +84,11 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstr
             headers[GatewayIdentity.InstanceHeader] = _gatewayIdentity.InstanceId;
         }
 
+        string? accessToken = null;
         if (options.OAuth is { } oauth)
         {
-            headers["Authorization"] = "Bearer " + await ResolveTokenAsync(id, config, oauth, ct)
-                .ConfigureAwait(false);
+            accessToken = await ResolveTokenAsync(id, config, oauth, ct).ConfigureAwait(false);
+            headers["Authorization"] = "Bearer " + accessToken;
         }
 
         var transport = new HttpClientTransport(new HttpClientTransportOptions
@@ -97,7 +105,13 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstr
         });
 
         var client = await McpClient.CreateAsync(transport, cancellationToken: ct).ConfigureAwait(false);
-        return new SdkUpstreamConnection(id, client);
+        if (accessToken is null)
+        {
+            return new SdkUpstreamConnection(id, client);
+        }
+
+        _presented[id] = accessToken;
+        return new SdkUpstreamConnection(id, client, [accessToken]);
     }
 
     /// <summary>

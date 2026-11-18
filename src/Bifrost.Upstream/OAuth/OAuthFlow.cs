@@ -114,9 +114,11 @@ public static class OAuthFlow
 
         if (!string.Equals(issuerFromResponse, attempt.ExpectedIssuer, StringComparison.Ordinal))
         {
+            // Der empfangene Wert steht nicht in der Meldung: Er kommt aus der Adresszeile und
+            // ginge wörtlich an den Browser (Codex-Review, Plan 0005 D2).
             throw new OAuthDiscoveryException(
-                $"Die Antwort trägt den Issuer '{issuerFromResponse}', erwartet war "
-                + $"'{attempt.ExpectedIssuer}'. Der Vorgang wird abgebrochen.");
+                $"Die Antwort stammt nicht vom erwarteten Issuer '{attempt.ExpectedIssuer}'. "
+                + "Der Vorgang wird abgebrochen.");
         }
     }
 
@@ -150,12 +152,23 @@ public static class OAuthFlow
                 + "hergestellt werden.");
         }
 
-        return PostTokenAsync(tokenEndpoint, options, existing.Server, existing.Issuer, new Dictionary<string, string>
+        return KeepRefreshTokenAsync(PostTokenAsync(tokenEndpoint, options, existing.Server, existing.Issuer, new Dictionary<string, string>
         {
             ["grant_type"] = "refresh_token",
             ["refresh_token"] = refresh,
             ["resource"] = resource,
-        }, existing.Scopes, now, ct);
+        }, existing.Scopes, now, ct), refresh);
+    }
+
+    /// <summary>
+    /// Eine Erneuerung darf das Refresh-Token weglassen (RFC 6749 §6) — dann gilt das bisherige
+    /// weiter. Ohne das ginge es verloren, und der nächste Ablauf verlangte ein neues Autorisieren
+    /// von Hand (Plan 0005 D9).
+    /// </summary>
+    private static async Task<UpstreamOAuthToken> KeepRefreshTokenAsync(Task<UpstreamOAuthToken> refreshing, string previous)
+    {
+        var token = await refreshing.ConfigureAwait(false);
+        return token.RefreshToken is { Length: > 0 } ? token : token with { RefreshToken = previous };
     }
 
     private static async Task<UpstreamOAuthToken> PostTokenAsync(
