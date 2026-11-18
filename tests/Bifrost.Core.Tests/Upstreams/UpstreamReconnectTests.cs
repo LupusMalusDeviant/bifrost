@@ -90,7 +90,10 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    /// <summary>Wartet, bis der n-te Fehlversuch verbucht ist und der Loop auf den nächsten wartet.</summary>
+    /// <summary>
+    /// Wartet, bis der n-te Fehlversuch verbucht ist und der Loop auf den nächsten wartet. Erst dann
+    /// stehen auch Audit und Log: Die neue Frist ist im Status schon sichtbar, bevor sie geschrieben sind.
+    /// </summary>
     private Task<UpstreamReconnectInfo> FailedAttemptAsync(ServerId id, int attempt)
         => FailedAttemptAsync(_supervisor, id, attempt);
 
@@ -98,10 +101,18 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         UpstreamSupervisor supervisor, ServerId id, int attempt)
     {
         await TestData.WaitUntilAsync(
-            () => supervisor.GetStatus(id)?.Reconnect is { NextAttemptAt: not null } info && info.Attempt == attempt,
+            () => supervisor.GetStatus(id)?.Reconnect is { NextAttemptAt: not null } info
+                && info.Attempt == attempt
+                && supervisor.IsWaitingForNextAttempt(id),
             because: $"der {attempt}. Fehlversuch muss verbucht sein");
         return supervisor.GetStatus(id)!.Reconnect!;
     }
+
+    /// <summary>Wartet, bis die gesetzte Grenze erreicht und alles dazu verbucht ist.</summary>
+    private static Task ExhaustedAsync(UpstreamSupervisor supervisor, ServerId id)
+        => TestData.WaitUntilAsync(
+            () => supervisor.GetStatus(id)?.Reconnect?.Exhausted == true && supervisor.IsWaitingForNextAttempt(id),
+            because: "die gesetzte Grenze muss erreicht und verbucht sein");
 
     /// <summary>„Jetzt verbinden" — wiederholt, bis der Loop wirklich wartet und den Anstoß annimmt.</summary>
     private Task ConnectNowAsync(ServerId id) => ConnectNowAsync(_supervisor, id);
@@ -471,7 +482,9 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         // die Frist leer, und erst danach steht die neue.
         await TestData.WaitUntilAdvancingAsync(
             _time,
-            () => connector.ConnectCalls >= 4 && supervisor.GetStatus(server)?.Reconnect?.NextAttemptAt is not null,
+            () => connector.ConnectCalls >= 4
+                && supervisor.GetStatus(server)?.Reconnect?.NextAttemptAt is not null
+                && supervisor.IsWaitingForNextAttempt(server),
             step: TimeSpan.FromSeconds(30), timeoutMs: 15000,
             because: "nach der abgewiesenen Audit-Zeile folgen weitere Versuche");
 
@@ -492,7 +505,10 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
             because: "kommt der Upstream zurück, verbindet der Loop von selbst");
 
         // Die abgewiesene Zeile ist nachgereicht: genau einmal, mit ihrem Zeitpunkt, vor dem
-        // „wieder verbunden".
+        // „wieder verbunden". Der Zustand Healthy steht vor seiner Audit-Zeile — auf die warten.
+        await TestData.WaitUntilAsync(
+            () => audit.Accepted.Any(e => e.Detail!.Contains("wieder verbunden", StringComparison.Ordinal)),
+            because: "die Zeile zur Rückkehr folgt dem Zustand");
         var lines = audit.Accepted.Where(e => e.Kind == AuditEventKind.ServerLifecycle).ToList();
         var failed = lines.Where(e => e.Detail!.StartsWith("audit-voll: Failed — ", StringComparison.Ordinal)).ToList();
         failed.Should().ContainSingle("jeder Wechsel steht genau einmal im Audit");
@@ -683,9 +699,11 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         await using var supervisor = Create(connector, jitter: 0d, audit);
         var limited = new RestartPolicy(MaxRetries: 0, TimeSpan.FromSeconds(5), 2.0, TimeSpan.FromMinutes(5));
         var server = await supervisor.AddAsync(TestData.StdioConfig("grenze-stumm", restart: limited), Ct);
-        await TestData.WaitUntilAsync(
-            () => supervisor.GetStatus(server)?.Reconnect?.Exhausted == true,
-            because: "ohne Wiederholungen ist die Grenze nach dem Erstversuch erreicht");
+        // Erst freigeben, wenn der Fall wirklich eingetreten ist: Die Grenze steht im Status schon,
+        // bevor der Loop seine Zeilen geschrieben hat.
+        await ExhaustedAsync(supervisor, server);
+        audit.Refused.Should().BeGreaterThan(0, "das Audit hat die Failed-Zeile abgewiesen");
+        _log.Thrown.Should().BeGreaterThan(0, "die Logzeile über das Zurückstellen hat geworfen");
 
         _log.Throws = null;
         Volatile.Write(ref full, false);
@@ -722,7 +740,10 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         await TestData.WaitUntilAdvancingAsync(
             _time, () => supervisor.GetStatus(server)?.State == UpstreamState.Healthy,
             step: TimeSpan.FromSeconds(1), timeoutMs: 15000);
-        audit.Refused.Should().BeGreaterThan(0, "sonst hätte der Test den Fall gar nicht hergestellt");
+
+        // Healthy steht vor seiner Audit-Zeile: auf die Abweisung warten, nicht nur auf den Zustand.
+        await TestData.WaitUntilAsync(
+            () => audit.Refused > 0, because: "sonst hätte der Test den Fall gar nicht hergestellt");
 
         Volatile.Write(ref full, false);
         await TestData.WaitUntilAdvancingAsync(
@@ -840,7 +861,7 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         var server = await _supervisor.AddAsync(TestData.StdioConfig("begrenzt", restart: limited), Ct);
 
         await TestData.WaitUntilAdvancingAsync(
-            _time, () => _supervisor.GetStatus(server)?.Reconnect?.Exhausted == true,
+            _time, () => _supervisor.GetStatus(server)?.Reconnect?.Exhausted == true && _supervisor.IsWaitingForNextAttempt(server),
             step: TimeSpan.FromSeconds(1), because: "1 Erstversuch + 2 Wiederholungen, dann ist die gesetzte Grenze erreicht");
 
         _connector.ConnectCalls.Should().Be(3);
@@ -1217,6 +1238,11 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         /// </summary>
         public Func<string, bool>? Throws { get; set; }
 
+        private int _thrown;
+
+        /// <summary>Wie oft <see cref="Throws"/> zugeschlagen hat — damit ein Test weiß, dass sein Fall eintrat.</summary>
+        public int Thrown => Volatile.Read(ref _thrown);
+
         public bool IsEnabled(LogLevel logLevel) => true;
 
         public void Log<TState>(
@@ -1226,6 +1252,7 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
             var message = formatter(state, exception);
             if (Throws?.Invoke(message) == true)
             {
+                Interlocked.Increment(ref _thrown);
                 throw new InvalidOperationException("Logger gestört (Test).");
             }
 

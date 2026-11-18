@@ -124,6 +124,38 @@ Offen aus demselben Durchgang, **nicht** eingearbeitet:
 - **T8** (niedrig) — `DisposeAsync` bricht bei einem werfenden Logger mitten in der Schleife über
   die Upstreams ab. Älter als diese Änderung. `[Claude-prüfbar]`
 
+**Fünfter und sechster Lesedurchgang vom 2026-11-17** (über T1, T3, T5 – T7 und über den ganzen
+Branch nach dem Neuaufbau auf `main`; Codex am Nutzungslimit, ersatzweise unabhängige
+Claude-Reviews; kein kritischer oder hoher Befund). Eingearbeitet auf Entscheidung des Nutzers vom
+2026-11-18:
+
+- **U1, U2** (mittel) — Zeitabhängige Tests: Der Status zeigt die neue Frist bzw. `Healthy`, bevor
+  Audit und Log geschrieben sind; Tests, die danach sofort lasen, konnten ohne Korrektur grün oder
+  ohne Defekt rot sein. Die Tests warten jetzt, bis der Loop wirklich auf den nächsten Versuch
+  wartet (`IsWaitingForNextAttempt`, nur für Tests), bzw. auf die Audit-Zeile selbst.
+  `[Claude-prüfbar]`, erledigt.
+
+Offen aus denselben Durchgängen, **nicht** eingearbeitet:
+
+- **U3** (mittel) — Wird ein Upstream bei vollem Audit (Compliance-Modus) abgeschaltet, ist die
+  Aktion schon gespeichert und wirksam, wird aber als verweigert gemeldet; die Zeile `Stopped` fehlt
+  im Audit, und der Katalog behält die Werkzeuge bis zum nächsten Ereignis. Gegenstück zu R7, älter
+  als diese Änderung. `[Claude-prüfbar]`
+- **U4** (mittel/niedrig) — Wirft der Logger nach einer gelungenen Verbindung, wird sie wieder
+  abgebaut; nach einem Neuaufbau der Sitzung bleibt die alte Verbindung offen. Auch
+  `DisposeQuietlyAsync` wirft dann, und ein 401 kann als „nicht erreichbar" gelten.
+  `[Claude-prüfbar]`
+- **U5** (niedrig) — `RediscoverAsync` kann nach einem Wechsel auf `Failed` oder einem Neuaufbau ein
+  veraltetes Inventar schreiben. Älter als diese Änderung. `[Claude-prüfbar]`
+- **U6** (niedrig) — `ChangedHandlerThrew` übergibt das Ausnahmeobjekt ans Log (harte Vorgabe: nur
+  Typnamen). `[Claude-prüfbar]`
+- **U7** (niedrig) — Ein Connector, der seinen Abbruch ignoriert, hinterlässt je Versuch eine späte
+  Verbindung; ohne Obergrenze wächst das ohne Ende. `[Claude-prüfbar]`
+- **U8** (niedrig) — `AbortPendingRebuild` bricht wartende Aufrufer mit einer unerklärten Abbruch-
+  meldung ab statt mit „Verbindung verloren". `[Claude-prüfbar]`
+- **U9** (niedrig) — Der Kommentar zu T6 sagt mehr, als der Code tut; die Meldung zum Zurückstellen
+  verspricht das Nachreichen auch an der Obergrenze (siehe T2). `[Claude-prüfbar]`
+
 ## Arbeitspakete
 
 | # | Inhalt | Marke |

@@ -909,6 +909,24 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     /// (<paramref name="delay"/> ist <c>null</c>: die konfigurierte Obergrenze ist erreicht) wartet
     /// der Loop nur noch auf den Knopf.
     /// </summary>
+    /// <summary>
+    /// Ob der Loop dieses Upstreams gerade auf den nächsten Versuch wartet — also alles verbucht hat,
+    /// was zum letzten gehört: Zustand, Audit, Log. Für Tests: <see cref="UpstreamStatus"/> zeigt die
+    /// neue Frist schon, bevor Audit und Log geschrieben sind.
+    /// </summary>
+    internal bool IsWaitingForNextAttempt(ServerId id)
+    {
+        if (!_entries.TryGetValue(id, out var entry))
+        {
+            return false;
+        }
+
+        lock (entry.Gate)
+        {
+            return entry.Wake is not null;
+        }
+    }
+
     private async Task WaitForNextAttemptAsync(Entry entry, TimeSpan? delay, CancellationToken ct)
     {
         var wake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
