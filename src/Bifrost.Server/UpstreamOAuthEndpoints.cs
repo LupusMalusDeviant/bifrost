@@ -166,6 +166,8 @@ internal static class UpstreamOAuthEndpoints
     /// Was nach dem Einlösen des Codes geschieht: Token ablegen, Bindung erneut prüfen, Upstream
     /// wecken. Herausgelöst, damit sich die Reihenfolge ohne Browser-Dialog prüfen lässt.
     /// </summary>
+    [Bifrost.Core.Execution.NoHostExecution(
+        "Liest die Konfiguration nur zum Vergleich der Token-Bindung; gestartet wird über den Supervisor.")]
     internal static async Task<IResult> StoreGrantAsync(
         OAuthAuthorizationAttempt attempt, UpstreamOAuthToken token, string slug, string? user,
         Func<CancellationToken, Task<UpstreamServerConfig?>> currentConfig,

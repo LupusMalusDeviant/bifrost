@@ -289,6 +289,34 @@ E12 und E13 am 2026-11-18 entschieden: Wiederholt wird nur ein 404 mit JSON-RPC-
 als zweite Ausnahme in 3.3. Offen für den Nutzer: die Abnahme von N20 – N30 und der Präzisierung in
 Abschnitt 4.
 
+### Viertes Codex-Review vom 2026-11-18 (`60d8bf9`)
+
+Codex (gpt-6.2-sol) meldet 15 Befunde (8 hoch, 6 mittel, 1 niedrig, kein kritischer). Jeder ist
+gegen den Code geprüft (nur gelesen). „Schwere" ist die geprüfte Einschätzung. Alle sind behoben
+(Vertrag N31 – N41); jeder neue Test scheitert gegen `60d8bf9`. Offen: Abnahme N31 – N41; das
+Muster „erst Wirkung, dann Audit" in den übrigen Verwaltungsaktionen.
+
+| # | Codex | Inhalt | Urteil | Herkunft | Schwere | Marke |
+|---|---|---|---|---|---|---|
+| F1 | H3 | Fehler aus `initialize`/`tools/list` beim Aufbau und Neuaufbau werden nur mit den Geheimwerten der Konfiguration gesäubert. Eine JSON-RPC-Fehlermeldung, die das Token zitiert, erreicht Status, Audit, Log und über die Neuaufbau-Ausnahme den Agenten. | echt | alt, von E3 nicht abgedeckt | mittel – hoch | `[Claude-prüfbar]` behoben, Abnahme offen |
+| F2 | H4 | Nach dem Schließen der Verbindung im Fehlerpfad (ohne Frist) bucht ein abgelöster Loop noch `MarkFailed` auf den Nachfolger (falscher Status, falsches Audit, falsches „wieder verbunden") und setzt im `finally` des Wartens `Wake` des Nachfolgers zurück. Ein hängendes Schließen blockiert ohne Eingriff jede weitere Wiederholung. | echt | alt, E1 unvollständig | mittel | `[Claude-prüfbar]` behoben, Abnahme offen |
+| F3 | M2 | OAuth-Rückruf: Audit nach dem Speichern; weist ein voller Compliance-Kanal ab, ist das Token gespeichert ohne Audit, und `CredentialsChanged` entfällt (erschöpfter Upstream bleibt liegen). | echt | alt, durch E13 verschärft | mittel | `[Claude-prüfbar]` behoben, Abnahme offen |
+| F4 | H8 | Pin-Annahme (REST und UI): erst festgeschrieben, dann auditiert. Im Compliance-Modus bei vollem Kanal ist der Hash vertraut ohne Audit-Zeile. Dasselbe Muster „erst ändern, dann auditieren" steht systemweit in den Verwaltungs-Endpunkten. Der V4-Teil (Prüfung beim Verbinden) ist vertragsgemäß. | echt für Annahme | alt, systemweit | mittel | `[braucht Nutzer]` entschieden „alle beheben": nur die Annahme; behoben, Abnahme offen |
+| F5 | H1 | Restfenster der OAuth-Bindung: Ein Rückruf kann zwischen Speichern und Nachprüfung das Token der alten Ressource an den neuen Loop geben (Millisekunden). Die Nachprüfung löscht ohne Bedingung und kann im Extremfall ein neueres Token löschen. | teilweise | E2 hat verengt, nicht geschlossen | mittel / niedrig | `[Claude-prüfbar]` (Bindung beim Token speichern) behoben, Abnahme offen |
+| F6 | H5 | Ein laufender Neuaufbau kann während des Drains veröffentlichen; die neue Verbindung nimmt Anfragen an und wird nach der Gnadenfrist mitten in Aufrufen geschlossen. `Publish` beachtet `Stopping` nicht. | echt, enges Fenster | neu (E4 unvollständig) | niedrig – mittel | `[Claude-prüfbar]` behoben, Abnahme offen |
+| F7 | H7 | Veraltete Neuabfrage schreibt weiter Pins, wenn sie erst in `VerifyAsync` hängt (Prüfung nur davor). Folge nur Anzeige/Bedienung, kein Umgehen der Sperre. Der E7-Test hält zu früh an. | teilweise; Testlücke echt | alt, E7 verengt | niedrig – mittel | `[Claude-prüfbar]` behoben, Abnahme offen |
+| F8 | H2 | Die 404-Erkennung nimmt jedes Objekt als `error` an (auch `{}`). Praktisch nur durch ein MCP-fähiges Zwischenglied erreichbar. Vertrag Abschnitt 4 ist ebenso weit gefasst. | teilweise | neu (E12) | niedrig | `[Claude-prüfbar]` (Vertrag 4 präzisieren) behoben, Abnahme offen |
+| F9 | H6 | Eine ersetzte Hülle läuft nach einem Umkonfigurieren über die neue Verbindung (gleicher Werkzeugname, identische Definition, sonst zurückgehalten). Vertragsgemäß nach N29, aber die Bindung an die Konfigurationsfassung fehlt. Bestand vorher schon für HTTP mit Sitzung; 60d8bf9 macht es für alle Transporte deterministisch. | teilweise | gemischt | niedrig | `[braucht Nutzer]` entschieden: nur dieselbe Konfiguration; behoben, Abnahme offen |
+| F10 | M1 | Ein Hinzufügen, das die Zulassungsfrist überdauert, registriert nach dem Herunterfahren noch einen Eintrag ohne Loop. Konfiguration ist gespeichert und kommt nach dem Neustart zurück. Weicht von N26 ab. | teilweise | neu (E8) | niedrig | `[Claude-prüfbar]` (N26 ergänzen) behoben, Abnahme offen |
+| F11 | M5 | Scheitert der letzte Best-Effort-Versuch nach dem Festschreiben, wird der ganze Batch als Verlust gezählt (zu hoch, nichts verloren). | echt | alt | niedrig | `[Claude-prüfbar]` behoben, Abnahme offen |
+| F12 | M6 | 401/403 bei der Metadaten-Discovery der Erneuerung gilt als „nicht erreichbar" (exponentieller Backoff statt 15 min). | teilweise | alt | niedrig | `[Claude-prüfbar]` behoben, Abnahme offen |
+| F13 | M3 | Ein veralteter Aufbau kann im `else`-Zweig einen neueren Erneuerungsvermerk löschen. Ohne `await` dazwischen praktisch nicht erreichbar. | teilweise | alt | niedrig | `[Claude-prüfbar]` behoben, Abnahme offen |
+| F14 | M4 | Nach Trennen und Neuanlage kann dieselbe Kennung (`ObtainedAt`) wieder entstehen; nur bei Uhr auf den Tick gleich. | teilweise, theoretisch | alt | niedrig | `[Claude-prüfbar]` (Versionsspalte, Migration) behoben, Abnahme offen |
+| F15 | L1 | Der Test mit zehn Aufrufern baut keinen schon laufenden Aufruf auf; eine Regression, die abgebrochene Aufrufe wiederholt, bestünde ihn. | echt (Testlücke) | alt | niedrig – mittel | `[Claude-prüfbar]` behoben, Abnahme offen |
+
+Gemeinsames Muster von F2, F5, F6, F7, F9, F14: Es fehlt eine Generation je Loop bzw.
+Konfigurationsfassung bzw. Token-Revision, gegen die spät eintreffende Schritte geprüft werden.
+
 ## Prüfliste für den Nutzer
 
 1. ~~Vertrag lesen und abnehmen; die sechs Fragen in Abschnitt 8 beantworten.~~ Erledigt am

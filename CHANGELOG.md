@@ -237,6 +237,25 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     - **Fehlertexte:** Lebenszeichen und Katalogabfrage maskieren auch das vorgelegte Token.
     - **Sitzungen:** Ein interner Abbruch erzwingt keinen Neuaufbau mehr.
     - **Audit:** Ein Fehler nach dem Festschreiben führt nicht zu doppelten Kettenstellen.
+  - **Befunde aus dem vierten Codex-Review** (Plan 0005, F1 – F15; Vertrag Abschnitt 10, N31 – N41):
+    - **Sicherheit:** Fehler beim Verbindungsaufbau (Katalog, Pin-Prüfung) werden mit dem vorgelegten
+      Token bereinigt, auch für Aufrufer, die auf einen Neuaufbau warten. Ein OAuth-Token trägt jetzt
+      Ressource und Client-ID und wird an eine andere Anbindung nicht vorgelegt; Bestandstoken gelten
+      bis zu ihrer ersten Erneuerung als passend. Migration `UpstreamOAuthTokenBinding` (neue, leere
+      Spalten `Resource`, `ClientId`, `Revision`); Vergleich-und-Tausch über eine Revision statt über
+      den Zeitpunkt.
+    - **Erst Audit, dann Wirkung:** OAuth-Rückweg, Trennen und Pin-Annahme schreiben ihre Audit-Zeile
+      vorher; nimmt das Audit (Compliance, voller Kanal) nicht an, geschieht nichts (503). *Nicht
+      erfasst:* die übrigen Verwaltungsaktionen folgen dem Muster noch nicht.
+    - **Loop und Stoppen:** Ein hängendes Schließen hält weder den nächsten Versuch noch die
+      Lebenszeichen auf und bucht nichts auf einen Nachfolger. Während des Stoppens wird keine neue
+      Verbindung veröffentlicht. Pin-Prüfungen von Aufbau und Neuabfrage laufen nacheinander. Ein
+      Hinzufügen nach Beginn des Herunterfahrens wird gespeichert, aber nicht mehr eingetragen.
+    - **Aufrufe:** Ein Aufruf über eine veraltete Hülle geht nach einem Umkonfigurieren nicht an die
+      neue Konfiguration. Die 404-Erkennung verlangt ein vollständiges JSON-RPC-Fehlerobjekt.
+    - **Einordnung und Zählung:** 401/403 beim Metadatenabruf der Erneuerung ist eine abgelehnte
+      Anmeldung, 5xx/429 eine Unerreichbarkeit. Der letzte Audit-Schreibversuch zählt nur wirklich
+      fehlende Zeilen als Verlust.
 - **Fehlertexte eines Upstreams konnten dessen Antwortkörper enthalten.** Das MCP-SDK hängt an eine
   HTTP-Fehlermeldung den Antwortkörper der Gegenstelle an; der Text ging ungefiltert in `lastError`,
   Audit und Log. Zitiert ein Upstream in seiner 401-Antwort den vorgelegten Schlüssel, stand er dort.

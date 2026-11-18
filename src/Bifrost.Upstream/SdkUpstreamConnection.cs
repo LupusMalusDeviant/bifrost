@@ -36,6 +36,9 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection, IPresentedCre
     /// </summary>
     private readonly bool _hadSession;
 
+    /// <summary>Ein 404 auf die Sitzung ist gesehen worden — mit oder ohne MCP-Fehlerkörper.</summary>
+    private bool _notFoundSeen;
+
     /// <summary>Das OAuth-Token, das diese Verbindung vorlegt — es steht in keiner Konfiguration (Plan 0005 D1).</summary>
     public IReadOnlyList<string> PresentedCredentials { get; }
 
@@ -131,7 +134,12 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection, IPresentedCre
         // abgerissenen Antwortstroms mit 404 ab, endet der Client, ohne dass ein Aufruf ein 404
         // sähe; der abgerissene endet mit „completed without a reply", jeder weitere mit einem
         // nackten Abbruch.
-        if (_client.Completion.IsCompleted && (_hadSession || _client.SessionId is not null))
+        // Auch ein 404, das NICHT wiederholt wird (kein MCP-Fehlerkörper), beendet den Client — aber
+        // erst etwas später. Wer in dieser Lücke beginnt, liefe in den sterbenden Client, würde
+        // abgebrochen und als „unterwegs abgebrochen" nicht wiederholt. Darum zählt schon das
+        // gesehene 404: Danach verlässt nichts mehr das Gateway über diesen Client (Abschnitt 4).
+        if ((Volatile.Read(ref _notFoundSeen) || _client.Completion.IsCompleted)
+            && (_hadSession || _client.SessionId is not null))
         {
             throw new UpstreamSessionLostException(
                 "Der Client der Sitzung zum Upstream ist beendet; die Anfrage wurde nicht gesendet.");
@@ -159,6 +167,8 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection, IPresentedCre
         {
             if (current is HttpRequestException { StatusCode: System.Net.HttpStatusCode.NotFound } notFound)
             {
+                Volatile.Write(ref _notFoundSeen, true);
+
                 // Nur das 404 des MCP-Servers selbst (Vertrag Abschnitt 4, Plan 0005 E12). Ein
                 // Zwischenglied kann ein 404 auch NACH der Ausführung liefern; das zu wiederholen
                 // hieße, einen Aufruf womöglich doppelt auszuführen.
