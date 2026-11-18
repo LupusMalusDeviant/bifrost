@@ -243,7 +243,14 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
                 return Task.FromResult(false);
             }
 
-            return Task.FromResult(wake.TrySetResult());
+            var woke = wake.TrySetResult();
+            if (woke)
+            {
+                // Ab hier wartet der Loop nicht mehr — auch wenn er die Sperre noch nicht zurück hat.
+                entry.LoopWaiting = false;
+            }
+
+            return Task.FromResult(woke);
         }
     }
 
@@ -641,7 +648,14 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                rebuild.TrySetCanceled(ct);
+                // Abgebrochen hat der Loop (Abschalten, Entfernen), nicht der Aufrufer: Ein Abbruch
+                // hielte er für seinen eigenen. Er bekommt, was jeder gescheiterte Neuaufbau meldet (U8).
+                if (rebuild.TrySetException(new UpstreamConnectionLostException(
+                        "Der Upstream wurde gestoppt; die Sitzung wird nicht mehr neu aufgebaut.")))
+                {
+                    Observe(rebuild.Task);
+                }
+
                 throw;
             }
             catch (Exception ex)
@@ -822,7 +836,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     private const string BookkeepingFailedText = "Der Fehlversuch konnte nicht vollständig verbucht werden.";
 
     /// <summary>Was <see cref="SetFailedState"/> geändert hat — und deshalb noch gemeldet werden muss.</summary>
-    private readonly record struct FailedTransition(bool Entered, bool ExhaustedNow);
+    private readonly record struct FailedTransition(bool Entered, bool ExhaustedNow, UpstreamFailureKind Kind);
 
     /// <summary>
     /// Setzt nur den Zustand, für den Fall, dass die Buchführung eines Fehlversuchs gescheitert ist.
@@ -843,14 +857,16 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             }
 
             entry.State = UpstreamState.Failed;
-            // Der schon bereinigte Grund geht vor: Sonst stünde nach Degraded noch der Text des
-            // gescheiterten Lebenszeichens da, während das Audit den eigentlichen Grund nennt.
+            // Der schon bereinigte Grund geht vor, wenn er bestimmt werden konnte: Sonst stünde nach
+            // Degraded noch der Text des gescheiterten Lebenszeichens da, während das Audit den
+            // eigentlichen Grund nennt. Scheiterte schon die Bestimmung, bleibt der alte Text stehen.
             entry.LastError = reason ?? entry.LastError ?? BookkeepingFailedText;
             entry.FailureKind = kind
                 ?? (entry.FailureKind == UpstreamFailureKind.None ? UpstreamFailureKind.Unreachable : entry.FailureKind);
             entry.NextAttemptAt = delay is { } wait ? now + wait : null;
             entry.Exhausted = delay is null;
-            return new FailedTransition(entered, exhaustedNow);
+            entry.Wake ??= NewWake();
+            return new FailedTransition(entered, exhaustedNow, entry.FailureKind);
         }
     }
 
@@ -867,7 +883,8 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         // Ohne diese Zeile stünde im Audit später ein „wieder verbunden" ohne vorheriges Failed.
         if (transition.Entered)
         {
-            RecordLoopLifecycle(entry, $"{slug}: {UpstreamState.Failed} — {reason ?? BookkeepingFailedText}");
+            RecordLoopLifecycle(
+                entry, $"{slug}: {UpstreamState.Failed} ({transition.Kind}) — {reason ?? BookkeepingFailedText}");
         }
 
         if (transition.ExhaustedNow)
@@ -918,42 +935,82 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
 
         lock (entry.Gate)
         {
-            return entry.Wake is not null;
+            return entry.LoopWaiting;
         }
     }
+
+    private static TaskCompletionSource NewWake()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>
     /// Wartet die Frist ab — oder bis jemand „Jetzt verbinden" drückt. Ohne Frist
     /// (<paramref name="delay"/> ist <c>null</c>: die konfigurierte Obergrenze ist erreicht) wartet
     /// der Loop nur noch auf den Knopf.
+    /// <para>
+    /// Das Wecksignal legt schon das Verbuchen an (<see cref="MarkFailed"/>), unter derselben Sperre,
+    /// unter der die Frist sichtbar wird: Ein Klick in der Lücke dazwischen verpufft sonst (L1).
+    /// </para>
+    /// <para>
+    /// Warten zurückgestellte Audit-Zeilen, wird in Abschnitten von einem Lebenszeichen-Abstand
+    /// gewartet und dazwischen nachgereicht — sonst warteten sie an der Obergrenze bis zum nächsten
+    /// Eingriff und bei sehr großer Frist bis zum nächsten Versuch (T2).
+    /// </para>
     /// </summary>
     private async Task WaitForNextAttemptAsync(Entry entry, TimeSpan? delay, CancellationToken ct)
     {
-        var wake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource wake;
         lock (entry.Gate)
         {
-            entry.Wake = wake;
+            wake = entry.Wake ??= NewWake();
+            entry.LoopWaiting = !wake.Task.IsCompleted;
         }
 
         try
         {
-            if (delay is not { } wait)
+            DateTimeOffset? deadline = delay is { } wait ? _time.GetUtcNow() + wait : null;
+            while (!wake.Task.IsCompleted)
             {
-                await wake.Task.WaitAsync(ct).ConfigureAwait(false);
-                return;
-            }
+                var remaining = deadline is { } until ? until - _time.GetUtcNow() : (TimeSpan?)null;
+                if (remaining is { } left && left <= TimeSpan.Zero)
+                {
+                    return;
+                }
 
-            using var timerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var timer = Task.Delay(wait, _time, timerCts.Token);
-            await Task.WhenAny(timer, wake.Task).ConfigureAwait(false);
-            await timerCts.CancelAsync().ConfigureAwait(false);
-            ct.ThrowIfCancellationRequested();
+                bool pending;
+                lock (entry.AuditGate)
+                {
+                    pending = entry.DeferredLifecycle.Count > 0;
+                }
+
+                var slice = pending && (remaining is null || remaining > _options.HealthCheckInterval)
+                    ? _options.HealthCheckInterval
+                    : remaining;
+                if (slice is null)
+                {
+                    await wake.Task.WaitAsync(ct).ConfigureAwait(false);
+                    return;
+                }
+
+                using (var timerCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                {
+                    var timer = Task.Delay(Waitable(slice.Value), _time, timerCts.Token);
+                    await Task.WhenAny(timer, wake.Task).ConfigureAwait(false);
+                    await timerCts.CancelAsync().ConfigureAwait(false);
+                }
+
+                ct.ThrowIfCancellationRequested();
+                if (pending)
+                {
+                    RetryDeferredLifecycle(entry);
+                }
+            }
         }
         finally
         {
             lock (entry.Gate)
             {
                 entry.Wake = null;
+                entry.LoopWaiting = false;
             }
         }
     }
@@ -998,6 +1055,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             {
                 entry.FailedSince = now;
             }
+
+            // Unter derselben Sperre wie die sichtbare Frist: Wer sie sieht, kann auch klicken (L1).
+            entry.Wake ??= NewWake();
         }
 
         // Erst alle Audit-Zeilen, dann das Log. Die Audit-Zeilen gehen über RecordLoopLifecycle, das
@@ -1007,7 +1067,8 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         var slug = entry.Config.Slug;
         if (entered)
         {
-            RecordLoopLifecycle(entry, $"{slug}: {UpstreamState.Failed} — {reason}");
+            // Abschnitt 6: Slug, Fehlerart, bereinigter Grund (L6).
+            RecordLoopLifecycle(entry, $"{slug}: {UpstreamState.Failed} ({kind}) — {reason}");
         }
         else if (kindChanged)
         {
@@ -1135,6 +1196,11 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         Observe(rebuild.Task);
     }
 
+    /// <summary>
+    /// Der Loop endet (abgeschaltet, entfernt, beendet): Wer noch auf einen Neuaufbau wartet, bekommt
+    /// „Verbindung verloren" — kein bloßes Abbrechen, das der Aufrufer nicht vom eigenen Abbruch
+    /// unterscheiden kann und deshalb unerklärt weitergibt (U8).
+    /// </summary>
     private static void AbortPendingRebuild(Entry entry)
     {
         TaskCompletionSource<GuardedUpstreamConnection>? rebuild;
@@ -1144,7 +1210,11 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             entry.Rebuild = null;
         }
 
-        rebuild?.TrySetCanceled();
+        if (rebuild is not null && rebuild.TrySetException(new UpstreamConnectionLostException(
+                "Der Upstream wurde gestoppt; die Sitzung wird nicht mehr neu aufgebaut.")))
+        {
+            Observe(rebuild.Task);
+        }
     }
 
     /// <summary>
@@ -1639,8 +1709,14 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         /// <summary>Seit wann der laufende Ausfall dauert — für die eine Zeile, die sein Ende meldet.</summary>
         public DateTimeOffset? FailedSince { get; set; }
 
-        /// <summary>Gesetzt, solange der Loop auf den nächsten Versuch wartet; „Jetzt verbinden" löst es aus.</summary>
+        /// <summary>
+        /// Gesetzt vom Verbuchen eines Fehlversuchs bis zum Ende des Wartens; „Jetzt verbinden" löst
+        /// es aus. Kommt der Klick vor dem Warten, endet das Warten sofort.
+        /// </summary>
         public TaskCompletionSource? Wake { get; set; }
+
+        /// <summary>Ob der Loop gerade wirklich wartet — erst nach aller Buchführung zum letzten Versuch.</summary>
+        public bool LoopWaiting { get; set; }
 
         /// <summary>Wird ausgelöst, sobald jemand den Neuaufbau der Sitzung verlangt; je Verbindung neu.</summary>
         public TaskCompletionSource? RebuildRequested { get; set; }
