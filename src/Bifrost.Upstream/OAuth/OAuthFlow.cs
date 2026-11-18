@@ -195,7 +195,10 @@ public static class OAuthFlow
             // Der Fehlertext des Servers kann Details enthalten, aber kein Token — die Antwort
             // eines gescheiterten Token-Requests trägt `error`/`error_description`.
             throw new OAuthDiscoveryException(
-                $"Token-Anfrage scheiterte mit {(int)response.StatusCode}: {Shorten(body)}");
+                $"Token-Anfrage scheiterte mit {(int)response.StatusCode}: {Shorten(body)}")
+            {
+                StatusCode = response.StatusCode,
+            };
         }
 
         JsonElement json;

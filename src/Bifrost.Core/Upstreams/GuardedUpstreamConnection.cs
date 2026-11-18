@@ -149,6 +149,16 @@ public sealed class GuardedUpstreamConnection
             return await attempt(this).ConfigureAwait(false);
         }
 
+        // Auch beim ersten Versuch: Wer den Namen noch aus einem älteren Katalog kennt, darf ein
+        // Werkzeug nicht aufrufen, das die Prüfung inzwischen zurückhält (U5).
+        if (toolName is not null && !_recovery.IsToolAvailable(toolName))
+        {
+            throw new InvalidOperationException(
+                $"Das Werkzeug '{toolName}' steht nicht im geprüften Katalog des Upstreams — es ist "
+                + "unbekannt, oder seine Definition hat sich geändert und wird bis zur Annahme "
+                + "zurückgehalten. Der Aufruf wurde nicht ausgeführt.");
+        }
+
         if (!_sessionLost)
         {
             try

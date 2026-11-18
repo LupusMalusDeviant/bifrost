@@ -45,7 +45,8 @@ public sealed class ServerReconnectApiTests : IClassFixture<GatewayFixture>
     {
         var (_, apiKey) = await _gw.SeedAdminAsync("reconnect-admin");
         using var client = CreateApiClient(apiKey);
-        var port = FreePort();
+        var (holder, port) = ClosedPort();
+        using var reserved = holder;
         var id = await _gw.Supervisor.AddAsync(Unreachable("weg", port), Ct);
         try
         {
@@ -120,7 +121,9 @@ public sealed class ServerReconnectApiTests : IClassFixture<GatewayFixture>
         using var unknown = await client.PostAsync($"/api/v1/servers/{Guid.NewGuid()}/connect", content: null, Ct);
         unknown.StatusCode.Should().Be(HttpStatusCode.NotFound);
 
-        var disabled = await _gw.Supervisor.AddAsync(Unreachable("aus", FreePort(), enabled: false), Ct);
+        var (holder, port) = ClosedPort();
+        using var reserved = holder;
+        var disabled = await _gw.Supervisor.AddAsync(Unreachable("aus", port, enabled: false), Ct);
         using var conflict = await client.PostAsync($"/api/v1/servers/{disabled.Value}/connect", content: null, Ct);
 
         conflict.StatusCode.Should().Be(HttpStatusCode.Conflict, "deaktiviert bleibt aus — auch über die API");
@@ -141,10 +144,15 @@ public sealed class ServerReconnectApiTests : IClassFixture<GatewayFixture>
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden, "ohne Global-Grant kein Management");
     }
 
-    private static int FreePort()
+    /// <summary>
+    /// Ein Port, an dem garantiert niemand zuhört: gebunden, aber ohne <c>Listen</c>. Ein bloß
+    /// „freier" Port konnte bis zum Verbindungsversuch ein paralleler Test belegen — dann war der
+    /// Upstream plötzlich erreichbar (L7). Der Socket hält den Port, bis der Test ihn freigibt.
+    /// </summary>
+    private static (Socket Holder, int Port) ClosedPort()
     {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
+        var holder = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        holder.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        return (holder, ((IPEndPoint)holder.LocalEndPoint!).Port);
     }
 }

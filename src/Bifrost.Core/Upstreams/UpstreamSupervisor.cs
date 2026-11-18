@@ -165,6 +165,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
                 return;
             }
 
+            // Erst das Audit, dann die Wirkung: Weist es ab (Compliance-Modus, voller Kanal), ist
+            // nichts gespeichert und nichts geschehen (L4, R7, U3).
+            AuditLifecycle(entry, $"{entry.Config.Slug}: {(enabled ? UpstreamState.Starting : UpstreamState.Stopped)}");
+
             var newConfig = entry.Config with { Enabled = enabled };
             entry.Version = await _store.AppendVersionAsync(id, newConfig, ct).ConfigureAwait(false);
             entry.Config = newConfig;
@@ -294,6 +298,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     {
         HostExecutionGuard.Ensure(_hostExecution, config);
 
+        // Erst das Audit, dann die Wirkung (L4, R7): Weist es ab, läuft der alte Stand weiter.
+        AuditLifecycle(entry, $"{config.Slug}: {(config.Enabled ? UpstreamState.Starting : UpstreamState.Stopped)}");
+
         await StopLoopAsync(entry, DrainPolicy.Graceful(_options.DefaultDrainGrace), ct).ConfigureAwait(false);
         entry.Version = await _store.AppendVersionAsync(entry.Id, config, ct).ConfigureAwait(false);
         entry.Config = config;
@@ -339,6 +346,27 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             return;
         }
 
+        lock (entry.Gate)
+        {
+            entry.Stopping = true;
+        }
+
+        try
+        {
+            await StopRunningLoopAsync(entry, cts, loop, drain, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (entry.Gate)
+            {
+                entry.Stopping = false;
+            }
+        }
+    }
+
+    private async Task StopRunningLoopAsync(
+        Entry entry, CancellationTokenSource cts, Task? loop, DrainPolicy drain, CancellationToken ct)
+    {
         if (entry.Connection is { } connection && drain.GracePeriod > TimeSpan.Zero)
         {
             var idle = await connection.WaitForIdleAsync(drain.GracePeriod, ct).ConfigureAwait(false);
@@ -529,7 +557,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             }
             catch (OperationCanceledException)
             {
-                _ = DisposeLateConnectionAsync(connect);
+                _ = DisposeLateConnectionAsync(entry, connect);
                 throw;
             }
 
@@ -566,9 +594,26 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         }
     }
 
-    /// <summary>Räumt eine Verbindung auf, die erst nach Ablauf der Frist doch noch zustande kam.</summary>
-    private static async Task DisposeLateConnectionAsync(Task<IUpstreamConnection> connect)
+    /// <summary>
+    /// Ab so vielen gleichzeitig hängenden Verbindungsaufbauten eines Upstreams steht es im Log.
+    /// Einer kann Pech sein; drei heißen, dass der Connector seinen Abbruch nicht beachtet.
+    /// </summary>
+    internal const int LateConnectWarningThreshold = 3;
+
+    /// <summary>
+    /// Räumt eine Verbindung auf, die erst nach Ablauf der Frist doch noch zustande kam — und zählt,
+    /// wie viele solcher Aufbauten je Upstream noch hängen (U7). Ein Connector, der seinen Abbruch
+    /// ignoriert, hinterlässt je Versuch einen; ohne Obergrenze der Versuche wächst das ohne Ende.
+    /// Gemeldet wird einmal, beim Erreichen der Schwelle — nicht bei jedem weiteren.
+    /// </summary>
+    private async Task DisposeLateConnectionAsync(Entry entry, Task<IUpstreamConnection> connect)
     {
+        var pending = Interlocked.Increment(ref entry.PendingLateConnects);
+        if (pending == LateConnectWarningThreshold)
+        {
+            Quietly(() => Log.LateConnectsPiling(_logger, entry.Config.Slug, pending));
+        }
+
         try
         {
             var late = await connect.ConfigureAwait(false);
@@ -577,6 +622,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         catch (Exception)
         {
             // Der Versuch ist längst als gescheitert verbucht; was hier noch kommt, ändert nichts.
+        }
+        finally
+        {
+            Interlocked.Decrement(ref entry.PendingLateConnects);
         }
     }
 
@@ -648,6 +697,26 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         while (true)
         {
             var rebuild = await WatchAsync(entry, connection, ct).ConfigureAwait(false);
+
+            bool stopping;
+            lock (entry.Gate)
+            {
+                stopping = entry.Stopping;
+            }
+
+            if (stopping)
+            {
+                // Der Upstream wird gerade abgeschaltet und wartet nur noch auf laufende Aufrufe.
+                // Eine neue Verbindung, die gleich wieder geschlossen wird, hilft niemandem — beim
+                // Stdio-Upstream wäre es ein neuer Prozess (R7). Der Loop wartet auf sein Ende.
+                if (rebuild.TrySetException(new UpstreamConnectionLostException(
+                        "Der Upstream wird gestoppt; die Sitzung wird nicht mehr neu aufgebaut.")))
+                {
+                    Observe(rebuild.Task);
+                }
+
+                await Task.Delay(Timeout.InfiniteTimeSpan, _time, ct).ConfigureAwait(false);
+            }
 
             SetState(entry, UpstreamState.Degraded, "Sitzung verloren, wird neu aufgebaut.");
             Quietly(() => Log.UpstreamSessionLost(_logger, entry.Config.Slug));
@@ -1179,6 +1248,12 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
                 return Task.FromResult(current);
             }
 
+            if (entry.Stopping)
+            {
+                throw new UpstreamConnectionLostException(
+                    "Der Upstream wird gestoppt; die Sitzung wird nicht mehr neu aufgebaut.");
+            }
+
             pending = entry.Rebuild ??= NewRebuild();
             entry.RebuildRequested?.TrySetResult();
         }
@@ -1271,7 +1346,23 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             return;
         }
 
-        await RefreshInventoryAsync(entry, connection, ct, raiseAlways: true).ConfigureAwait(false);
+        try
+        {
+            await RefreshInventoryAsync(entry, connection, ct, raiseAlways: true).ConfigureAwait(false);
+        }
+        catch (UpstreamSessionLostException)
+        {
+            // Die Sitzung ist fort (R6). Hier meldet sie sonst niemand: Bis das nächste
+            // Lebenszeichen sie bemerkt, liefe jeder Aufruf erst in die tote Verbindung. Der
+            // Neuaufbau holt den Katalog ohnehin neu und prüft ihn.
+            lock (entry.Gate)
+            {
+                if (ReferenceEquals(entry.Connection, connection))
+                {
+                    entry.RebuildRequested?.TrySetResult();
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -1293,6 +1384,13 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         bool changed;
         lock (entry.Gate)
         {
+            // Inzwischen ersetzt: Der Katalog der alten Verbindung überschriebe sonst den, den der
+            // Neuaufbau gerade geprüft hat (L3).
+            if (!ReferenceEquals(entry.Connection, connection))
+            {
+                return;
+            }
+
             changed = entry.Inventory is null || Signature(entry.Inventory) != Signature(screened);
             entry.Inventory = screened;
             entry.QuarantinedTools = quarantined;
@@ -1410,9 +1508,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     /// </para>
     /// </summary>
     /// <param name="fromAdmin">
-    /// Wechsel aus einer Verwaltungsaktion: Deren Audit-Zeile darf werfen — im Compliance-Modus
-    /// wird die Aktion dann verweigert. Wechsel des Loops dagegen sind geschehen, ob das Audit sie
-    /// annimmt oder nicht; ihre Zeilen werden zurückgestellt statt den Loop zu beenden.
+    /// Wechsel aus einer Verwaltungsaktion: Deren Audit-Zeile ist schon geschrieben, bevor die
+    /// Aktion gespeichert oder wirksam wurde — im Compliance-Modus wird sie dort verweigert (L4).
+    /// Hier entsteht deshalb keine zweite. Wechsel des Loops dagegen sind geschehen, ob das Audit
+    /// sie annimmt oder nicht; ihre Zeilen werden zurückgestellt statt den Loop zu beenden.
     /// </param>
     private void SetState(
         Entry entry, UpstreamState state, string? error, string? auditDetail = null, bool fromAdmin = false)
@@ -1438,19 +1537,12 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             return;
         }
 
-        if (stateChanged)
+        if (stateChanged && !fromAdmin)
         {
             var detail = auditDetail ?? (error is null
                 ? $"{entry.Config.Slug}: {state}"
                 : $"{entry.Config.Slug}: {state} — {error}");
-            if (fromAdmin)
-            {
-                AuditLifecycle(entry, detail);
-            }
-            else
-            {
-                RecordLoopLifecycle(entry, detail);
-            }
+            RecordLoopLifecycle(entry, detail);
         }
 
         Raise(entry, UpstreamChangeKind.StateChanged);
@@ -1757,6 +1849,17 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         /// <summary>Ob der Loop gerade wirklich wartet — erst nach aller Buchführung zum letzten Versuch.</summary>
         public bool LoopWaiting { get; set; }
 
+        /// <summary>Verbindungsaufbauten, die ihre Frist überschritten haben und noch nicht zurück sind (U7).</summary>
+#pragma warning disable SA1401 // Feld statt Eigenschaft: Interlocked braucht eine Referenz.
+        public int PendingLateConnects;
+#pragma warning restore SA1401
+
+        /// <summary>
+        /// Gesetzt, solange der Loop gestoppt wird (Drain eingeschlossen). Eine Sitzung, die in dieser
+        /// Zeit verloren geht, wird nicht mehr neu aufgebaut (R7).
+        /// </summary>
+        public bool Stopping { get; set; }
+
         /// <summary>Wird ausgelöst, sobald jemand den Neuaufbau der Sitzung verlangt; je Verbindung neu.</summary>
         public TaskCompletionSource? RebuildRequested { get; set; }
 
@@ -1883,6 +1986,12 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         [LoggerMessage(Level = LogLevel.Error,
             Message = "Changed-Handler warf eine Exception — Handler müssen exception-frei sein. [{ExceptionTypes}]")]
         public static partial void ChangedHandlerThrew(ILogger logger, string exceptionTypes);
+
+        [LoggerMessage(Level = LogLevel.Warning,
+            Message = "Upstream {Slug}: {Count} Verbindungsaufbauten hängen nach Ablauf ihrer Frist noch — "
+                + "der Connector beachtet seinen Abbruch nicht. Jeder hält bis zu seinem Ende Ressourcen "
+                + "(Prozess, Socket).")]
+        public static partial void LateConnectsPiling(ILogger logger, string slug, int count);
 
         [LoggerMessage(Level = LogLevel.Error,
             Message = "Upstream {Slug} ließ sich beim Beenden des Gateways nicht sauber stoppen. [{ExceptionTypes}]")]

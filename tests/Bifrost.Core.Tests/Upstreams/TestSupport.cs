@@ -129,10 +129,22 @@ internal sealed class FakeUpstreamConnection : IUpstreamConnection
 
     private int _discoverCalls;
 
-    public Task<UpstreamInventory> DiscoverAsync(CancellationToken ct)
+    /// <summary>Wenn gesetzt, wartet jede Katalogabfrage erst darauf — für Abfragen, die sich mit anderem überschneiden.</summary>
+    public Func<Task>? DiscoverHook { get; set; }
+
+    /// <summary>Wenn gesetzt, wirft DiscoverAsync diese Exception.</summary>
+    public Exception? DiscoverException { get; set; }
+
+    public async Task<UpstreamInventory> DiscoverAsync(CancellationToken ct)
     {
         Interlocked.Increment(ref _discoverCalls);
-        return Task.FromResult(Inventory);
+        var inventory = Inventory;
+        if (DiscoverHook is { } hook)
+        {
+            await hook().ConfigureAwait(false);
+        }
+
+        return DiscoverException is { } ex ? throw ex : inventory;
     }
 
     /// <summary>Wenn gesetzt, wirft CallToolAsync diese Exception.</summary>

@@ -37,16 +37,25 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
     private readonly CapturingLogger _log = new();
     private readonly List<UpstreamChangedEventArgs> _events = [];
     private readonly UpstreamSupervisor _supervisor;
+    private readonly InMemoryUpstreamConfigStore _store;
 
-    public UpstreamReconnectTests() => _supervisor = Create(_connector, jitter: 0d);
+    public UpstreamReconnectTests()
+    {
+        _store = new InMemoryUpstreamConfigStore(_time);
+        _supervisor = Create(_connector, jitter: 0d);
+    }
 
     public async ValueTask DisposeAsync() => await _supervisor.DisposeAsync();
+
+    /// <summary>Was zuletzt gespeichert ist — ob eine Aktion wirklich nicht gespeichert wurde.</summary>
+    private async Task<bool> LatestEnabledAsync(ServerId id)
+        => (await _store.GetAllLatestAsync(Ct))[id].Config.Enabled;
 
     private UpstreamSupervisor Create(FakeUpstreamConnector connector, double jitter, IAuditSink? audit = null)
     {
         var supervisor = new UpstreamSupervisor(
             [connector],
-            new InMemoryUpstreamConfigStore(_time),
+            _store,
             new SupervisorOptions
             {
                 HealthCheckInterval = TimeSpan.FromSeconds(1),
@@ -1026,6 +1035,162 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         connector.Connections.Should().HaveCount(2).And.OnlyContain(c => c.DisposeCount == 1);
     }
 
+    // ── Inventar (W12) ───────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task A_rediscovery_on_a_replaced_connection_does_not_overwrite_the_new_catalog()
+    {
+        var server = await _supervisor.AddAsync(TestData.StdioConfig(), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        var old = _connector.Connections[0];
+        old.Inventory = TestData.InventoryWithTools("echo", "alt");
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        old.DiscoverHook = () => gate.Task;
+        _connector.DefaultBehavior = static (id, _) => new FakeUpstreamConnection
+        {
+            Id = id,
+            Inventory = TestData.InventoryWithTools("echo", "neu"),
+        };
+
+        // Die Abfrage hängt auf der alten Verbindung, während die Sitzung neu aufgebaut wird.
+        var rediscovery = _supervisor.RediscoverAsync(server, Ct);
+        await TestData.WaitUntilAsync(() => old.DiscoverCalls == 2, because: "die Abfrage läuft");
+        old.CallException = new UpstreamSessionLostException("404 (Test)");
+        await _supervisor.GetConnection(server)!.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+
+        gate.SetResult();
+        await rediscovery;
+
+        _supervisor.GetInventory(server)!.Tools.Select(t => t.Name).Should().BeEquivalentTo(["echo", "neu"],
+            "der Katalog der neuen Verbindung bleibt; der der alten kam zu spät (L3)");
+    }
+
+    [Fact]
+    public async Task A_lost_session_on_rediscovery_starts_the_rebuild()
+    {
+        var server = await _supervisor.AddAsync(TestData.StdioConfig(), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        _connector.Connections[0].DiscoverException = new UpstreamSessionLostException("404 (Test)");
+
+        await _supervisor.RediscoverAsync(server, Ct);
+
+        // Ohne die Uhr vorzustellen: Kein Lebenszeichen hilft hier nach (R6).
+        await TestData.WaitUntilAsync(
+            () => _connector.ConnectCalls == 2 && _supervisor.GetStatus(server)?.State == UpstreamState.Healthy,
+            because: "die Abfrage selbst fordert den Neuaufbau an");
+        _supervisor.GetConnection(server)!.Should().NotBeNull();
+        _connector.Connections[0].DisposeCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task A_call_to_a_tool_outside_the_checked_catalog_is_refused_on_the_first_attempt()
+    {
+        var server = await _supervisor.AddAsync(TestData.StdioConfig(), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+
+        var act = () => _supervisor.GetConnection(server)!.CallToolAsync("zurueckgehalten", TestData.EmptySchema(), Ct);
+
+        (await act.Should().ThrowAsync<InvalidOperationException>())
+            .WithMessage("*nicht im geprüften Katalog*");
+        _connector.Connections[0].CallCount.Should().Be(0, "der Aufruf hat das Gateway nicht verlassen (U5)");
+    }
+
+    // ── Verwaltungsaktionen (W13) ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Disabling_with_a_refusing_audit_changes_nothing()
+    {
+        var audit = new RefusingAuditSink { Refuses = e => e.Detail == "verweigert: Stopped" };
+        await using var supervisor = Create(_connector, jitter: 0d, audit);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("verweigert"), Ct);
+
+        // Auf das Katalog-Ereignis des Verbindens warten: Es folgt dem Zustand Healthy erst nach.
+        await TestData.WaitUntilAsync(() => Events.Any(
+            e => e.Server == server && e.Kind == UpstreamChangeKind.InventoryChanged && e.State == UpstreamState.Healthy));
+        var events = Events.Count;
+
+        var act = () => supervisor.SetEnabledAsync(server, enabled: false, Ct);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Healthy, "verweigert heißt: nicht geschehen (U3)");
+        supervisor.GetConnection(server).Should().NotBeNull();
+        _connector.Connections[0].DisposeCount.Should().Be(0);
+        Events.Skip(events).Should().BeEmpty("der Katalog hat nichts zu erfahren");
+        (await LatestEnabledAsync(server)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Enabling_with_a_refusing_audit_leaves_no_half_started_upstream()
+    {
+        var audit = new RefusingAuditSink { Refuses = e => e.Detail == "halb: Starting" };
+        await using var supervisor = Create(_connector, jitter: 0d, audit);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("halb") with { Enabled = false }, Ct);
+
+        var act = () => supervisor.SetEnabledAsync(server, enabled: true, Ct);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Stopped, "kein Starting ohne Loop (R7)");
+        _connector.ConnectCalls.Should().Be(0);
+        (await LatestEnabledAsync(server)).Should().BeFalse(
+            "eine verweigerte Aktion ist nicht gespeichert (L4)");
+    }
+
+    [Fact]
+    public async Task A_session_lost_while_draining_for_a_disable_is_not_rebuilt()
+    {
+        var server = await _supervisor.AddAsync(TestData.StdioConfig(), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        var first = _connector.Connections[0];
+        first.CallGate = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var running = _supervisor.GetConnection(server)!.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+        await TestData.WaitUntilAsync(() => first.CallCount == 1, because: "der Aufruf läuft");
+
+        // Abschalten wartet auf den laufenden Aufruf; in dieser Zeit geht die Sitzung verloren.
+        var disabling = _supervisor.SetEnabledAsync(server, enabled: false, Ct);
+        first.PingException = new UpstreamSessionLostException("404 (Test)");
+        for (var i = 0; i < 3; i++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(1));
+            await Task.Delay(20, Ct);
+        }
+
+        _connector.ConnectCalls.Should().Be(1, "ein abgeschalteter Upstream wird nicht neu aufgebaut (R7)");
+
+        first.CallGate.SetResult(JsonSerializer.SerializeToElement(new { ok = true }));
+        await running.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => disabling.IsCompleted, step: TimeSpan.FromMilliseconds(100), because: "der Drain ist durch");
+        await disabling.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        _supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Stopped);
+        _connector.ConnectCalls.Should().Be(1);
+    }
+
+    // ── Späte Verbindungen (W17) ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Connect_attempts_that_ignore_their_cancellation_are_reported_once()
+    {
+        // Jeder Aufbau hängt und beachtet seinen Abbruch nicht — wie ein Connector, der auf einen
+        // Prozess wartet, der nie antwortet.
+        var never = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _connector.ConnectHook = _ => never.Task;
+        var server = await _supervisor.AddAsync(TestData.StdioConfig("haengt"), Ct);
+
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => _connector.ConnectCalls >= 6 && _supervisor.IsWaitingForNextAttempt(server),
+            step: TimeSpan.FromSeconds(30), timeoutMs: 20000,
+            because: "jeder Versuch endet an seiner Frist, und der nächste folgt");
+
+        _log.Entries.Count(e => e.Message.Contains("Verbindungsaufbauten hängen", StringComparison.Ordinal))
+            .Should().Be(1, "gemeldet wird beim Erreichen der Schwelle, nicht bei jedem weiteren (U7)");
+
+        never.SetResult();
+        await TestData.WaitUntilAsync(
+            () => _connector.Connections.Count(c => c.DisposeCount == 1) >= 6,
+            because: "was spät doch noch kommt, wird geschlossen");
+    }
+
     [Fact]
     public void A_delay_never_exceeds_what_a_timer_accepts()
     {
@@ -1172,6 +1337,11 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
     [Fact]
     public async Task Any_other_failure_in_the_middle_of_a_call_is_not_repeated()
     {
+        _connector.DefaultBehavior = static (id, _) => new FakeUpstreamConnection
+        {
+            Id = id,
+            Inventory = TestData.InventoryWithTools("create_issue"),
+        };
         var server = await _supervisor.AddAsync(TestData.StdioConfig(), Ct);
         await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
         var connection = _connector.Connections[0];

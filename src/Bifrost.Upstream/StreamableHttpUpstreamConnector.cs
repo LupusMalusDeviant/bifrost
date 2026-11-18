@@ -129,6 +129,16 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector
                 token, metadata.TokenEndpoint, oauth, resource, now, ct).ConfigureAwait(false);
         }
         catch (OAuthDiscoveryException exception)
+            when (exception.StatusCode is { } status
+                && ((int)status >= 500 || status == System.Net.HttpStatusCode.TooManyRequests))
+        {
+            // Der Token-Endpunkt ist gestört oder überlastet, nicht ablehnend: Das wird von selbst
+            // besser und gehört in die kurze Frist der Unerreichbarkeit, nicht in die 15 min einer
+            // abgelehnten Anmeldung (L5). Die Meldung nennt den Antwortkörper nicht.
+            throw new HttpRequestException(
+                $"Der Token-Endpunkt antwortete mit HTTP {(int)status}.", exception, status);
+        }
+        catch (OAuthDiscoveryException exception)
         {
             // Der Token-Endpunkt hat geantwortet und abgelehnt (oder es gibt kein Refresh-Token).
             // Ein Netzfehler auf dem Weg dorthin ist KEIN Fall für diesen Zweig — der kommt als
