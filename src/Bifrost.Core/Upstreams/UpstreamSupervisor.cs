@@ -905,11 +905,6 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     }
 
     /// <summary>
-    /// Wartet die Frist ab — oder bis jemand „Jetzt verbinden" drückt. Ohne Frist
-    /// (<paramref name="delay"/> ist <c>null</c>: die konfigurierte Obergrenze ist erreicht) wartet
-    /// der Loop nur noch auf den Knopf.
-    /// </summary>
-    /// <summary>
     /// Ob der Loop dieses Upstreams gerade auf den nächsten Versuch wartet — also alles verbucht hat,
     /// was zum letzten gehört: Zustand, Audit, Log. Für Tests: <see cref="UpstreamStatus"/> zeigt die
     /// neue Frist schon, bevor Audit und Log geschrieben sind.
@@ -927,6 +922,11 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         }
     }
 
+    /// <summary>
+    /// Wartet die Frist ab — oder bis jemand „Jetzt verbinden" drückt. Ohne Frist
+    /// (<paramref name="delay"/> ist <c>null</c>: die konfigurierte Obergrenze ist erreicht) wartet
+    /// der Loop nur noch auf den Knopf.
+    /// </summary>
     private async Task WaitForNextAttemptAsync(Entry entry, TimeSpan? delay, CancellationToken ct)
     {
         var wake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
