@@ -79,6 +79,32 @@ public sealed class OAuthFlowTests
     }
 
     /// <summary>
+    /// Plan 0005 E2: Ein Vorgang wird nur eingelöst, solange Endpunkt und Client-ID noch dieselben
+    /// sind wie beim Start.
+    /// </summary>
+    [Fact]
+    public void A_code_is_redeemed_only_for_the_binding_it_was_started_with()
+    {
+        var (_, attempt) = Begin();
+        UpstreamServerConfig Config(string endpoint, UpstreamOAuthOptions? oauth) => new(
+            "up", "Up", UpstreamTransportKind.StreamableHttp, true,
+            Http: new HttpTransportOptions(new Uri(endpoint), OAuth: oauth));
+
+        var same = () => OAuthFlow.EnsureBindingMatches(attempt, Config("https://upstream.example.com/mcp/?x=1", Options));
+        same.Should().NotThrow("Query und Schrägstrich gehören nicht zur Ressource");
+
+        var otherEndpoint = () => OAuthFlow.EnsureBindingMatches(attempt, Config("https://anders.example.com/mcp", Options));
+        otherEndpoint.Should().Throw<OAuthDiscoveryException>();
+
+        var otherClient = () => OAuthFlow.EnsureBindingMatches(
+            attempt, Config("https://upstream.example.com/mcp", new UpstreamOAuthOptions("anderer-client")));
+        otherClient.Should().Throw<OAuthDiscoveryException>();
+
+        var noOAuth = () => OAuthFlow.EnsureBindingMatches(attempt, Config("https://upstream.example.com/mcp", null));
+        noOAuth.Should().Throw<OAuthDiscoveryException>();
+    }
+
+    /// <summary>
     /// Der beim Start notierte Issuer ist der Bezugspunkt der Antwortprüfung (RFC 9207). Ohne ihn
     /// ließe sich die Antwort eines anderen Authorization Servers unterschieben.
     /// </summary>

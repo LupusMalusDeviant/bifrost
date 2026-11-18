@@ -67,26 +67,55 @@ public sealed class UpstreamOAuthTokenStore : IUpstreamOAuthTokenStore
     public async Task SaveAsync(UpstreamOAuthToken token, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(token);
-        await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
-        var row = await db.UpstreamOAuthTokens
-            .FirstOrDefaultAsync(r => r.ServerId == token.Server.Value, ct).ConfigureAwait(false);
-        if (row is null)
-        {
-            row = new UpstreamOAuthTokenRow { ServerId = token.Server.Value };
-            db.UpstreamOAuthTokens.Add(row);
-        }
-
-        row.Payload = _protector.Protect(JsonSerializer.SerializeToUtf8Bytes(
+        var payload = _protector.Protect(JsonSerializer.SerializeToUtf8Bytes(
             new Secrets(token.AccessToken, token.RefreshToken, token.Scopes)));
-        row.Issuer = token.Issuer;
-        row.ExpiresAtTicks = token.ExpiresAt?.UtcTicks;
-        // Der Zeitpunkt ist zugleich die Kennung des gespeicherten Tokens (ReplaceAsync). Trägt das
-        // neue denselben wie das alte, wird er um einen Tick weitergestellt — sonst hielte eine späte
-        // Erneuerung das neue Token für das, das sie gelesen hat (Plan 0005 D7).
-        row.ObtainedAtTicks = row.ObtainedAtTicks >= token.ObtainedAt.UtcTicks && db.Entry(row).State != EntityState.Added
-            ? row.ObtainedAtTicks + 1
-            : token.ObtainedAt.UtcTicks;
-        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        var obtained = token.ObtainedAt.UtcTicks;
+        var expires = token.ExpiresAt?.UtcTicks;
+
+        // Zwei Versuche: Legt ein gleichzeitiges Speichern die Zeile zwischen unserem Update und
+        // unserem Einfügen an, schreibt der zweite Durchgang über das Update.
+        for (var attempt = 0; ; attempt++)
+        {
+            await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+
+            // Der Zeitpunkt ist zugleich die Kennung des gespeicherten Tokens (ReplaceAsync). Trägt
+            // das neue denselben wie das alte (oder einen früheren), wird er um einen Tick
+            // weitergestellt — sonst hielte eine späte Erneuerung das neue Token für das, das sie
+            // gelesen hat (Plan 0005 D7). In EINER Anweisung, damit zwei gleichzeitige Speicherungen
+            // nicht beide denselben Folgewert ausrechnen (E15).
+            var changed = await db.UpstreamOAuthTokens
+                .Where(r => r.ServerId == token.Server.Value)
+                .ExecuteUpdateAsync(set => set
+                    .SetProperty(r => r.Payload, payload)
+                    .SetProperty(r => r.Issuer, token.Issuer)
+                    .SetProperty(r => r.ExpiresAtTicks, expires)
+                    .SetProperty(
+                        r => r.ObtainedAtTicks,
+                        r => r.ObtainedAtTicks >= obtained ? r.ObtainedAtTicks + 1 : obtained), ct)
+                .ConfigureAwait(false);
+            if (changed > 0)
+            {
+                return;
+            }
+
+            db.UpstreamOAuthTokens.Add(new UpstreamOAuthTokenRow
+            {
+                ServerId = token.Server.Value,
+                Payload = payload,
+                Issuer = token.Issuer,
+                ExpiresAtTicks = expires,
+                ObtainedAtTicks = obtained,
+            });
+            try
+            {
+                await db.SaveChangesAsync(ct).ConfigureAwait(false);
+                return;
+            }
+            catch (DbUpdateException) when (attempt == 0)
+            {
+                // Ein anderer Schreiber hat die Zeile eben angelegt — dann gilt der Update-Weg.
+            }
+        }
     }
 
     /// <summary>

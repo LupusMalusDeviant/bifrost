@@ -214,6 +214,29 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     - **Sitzungen:** Nach einer abgerissenen und mit 404 abgewiesenen Wiederaufnahme läuft der
       nächste Aufruf über eine neue Sitzung, statt in den beendeten SDK-Client zu laufen.
     - **Audit:** Ein beim Herunterfahren abgebrochener Batch landet im Drain an seinen Kettenstellen.
+  - **Befunde aus dem dritten Codex-Review** (Plan 0005, E1 – E17; Vertrag Abschnitt 10, N20 – N30,
+    sowie 3.3 und 4):
+    - **Verlorene Sitzung:** Wiederholt wird ein Aufruf nur noch nach einem 404, dessen Körper ein
+      JSON-RPC-Fehler ist — so antwortet ein MCP-Server auf eine unbekannte Sitzung. Ein nacktes 404
+      (etwa von einem Proxy davor, womöglich nach der Ausführung) geht als Fehler an den Aufrufer; der
+      nächste Aufruf läuft über eine neue Sitzung. Neues Autorisieren weckt wie „Jetzt verbinden" auch
+      einen Upstream mit erschöpfter Wiederholungsgrenze (so im Vertrag festgehalten).
+    - **OAuth:** Ein Token gilt für einen Endpunkt und eine Client-ID. Ändert sich eins davon, löscht
+      das Umkonfigurieren das Token; mit dem Upstream geht auch sein Token. Ein Autorisierungsvorgang,
+      der vor einer solchen Änderung begann, wird beim Rückruf nicht eingelöst. Die Erneuerung gilt dem
+      Token der abgewiesenen Verbindung, auch wenn schon eine neuere steht; gleichzeitige
+      Speicherungen bekommen je einen eigenen Zeitpunkt. Zeit in `Degraded` bestätigt keine Erneuerung.
+    - **Loop und Stoppen:** Ein abgelöster Loop berührt seinen Nachfolger nicht mehr. Während des
+      Drains nimmt eine Verbindung nichts Neues an; Ressourcen- und Prompt-Aufrufe zählen als laufend;
+      Abbruch und Schließen sind auf 10 s begrenzt. Ein Hinzufügen, das mit dem Herunterfahren
+      zusammenfällt, ist danach ganz da oder gar nicht.
+    - **Katalog und Pins:** Ein 401/403 auf die ausgelöste Neuabfrage beendet die Verbindung wie bei
+      der turnusmäßigen. Eine veraltete Neuabfrage schreibt keine Pin-Einträge mehr. Angenommen wird
+      nur die angezeigte Fassung (`?pendingHash=`, sonst 409); das Audit steht vor der Neuabfrage.
+      Werkzeuge werden gegen den Katalog der Verbindung geprüft, die den Aufruf ausführt.
+    - **Fehlertexte:** Lebenszeichen und Katalogabfrage maskieren auch das vorgelegte Token.
+    - **Sitzungen:** Ein interner Abbruch erzwingt keinen Neuaufbau mehr.
+    - **Audit:** Ein Fehler nach dem Festschreiben führt nicht zu doppelten Kettenstellen.
 - **Fehlertexte eines Upstreams konnten dessen Antwortkörper enthalten.** Das MCP-SDK hängt an eine
   HTTP-Fehlermeldung den Antwortkörper der Gegenstelle an; der Text ging ungefiltert in `lastError`,
   Audit und Log. Zitiert ein Upstream in seiner 401-Antwort den vorgelegten Schlüssel, stand er dort.

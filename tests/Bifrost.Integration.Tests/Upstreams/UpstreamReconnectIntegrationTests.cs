@@ -184,6 +184,29 @@ public sealed class UpstreamReconnectIntegrationTests : IAsyncLifetime
         _audit.Details.Should().Contain(d => d.Contains("Sitzung verloren", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// E12: Ein nacktes 404 (wie von einem Proxy davor) beweist nicht, dass nichts ausgeführt wurde.
+    /// Der Aufruf wird nicht wiederholt; der nächste läuft über eine neue Sitzung.
+    /// </summary>
+    [Fact]
+    public async Task A_bare_404_is_not_retried_but_the_next_call_gets_a_new_session()
+    {
+        var supervisor = CreateSupervisor(healthCheck: TimeSpan.FromMinutes(5));
+        var id = await AddHealthyAsync(supervisor);
+        var connection = supervisor.GetConnection(id)!;
+
+        _upstream.BareNotFound = true;
+        _upstream.RevokeSessions();
+        var refused = () => connection.CallToolAsync("echo", Hello, Ct);
+        await refused.Should().ThrowAsync<Exception>("ein 404 ohne MCP-Fehlerkörper wird nicht wiederholt");
+        _upstream.Initializes.Should().Be(1, "für diesen Aufruf kein Neuaufbau");
+        _upstream.Executions.Should().Be(0);
+
+        Text(await connection.CallToolAsync("echo", Hello, Ct)).Should().Be("Echo");
+        _upstream.Initializes.Should().Be(2, "der nächste Aufruf läuft über eine neue Sitzung");
+        _upstream.Executions.Should().Be(1);
+    }
+
     [Fact]
     public async Task Ten_concurrent_calls_on_a_lost_session_cause_one_rebuild()
     {
@@ -407,7 +430,8 @@ public sealed class UpstreamReconnectIntegrationTests : IAsyncLifetime
             return Task.FromResult(ToolDefinitionVerdict.Changed);
         }
 
-        public Task AcceptAsync(ServerId server, string tool, CancellationToken ct) => Task.CompletedTask;
+        public Task<bool> AcceptAsync(ServerId server, string tool, string expectedPendingHash, CancellationToken ct)
+            => Task.FromResult(false);
 
         public Task ForgetServerAsync(ServerId server, CancellationToken ct) => Task.CompletedTask;
     }

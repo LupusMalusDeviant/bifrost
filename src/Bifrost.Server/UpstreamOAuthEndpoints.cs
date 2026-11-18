@@ -122,8 +122,31 @@ internal static class UpstreamOAuthEndpoints
 
             try
             {
+                OAuthFlow.EnsureBindingMatches(attempt, config);
                 var token = await OAuthFlow.RedeemAsync(attempt, code, oauth, time.GetUtcNow(), ct);
                 await tokens.SaveAsync(token, ct);
+
+                // Nach dem Speichern noch einmal: Wurde die Anbindung zwischen Prüfung und Speichern
+                // geändert, hat das Umkonfigurieren das Token womöglich vor uns entfernt — dann
+                // entfernen wir es hier (E2). Umkonfigurieren speichert zuerst und entfernt danach,
+                // also sieht einer der beiden Wege den neuen Stand.
+                var after = await CurrentConfigAsync(configStore, attempt.Server, ct);
+                if (after is null)
+                {
+                    await tokens.RemoveAsync(attempt.Server, CancellationToken.None);
+                    return Results.BadRequest(new { error = "Der Upstream wurde zwischenzeitlich entfernt." });
+                }
+
+                try
+                {
+                    OAuthFlow.EnsureBindingMatches(attempt, after);
+                }
+                catch (OAuthDiscoveryException)
+                {
+                    await tokens.RemoveAsync(attempt.Server, CancellationToken.None);
+                    throw;
+                }
+
                 AuditOAuth(audit, time, ctx, attempt.Server, $"upstream-oauth-connected:{config.Slug}");
             }
             catch (OAuthDiscoveryException exception)
@@ -164,7 +187,7 @@ internal static class UpstreamOAuthEndpoints
 
         // Die kanonische URI des Upstreams ist der Resource Indicator (RFC 8707) — ohne Query und
         // ohne Fragment, mit Pfad, weil mehrere MCP-Server hinter einem Host liegen können.
-        var resource = endpoint.GetLeftPart(UriPartial.Path).TrimEnd('/');
+        var resource = OAuthAuthorizationAttempt.ResourceFor(endpoint);
 
         // Diese Sonde ging ungeprüft gegen die vom Betreiber genannte Adresse — und drei Zeilen
         // weiter unten wird derselbe Schalter an jede Discovery-Anfrage weitergereicht. Der Code

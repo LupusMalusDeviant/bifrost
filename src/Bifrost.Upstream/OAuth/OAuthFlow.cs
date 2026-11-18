@@ -78,7 +78,28 @@ public static class OAuthFlow
             // wurde bisher gelesen und weggeworfen — damit lief die Prüfung selbst dann nachsichtig,
             // wenn der Server den Parameter zugesagt hatte.
             IssuerParameterRequired = metadata.IssuerParameterSupported,
+            ClientId = options.ClientId,
         });
+    }
+
+    /// <summary>
+    /// Gehört der Vorgang noch zur aktuellen Konfiguration (Plan 0005 E2)? Wurde zwischen Start und
+    /// Rückkehr der Endpunkt oder die Client-ID geändert, wird der Code nicht eingelöst — sonst
+    /// landete ein Token für die alte Ressource oder den alten Client unter dem Upstream.
+    /// </summary>
+    public static void EnsureBindingMatches(OAuthAuthorizationAttempt attempt, UpstreamServerConfig current)
+    {
+        ArgumentNullException.ThrowIfNull(attempt);
+        ArgumentNullException.ThrowIfNull(current);
+        if (current.Http?.OAuth is not { } oauth
+            || !string.Equals(attempt.ClientId, oauth.ClientId, StringComparison.Ordinal)
+            || !string.Equals(
+                attempt.Resource, OAuthAuthorizationAttempt.ResourceFor(current.Http.Endpoint), StringComparison.Ordinal))
+        {
+            throw new OAuthDiscoveryException(
+                "Die OAuth-Anbindung des Upstreams wurde während des Vorgangs geändert. Der Vorgang "
+                + "wird abgebrochen; bitte erneut autorisieren.");
+        }
     }
 
     /// <summary>

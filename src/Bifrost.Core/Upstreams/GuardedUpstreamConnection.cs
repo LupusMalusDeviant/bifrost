@@ -103,18 +103,49 @@ public sealed class GuardedUpstreamConnection
         => WithRecoveryAsync(
             connection => connection.CallToolOnceAsync(caller, toolName, args, ct), toolName, ct);
 
-    private async Task<JsonElement> CallToolOnceAsync(
+    private Task<JsonElement> CallToolOnceAsync(
         string caller, string toolName, JsonElement args, CancellationToken ct)
+        => CountedAsync(
+            (inner, token) => inner is ICallerAwareUpstreamConnection aware
+                ? aware.CallToolAsync(caller, toolName, args, token)
+                : inner.CallToolAsync(toolName, args, token),
+            toolName,
+            ct);
+
+    public Task<JsonElement> ReadResourceAsync(Uri uri, CancellationToken ct)
+        => WithRecoveryAsync(
+            connection => connection.CountedAsync(
+                (inner, token) => inner.ReadResourceAsync(uri, token), "resources/read", ct),
+            toolName: null,
+            ct);
+
+    public Task<JsonElement> GetPromptAsync(string promptName, JsonElement? args, CancellationToken ct)
+        => WithRecoveryAsync(
+            connection => connection.CountedAsync(
+                (inner, token) => inner.GetPromptAsync(promptName, args, token), "prompts/get", ct),
+            toolName: null,
+            ct);
+
+    /// <summary>
+    /// Eine Anfrage, die der Drain abwarten muss — Werkzeug, Ressource oder Prompt (Plan 0005 E4).
+    /// Nach <see cref="CloseAdmission"/> wird keine neue mehr angenommen; sie verlässt das Gateway
+    /// dann nicht, und der Drain wartet nur auf die, die schon unterwegs waren.
+    /// </summary>
+    private async Task<JsonElement> CountedAsync(
+        Func<IUpstreamConnection, CancellationToken, Task<JsonElement>> operation,
+        string operationName,
+        CancellationToken ct)
     {
         Interlocked.Increment(ref _inFlight);
         try
         {
-            return await WithTimeoutAsync(
-                (inner, token) => inner is ICallerAwareUpstreamConnection aware
-                    ? aware.CallToolAsync(caller, toolName, args, token)
-                    : inner.CallToolAsync(toolName, args, token),
-                toolName,
-                ct).ConfigureAwait(false);
+            if (Volatile.Read(ref _admissionClosed))
+            {
+                throw new UpstreamConnectionLostException(
+                    $"Der Upstream wird gestoppt; '{operationName}' wurde nicht mehr gesendet.");
+            }
+
+            return await WithTimeoutAsync(operation, operationName, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -122,19 +153,10 @@ public sealed class GuardedUpstreamConnection
         }
     }
 
-    public Task<JsonElement> ReadResourceAsync(Uri uri, CancellationToken ct)
-        => WithRecoveryAsync(
-            connection => connection.WithTimeoutAsync(
-                (inner, token) => inner.ReadResourceAsync(uri, token), "resources/read", ct),
-            toolName: null,
-            ct);
+    private bool _admissionClosed;
 
-    public Task<JsonElement> GetPromptAsync(string promptName, JsonElement? args, CancellationToken ct)
-        => WithRecoveryAsync(
-            connection => connection.WithTimeoutAsync(
-                (inner, token) => inner.GetPromptAsync(promptName, args, token), "prompts/get", ct),
-            toolName: null,
-            ct);
+    /// <summary>Ab jetzt keine neuen Anfragen mehr — der Drain beginnt (E4).</summary>
+    internal void CloseAdmission() => Volatile.Write(ref _admissionClosed, true);
 
     /// <summary>
     /// Führt einen Aufruf aus und wiederholt ihn <b>genau einmal</b>, wenn der Upstream die Sitzung
@@ -159,13 +181,21 @@ public sealed class GuardedUpstreamConnection
         }
 
         // Auch beim ersten Versuch: Wer den Namen noch aus einem älteren Katalog kennt, darf ein
-        // Werkzeug nicht aufrufen, das die Prüfung inzwischen zurückhält (U5).
-        if (toolName is not null && !_recovery.IsToolAvailable(toolName))
+        // Werkzeug nicht aufrufen, das die Prüfung inzwischen zurückhält (U5). Geprüft wird gegen
+        // den Katalog DIESER Verbindung; ist sie schon ersetzt, läuft der Aufruf über die neue (E14).
+        if (!_sessionLost && toolName is not null)
         {
-            throw new InvalidOperationException(
-                $"Das Werkzeug '{toolName}' steht nicht im geprüften Katalog des Upstreams — es ist "
-                + "unbekannt, oder seine Definition hat sich geändert und wird bis zur Annahme "
-                + "zurückgehalten. Der Aufruf wurde nicht ausgeführt.");
+            switch (_recovery.CheckTool(this, toolName))
+            {
+                case ToolAvailability.Withheld:
+                    throw new InvalidOperationException(
+                        $"Das Werkzeug '{toolName}' steht nicht im geprüften Katalog des Upstreams — es ist "
+                        + "unbekannt, oder seine Definition hat sich geändert und wird bis zur Annahme "
+                        + "zurückgehalten. Der Aufruf wurde nicht ausgeführt.");
+                case ToolAvailability.Stale:
+                    _sessionLost = true;
+                    break;
+            }
         }
 
         if (!_sessionLost)
@@ -182,7 +212,7 @@ public sealed class GuardedUpstreamConnection
 
         var replacement = await _recovery.RebuildAsync(this, ct).ConfigureAwait(false);
         _replacement = replacement;
-        if (toolName is not null && !_recovery.IsToolAvailable(toolName))
+        if (toolName is not null && _recovery.CheckTool(replacement, toolName) != ToolAvailability.Available)
         {
             throw new InvalidOperationException(
                 $"Die Sitzung zum Upstream ging verloren und wurde neu aufgebaut. Das Werkzeug "
@@ -218,11 +248,15 @@ public sealed class GuardedUpstreamConnection
     /// Was diese Verbindung dem Upstream an Zugangsdaten vorgelegt hat — und die Verbindung, auf der
     /// zuletzt wiederholt wurde, denn ein erneuertes OAuth-Token steht in keiner Konfiguration.
     /// </summary>
+    /// <summary>Was nur diese Verbindung selbst vorgelegt hat, ohne die ihrer Ersatzverbindung (E11).</summary>
+    internal IReadOnlyList<string> OwnPresentedCredentials
+        => _inner is IPresentedCredentials presented ? presented.PresentedCredentials : [];
+
     internal IReadOnlyList<string> PresentedCredentials
     {
         get
         {
-            var own = _inner is IPresentedCredentials presented ? presented.PresentedCredentials : [];
+            var own = OwnPresentedCredentials;
             return _replacement is { } replacement ? [.. own, .. replacement.PresentedCredentials] : own;
         }
     }
@@ -303,12 +337,10 @@ public sealed class GuardedUpstreamConnection
             // Wiederholt wird hier bewusst NICHT (Vertrag Abschnitt 4): Eine Anfrage, die schon
             // unterwegs war, kann der Upstream ausgeführt haben, bevor seine Sitzung endete.
             //
-            // Gemerkt wird der Verlust aber (Plan 0005 D13): Ein Client, der seine Anfragen selbst
-            // abbricht, ist tot — gemessen nach einer Wiederaufnahme, die der Upstream mit 404
-            // abwies. Ohne diese Zeile liefe jeder weitere Aufruf in denselben toten Client und
-            // bekäme „nicht wiederholt", obwohl nichts das Gateway verlassen hat, bis irgendwann
-            // das Lebenszeichen den Verlust bemerkt. So baut der nächste Aufrufer neu auf.
-            _sessionLost = true;
+            // Als Sitzungsverlust gemerkt wird das hier NICHT (Plan 0005 E10): Ein interner Abbruch
+            // beweist keinen — auch stdio und sessionloses HTTP kennen ihn, und ein Neuaufbau ginge
+            // dort an Abschnitt 4 vorbei in die Bremse aus V2. Ist der Client wirklich beendet,
+            // erkennt das die Verbindung selbst vor der nächsten Anfrage (D13).
             throw new UpstreamConnectionLostException(
                 $"Die Verbindung zum Upstream wurde während der Operation '{operationName}' abgebaut — "
                 + "etwa weil seine Sitzung verloren ging. Ob der Upstream sie noch ausgeführt hat, ist "

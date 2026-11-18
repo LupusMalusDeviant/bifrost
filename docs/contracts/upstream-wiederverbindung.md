@@ -161,7 +161,7 @@ diesen einen Upstream. Geändert wird die Bedeutung von `maxRetries`:
 |---|---|
 | fehlt (der Regelfall — die Oberfläche setzt das Feld nie) | globale Werte, **unbegrenzt** |
 | vorhanden, `maxRetries` fehlt oder `null` | eigene Fristen, unbegrenzt |
-| vorhanden, `maxRetries` = Zahl | eigene Fristen, Grenze wie bisher. Ist sie erreicht, steht in Status und Oberfläche „Wiederverbindung nach N Versuchen eingestellt (so konfiguriert)"; „Jetzt verbinden" funktioniert weiter |
+| vorhanden, `maxRetries` = Zahl | eigene Fristen, Grenze wie bisher. Ist sie erreicht, steht in Status und Oberfläche „Wiederverbindung nach N Versuchen eingestellt (so konfiguriert)"; „Jetzt verbinden" funktioniert weiter, ebenso das Speichern neuer Zugangsdaten (Autorisieren, N12): Jedes davon ist ein Eingriff eines Menschen und löst **einen** Versuch aus (entschieden am 2026-11-18, Plan 0005 E13) |
 
 Eine ausdrücklich gesetzte Grenze ist eine Entscheidung des Betreibers und wird nicht stillschweigend
 aufgehoben. Aus dem Code ist kein Weg ersichtlich, auf dem `restart` ohne Handarbeit an der
@@ -176,6 +176,16 @@ Betrifft nur Upstreams mit `Mcp-Session-Id`. Ein sessionloser Upstream (Fassung 
 **Erkennung.** Die Verbindung selbst übersetzt „HTTP 404 auf eine Anfrage, während eine
 Sitzungs-Id besteht" in `UpstreamSessionLostException`. Oberhalb der Verbindung gibt es weiterhin
 keine SDK-Typen.
+
+**Nur ein 404 des MCP-Servers zählt (entschieden am 2026-11-18, Plan 0005 E12).** Ein 404 kann
+auch von einem Zwischenglied kommen (Reverse Proxy, Gateway davor), womöglich nachdem der Upstream
+den Aufruf schon ausgeführt hat. Als verlorene Sitzung gilt deshalb nur ein 404, dessen
+Antwortkörper ein JSON-RPC-Fehler ist (`"jsonrpc": "2.0"` mit `error`); so antworten die
+MCP-SDKs auf eine unbekannte Sitzung. Ein 404 ohne Körper oder mit anderem Körper wird **nicht**
+wiederholt: Der Aufrufer bekommt den Fehler. Der SDK-Client ist danach trotzdem beendet; der nächste
+Aufruf geht nicht mehr an ihn, sondern über eine neue Sitzung (Zeile „beginnt, nachdem das 404
+gesehen wurde"). Ein Upstream, der unbekannte Sitzungen mit leerem 404 beantwortet, verliert also
+für den einen Aufruf die Wiederholung, nicht die Wiederverbindung.
 
 **Ablauf.**
 
@@ -193,8 +203,8 @@ keine SDK-Typen.
 
 **Was nicht wiederholt wird.** Jeder andere Fehler mitten im Aufruf — abgerissene Verbindung,
 Zeitüberschreitung, 5xx. Dort ist nicht zu wissen, ob der Upstream den Aufruf schon ausgeführt
-hat, und ein zweites `create_issue` ist schlimmer als ein gemeldeter Fehler. Das 404 auf die
-Sitzung ist der eine Fall, in dem feststeht, dass nichts ausgeführt wurde.
+hat, und ein zweites `create_issue` ist schlimmer als ein gemeldeter Fehler. Das 404 des
+MCP-Servers auf die Sitzung ist der eine Fall, in dem feststeht, dass nichts ausgeführt wurde.
 
 Gilt für `tools/call`, `resources/read` und `prompts/get` gleichermaßen: Die Wiederholung sitzt in
 dem Objekt, das `GetConnection` herausgibt. Die Aufrufer ändern sich nicht.
@@ -411,7 +421,7 @@ oder erweitern eine Zusage und brauchen deshalb deine Abnahme:
 |---|---|---|
 | N1 | C8 | V1 gilt nur für ein **401**. Ein 403 („dieses Token darf das nicht") erneuert nicht und bleibt eine abgelehnte Anmeldung (E2). Die gesunde Minute aus der Präzisierung zu V1 zählt ab der **neuen Verbindung**, nicht ab dem Entschluss zu erneuern. |
 | N2 | C3 | Die Erneuerungsanforderung aus V1 bleibt stehen, bis ein anderes Token gespeichert ist. Ein gestörter Token-Endpunkt (5xx, 429) verbraucht sie nicht; das abgewiesene Token wird nicht noch einmal vorgelegt. |
-| N3 | C10 | `IUpstreamOAuthTokenStore` bekommt `ReplaceAsync(expected, replacement)` mit Standardumsetzung: Eine Erneuerung im Hintergrund ersetzt nur das Token, das sie gelesen hat. Ein neues Autorisieren oder ein „Trennen" in der Zwischenzeit hat Vorrang. |
+| N3 | C10 | **Standardumsetzung ersetzt durch N14.** `IUpstreamOAuthTokenStore` bekommt `ReplaceAsync(expected, replacement)`: Eine Erneuerung im Hintergrund ersetzt nur das Token, das sie gelesen hat. Ein neues Autorisieren oder ein „Trennen" in der Zwischenzeit hat Vorrang. |
 | N4 | C9, D11 | ~~`ConnectNowAsync` während eines laufenden Versuchs verpufft nicht.~~ **Ersetzt durch N12** (zweites Review): `ConnectNowAsync` bleibt wie Abschnitt 5.1 — `false` heißt „nichts getan". Für neue Zugangsdaten gibt es ein eigenes Signal. |
 | N5 | C12 | Die Bremse aus V2 behält ihre Zeitpunkte, bis sie aus dem Fenster fallen, auch über ihr Auslösen hinweg. Nach der Rückkehr geht ein weiterer Verlust im selben Fenster wieder in die Frist aus Abschnitt 3. |
 | N6 | C6 | Die eine Frist aus Z4 gilt für den **ganzen** Aufbau: verbinden, Katalog holen, Definitionen prüfen. Was nach Ablauf doch noch fertig wird, wird geschlossen und nie veröffentlicht. |
@@ -434,4 +444,22 @@ oder erweitern eine Zusage und brauchen deshalb deine Abnahme:
 | N16 | D10 | Ein 401/403 auf die turnusmäßige Katalogabfrage beendet die Verbindung als abgelehnte Anmeldung (E2), statt den Upstream gesund stehen zu lassen. |
 | N17 | D12 | Entfernen löscht **zuerst** in der Ablage; scheitert das, läuft der Upstream unverändert weiter. Danach wird zu Ende gestoppt, auch wenn der Aufrufer abbricht. Ab dem Beginn des Herunterfahrens werden Hinzufügen und Verwaltungsaktionen mit `ObjectDisposedException` abgewiesen. |
 | N18 | D13 | Gemessen (SDK 2.0.0): Der Client nimmt einen abgerissenen Antwortstrom mit `Last-Event-ID` wieder auf. Weist der Upstream die Wiederaufnahme mit 404 ab, endet der Client, ohne dass ein Aufruf ein 404 sieht. Eine Anfrage, die erst danach beginnt, hat das Gateway nicht verlassen und läuft wie nach einem 404 über eine neue Sitzung (Abschnitt 4). Der abgerissene Aufruf selbst wird nicht wiederholt. |
-| N19 | D14 | Bricht das Herunterfahren eine Audit-Schreibung ab, schreibt der Drain dieselben Zeilen an ihren Kettenstellen. |
+| N19 | D14 | Bricht das Herunterfahren eine Audit-Schreibung ab, schreibt der Drain dieselben Zeilen an ihren Kettenstellen. Präzisiert durch N30. |
+
+### Drittes Review (`49e1792`, Plan 0005 E1 – E17)
+
+**Status: gebaut auf deinen Auftrag „Alle Claude-prüfbaren" (ohne E12, E13); zur Abnahme.**
+
+| # | Befund | Präzisierung |
+|---|---|---|
+| N20 | E1 | Ein Loop, der nach dem 10-s-Join (N13) noch läuft, bucht nichts mehr: kein Zustand, kein Neuaufbau, kein Schließen fremder Verbindungen. Jeder Schritt nach einem Warten prüft zuerst, ob er abgelöst ist. |
+| N21 | E2 | Ein OAuth-Token ist an Ressource (kanonischer Endpunkt) und Client-ID gebunden. Ändert das Umkonfigurieren (auch Zurückrollen) eins davon oder entfernt es die OAuth-Anbindung, wird das gespeicherte Token **nach** dem Speichern der Konfiguration gelöscht. Entfernen löscht das Token mit. Der Rückruf löst einen Code nur ein, wenn Endpunkt und Client-ID noch denen beim Start entsprechen, und prüft das nach dem Speichern erneut (sonst löscht er sein Token). `OAuthAuthorizationAttempt` trägt dafür `ClientId`; neu sind `ResourceFor(Uri)` und `BindingChanged(before, after)`. Der Supervisor bekommt die Token-Ablage als optionalen Parameter. |
+| N22 | E3 | Fehlertexte aus Lebenszeichen und Katalogabfrage (Status, Log, Audit) maskieren auch das vorgelegte Token (N9). |
+| N23 | E4 | Ab dem Beginn des Stoppens nimmt eine Verbindung keine neue Anfrage mehr an (`UpstreamConnectionLostException`, nichts wird gesendet). Werkzeug-, Ressourcen- und Prompt-Aufrufe zählen gleichermaßen als laufend. Abbruch und Schließen der Verbindung sind wie der Join auf `StopJoinTimeout` begrenzt; ein Überschreiten wird als Fehler geloggt. |
+| N24 | E5, E7 | Ein 401/403 auf eine **ausgelöste** Neuabfrage beendet die Verbindung wie N16; der Aufrufer bekommt den Fehler trotzdem. `AcceptAsync(server, tool, expectedPendingHash)` ist ein Vergleich-und-Tausch: Angenommen wird nur, wenn noch genau diese Fassung ansteht (sonst `false`). REST: `POST …/accept?pendingHash=<hex>`; fehlt der Parameter, gilt die beim Aufruf anstehende Fassung. Steht eine andere an: **409**. Das Audit steht vor der Neuabfrage; scheitert die Neuabfrage, antwortet der Endpunkt **202** mit Warnung statt 500. Eine Neuabfrage, deren Verbindung inzwischen ersetzt ist, schreibt keine Pin-Einträge. |
+| N25 | E6 | Zeit in `Degraded` zählt nicht zur gesunden Minute (N15, Z5); sie beginnt mit dem nächsten gelungenen Lebenszeichen neu. |
+| N26 | E8 | Hinzufügen und Wiederherstellen laufen in einer Zulassung: Das Herunterfahren wartet (höchstens `StopJoinTimeout`) auf begonnene Zulassungen. Ein Hinzufügen ist danach vollständig registriert oder gar nicht begonnen; Verwaltungsaktionen nach Beginn des Herunterfahrens werfen `ObjectDisposedException` (auch „Jetzt verbinden"). |
+| N27 | E10 | **Ersetzt den Zusatz zu N18:** Ein interner Abbruch (Frist des Aufrufs) markiert die Sitzung nicht als verloren. Den Fall aus N18 erkennt allein die Prüfung des beendeten SDK-Clients. |
+| N28 | E11 | `IUpstreamCredentialRenewal` bekommt `RequestCredentialRenewal(ServerId, string? rejectedCredential)` (Standardumsetzung ruft die alte Form). Der Supervisor übergibt das Token, das die abgewiesene Verbindung selbst vorgelegt hat. Der Vermerk wird nur gelöscht, solange er noch das ersetzte Token nennt. |
+| N29 | E14 | `IUpstreamSessionRecovery.IsToolAvailable(string)` wird zu `CheckTool(connection, tool)` → `Available` / `Withheld` / `Stale`. Geprüft wird gegen den Katalog der ausführenden Verbindung; eine ersetzte Hülle läuft über die aktuelle Verbindung. |
+| N30 | E9, E15 | Ein wiederholter Audit-Schreibversuch schreibt nur Kettenstellen, die noch nicht mit demselben Hash stehen. Die Token-Ablage stellt den Zeitpunkt des Erhalts in **einer** Anweisung weiter, sodass auch gleichzeitige Speicherungen je einen eigenen bekommen. |

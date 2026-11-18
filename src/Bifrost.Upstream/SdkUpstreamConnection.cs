@@ -157,13 +157,49 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection, IPresentedCre
 
         for (var current = exception; current is not null; current = current.InnerException)
         {
-            if (current is HttpRequestException { StatusCode: System.Net.HttpStatusCode.NotFound })
+            if (current is HttpRequestException { StatusCode: System.Net.HttpStatusCode.NotFound } notFound)
             {
-                return true;
+                // Nur das 404 des MCP-Servers selbst (Vertrag Abschnitt 4, Plan 0005 E12). Ein
+                // Zwischenglied kann ein 404 auch NACH der Ausführung liefern; das zu wiederholen
+                // hieße, einen Aufruf womöglich doppelt auszuführen.
+                return IsMcpErrorBody(notFound.Message);
             }
         }
 
         return false;
+    }
+
+    /// <summary>Das SDK hängt den Antwortkörper an die Meldung an („… Response body: {…}").</summary>
+    private const string ResponseBodyMarker = "Response body:";
+
+    /// <summary>
+    /// Ist der an die Meldung angehängte Antwortkörper ein JSON-RPC-Fehler? So antworten die
+    /// MCP-SDKs auf eine unbekannte Sitzung; ein Proxy-404 ist leer oder HTML.
+    /// </summary>
+    internal static bool IsMcpErrorBody(string message)
+    {
+        var at = message.IndexOf(ResponseBodyMarker, StringComparison.Ordinal);
+        if (at < 0)
+        {
+            return false;
+        }
+
+        var body = message[(at + ResponseBodyMarker.Length)..].Trim();
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            return root.ValueKind == JsonValueKind.Object
+                && root.TryGetProperty("jsonrpc", out var version)
+                && version.ValueKind == JsonValueKind.String
+                && version.GetString() == "2.0"
+                && root.TryGetProperty("error", out var error)
+                && error.ValueKind == JsonValueKind.Object;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private async Task<UpstreamInventory> DiscoverCoreAsync(CancellationToken ct)

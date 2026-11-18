@@ -117,4 +117,39 @@ public sealed record OAuthAuthorizationAttempt(
     /// </para>
     /// </summary>
     public bool IssuerParameterRequired { get; init; }
+
+    /// <summary>
+    /// Die Client-ID, mit der der Vorgang begonnen wurde (Plan 0005 E2). Hat sie sich bis zum
+    /// Zurückkommen geändert, gehört der Code zu einem anderen Client und wird nicht eingelöst.
+    /// </summary>
+    public string? ClientId { get; init; }
+
+    /// <summary>
+    /// Der Resource Indicator (RFC 8707) eines Upstream-Endpunkts: seine kanonische URI ohne Query
+    /// und Fragment, mit Pfad, ohne abschließenden Schrägstrich. An ihn ist jedes Token gebunden.
+    /// </summary>
+    public static string ResourceFor(Uri endpoint)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        return endpoint.GetLeftPart(UriPartial.Path).TrimEnd('/');
+    }
+
+    /// <summary>
+    /// Hat sich die Bindung eines OAuth-Tokens zwischen zwei Konfigurationen geändert — anderer
+    /// Endpunkt (also andere Ressource), andere Client-ID oder keine OAuth-Anbindung mehr? Dann gilt
+    /// ein gespeichertes Token nicht mehr (Plan 0005 E2).
+    /// </summary>
+    public static bool BindingChanged(UpstreamServerConfig before, UpstreamServerConfig after)
+    {
+        ArgumentNullException.ThrowIfNull(before);
+        ArgumentNullException.ThrowIfNull(after);
+        if (before.Http?.OAuth is not { } old)
+        {
+            return false;
+        }
+
+        return after.Http?.OAuth is not { } now
+            || !string.Equals(old.ClientId, now.ClientId, StringComparison.Ordinal)
+            || !string.Equals(ResourceFor(before.Http.Endpoint), ResourceFor(after.Http.Endpoint), StringComparison.Ordinal);
+    }
 }

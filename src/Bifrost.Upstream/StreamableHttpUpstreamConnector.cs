@@ -54,6 +54,20 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstr
         // frisch und nicht abgewiesen (Plan 0005 D6).
         => _renew[id] = _presented.TryGetValue(id, out var presented) ? presented : RejectedTokenUnknown;
 
+    /// <inheritdoc />
+    public void RequestCredentialRenewal(ServerId id, string? rejectedCredential)
+    {
+        // Das Token der abgewiesenen Verbindung selbst (E11): Ist inzwischen eine neuere Verbindung
+        // mit einem frischen Token aufgebaut, gilt dieses nicht als abgewiesen.
+        if (string.IsNullOrEmpty(rejectedCredential))
+        {
+            RequestCredentialRenewal(id);
+            return;
+        }
+
+        _renew[id] = rejectedCredential;
+    }
+
     /// <summary>Das Token, das die zuletzt aufgebaute Verbindung je Upstream vorgelegt hat.</summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<ServerId, string> _presented = new();
 
@@ -171,7 +185,7 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstr
             return token.AccessToken;
         }
 
-        var resource = config.Http!.Endpoint.GetLeftPart(UriPartial.Path).TrimEnd('/');
+        var resource = OAuthAuthorizationAttempt.ResourceFor(config.Http!.Endpoint);
         var metadata = await OAuthDiscovery.FetchAuthorizationServerMetadataAsync(
             new Uri(token.Issuer), oauth.AllowPrivateTargets, ct).ConfigureAwait(false);
         UpstreamOAuthToken refreshed;
@@ -210,11 +224,21 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstr
                 ?? throw new UpstreamAuthenticationException(
                     $"Für '{config.Slug}' liegt kein Zugriffstoken mehr vor — die Verbindung wurde "
                     + "getrennt. Der Upstream muss neu autorisiert werden (Server-Verwaltung → Autorisieren).");
-            _renew.TryRemove(id, out _);
+            ForgetRenewal(id, token.AccessToken);
             return current.AccessToken;
         }
 
-        _renew.TryRemove(id, out _);
+        ForgetRenewal(id, token.AccessToken);
         return refreshed.AccessToken;
+    }
+
+    /// <summary>
+    /// Löscht den Erneuerungsvermerk nur, wenn er noch das gerade ersetzte Token nennt (E11). Hat
+    /// zwischendurch eine andere Verbindung ein anderes Token als abgewiesen gemeldet, bleibt das stehen.
+    /// </summary>
+    private void ForgetRenewal(ServerId id, string replaced)
+    {
+        _renew.TryRemove(new KeyValuePair<ServerId, string>(id, replaced));
+        _renew.TryRemove(new KeyValuePair<ServerId, string>(id, RejectedTokenUnknown));
     }
 }
