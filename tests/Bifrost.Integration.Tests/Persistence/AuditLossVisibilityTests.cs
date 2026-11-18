@@ -116,6 +116,34 @@ public sealed class AuditLossVisibilityTests
         check.SafeDetails["erster_verlust"].Should().NotBe("nicht vermerkt", "und seit wann");
     }
 
+    /// <summary>
+    /// V3 (Vertrag „Selbsttätige Wiederverbindung"): Ein Angebot, das abgewiesen und später erneut
+    /// gemacht wird, ist kein Verlust. Sonst zählte bei vollem Kanal jeder Nachreich-Versuch, und
+    /// der Bericht nennte eine Zahl, die mit den Lebenszeichen wächst statt mit den Lücken.
+    /// </summary>
+    [Fact]
+    public void An_offer_that_is_refused_is_not_a_loss_until_it_is_given_up()
+    {
+        var sink = new ChannelAuditSink(capacity: 1, mode: AuditDeliveryMode.Compliance);
+        IAuditSink offered = sink;
+        offered.TryRecord(NewEvent()).Should().BeTrue();
+
+        for (var i = 0; i < 10; i++)
+        {
+            offered.TryRecord(NewEvent()).Should().BeFalse("der Kanal ist voll");
+        }
+
+        sink.Loss.Total.Should().Be(0, "abgewiesen, aber noch beim Aufrufer — nicht verloren");
+        sink.Loss.FirstLossAt.Should().BeNull();
+        sink.IsHealthy.Should().BeTrue();
+
+        offered.ReportDiscarded(3);
+
+        sink.Loss.LostAtIntake.Should().Be(3, "verloren ist, was der Aufrufer aufgibt");
+        sink.Loss.FirstLossAt.Should().NotBeNull();
+        sink.IsHealthy.Should().BeFalse("im Compliance-Modus ist ein Verlust ein Befund");
+    }
+
     private static AuditEvent NewEvent() => new(
         DateTimeOffset.UtcNow, IdentityId.New(), CallOrigin.Mcp, AuditEventKind.ToolCall,
         ServerId.New(), "srv__tool", InvocationStatus.Success, null, 1, 2, TimeSpan.FromMilliseconds(1));

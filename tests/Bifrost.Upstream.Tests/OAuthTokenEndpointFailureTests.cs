@@ -53,12 +53,37 @@ public sealed class OAuthTokenEndpointFailureTests
         (await act.Should().ThrowAsync<OAuthDiscoveryException>()).Which.StatusCode.Should().Be(HttpStatusCode.BadGateway);
     }
 
+    /// <summary>
+    /// V1: Weist der Upstream ein Token ab, das laut Ablaufzeit noch gälte, verlangt der Supervisor
+    /// die Erneuerung — und der nächste Verbindungsaufbau geht zum Token-Endpunkt, statt das
+    /// abgewiesene Token noch einmal vorzulegen. Einmal: danach gilt wieder die Ablaufzeit.
+    /// </summary>
+    [Fact]
+    public async Task A_requested_renewal_refreshes_a_token_that_has_not_expired_yet()
+    {
+        using var server = new AuthorizationServer(HttpStatusCode.ServiceUnavailable);
+        var (connector, config, id) = await ArrangeAsync(server, expired: false);
+        var ct = TestContext.Current.CancellationToken;
+
+        connector.RequestCredentialRenewal(id);
+        var renewing = async () => await connector.ConnectAsync(id, config, ct);
+        (await renewing.Should().ThrowAsync<HttpRequestException>())
+            .WithMessage("*Token-Endpunkt*", "erneuert wurde, obwohl das Token noch gälte");
+
+        var again = async () => await connector.ConnectAsync(id, config, ct);
+        (await again.Should().ThrowAsync<Exception>())
+            .Which.Message.Should().NotContain("Token-Endpunkt", "die Anforderung gilt für einen Aufbau, nicht für immer");
+    }
+
     private static async Task<(StreamableHttpUpstreamConnector Connector, UpstreamServerConfig Config, ServerId Id)> ArrangeAsync(
-        AuthorizationServer server)
+        AuthorizationServer server, bool expired = true)
     {
         var id = new ServerId(Guid.NewGuid());
         var tokens = new MemoryTokens();
-        await tokens.SaveAsync(ExpiredToken(id, server.Issuer), TestContext.Current.CancellationToken);
+        var token = ExpiredToken(id, server.Issuer);
+        await tokens.SaveAsync(
+            expired ? token : token with { ExpiresAt = DateTimeOffset.UtcNow.AddHours(1) },
+            TestContext.Current.CancellationToken);
         var config = new UpstreamServerConfig(
             "oauth", "OAuth", UpstreamTransportKind.StreamableHttp, true,
             Http: new HttpTransportOptions(

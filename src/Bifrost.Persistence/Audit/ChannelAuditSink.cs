@@ -104,6 +104,29 @@ public sealed class ChannelAuditSink : IAuditSink
         }
     }
 
+    /// <summary>
+    /// Bietet an, ohne zu zählen: Eine Abweisung ist hier noch kein Verlust — der Aufrufer bewahrt
+    /// das Ereignis auf und bietet es erneut an. Sonst zählte jeder Nachreich-Versuch bei vollem
+    /// Kanal als eigener Verlust, und <see cref="Loss"/> wüchse mit jedem Lebenszeichen (V3).
+    /// </summary>
+    public bool TryRecord(AuditEvent evt)
+    {
+        ArgumentNullException.ThrowIfNull(evt);
+        return _channel.Writer.TryWrite(evt);
+    }
+
+    /// <summary>Ereignisse, die ein Aufrufer nach <see cref="TryRecord"/> aufgegeben hat — sie sind verloren.</summary>
+    public void ReportDiscarded(int count)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        Interlocked.Add(ref _dropped, count);
+        MarkFirstLoss();
+    }
+
     /// <summary>Signalisiert dem Batch-Writer das Ende (Shutdown) — danach wird der Rest gedraint.</summary>
     public void Complete() => _channel.Writer.TryComplete();
 

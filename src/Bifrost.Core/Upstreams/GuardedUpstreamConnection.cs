@@ -194,6 +194,13 @@ public sealed class GuardedUpstreamConnection
         }
     }
 
+    /// <summary>
+    /// Die Verbindung wird ersetzt, obwohl ihre Sitzung nicht verloren ist — etwa nach einem
+    /// abgewiesenen Token (V1). Wer die Hülle noch hält, wartet danach auf die neue Verbindung,
+    /// statt in die alte zu laufen.
+    /// </summary>
+    internal void MarkReplaced() => _sessionLost = true;
+
     public Task PingAsync(CancellationToken ct)
         => WithTimeoutAsync(
             async (inner, token) =>

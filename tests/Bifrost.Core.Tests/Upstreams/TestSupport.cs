@@ -215,8 +215,15 @@ internal sealed class FakeUpstreamConnection : IUpstreamConnection
         => NotificationReceived?.Invoke(this, new UpstreamNotificationEventArgs { Server = Id, Method = method });
 }
 
-internal sealed class FakeUpstreamConnector : IUpstreamConnector
+internal sealed class FakeUpstreamConnector : IUpstreamConnector, IUpstreamCredentialRenewal
 {
+    private int _renewals;
+
+    /// <summary>Wie oft der Supervisor die Erneuerung der Zugangsdaten verlangt hat (V1).</summary>
+    public int CredentialRenewals => Volatile.Read(ref _renewals);
+
+    public void RequestCredentialRenewal(ServerId id) => Interlocked.Increment(ref _renewals);
+
     private readonly ConcurrentQueue<Func<ServerId, UpstreamServerConfig, IUpstreamConnection>> _scripted = new();
     private readonly List<FakeUpstreamConnection> _connections = [];
     private int _connectCalls;

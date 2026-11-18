@@ -824,6 +824,12 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
 
         _log.Entries.Should().Contain(e => e.Message.Contains("älteste zurückgestellte", StringComparison.Ordinal));
 
+        // Verloren sind genau die verworfenen Zeilen (je eine Logzeile) — nicht jede der vielen
+        // Abweisungen davor (V3).
+        var dropped = _log.Entries.Count(e => e.Message.Contains("älteste zurückgestellte", StringComparison.Ordinal));
+        audit.Discarded.Should().Be(dropped);
+        audit.Refused.Should().BeGreaterThan(dropped, "abgewiesen wurde weit öfter, als verworfen");
+
         Volatile.Write(ref full, false);
         await ConnectNowAsync(supervisor, server);
         await FailedAttemptAsync(supervisor, server, 41);
@@ -1164,6 +1170,149 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
 
         _supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Stopped);
         _connector.ConnectCalls.Should().Be(1);
+    }
+
+    // ── Abgewiesenes Token auf stehender Verbindung (V1) ─────────────────────────────────────
+
+    private static UpstreamServerConfig OAuthConfig(string slug)
+        => new(
+            slug, slug, UpstreamTransportKind.StreamableHttp, Enabled: true,
+            Http: new HttpTransportOptions(
+                new Uri("https://upstream.invalid/mcp"), OAuth: new UpstreamOAuthOptions("gateway")));
+
+    private static HttpRequestException Unauthorized()
+        => new("Response status code does not indicate success: 401 (Unauthorized).", null, HttpStatusCode.Unauthorized);
+
+    private (FakeUpstreamConnector Connector, UpstreamSupervisor Supervisor) CreateOAuth(bool renewedTokenIsRefused = false)
+    {
+        var connector = new FakeUpstreamConnector { Kind = UpstreamTransportKind.StreamableHttp };
+        var supervisor = Create(connector, jitter: 0d);
+        if (renewedTokenIsRefused)
+        {
+            // Jede Verbindung nach der ersten weist ihr Token gleich wieder ab.
+            connector.DefaultBehavior = (id, _) => new FakeUpstreamConnection
+            {
+                Id = id,
+                PingException = connector.ConnectCalls > 1 ? Unauthorized() : null,
+            };
+        }
+
+        return (connector, supervisor);
+    }
+
+    [Fact]
+    public async Task A_refused_token_on_a_standing_connection_is_renewed_and_reconnected_at_once()
+    {
+        var (connector, supervisor) = CreateOAuth();
+        await using var _ = supervisor;
+        var server = await supervisor.AddAsync(OAuthConfig("oauth"), Ct);
+        await TestData.WaitUntilAsync(() => supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        var first = connector.Connections[0];
+        var stale = supervisor.GetConnection(server)!;
+
+        first.PingException = Unauthorized();
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => connector.ConnectCalls == 2 && supervisor.GetStatus(server)?.State == UpstreamState.Healthy,
+            step: TimeSpan.FromSeconds(1), because: "abgewiesenes Token: erneuern und sofort neu verbinden (V1)");
+
+        connector.CredentialRenewals.Should().Be(1);
+        Events.Should().NotContain(e => e.Server == server && e.State == UpstreamState.Failed,
+            "ohne Frist und ohne Fehlversuch");
+        await TestData.WaitUntilAsync(() => first.DisposeCount == 1);
+
+        // Wer die alte Hülle hält, landet auf der neuen Verbindung.
+        await stale.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+        first.CallCount.Should().Be(0);
+        connector.Connections[1].CallCount.Should().Be(1);
+
+        // Eine Stunde später läuft das Token wieder ab: Auch das wird erneuert, nicht abgelehnt.
+        _time.Advance(TimeSpan.FromHours(1));
+        connector.Connections[1].PingException = Unauthorized();
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => connector.ConnectCalls == 3 && supervisor.GetStatus(server)?.State == UpstreamState.Healthy,
+            step: TimeSpan.FromSeconds(1), because: "jeder Ablauf nach einer gesunden Minute wird erneuert");
+        connector.CredentialRenewals.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task A_token_refused_again_right_after_renewal_is_a_rejected_login()
+    {
+        var (connector, supervisor) = CreateOAuth(renewedTokenIsRefused: true);
+        await using var _ = supervisor;
+        var server = await supervisor.AddAsync(OAuthConfig("abgelehnt"), Ct);
+        await TestData.WaitUntilAsync(() => supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+
+        connector.Connections[0].PingException = Unauthorized();
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => supervisor.GetStatus(server)?.Reconnect is { NextAttemptAt: not null },
+            step: TimeSpan.FromSeconds(1), because: "ein zweites 401 gleich danach ist eine abgelehnte Anmeldung (E2)");
+
+        supervisor.GetStatus(server)!.Reconnect!.Kind.Should().Be(UpstreamFailureKind.Authentication);
+        connector.CredentialRenewals.Should().Be(1, "erneuert wird einmal, nicht in einer Schleife");
+    }
+
+    [Fact]
+    public async Task A_refused_static_key_is_not_renewed()
+    {
+        var connector = new FakeUpstreamConnector { Kind = UpstreamTransportKind.StreamableHttp };
+        await using var supervisor = Create(connector, jitter: 0d);
+        var server = await supervisor.AddAsync(HttpConfig(new Uri("https://upstream.invalid/mcp")), Ct);
+        await TestData.WaitUntilAsync(() => supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+
+        connector.Connections[0].PingException = Unauthorized();
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => supervisor.GetStatus(server)?.Reconnect is { NextAttemptAt: not null },
+            step: TimeSpan.FromSeconds(1), because: "ein fester Schlüssel lässt sich nicht erneuern");
+
+        connector.CredentialRenewals.Should().Be(0);
+        supervisor.GetStatus(server)!.Reconnect!.Kind.Should().Be(UpstreamFailureKind.Authentication);
+    }
+
+    // ── Bremse für Neuaufbauten (V2) ─────────────────────────────────────────────────────────
+
+    private async Task LoseSessionAsync(ServerId server)
+    {
+        _connector.Connections[^1].CallException = new UpstreamSessionLostException("404 (Test)");
+        await _supervisor.GetConnection(server)!.CallToolAsync("echo", TestData.EmptySchema(), Ct);
+    }
+
+    [Fact]
+    public async Task A_session_lost_again_and_again_counts_as_an_outage()
+    {
+        var server = await _supervisor.AddAsync(TestData.StdioConfig("flattert"), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+
+        for (var i = 0; i < UpstreamSupervisor.MaxRebuildsPerWindow; i++)
+        {
+            await LoseSessionAsync(server);
+            _time.Advance(TimeSpan.FromSeconds(30));
+        }
+
+        _connector.ConnectCalls.Should().Be(1 + UpstreamSupervisor.MaxRebuildsPerWindow, "drei Neuaufbauten sind erlaubt");
+
+        var act = () => LoseSessionAsync(server);
+
+        await act.Should().ThrowAsync<UpstreamConnectionLostException>().WithMessage("*wiederholt verloren*");
+        var info = await FailedAttemptAsync(server, 1);
+        info.Kind.Should().Be(UpstreamFailureKind.Unreachable, "ab hier übernimmt die Frist aus Abschnitt 3 (V2)");
+        _connector.ConnectCalls.Should().Be(1 + UpstreamSupervisor.MaxRebuildsPerWindow, "der vierte wird nicht mehr gebaut");
+    }
+
+    [Fact]
+    public async Task Rebuilds_spread_over_more_than_five_minutes_do_not_count_as_an_outage()
+    {
+        var server = await _supervisor.AddAsync(TestData.StdioConfig("selten"), Ct);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+
+        for (var i = 0; i < 6; i++)
+        {
+            await LoseSessionAsync(server);
+            _time.Advance(TimeSpan.FromMinutes(2));
+            await Task.Delay(5, Ct);
+        }
+
+        _supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Healthy);
+        _connector.ConnectCalls.Should().Be(7, "jeder Verlust ein Neuaufbau, keiner zu viel in fünf Minuten");
     }
 
     // ── Späte Verbindungen (W17) ─────────────────────────────────────────────────────────────
@@ -1555,6 +1704,13 @@ public sealed class UpstreamReconnectTests : IAsyncDisposable
         public required Func<AuditEvent, bool> Refuses { get; init; }
 
         public int Refused => Volatile.Read(ref _refused);
+
+        private int _discarded;
+
+        /// <summary>Was der Supervisor als endgültig verloren gemeldet hat (V3).</summary>
+        public int Discarded => Volatile.Read(ref _discarded);
+
+        public void ReportDiscarded(int count) => Interlocked.Add(ref _discarded, count);
 
         public IReadOnlyList<AuditEvent> Accepted
         {

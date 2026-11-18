@@ -15,8 +15,11 @@ namespace Bifrost.Upstream;
 /// hinterliesse einen Server im Fehlerzustand, dessen Ursache niemand ansieht.
 /// </para>
 /// </summary>
-public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector
+public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstreamCredentialRenewal
 {
+    /// <summary>Upstreams, deren nächster Verbindungsaufbau das Token erneuert, gleich wie lange es noch gälte (V1).</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<ServerId, byte> _renew = new();
+
     /// <summary>Sicherheitsabstand vor dem Ablauf — ein Token, das während des Aufrufs verfällt, ist keins.</summary>
     private static readonly TimeSpan RefreshSkew = TimeSpan.FromMinutes(2);
 
@@ -35,6 +38,9 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector
     }
 
     public UpstreamTransportKind Kind => UpstreamTransportKind.StreamableHttp;
+
+    /// <inheritdoc />
+    public void RequestCredentialRenewal(ServerId id) => _renew[id] = 0;
 
     public async Task<IUpstreamConnection> ConnectAsync(ServerId id, UpstreamServerConfig config, CancellationToken ct)
     {
@@ -113,8 +119,12 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector
                 $"Für '{config.Slug}' liegt kein Zugriffstoken vor. Der Upstream muss einmal "
                 + "autorisiert werden (Server-Verwaltung → Autorisieren).");
 
+        // Verlangt der Supervisor die Erneuerung (der Upstream hat das Token abgewiesen), wird
+        // erneuert, auch wenn die Ablaufzeit noch nicht erreicht ist — sie ist dann offenbar falsch
+        // oder das Token widerrufen (V1).
+        var renewalRequested = _renew.TryRemove(id, out _);
         var now = _time.GetUtcNow();
-        if (!token.NeedsRefresh(now, RefreshSkew))
+        if (!renewalRequested && !token.NeedsRefresh(now, RefreshSkew))
         {
             return token.AccessToken;
         }
