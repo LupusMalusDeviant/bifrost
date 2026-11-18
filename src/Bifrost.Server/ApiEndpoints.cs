@@ -1210,10 +1210,38 @@ internal static class ApiEndpoints
                 });
             }
 
-            await store.AcceptAsync(server, tool, ct);
-            await supervisor.RediscoverAsync(server, ct);
+            // Angenommen wird die Fassung, die der Aufrufer gesehen hat (E7): ?pendingHash=… aus der
+            // Liste. Ohne den Parameter die, die gerade gelesen wurde — eine dazwischen neu
+            // gemeldete wird dann nicht stillschweigend mit angenommen.
+            var expected = ctx.Request.Query["pendingHash"].ToString() is { Length: > 0 } given
+                ? given
+                : pin.PendingHash!;
+            if (!await store.AcceptAsync(server, tool, expected, ct))
+            {
+                return Results.Conflict(new
+                {
+                    error = $"Für '{tool}' steht inzwischen eine andere geänderte Definition an. "
+                        + "Bitte die Liste neu laden und diese Fassung prüfen.",
+                });
+            }
+
+            // Erst das Audit, dann die Neuabfrage (E5): Die Annahme gilt ab hier, auch wenn die
+            // Neuabfrage scheitert — etwa weil der Upstream die Anmeldung abweist.
             AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, server,
                 $"tool-definition-accepted:{tool}");
+            try
+            {
+                await supervisor.RediscoverAsync(server, ct);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                return Results.Accepted(value: new
+                {
+                    warning = "Angenommen. Die Neuabfrage des Katalogs ist gescheitert; den Grund "
+                        + "zeigt der Status des Upstreams.",
+                });
+            }
+
             return Results.NoContent();
         });
     }

@@ -105,7 +105,9 @@ public sealed partial class AuditBatchWriter
 
         if (pending is not null)
         {
-            await WriteRowsAsync(pending, CancellationToken.None).ConfigureAwait(false);
+            // Die abgebrochene Schreibung kann schon durch sein — dann darf der Drain sie nicht
+            // ein zweites Mal einfügen (E9).
+            await WriteRowsAsync(pending, CancellationToken.None, mayExist: true).ConfigureAwait(false);
         }
 
         while (_sink.Reader.TryRead(out var evt))
@@ -159,7 +161,7 @@ public sealed partial class AuditBatchWriter
     }
 
     /// <summary>Schreibt schon verkettete Zeilen — mit den Versuchen aus <see cref="WriteBatchAsync"/>.</summary>
-    private async Task WriteRowsAsync(List<AuditEventRow> rows, CancellationToken ct)
+    private async Task WriteRowsAsync(List<AuditEventRow> rows, CancellationToken ct, bool mayExist = false)
     {
         var attempt = 0;
         while (true)
@@ -167,8 +169,19 @@ public sealed partial class AuditBatchWriter
             try
             {
                 await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
-                db.AuditEvents.AddRange(rows);
-                await db.SaveChangesAsync(ct).ConfigureAwait(false);
+
+                // Ein Fehler kann NACH dem Festschreiben kommen (Verbindung bricht bei der Bestätigung
+                // ab, Abbruch nach dem Commit). Dann stehen die Zeilen schon da, und ein zweites
+                // Einfügen verdoppelte Kettenstellen — der Prüfer meldete Manipulation (E9). Darum
+                // schreibt ein wiederholter Versuch nur, was unter dieser Kette noch fehlt. Die Kette
+                // gehört genau diesem Schreiberlauf; niemand sonst schreibt unter ihrer Id.
+                var toWrite = mayExist ? await MissingAsync(db, rows, ct).ConfigureAwait(false) : rows;
+                if (toWrite.Count > 0)
+                {
+                    db.AuditEvents.AddRange(toWrite);
+                    await db.SaveChangesAsync(ct).ConfigureAwait(false);
+                }
+
                 _sink.ReportPersistenceSuccess();
                 return;
             }
@@ -178,6 +191,7 @@ public sealed partial class AuditBatchWriter
             }
             catch (Exception ex)
             {
+                mayExist = true;
                 attempt++;
                 _sink.ReportPersistenceFailure();
                 Log.BatchWriteFailed(_logger, ex, rows.Count, _options.AuditMode.ToString(), attempt);
@@ -196,6 +210,49 @@ public sealed partial class AuditBatchWriter
                 await Task.Delay(_options.AuditRetryInterval, _time, ct).ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>
+    /// Die Zeilen, die unter ihrer Kettenstelle noch nicht stehen. Eine Stelle, die schon mit
+    /// demselben Hash steht, ist geschrieben; ihre Zeile wird übersprungen (E9).
+    /// </summary>
+    private static async Task<List<AuditEventRow>> MissingAsync(
+        BifrostDbContext db, List<AuditEventRow> rows, CancellationToken ct)
+    {
+        if (rows.Count == 0)
+        {
+            return rows;
+        }
+
+        var chain = rows[0].ChainId;
+        var first = rows[0].ChainIndex;
+        var last = rows[^1].ChainIndex;
+        var written = await db.AuditEvents.AsNoTracking()
+            .Where(r => r.ChainId == chain && r.ChainIndex >= first && r.ChainIndex <= last)
+            .Select(r => new { r.ChainIndex, r.EntryHash })
+            .ToListAsync(ct).ConfigureAwait(false);
+        var present = written
+            .Where(w => w.ChainIndex is not null)
+            .GroupBy(w => w.ChainIndex!.Value)
+            .ToDictionary(g => g.Key, g => g.First().EntryHash);
+
+        var missing = new List<AuditEventRow>(rows.Count);
+        foreach (var row in rows)
+        {
+            if (row.ChainIndex is { } index
+                && present.TryGetValue(index, out var hash)
+                && string.Equals(hash, row.EntryHash, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            // Ein gescheitertes SaveChanges kann den Schlüssel schon gesetzt haben; neu eingefügt
+            // wird ohne, sonst prallte die Zeile am vergebenen Primärschlüssel ab.
+            row.Id = 0;
+            missing.Add(row);
+        }
+
+        return missing;
     }
 
     /// <summary>

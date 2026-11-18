@@ -49,6 +49,44 @@ public sealed class OAuthRenewalIntegrationTests
         (await tokens.GetAsync(id, Ct))!.AccessToken.Should().Be(granted.AccessToken);
     }
 
+    /// <summary>
+    /// E11: Meldet der Supervisor eine ältere Verbindung als abgewiesen, nachdem schon eine neuere mit
+    /// frischem Token aufgebaut ist, gilt das frische Token nicht als abgewiesen.
+    /// </summary>
+    [Fact]
+    public async Task A_late_refusal_of_an_older_connection_does_not_mark_the_newer_token()
+    {
+        await using var upstream = new ScriptedMcpUpstream();
+        await upstream.StartAsync();
+        var id = new ServerId(Guid.NewGuid());
+        var tokens = new Tokens();
+        const string unreachableIssuer = "http://127.0.0.1:1";
+        var old = Token(id, unreachableIssuer);
+        await tokens.SaveAsync(old, Ct);
+        var config = new UpstreamServerConfig(
+            "oauth", "OAuth", UpstreamTransportKind.StreamableHttp, true,
+            Http: new HttpTransportOptions(
+                upstream.Endpoint,
+                OAuth: new UpstreamOAuthOptions("gateway", AllowPrivateTargets: true),
+                AllowPrivateTargets: true));
+        var connector = new StreamableHttpUpstreamConnector(tokens: tokens);
+
+        var first = await connector.ConnectAsync(id, config, Ct);
+        await first.DisposeAsync();
+        var granted = Token(id, unreachableIssuer);
+        await tokens.SaveAsync(granted, Ct);
+        var second = await connector.ConnectAsync(id, config, Ct);
+        await second.DisposeAsync();
+
+        // Erst jetzt kommt die Abweisung der ERSTEN Verbindung an.
+        ((IUpstreamCredentialRenewal)connector).RequestCredentialRenewal(id, old.AccessToken);
+
+        var third = await connector.ConnectAsync(id, config, Ct);
+        await using var _ = third;
+        ((IPresentedCredentials)third).PresentedCredentials.Should().Equal(
+            [granted.AccessToken], "abgewiesen war das alte Token, nicht das der neueren Verbindung");
+    }
+
     private static UpstreamOAuthToken Token(ServerId id, string issuer)
         => new(
             id, "at-" + Guid.NewGuid().ToString("N"), "rt-" + Guid.NewGuid().ToString("N"),

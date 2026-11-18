@@ -21,9 +21,27 @@ public interface IUpstreamSessionRecovery
     Task<GuardedUpstreamConnection> RebuildAsync(GuardedUpstreamConnection lost, CancellationToken ct);
 
     /// <summary>
-    /// Steht das Werkzeug im <b>geprüften</b> Katalog der aktuellen Verbindung? Ein Werkzeug, das
-    /// nach dem Neuaufbau fehlt oder dessen geänderte Definition zurückgehalten wird, darf nicht
-    /// wiederholt werden.
+    /// Steht das Werkzeug im <b>geprüften</b> Katalog von <paramref name="connection"/>? Ein
+    /// Werkzeug, das nach dem Neuaufbau fehlt oder dessen geänderte Definition zurückgehalten wird,
+    /// darf nicht wiederholt werden.
+    /// <para>
+    /// Geprüft wird gegen den Katalog der Verbindung, die den Aufruf ausführt — nicht gegen den
+    /// gerade veröffentlichten (Plan 0005 E14). Ist <paramref name="connection"/> nicht mehr die
+    /// aktuelle Verbindung, lautet die Antwort <see cref="ToolAvailability.Stale"/>.
+    /// </para>
     /// </summary>
-    bool IsToolAvailable(string toolName);
+    ToolAvailability CheckTool(GuardedUpstreamConnection connection, string toolName);
+}
+
+/// <summary>Ergebnis von <see cref="IUpstreamSessionRecovery.CheckTool"/>.</summary>
+public enum ToolAvailability
+{
+    /// <summary>Das Werkzeug steht im geprüften Katalog dieser Verbindung.</summary>
+    Available,
+
+    /// <summary>Das Werkzeug fehlt oder wird zurückgehalten.</summary>
+    Withheld,
+
+    /// <summary>Die Verbindung ist nicht mehr die aktuelle; ihr Katalog gilt nicht mehr.</summary>
+    Stale,
 }

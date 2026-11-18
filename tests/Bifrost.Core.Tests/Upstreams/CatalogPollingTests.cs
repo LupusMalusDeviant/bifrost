@@ -136,6 +136,33 @@ public sealed class CatalogPollingTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// Plan 0005 E5: Auch eine ausgelöste Neuabfrage, die mit 401/403 abgewiesen wird, beendet die
+    /// Verbindung als abgelehnte Anmeldung — der Aufrufer erfährt den Fehler trotzdem.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_manual_rediscovery_does_not_stay_healthy()
+    {
+        FakeUpstreamConnection? connection = null;
+        _connector.DefaultBehavior = (id, _) => connection = new FakeUpstreamConnection { Id = id };
+
+        var id = await _supervisor.AddAsync(TestData.StdioConfig("manuell"), TestContext.Current.CancellationToken);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(id)?.State == UpstreamState.Healthy);
+
+        _connector.DefaultBehavior = (_, _) => throw new System.Net.Http.HttpRequestException(
+            "403 (Test)", null, System.Net.HttpStatusCode.Forbidden);
+        connection!.DiscoverException = new System.Net.Http.HttpRequestException(
+            "403 (Test)", null, System.Net.HttpStatusCode.Forbidden);
+
+        var rediscover = () => _supervisor.RediscoverAsync(id, TestContext.Current.CancellationToken);
+        await rediscover.Should().ThrowAsync<System.Net.Http.HttpRequestException>();
+
+        await TestData.WaitUntilAdvancingAsync(
+            _time,
+            () => _supervisor.GetStatus(id) is { State: UpstreamState.Failed, Reconnect.Kind: UpstreamFailureKind.Authentication },
+            because: "die abgewiesene Neuabfrage beendet die Verbindung");
+    }
+
+    /// <summary>
     /// Plan 0005 D10: Weist der Upstream die Katalogabfrage ab (401/403), steht er nicht weiter als
     /// gesund da — die Verbindung gilt als verloren, und der nächste Aufbau zeigt die Fehlerart.
     /// </summary>

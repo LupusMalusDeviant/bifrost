@@ -67,6 +67,12 @@ internal sealed class ScriptedMcpUpstream : IAsyncDisposable
     /// </summary>
     public bool Resumable { get; init; }
 
+    /// <summary>
+    /// Beantwortet eine widerrufene Sitzung mit einem nackten 404 ohne Körper — wie ein Proxy davor,
+    /// nicht wie ein MCP-Server (Plan 0005 E12). Vorgabe: JSON-RPC-Fehler wie die MCP-SDKs.
+    /// </summary>
+    public bool BareNotFound { get; set; }
+
     /// <summary>Wie oft ein Werkzeug wirklich <b>ausgeführt</b> wurde.</summary>
     public int Executions => Volatile.Read(ref _executions);
 
@@ -210,6 +216,14 @@ internal sealed class ScriptedMcpUpstream : IAsyncDisposable
         if (session.Length > 0 && _revoked.ContainsKey(session))
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
+            if (!BareNotFound)
+            {
+                // So antwortet das MCP-SDK für ASP.NET Core auf eine unbekannte Sitzung.
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsync(
+                    """{"jsonrpc":"2.0","error":{"code":-32001,"message":"Session not found"},"id":null}""");
+            }
+
             return;
         }
 

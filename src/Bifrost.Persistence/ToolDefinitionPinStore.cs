@@ -100,26 +100,40 @@ public sealed class ToolDefinitionPinStore : IToolDefinitionPinStore
         return ToolDefinitionVerdict.Changed;
     }
 
-    public async Task AcceptAsync(ServerId server, string tool, CancellationToken ct)
+    public async Task<bool> AcceptAsync(ServerId server, string tool, string expectedPendingHash, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tool);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedPendingHash);
         await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
-        var row = await db.ToolDefinitionPins
+
+        // Ein Schritt in der Datenbank (E7): Steht inzwischen eine andere Fassung an, trifft die
+        // Bedingung keine Zeile, und angenommen wird nichts. Hashes sind kleingeschriebenes Hex.
+        var expected = expectedPendingHash.ToLowerInvariant();
+        var now = _time.GetUtcNow().UtcTicks;
+        var changed = await db.ToolDefinitionPins
+            .Where(r => r.ServerId == server.Value && r.Tool == tool && r.PendingHash != null
+                && r.PendingHash == expected)
+            .ExecuteUpdateAsync(set => set
+                .SetProperty(r => r.AcceptedHash, r => r.PendingHash!)
+                .SetProperty(r => r.AcceptedAtTicks, now)
+                .SetProperty(r => r.PendingHash, (string?)null)
+                .SetProperty(r => r.PendingSinceTicks, (long?)null), ct)
+            .ConfigureAwait(false);
+
+        var row = await db.ToolDefinitionPins.AsNoTracking()
             .FirstOrDefaultAsync(r => r.ServerId == server.Value && r.Tool == tool, ct)
             .ConfigureAwait(false);
-        if (row?.PendingHash is not { Length: > 0 } pending)
+        if (row is not null)
         {
-            return;
+            _cache[(server.Value, tool)] = ToPin(row);
         }
 
-        row.AcceptedHash = pending;
-        row.AcceptedAtTicks = _time.GetUtcNow().UtcTicks;
-        row.PendingHash = null;
-        row.PendingSinceTicks = null;
-        await db.SaveChangesAsync(ct).ConfigureAwait(false);
-        _cache[(server.Value, tool)] = ToPin(row);
+        if (changed == 1)
+        {
+            Changed?.Invoke(this, new ToolDefinitionPinChangedEventArgs(server));
+        }
 
-        Changed?.Invoke(this, new ToolDefinitionPinChangedEventArgs(server));
+        return changed == 1;
     }
 
     public async Task ForgetServerAsync(ServerId server, CancellationToken ct)

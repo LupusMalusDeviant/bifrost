@@ -671,6 +671,13 @@ public interface IUpstreamCredentialRenewal
 {
     /// <summary>Der nächste <see cref="IUpstreamConnector.ConnectAsync"/> für diesen Upstream erneuert seine Zugangsdaten, statt die gespeicherten zu nehmen.</summary>
     void RequestCredentialRenewal(ServerId id);
+
+    /// <summary>
+    /// Wie <see cref="RequestCredentialRenewal(ServerId)"/>, aber mit dem Zugangswert, den die
+    /// abgewiesene Verbindung vorgelegt hat (Plan 0005 E11). Nur dieser Wert gilt als abgewiesen —
+    /// nicht der, den die zuletzt aufgebaute Verbindung vorlegt; die kann schon eine neuere sein.
+    /// </summary>
+    void RequestCredentialRenewal(ServerId id, string? rejectedCredential) => RequestCredentialRenewal(id);
 }
 
 /// <summary>

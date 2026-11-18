@@ -103,9 +103,11 @@
                                     angenommen ist — sie sind weder sichtbar noch aufrufbar.
                                     @foreach (var tool in held)
                                     {
+                                        var pending = ToolPins.All
+                                            .FirstOrDefault(p => p.Server == s.Id && p.Tool == tool)?.PendingHash;
                                         <span class="mono" style="margin-left:.5rem">@tool</span>
                                         <button class="btn-sm" style="margin-left:.3rem"
-                                                @onclick="() => AcceptDefinition(s.Id, s.Slug, tool)"
+                                                @onclick="() => AcceptDefinition(s.Id, s.Slug, tool, pending)"
                                                 disabled="@_busy">Neue Fassung annehmen</button>
                                     }
                                 </td>
@@ -928,15 +930,31 @@
     /// Nimmt die geänderte Definition an und fragt den Katalog neu ab. Erst danach ist das Tool
     /// wieder da — mit der neuen Fassung, die jemand angesehen hat.
     /// </summary>
-    private async Task AcceptDefinition(ServerId id, string slug, string tool)
+    private async Task AcceptDefinition(ServerId id, string slug, string tool, string? pendingHash)
     {
         _busy = true;
         try
         {
-            await ToolPins.AcceptAsync(id, tool, CancellationToken.None);
-            await ConcreteSupervisor.RediscoverAsync(id, CancellationToken.None);
+            // Angenommen wird die Fassung, die beim Anzeigen anstand (E7). Steht inzwischen eine
+            // andere an, zeigt das Neuladen sie — angenommen wird sie erst nach einem neuen Klick.
+            if (pendingHash is null
+                || !await ToolPins.AcceptAsync(id, tool, pendingHash, CancellationToken.None))
+            {
+                return;
+            }
+
+            // Erst das Audit, dann die Neuabfrage (E5): Die Annahme gilt, auch wenn die
+            // Neuabfrage scheitert.
             UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged,
                 $"tool-definition-accepted:{slug}__{tool}", id);
+            try
+            {
+                await ConcreteSupervisor.RediscoverAsync(id, CancellationToken.None);
+            }
+            catch (Exception)
+            {
+                // Den Grund zeigt der Status des Upstreams nach dem Neuladen.
+            }
         }
         finally
         {

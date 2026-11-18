@@ -991,7 +991,13 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         pin.AcceptedHash.Should().Be(new string('a', 64));
         pin.HasPendingChange.Should().BeTrue("die Abweichung ist noch offen");
 
-        await afterRestart.AcceptAsync(server, "read_file", ct);
+        // E7: Angenommen wird nur die gezeigte Fassung. Steht inzwischen eine andere an, nichts.
+        (await afterRestart.AcceptAsync(server, "read_file", new string('c', 64), ct))
+            .Should().BeFalse("die anstehende Fassung ist 'b', nicht 'c'");
+        afterRestart.All.Single(p => p.Server == server && p.Tool == "read_file")
+            .HasPendingChange.Should().BeTrue();
+
+        (await afterRestart.AcceptAsync(server, "read_file", new string('b', 64), ct)).Should().BeTrue();
         (await afterRestart.VerifyAsync(server, "read_file", new string('b', 64), ct))
             .Should().Be(ToolDefinitionVerdict.Unchanged, "die neue Fassung ist jetzt der Bezugspunkt");
 
@@ -1125,6 +1131,30 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
         await store.RemoveAsync(server, ct);
         (await store.ReplaceAsync(refreshed, Token(4), ct)).Should().BeFalse();
         (await store.GetAsync(server, ct)).Should().BeNull();
+    }
+
+    /// <summary>
+    /// Plan 0005 E15: Gleichzeitige Speicherungen mit demselben Zeitpunkt bekommen alle einen eigenen
+    /// — der Zeitpunkt wird in der Datenbank weitergestellt, nicht im Speicher jedes Schreibers.
+    /// </summary>
+    [Fact]
+    public async Task UpstreamOAuthTokens_saved_concurrently_each_get_their_own_time()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = new UpstreamOAuthTokenStore(Factory, DataProtection);
+        var server = ServerId.New();
+        var at = DateTimeOffset.UnixEpoch.AddSeconds(1);
+        UpstreamOAuthToken Token() => new(
+            server, "at-" + Guid.NewGuid().ToString("N"), null,
+            null, ["mcp:read"], "https://as.example.com", at);
+
+        await store.SaveAsync(Token(), ct);
+        const int writers = 8;
+        await Task.WhenAll(Enumerable.Range(0, writers).Select(_ => Task.Run(() => store.SaveAsync(Token(), ct), ct)));
+
+        (await store.GetAsync(server, ct))!.ObtainedAt.UtcTicks.Should().Be(
+            at.UtcTicks + writers, "jede Speicherung hat den Zeitpunkt um genau einen Tick weitergestellt");
     }
 
     [Fact]

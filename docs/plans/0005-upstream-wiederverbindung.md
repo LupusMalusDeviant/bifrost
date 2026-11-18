@@ -252,6 +252,43 @@ abgewiesenen Wiederaufnahme lief jeder weitere Aufruf in den beendeten SDK-Clien
 | D14 | M10 | Bricht das Herunterfahren eine Audit-Schreibung ab, kann der Drain dieselben Zeilen an späterer Kettenstelle schreiben (Lücke ohne gezählten Verlust). | alt | `[Claude-prüfbar]`, erledigt |
 | D15 | L1 | Plan: C7 stand noch als „außerhalb". | Plan | `[Claude-prüfbar]`, erledigt |
 
+### Drittes Codex-Review vom 2026-11-18 (`49e1792`)
+
+Codex (gpt-6.2-sol) meldet 17 Befunde (6 hoch, 9 mittel, 2 niedrig, kein kritischer). Jeder ist
+gegen den Code geprüft. „Neu" heißt: mit `49e1792` entstanden; „alt": schon in `385c3e4`.
+„Schwere" ist die geprüfte Einschätzung, nicht die von Codex.
+
+| # | Codex | Inhalt | Urteil | Herkunft | Schwere | Marke |
+|---|---|---|---|---|---|---|
+| E1 | H2 | Nach dem 10-s-Join (D4) läuft der alte Loop auf demselben Eintrag weiter; ein später Fehlschlag setzt `Degraded`/`Failed`, schließt die **neue** Verbindung und lässt ihren Neuaufbau scheitern. Nur `Publish` ist gezäunt. | echt | neu (D4) | hoch | `[Claude-prüfbar]` behoben, Abnahme offen |
+| E2 | H3 | OAuth nach Umkonfigurieren: Der Rückruf schickt das **aktuelle** Client-Secret an den Token-Endpunkt aus dem **alten** Vorgang; auch die Erneuerung geht mit dem neuen Secret an den alten Aussteller, und ein gespeichertes Token geht an einen neuen Endpunkt. Token und Vorgang sind nur an die ServerId gebunden. | echt, breiter als gemeldet | alt | hoch | `[Claude-prüfbar]` behoben, Abnahme offen |
+| E3 | H4 | Fehler aus Lebenszeichen und Katalogabfrage werden nur mit den Geheimwerten der Konfiguration gesäubert, nicht mit dem vorgelegten Token (Status, Log, Audit). `isError`-Inhalte sind Nutzlast, kein Verstoß gegen P1–P3. | teilweise | alt | mittel | `[Claude-prüfbar]` behoben, Abnahme offen |
+| E4 | M3 | Stoppen: Abbruch und Dispose sind unbegrenzt; während des Drains gibt `GetConnection` die Verbindung weiter heraus; Ressourcen- und Prompt-Aufrufe zählen nicht als laufend. | teilweise, im Kern echt | alt | mittel | `[Claude-prüfbar]` behoben, Abnahme offen |
+| E5 | M5 | Ein 401/403 bei der **manuellen** Neuabfrage lässt den Upstream `Healthy` (Abschnitt 2 gilt für jede Katalogabfrage). Nach „Annahme" fehlt dann die Audit-Zeile, und der Client bekommt 500, obwohl die Annahme wirkt. | echt | alt | mittel | `[Claude-prüfbar]` behoben, Abnahme offen |
+| E6 | M2 | D8 unvollständig: Zeit in `Degraded` zählt weiter als gesund (`healthySince` bleibt stehen). | echt | alt | mittel | `[Claude-prüfbar]` behoben, Abnahme offen |
+| E7 | M4 | Eine veraltete Neuabfrage schreibt Pin-Einträge (Pending löschen/überschreiben). `AcceptAsync` nimmt keinen Hash — angenommen wird, was beim Klick ansteht, nicht unbedingt das Geprüfte. | echt | alt | mittel | `[Claude-prüfbar]` behoben, Abnahme offen |
+| E8 | M6 | D12: Hinzufügen wird gespeichert und danach abgewiesen, wenn das Herunterfahren dazwischen beginnt (kehrt nach dem Neustart zurück). Test erwartet die falsche Ausnahme und prüft keinen Wettlauf. | teilweise | neu (D12) | niedrig – mittel | `[Claude-prüfbar]` behoben, Abnahme offen |
+| E9 | M9 | D14: Geht nur die Bestätigung eines Commits verloren (v. a. Postgres), schreibt der Drain dieselben Kettenstellen doppelt; der Index auf (ChainId, ChainIndex) ist nicht eindeutig → falscher Manipulationsalarm. | echt, schmal | gemischt | niedrig – mittel | `[Claude-prüfbar]` behoben, Abnahme offen |
+| E10 | M8 | Mein Zusatzfix zu D13 markiert bei **jedem** internen Abbruch die Sitzung als verloren (auch stdio, sessionloses HTTP) und verbraucht das V2-Budget. Die SDK-Prüfung allein deckt den Fall ab. | teilweise | neu (D13) | niedrig – mittel | `[Claude-prüfbar]` behoben, Abnahme offen |
+| E11 | M1 | D6: Ein später, verlassener Handshake überschreibt das gemerkte vorgelegte Token; die Markierung wird unbedingt entfernt. | echt, eng | neu (D6) | niedrig – mittel | `[Claude-prüfbar]` behoben, Abnahme offen |
+| E12 | H1 | Jedes 404 bei bestehender Sitzung gilt als „nicht ausgeführt" und wird wiederholt — auch eines von einem Zwischenglied nach der Ausführung. Setzt Abschnitt 4 wörtlich um. | teilweise, vertragskonform | alt | niedrig – mittel | `[braucht Nutzer]` (Vertrag 4) entschieden: nur MCP-404; behoben, Abnahme offen |
+| E13 | M7 | Das Signal für neue Zugangsdaten weckt auch einen Upstream mit erschöpfter Grenze (ein Versuch je Rückruf). 3.3 nennt als Ausnahme nur „Jetzt verbinden". Verhalten bestand schon über `ConnectNowAsync`. | teilweise | alt | niedrig | `[braucht Nutzer]` (N12) entschieden: bleibt, als Ausnahme in 3.3 eingetragen |
+| E14 | H5 | Die Zulassungsprüfung liest das Inventar des Eintrags, nicht das der ausführenden Verbindung. Das Rennen Prüfung/Versand ist praktisch folgenlos. | teilweise | alt | niedrig | `[Claude-prüfbar]` behoben, Abnahme offen |
+| E15 | H6 | D7: Zwei **gleichzeitige** Speicherungen können denselben Zeitpunkt berechnen (nur bei gleichem Tick oder rückläufiger Uhr). | teilweise | Fix neu, Rest alt | niedrig | `[Claude-prüfbar]` behoben, Abnahme offen |
+| E16 | L1 | Der D11-Test für den laufenden Wiederholungsversuch besteht auch mit altem Verhalten. | echt | neu | niedrig | `[Claude-prüfbar]` behoben, Abnahme offen |
+| E17 | L2 | Vertrag: N3 („mit Standardumsetzung") widerspricht N14. | echt | neu | niedrig | `[Claude-prüfbar]` behoben, Abnahme offen |
+
+D8 ist mit E6 vervollständigt.
+
+**Stand nach „Alle Claude-prüfbaren":** Die fünfzehn prüfbaren Befunde sind gebaut; ihre Präzisierungen
+stehen im Vertrag, Abschnitt 10, N20 – N30. Gegenprobe: Jeder neue Test eines Fehlerbefunds scheitert
+gegen `49e1792` (E16 und E17 sind Test- bzw. Vertragsarbeit und haben keinen).
+
+E12 und E13 am 2026-11-18 entschieden: Wiederholt wird nur ein 404 mit JSON-RPC-Fehlerkörper
+(Vertrag Abschnitt 4); das Signal für neue Zugangsdaten weckt auch einen erschöpften Upstream und steht
+als zweite Ausnahme in 3.3. Offen für den Nutzer: die Abnahme von N20 – N30 und der Präzisierung in
+Abschnitt 4.
+
 ## Prüfliste für den Nutzer
 
 1. ~~Vertrag lesen und abnehmen; die sechs Fragen in Abschnitt 8 beantworten.~~ Erledigt am

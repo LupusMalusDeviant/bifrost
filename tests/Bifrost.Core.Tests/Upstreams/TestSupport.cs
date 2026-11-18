@@ -188,8 +188,18 @@ internal sealed class FakeUpstreamConnection : IUpstreamConnection, IPresentedCr
         return JsonSerializer.SerializeToElement(new { tool = toolName, token = "geheim-antwort" });
     }
 
-    public Task<JsonElement> ReadResourceAsync(Uri uri, CancellationToken ct)
-        => Task.FromResult(JsonSerializer.SerializeToElement(new { contents = new[] { new { uri = uri.ToString() } } }));
+    /// <summary>Wenn gesetzt, wartet ReadResourceAsync darauf (Drain-Tests, E4).</summary>
+    public Task? ResourceGate { get; set; }
+
+    public async Task<JsonElement> ReadResourceAsync(Uri uri, CancellationToken ct)
+    {
+        if (ResourceGate is { } gate)
+        {
+            await gate;
+        }
+
+        return JsonSerializer.SerializeToElement(new { contents = new[] { new { uri = uri.ToString() } } });
+    }
 
     public Task<JsonElement> GetPromptAsync(string promptName, JsonElement? args, CancellationToken ct)
         => Task.FromResult(JsonSerializer.SerializeToElement(new { messages = Array.Empty<object>() }));
@@ -212,9 +222,17 @@ internal sealed class FakeUpstreamConnection : IUpstreamConnection, IPresentedCr
     /// <summary>Wenn gesetzt, wirft DisposeAsync diese Exception — ein Aufräumen, das scheitert.</summary>
     public Exception? DisposeException { get; set; }
 
+    /// <summary>Wenn gesetzt, hängt DisposeAsync daran — ein Prozess, der beim Beenden hängt (E4).</summary>
+    public Task? DisposeHang { get; set; }
+
     public ValueTask DisposeAsync()
     {
         Interlocked.Increment(ref _disposeCount);
+        if (DisposeHang is { } hang)
+        {
+            return new ValueTask(hang);
+        }
+
         return DisposeException is { } ex ? ValueTask.FromException(ex) : ValueTask.CompletedTask;
     }
 
@@ -230,6 +248,15 @@ internal sealed class FakeUpstreamConnector : IUpstreamConnector, IUpstreamCrede
     public int CredentialRenewals => Volatile.Read(ref _renewals);
 
     public void RequestCredentialRenewal(ServerId id) => Interlocked.Increment(ref _renewals);
+
+    /// <summary>Das Token, das der Supervisor zuletzt als abgewiesen gemeldet hat (E11).</summary>
+    public string? LastRejectedCredential { get; private set; }
+
+    public void RequestCredentialRenewal(ServerId id, string? rejectedCredential)
+    {
+        LastRejectedCredential = rejectedCredential;
+        RequestCredentialRenewal(id);
+    }
 
     private readonly ConcurrentQueue<Func<ServerId, UpstreamServerConfig, IUpstreamConnection>> _scripted = new();
     private readonly List<FakeUpstreamConnection> _connections = [];

@@ -199,6 +199,46 @@ public sealed class ToolDefinitionPinScreeningTests : IAsyncDisposable
             ["read_file"], "die späte Neuabfrage der alten Verbindung zieht aus der neuen nichts zurück");
     }
 
+    /// <summary>
+    /// E7: Eine Neuabfrage, deren Katalog noch von der alten Verbindung kam, schreibt keine Pins —
+    /// die neue Verbindung meldet den angenommenen Stand, und es steht nichts zur Annahme an.
+    /// </summary>
+    [Fact]
+    public async Task A_stale_rediscovery_does_not_write_pins()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (id, first) = await StartAsync("Original");
+
+        var stalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        first.Inventory = Inventory("Verändert");
+        first.DiscoverHook = () =>
+        {
+            reached.TrySetResult();
+            return stalled.Task;
+        };
+        var rediscover = _supervisor.RediscoverAsync(id, ct);
+        try
+        {
+            await reached.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            _connector.DefaultBehavior = (server, _) =>
+                new FakeUpstreamConnection { Id = server, Inventory = Inventory("Original") };
+            first.FailPing = true;
+            await TestData.WaitUntilAdvancingAsync(
+                _time,
+                () => _connector.Connections.Count == 2 && _supervisor.GetStatus(id)?.State == UpstreamState.Healthy,
+                step: TimeSpan.FromSeconds(5), timeoutMs: 15000, because: "die neue Verbindung steht");
+        }
+        finally
+        {
+            stalled.TrySetResult();
+        }
+
+        await rediscover.Invoking(t => t).Should().ThrowAsync<UpstreamConnectionLostException>("die Prüfung ist veraltet");
+        _pins.Pin("read_file").HasPendingChange.Should().BeFalse("nichts Neues steht zur Annahme an");
+        _supervisor.GetInventory(id)!.Tools.Should().ContainSingle();
+    }
+
     private static UpstreamInventory TwoTools(string readDescription) => new(
         [
             new ToolDescriptor("read_file", readDescription, TestData.EmptySchema()),
@@ -262,7 +302,7 @@ public sealed class ToolDefinitionPinScreeningTests : IAsyncDisposable
         connection.Inventory = Inventory("Neu, und zwar bewusst");
         await _supervisor.RediscoverAsync(id, ct);
 
-        await _pins.AcceptAsync(id, "read_file", ct);
+        (await _pins.AcceptAsync(id, "read_file", _pins.Pin("read_file").PendingHash!, ct)).Should().BeTrue();
         await _supervisor.RediscoverAsync(id, ct);
 
         _supervisor.GetStatus(id)!.ToolCount.Should().Be(1);
@@ -411,18 +451,20 @@ public sealed class ToolDefinitionPinScreeningTests : IAsyncDisposable
             return Task.FromResult(ToolDefinitionVerdict.Changed);
         }
 
-        public Task AcceptAsync(ServerId server, string tool, CancellationToken ct)
+        public Task<bool> AcceptAsync(ServerId server, string tool, string expectedPendingHash, CancellationToken ct)
         {
             var key = (server.Value, tool);
-            if (_pins.TryGetValue(key, out var pin) && pin.PendingHash is { Length: > 0 } pending)
+            if (_pins.TryGetValue(key, out var pin) && pin.PendingHash is { Length: > 0 } pending
+                && string.Equals(pending, expectedPendingHash, StringComparison.OrdinalIgnoreCase))
             {
                 _pins[key] = pin with
                 {
                     AcceptedHash = pending, PendingHash = null, PendingSince = null,
                 };
+                return Task.FromResult(true);
             }
 
-            return Task.CompletedTask;
+            return Task.FromResult(false);
         }
 
         public Task ForgetServerAsync(ServerId server, CancellationToken ct)

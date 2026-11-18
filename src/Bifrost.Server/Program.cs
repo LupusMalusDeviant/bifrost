@@ -244,7 +244,8 @@ builder.Services.AddSingleton<UpstreamSupervisor>(sp => new UpstreamSupervisor(
     sp.GetRequiredService<ILogger<UpstreamSupervisor>>(),
     sp.GetRequiredService<IAuditSink>(),
     sp.GetRequiredService<IToolDefinitionPinStore>(),
-    sp.GetRequiredService<IHostExecutionPolicy>()));
+    sp.GetRequiredService<IHostExecutionPolicy>(),
+    sp.GetRequiredService<IUpstreamOAuthTokenStore>()));
 builder.Services.AddSingleton<IUpstreamSupervisor>(sp => sp.GetRequiredService<UpstreamSupervisor>());
 builder.Services.AddSingleton<ToolDescriptionOverrideStore>();
 builder.Services.AddSingleton<IToolDescriptionOverrides>(sp => sp.GetRequiredService<ToolDescriptionOverrideStore>());

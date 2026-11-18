@@ -181,6 +181,43 @@ public sealed class AuditLossVisibilityTests
         rows[1].PreviousHash.Should().Be(rows[0].EntryHash);
     }
 
+    /// <summary>
+    /// Plan 0005 E9: Meldet das Schreiben einen Fehler, nachdem die Zeilen schon festgeschrieben sind,
+    /// fügt der zweite Versuch sie nicht noch einmal ein — jede Kettenstelle steht genau einmal.
+    /// </summary>
+    [Fact]
+    public async Task A_write_that_failed_after_commit_is_not_written_twice()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var name = $"file:{Guid.NewGuid():N}?mode=memory&cache=shared";
+        await using var keepAlive = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={name}");
+        await keepAlive.OpenAsync(ct);
+        var factory = new FailingDbContextFactory(failuresBeforeSuccess: 0, dataSource: name, failAfterFirstCommit: true);
+        var sink = new ChannelAuditSink(capacity: 100, mode: AuditDeliveryMode.Compliance);
+        var options = new PersistenceOptions
+        {
+            AuditMode = AuditDeliveryMode.Compliance,
+            AuditFlushInterval = TimeSpan.FromMilliseconds(10),
+            AuditRetryInterval = TimeSpan.FromMilliseconds(1),
+        };
+
+        sink.Record(NewEvent("eins"));
+        sink.Record(NewEvent("zwei"));
+        sink.Complete();
+
+        // Begrenzt: Ohne die Prüfung prallt jeder weitere Versuch an den schon geschriebenen Zeilen
+        // ab, und der Compliance-Modus versucht es endlos.
+        await new AuditBatchWriter(sink, factory, options).RunAsync(CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(20), ct);
+
+        await using var db = factory.CreateDbContext();
+        var rows = await db.AuditEvents.OrderBy(r => r.ChainIndex).ToListAsync(ct);
+        rows.Select(r => (r.ChainIndex, r.Tool)).Should().Equal(
+            [(0L, "eins"), (1L, "zwei")], "der geglückte erste Versuch wird nicht wiederholt");
+        factory.Attempts.Should().BeGreaterThan(1, "der Fehler nach dem Festschreiben hat einen zweiten Versuch ausgelöst");
+        sink.UnwrittenCount.Should().Be(0);
+    }
+
     private static AuditEvent NewEvent(string tool) => new(
         DateTimeOffset.UtcNow, IdentityId.New(), CallOrigin.Mcp, AuditEventKind.ToolCall,
         ServerId.New(), tool, InvocationStatus.Success, null, 1, 2, TimeSpan.FromMilliseconds(1));
@@ -198,12 +235,15 @@ public sealed class AuditLossVisibilityTests
     {
         private readonly int _failuresBeforeSuccess;
         private readonly string? _dataSource;
+        private readonly FailAfterCommit? _failAfterCommit;
         private int _attempts;
 
-        public FailingDbContextFactory(int failuresBeforeSuccess = int.MaxValue, string? dataSource = null)
+        public FailingDbContextFactory(
+            int failuresBeforeSuccess = int.MaxValue, string? dataSource = null, bool failAfterFirstCommit = false)
         {
             _failuresBeforeSuccess = failuresBeforeSuccess;
             _dataSource = dataSource;
+            _failAfterCommit = failAfterFirstCommit ? new FailAfterCommit() : null;
         }
 
         public int Attempts => Volatile.Read(ref _attempts);
@@ -217,14 +257,34 @@ public sealed class AuditLossVisibilityTests
             }
 
             // Der gelungene Versuch: eine Datenbank im Arbeitsspeicher, die den Batch annimmt.
-            var options = new DbContextOptionsBuilder<BifrostDbContext>()
+            var builder = new DbContextOptionsBuilder<BifrostDbContext>()
                 .UseBifrostDatabase(
                     BifrostDbOptions.Sqlite,
-                    $"Data Source={_dataSource ?? $"file:{Guid.NewGuid():N}?mode=memory&cache=shared"}")
-                .Options;
-            var db = new BifrostDbContext(options);
+                    $"Data Source={_dataSource ?? $"file:{Guid.NewGuid():N}?mode=memory&cache=shared"}");
+            if (_failAfterCommit is not null)
+            {
+                builder.AddInterceptors(_failAfterCommit);
+            }
+
+            var db = new BifrostDbContext(builder.Options);
             db.Database.EnsureCreated();
             return db;
         }
+    }
+
+    /// <summary>
+    /// Wirft einmal, NACHDEM gespeichert ist — wie eine Verbindung, die bei der Bestätigung abreißt.
+    /// </summary>
+    private sealed class FailAfterCommit : Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor
+    {
+        private int _fired;
+
+        public override ValueTask<int> SavedChangesAsync(
+            Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesCompletedEventData eventData,
+            int result,
+            CancellationToken cancellationToken = default)
+            => Interlocked.Exchange(ref _fired, 1) == 0
+                ? throw new InvalidOperationException("Verbindung nach dem Festschreiben abgerissen (Test).")
+                : ValueTask.FromResult(result);
     }
 }

@@ -68,8 +68,14 @@ public interface IToolDefinitionPinStore
     /// <summary>
     /// Nimmt die anstehende Fassung an. Ausdrücklicher Schritt eines Administrators — genau hier
     /// liegt die Entscheidung, die ein Rug Pull umgehen möchte.
+    /// <para>
+    /// Angenommen wird nur <paramref name="expectedPendingHash"/>, die Fassung, die dem
+    /// Administrator angezeigt wurde (Plan 0005 E7). Steht inzwischen eine andere an, geschieht
+    /// nichts und das Ergebnis ist <c>false</c> — sonst nähme ein Klick eine Fassung an, die
+    /// niemand gesehen hat.
+    /// </para>
     /// </summary>
-    Task AcceptAsync(ServerId server, string tool, CancellationToken ct);
+    Task<bool> AcceptAsync(ServerId server, string tool, string expectedPendingHash, CancellationToken ct);
 
     /// <summary>Entfernt alle Pins eines Upstreams (wenn er selbst entfernt wird).</summary>
     Task ForgetServerAsync(ServerId server, CancellationToken ct);
