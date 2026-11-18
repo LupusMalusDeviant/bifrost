@@ -171,7 +171,7 @@ public static class OAuthDiscovery
             new Uri(issuer, $"{basePath}/.well-known/openid-configuration"),
         };
 
-        OAuthDiscoveryException? last = null;
+        var failures = new List<OAuthDiscoveryException>(candidates.Length);
         foreach (var candidate in candidates)
         {
             try
@@ -181,13 +181,37 @@ public static class OAuthDiscovery
             }
             catch (OAuthDiscoveryException exception)
             {
-                last = exception;
+                failures.Add(exception);
             }
         }
 
+        // Ausschlaggebend ist nicht der letzte Fehlschlag, sondern der aussagekräftigste (Plan 0005
+        // F12): Ist ein Weg nur gestört (5xx, 429, Netzfehler), kann er gleich wieder antworten — das
+        // geht vor. Sonst geht eine Ablehnung (401/403) vor einem schlichten „gibt es hier nicht"
+        // (404), weil sie sagt, dass der Server da ist und uns nicht lässt.
+        var decisive = failures.FirstOrDefault(IsTransient)
+            ?? failures.FirstOrDefault(f => f.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            ?? failures[^1];
         throw new OAuthDiscoveryException(
             $"Keine Authorization-Server-Metadaten unter '{issuer}' gefunden. "
-            + $"Zuletzt: {last?.Message}");
+            + $"Ausschlaggebend: {decisive.Message}",
+            decisive)
+        {
+            StatusCode = decisive.StatusCode,
+        };
+    }
+
+    /// <summary>
+    /// Wird das von selbst besser — ein gestörter (5xx), überlasteter (429) oder gar nicht
+    /// erreichter Server? Dann ist es eine Unerreichbarkeit, keine Ablehnung (Plan 0005 F12).
+    /// </summary>
+    public static bool IsTransient(OAuthDiscoveryException exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        return exception.StatusCode is { } status
+            ? (int)status >= 500 || status == HttpStatusCode.TooManyRequests
+            : exception.InnerException is HttpRequestException { StatusCode: null }
+                || (exception.InnerException is OAuthDiscoveryException inner && IsTransient(inner));
     }
 
     private static AuthorizationServerMetadata ReadServerMetadata(
@@ -258,7 +282,14 @@ public static class OAuthDiscovery
             // toter Code — gegen jeden Server, der die Metadaten nur unter
             // '{issuer}/.well-known/openid-configuration' ausliefert (Keycloak unter anderen),
             // scheiterte die Anbindung. Gefunden hat es der erste Lauf gegen ein echtes Keycloak.
-            throw new OAuthDiscoveryException($"'{url}' war nicht abrufbar: {exception.Message}");
+            //
+            // Der Status reist mit (Plan 0005 F12): Ein 401/403 der Metadaten ist eine abgelehnte
+            // Anmeldung, ein 5xx/429 eine Störung — ohne ihn war beides dasselbe. Ein Netzfehler
+            // (kein Status) bleibt als innere Ausnahme erkennbar.
+            throw new OAuthDiscoveryException($"'{url}' war nicht abrufbar: {exception.Message}", exception)
+            {
+                StatusCode = exception.StatusCode,
+            };
         }
 
         try
@@ -306,8 +337,9 @@ public sealed class OAuthDiscoveryException : Exception
         : base(message, innerException) { }
 
     /// <summary>
-    /// Der Statuscode, mit dem ein Token-Endpunkt abgelehnt hat — <c>null</c>, wenn die Ablehnung
-    /// nicht aus einer HTTP-Antwort stammt. Trennt „abgelehnt" (4xx) von „gerade gestört" (5xx).
+    /// Der Statuscode, mit dem ein Token-Endpunkt oder ein Metadaten-Abruf abgelehnt hat —
+    /// <c>null</c>, wenn die Ablehnung nicht aus einer HTTP-Antwort stammt. Trennt „abgelehnt" (4xx)
+    /// von „gerade gestört" (5xx, 429).
     /// </summary>
     public System.Net.HttpStatusCode? StatusCode { get; init; }
 }

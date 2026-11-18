@@ -271,7 +271,15 @@ public static class OAuthFlow
             expires,
             granted,
             issuer,
-            now);
+            now)
+        {
+            // Gebunden an genau das, was in der Anfrage stand (Plan 0005 F5): den Resource Indicator
+            // und die Client-ID. Eine Erneuerung übernimmt damit die Bindung des Vorgängers — der
+            // Connector hat vorher geprüft, dass sie zur Konfiguration passt — und schreibt sie bei
+            // einem Token aus der Zeit vor der Bindung nach.
+            Resource = form["resource"],
+            ClientId = options.ClientId,
+        };
     }
 
     private static Exception Fail(string message) => new OAuthDiscoveryException(message);

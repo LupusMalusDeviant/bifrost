@@ -230,6 +230,8 @@ public sealed class BifrostDbContext : DbContext
             e.HasKey(r => r.ServerId);
             e.Property(r => r.Payload).IsRequired();
             e.Property(r => r.Issuer).IsRequired().HasMaxLength(500);
+            e.Property(r => r.Resource).HasMaxLength(2000);
+            e.Property(r => r.ClientId).HasMaxLength(500);
         });
 
         modelBuilder.Entity<ToolDefinitionPinRow>(e =>
@@ -647,6 +649,21 @@ public sealed class UpstreamOAuthTokenRow
     public long? ExpiresAtTicks { get; set; }
 
     public long ObtainedAtTicks { get; set; }
+
+    /// <summary>
+    /// Der Resource Indicator, an den das Token gebunden ist (Plan 0005 F5). <c>null</c> bei Zeilen
+    /// aus der Zeit vor der Bindung.
+    /// </summary>
+    public string? Resource { get; set; }
+
+    /// <summary>Die Client-ID, mit der das Token eingelöst wurde (Plan 0005 F5).</summary>
+    public string? ClientId { get; set; }
+
+    /// <summary>
+    /// Die Kennung des gespeicherten Standes (Plan 0005 F14), Vergleichsschlüssel für bedingtes
+    /// Ersetzen und Entfernen. <c>null</c> bei Zeilen aus der Zeit vor den Kennungen.
+    /// </summary>
+    public Guid? Revision { get; set; }
 }
 
 /// <summary>

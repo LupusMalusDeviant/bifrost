@@ -46,11 +46,50 @@ public sealed record UpstreamOAuthToken(
     DateTimeOffset ObtainedAt)
 {
     /// <summary>
+    /// Der Resource Indicator (<see cref="OAuthAuthorizationAttempt.ResourceFor"/>), für den das
+    /// Token ausgestellt wurde (Plan 0005 F5). <c>null</c> nur bei Token, die vor Einführung der
+    /// Bindung gespeichert wurden — siehe <see cref="IsBoundTo"/>.
+    /// </summary>
+    public string? Resource { get; init; }
+
+    /// <summary>Die Client-ID, mit der das Token eingelöst wurde (Plan 0005 F5).</summary>
+    public string? ClientId { get; init; }
+
+    /// <summary>
+    /// Die Kennung des gespeicherten Standes (Plan 0005 F14). Daran — und nicht am Zeitpunkt des
+    /// Erhalts, der nach Trennen und neuem Autorisieren wiederkehren kann — erkennen
+    /// <see cref="IUpstreamOAuthTokenStore.ReplaceAsync"/> und
+    /// <see cref="IUpstreamOAuthTokenStore.RemoveIfUnchangedAsync"/> „noch dasselbe Token".
+    /// <para>
+    /// Die Datenbank-Ablage vergibt sie bei <b>jedem</b> Schreiben neu; was ein noch nicht
+    /// gespeichertes Token hier trägt, übernimmt sie nicht. Der zufällige Startwert ist für Ablagen,
+    /// die das Objekt unverändert ablegen — sie erfüllen damit dieselbe Regel.
+    /// <see cref="Guid.Empty"/> heißt: gespeichert, bevor es Kennungen gab.
+    /// </para>
+    /// </summary>
+    public Guid Revision { get; init; } = Guid.NewGuid();
+
+    /// <summary>
     /// Erneuerungsbedarf mit Sicherheitsabstand: Ein Token, das während des Aufrufs abläuft, ist so
     /// gut wie abgelaufen.
     /// </summary>
     public bool NeedsRefresh(DateTimeOffset now, TimeSpan skew)
         => ExpiresAt is { } expires && expires - skew <= now;
+
+    /// <summary>
+    /// Gehört das Token zu dieser Anbindung — demselben Resource Indicator und derselben Client-ID
+    /// (Plan 0005 F5)?
+    /// <para>
+    /// <b>Ein Token ohne jede Bindung gilt als passend.</b> Das sind nur Token, die vor Einführung der
+    /// Bindung gespeichert wurden: Sie wurden für die damalige Anbindung ausgestellt, und eine
+    /// bestehende Instanz soll nach dem Update ohne neues Autorisieren weiterlaufen. Ihre erste
+    /// Erneuerung schreibt die Bindung nach; ab dann gilt die strenge Prüfung.
+    /// </para>
+    /// </summary>
+    public bool IsBoundTo(string resource, string clientId)
+        => (Resource is null && ClientId is null)
+            || (string.Equals(Resource, resource, StringComparison.Ordinal)
+                && string.Equals(ClientId, clientId, StringComparison.Ordinal));
 }
 
 /// <summary>Ablage der Upstream-Token. Werte liegen verschlüsselt (NFR-04).</summary>
@@ -59,6 +98,20 @@ public interface IUpstreamOAuthTokenStore
     Task<UpstreamOAuthToken?> GetAsync(ServerId server, CancellationToken ct);
 
     Task SaveAsync(UpstreamOAuthToken token, CancellationToken ct);
+
+    /// <summary>
+    /// Speichert wie <see cref="SaveAsync"/> und liefert die Kennung, unter der das Token jetzt liegt
+    /// (Plan 0005 F5, F14) — für den Rückweg der Autorisierung, der später nur sein eigenes Token
+    /// entfernen darf (<see cref="RemoveIfUnchangedAsync"/>). Die Standardumsetzung passt für
+    /// Ablagen, die das Token-Objekt unverändert ablegen; eine Ablage, die Kennungen selbst vergibt,
+    /// setzt sie selbst um.
+    /// </summary>
+    async Task<Guid> SaveWithRevisionAsync(UpstreamOAuthToken token, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        await SaveAsync(token, ct).ConfigureAwait(false);
+        return token.Revision;
+    }
 
     Task RemoveAsync(ServerId server, CancellationToken ct);
 
@@ -74,11 +127,26 @@ public interface IUpstreamOAuthTokenStore
     /// <para>
     /// Muss atomar sein — es gibt bewusst keine Standardumsetzung aus Lesen und Schreiben, denn
     /// zwischen beiden läge genau die Lücke, die diese Methode schließen soll (Plan 0005 D7). Erkannt
-    /// wird „noch dasselbe Token" an <see cref="UpstreamOAuthToken.ObtainedAt"/>: Jede Ablage sorgt
-    /// dafür, dass jedes gespeicherte Token einen anderen Zeitpunkt trägt als sein Vorgänger.
+    /// wird „noch dasselbe Token" an <see cref="UpstreamOAuthToken.Revision"/> (Plan 0005 F14), nicht
+    /// am Zeitpunkt des Erhalts: Der kann nach einem Trennen und neuen Autorisieren wiederkehren.
     /// </para>
     /// </summary>
     Task<bool> ReplaceAsync(UpstreamOAuthToken expected, UpstreamOAuthToken replacement, CancellationToken ct);
+
+    /// <summary>
+    /// Entfernt <paramref name="expected"/> — aber nur, wenn noch genau dieser Stand gespeichert ist
+    /// (erkannt an <see cref="UpstreamOAuthToken.Revision"/>). Liefert <c>false</c>, wenn inzwischen
+    /// ein anderes Token gespeichert oder keins mehr da ist; dann bleibt die Ablage, wie sie ist.
+    /// <para>
+    /// Für den Rückweg der Autorisierung (Plan 0005 F5): Er räumt nur sein eigenes Token weg, nicht
+    /// eine neuere Autorisierung, die ein zweiter Vorgang inzwischen gespeichert hat. Wie
+    /// <see cref="ReplaceAsync"/> muss es atomar sein; die Standardumsetzung gibt es nur, damit
+    /// Testablagen, die es nicht brauchen, es nicht nachbauen müssen.
+    /// </para>
+    /// </summary>
+    Task<bool> RemoveIfUnchangedAsync(UpstreamOAuthToken expected, CancellationToken ct)
+        => throw new NotSupportedException(
+            "Diese Token-Ablage kann nicht bedingt entfernen (Plan 0005 F5).");
 }
 
 /// <summary>

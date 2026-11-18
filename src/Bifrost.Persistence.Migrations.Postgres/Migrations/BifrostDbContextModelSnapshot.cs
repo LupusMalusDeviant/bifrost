@@ -672,6 +672,10 @@ namespace Bifrost.Persistence.Migrations.Postgres.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("ClientId")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<long?>("ExpiresAtTicks")
                         .HasColumnType("bigint");
 
@@ -686,6 +690,13 @@ namespace Bifrost.Persistence.Migrations.Postgres.Migrations
                     b.Property<byte[]>("Payload")
                         .IsRequired()
                         .HasColumnType("bytea");
+
+                    b.Property<string>("Resource")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<Guid?>("Revision")
+                        .HasColumnType("uuid");
 
                     b.HasKey("ServerId");
 

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Bifrost.Abstractions;
+using Bifrost.Persistence.Audit;
 using Bifrost.Upstream.OAuth;
 
 namespace Bifrost.Server;
@@ -120,51 +121,21 @@ internal static class UpstreamOAuthEndpoints
                 return Results.BadRequest(new { error = "Die OAuth-Anbindung wurde zwischenzeitlich entfernt." });
             }
 
+            UpstreamOAuthToken token;
             try
             {
                 OAuthFlow.EnsureBindingMatches(attempt, config);
-                var token = await OAuthFlow.RedeemAsync(attempt, code, oauth, time.GetUtcNow(), ct);
-                await tokens.SaveAsync(token, ct);
-
-                // Nach dem Speichern noch einmal: Wurde die Anbindung zwischen Prüfung und Speichern
-                // geändert, hat das Umkonfigurieren das Token womöglich vor uns entfernt — dann
-                // entfernen wir es hier (E2). Umkonfigurieren speichert zuerst und entfernt danach,
-                // also sieht einer der beiden Wege den neuen Stand.
-                var after = await CurrentConfigAsync(configStore, attempt.Server, ct);
-                if (after is null)
-                {
-                    await tokens.RemoveAsync(attempt.Server, CancellationToken.None);
-                    return Results.BadRequest(new { error = "Der Upstream wurde zwischenzeitlich entfernt." });
-                }
-
-                try
-                {
-                    OAuthFlow.EnsureBindingMatches(attempt, after);
-                }
-                catch (OAuthDiscoveryException)
-                {
-                    await tokens.RemoveAsync(attempt.Server, CancellationToken.None);
-                    throw;
-                }
-
-                AuditOAuth(audit, time, ctx, attempt.Server, $"upstream-oauth-connected:{config.Slug}");
+                token = await OAuthFlow.RedeemAsync(attempt, code, oauth, time.GetUtcNow(), ct);
             }
             catch (OAuthDiscoveryException exception)
             {
                 return Results.BadRequest(new { error = exception.Message });
             }
 
-            // Wartet der Upstream gerade auf seinen nächsten Versuch — nach abgelehnter Anmeldung
-            // bis zu 15 min —, verbindet er jetzt mit dem neuen Token, statt die Frist abzusitzen
-            // (L5). Läuft gerade ein Versuch mit dem alten Token, folgt auf sein Scheitern der
-            // nächste ohne Frist (D11). Verbunden, abgeschaltet oder entfernt: nichts.
-            if (supervisor is IUpstreamCredentialObserver observer)
-            {
-                observer.CredentialsChanged(attempt.Server);
-            }
-
-            // Zurück in die Verwaltung.
-            return Results.Redirect("/servers?oauth=verbunden");
+            return await StoreGrantAsync(
+                attempt, token, config.Slug, ctx.User.Identity?.Name,
+                c => CurrentConfigAsync(configStore, attempt.Server, c), tokens,
+                supervisor as IUpstreamCredentialObserver, audit, time, ct);
         });
 
         // Trennt die Verbindung: Token weg, Upstream läuft ohne Autorisierung nicht mehr hoch.
@@ -173,10 +144,92 @@ internal static class UpstreamOAuthEndpoints
             IAuditSink audit, CancellationToken ct) =>
         {
             var id = new ServerId(serverId);
+
+            // Erst das Audit, dann die Wirkung — wie beim Rückweg (Plan 0005 F3).
+            try
+            {
+                AuditOAuth(audit, time, ctx, id, "upstream-oauth-disconnected");
+            }
+            catch (AuditUnavailableException)
+            {
+                return Results.Json(
+                    new { error = "Das Audit nimmt gerade nichts an; die Verbindung wurde nicht getrennt." },
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
             await tokens.RemoveAsync(id, ct);
-            AuditOAuth(audit, time, ctx, id, "upstream-oauth-disconnected");
             return Results.NoContent();
         });
+    }
+
+    /// <summary>
+    /// Was nach dem Einlösen des Codes geschieht: Token ablegen, Bindung erneut prüfen, Upstream
+    /// wecken. Herausgelöst, damit sich die Reihenfolge ohne Browser-Dialog prüfen lässt.
+    /// </summary>
+    internal static async Task<IResult> StoreGrantAsync(
+        OAuthAuthorizationAttempt attempt, UpstreamOAuthToken token, string slug, string? user,
+        Func<CancellationToken, Task<UpstreamServerConfig?>> currentConfig,
+        IUpstreamOAuthTokenStore tokens, IUpstreamCredentialObserver? observer,
+        IAuditSink audit, TimeProvider time, CancellationToken ct)
+    {
+        // Erst das Audit, dann die Wirkung (Plan 0005 F3): Weist es ab (Compliance-Modus, voller
+        // Kanal), ist kein Token gespeichert und nichts geweckt.
+        try
+        {
+            AuditOAuth(audit, time, user, attempt.Server, $"upstream-oauth-connected:{slug}");
+        }
+        catch (AuditUnavailableException)
+        {
+            return Results.Json(
+                new
+                {
+                    error = "Das Audit nimmt gerade nichts an; die Autorisierung wurde nicht gespeichert. "
+                        + "Bitte später erneut autorisieren.",
+                },
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        // Mit der Kennung, unter der es liegt: Nur dieser Stand darf unten wieder entfernt werden.
+        var own = token with { Revision = await tokens.SaveWithRevisionAsync(token, ct) };
+        try
+        {
+            // Nach dem Speichern noch einmal: Wurde die Anbindung zwischen Prüfung und Speichern
+            // geändert, hat das Umkonfigurieren das Token womöglich vor uns entfernt — dann
+            // entfernen wir es hier (E2). Umkonfigurieren speichert zuerst und entfernt danach,
+            // also sieht einer der beiden Wege den neuen Stand. Entfernt wird nur das EIGENE Token
+            // (F5): Hat ein zweiter Vorgang inzwischen eine neuere Autorisierung gespeichert, bleibt
+            // sie stehen.
+            var after = await currentConfig(ct);
+            if (after is null)
+            {
+                await tokens.RemoveIfUnchangedAsync(own, CancellationToken.None);
+                return Results.BadRequest(new { error = "Der Upstream wurde zwischenzeitlich entfernt." });
+            }
+
+            try
+            {
+                OAuthFlow.EnsureBindingMatches(attempt, after);
+            }
+            catch (OAuthDiscoveryException exception)
+            {
+                await tokens.RemoveIfUnchangedAsync(own, CancellationToken.None);
+                return Results.BadRequest(new { error = exception.Message });
+            }
+        }
+        finally
+        {
+            // Ab dem Speichern immer (F3): Wartet der Upstream gerade auf seinen nächsten Versuch —
+            // nach abgelehnter Anmeldung bis zu 15 min —, verbindet er jetzt mit dem neuen Token,
+            // statt die Frist abzusitzen (L5). Läuft gerade ein Versuch mit dem alten Token, folgt
+            // auf sein Scheitern der nächste ohne Frist (D11). Hat die Nachprüfung das Token wieder
+            // entfernt, scheitert dieser Versuch an der Anmeldung — ein Versuch zu viel ist billiger
+            // als ein Upstream, der ein gültiges Token 15 min lang nicht benutzt. Verbunden,
+            // abgeschaltet oder entfernt: nichts.
+            observer?.CredentialsChanged(attempt.Server);
+        }
+
+        // Zurück in die Verwaltung.
+        return Results.Redirect("/servers?oauth=verbunden");
     }
 
     private static async Task<(Uri Url, OAuthAuthorizationAttempt Attempt)> BeginAsync(
@@ -255,9 +308,13 @@ internal static class UpstreamOAuthEndpoints
 
     private static void AuditOAuth(
         IAuditSink audit, TimeProvider time, HttpContext ctx, ServerId server, string detail)
+        => AuditOAuth(audit, time, ctx.User.Identity?.Name, server, detail);
+
+    private static void AuditOAuth(
+        IAuditSink audit, TimeProvider time, string? user, ServerId server, string detail)
         => audit.Record(new AuditEvent(
             time.GetUtcNow(), Caller: null, CallOrigin.Ui, AuditEventKind.ConfigChanged,
             server, Tool: null, Status: null, RedactedArguments: null,
             RequestBytes: null, ResponseBytes: null, Duration: null,
-            Detail: $"{ctx.User.Identity?.Name ?? "?"}: {detail}"));
+            Detail: $"{user ?? "?"}: {detail}"));
 }

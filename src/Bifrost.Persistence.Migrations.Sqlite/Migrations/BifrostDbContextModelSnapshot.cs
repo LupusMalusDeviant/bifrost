@@ -665,6 +665,10 @@ namespace Bifrost.Persistence.Migrations.Sqlite.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ClientId")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
                     b.Property<long?>("ExpiresAtTicks")
                         .HasColumnType("INTEGER");
 
@@ -679,6 +683,13 @@ namespace Bifrost.Persistence.Migrations.Sqlite.Migrations
                     b.Property<byte[]>("Payload")
                         .IsRequired()
                         .HasColumnType("BLOB");
+
+                    b.Property<string>("Resource")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("Revision")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("ServerId");
 

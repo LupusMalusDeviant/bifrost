@@ -174,10 +174,33 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstr
             }
             else
             {
-                // Inzwischen liegt ein anderes Token (neu autorisiert): Das ist nicht abgewiesen.
-                _renew.TryRemove(new KeyValuePair<ServerId, string>(id, rejected));
+                // Das gelesene Token ist nicht das abgewiesene. Das heißt aber noch nicht, dass der
+                // Vermerk erledigt ist (Plan 0005 F13): Gelesen wurde womöglich VOR dem Speichern
+                // des Tokens, das danach vorgelegt und abgewiesen wurde. Darum noch einmal lesen —
+                // der Vermerk ist älter als dieses Lesen.
+                token = await _tokens.GetAsync(id, ct).ConfigureAwait(false)
+                    ?? throw new UpstreamAuthenticationException(
+                        $"Für '{config.Slug}' liegt kein Zugriffstoken vor. Der Upstream muss einmal "
+                        + "autorisiert werden (Server-Verwaltung → Autorisieren).");
+                if (rejected == token.AccessToken)
+                {
+                    renewalRequested = true;
+                }
+                else
+                {
+                    // Nach dem Vermerk gelesen und trotzdem ein anderes Token: Es wurde nach dem
+                    // abgewiesenen gespeichert (neu autorisiert) und ist nicht abgewiesen (D6). Der
+                    // Vermerk ist damit erledigt — gelöscht nur, solange er noch dieses Token nennt.
+                    _renew.TryRemove(new KeyValuePair<ServerId, string>(id, rejected));
+                }
             }
         }
+
+        // Ein Token gilt nur für die Anbindung, für die es ausgestellt wurde (Plan 0005 F5). Wurde
+        // Endpunkt oder Client-ID geändert, geht das Token der alten Anbindung nicht an die neue —
+        // auch nicht in der Lücke, bevor das Umkonfigurieren es löscht.
+        var resource = OAuthAuthorizationAttempt.ResourceFor(config.Http!.Endpoint);
+        EnsureBound(token, resource, oauth, config);
 
         var now = _time.GetUtcNow();
         if (!renewalRequested && !token.NeedsRefresh(now, RefreshSkew))
@@ -185,12 +208,13 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstr
             return token.AccessToken;
         }
 
-        var resource = OAuthAuthorizationAttempt.ResourceFor(config.Http!.Endpoint);
-        var metadata = await OAuthDiscovery.FetchAuthorizationServerMetadataAsync(
-            new Uri(token.Issuer), oauth.AllowPrivateTargets, ct).ConfigureAwait(false);
         UpstreamOAuthToken refreshed;
         try
         {
+            // Auch der Abruf der Metadaten gehört in die Einordnung (Plan 0005 F12): Ein 401/403
+            // dort ist eine abgelehnte Anmeldung, ein 5xx eine Störung.
+            var metadata = await OAuthDiscovery.FetchAuthorizationServerMetadataAsync(
+                new Uri(token.Issuer), oauth.AllowPrivateTargets, ct).ConfigureAwait(false);
             refreshed = await OAuthFlow.RefreshAsync(
                 token, metadata.TokenEndpoint, oauth, resource, now, ct).ConfigureAwait(false);
         }
@@ -198,18 +222,28 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstr
             when (exception.StatusCode is { } status
                 && ((int)status >= 500 || status == System.Net.HttpStatusCode.TooManyRequests))
         {
-            // Der Token-Endpunkt ist gestört oder überlastet, nicht ablehnend: Das wird von selbst
-            // besser und gehört in die kurze Frist der Unerreichbarkeit, nicht in die 15 min einer
-            // abgelehnten Anmeldung (L5). Die Meldung nennt den Antwortkörper nicht.
+            // Token-Endpunkt oder Metadaten sind gestört oder überlastet, nicht ablehnend: Das wird
+            // von selbst besser und gehört in die kurze Frist der Unerreichbarkeit, nicht in die
+            // 15 min einer abgelehnten Anmeldung (L5). Die Meldung nennt den Antwortkörper nicht.
             throw new HttpRequestException(
-                $"Der Token-Endpunkt antwortete mit HTTP {(int)status}.", exception, status);
+                $"Der Token-Endpunkt oder die Metadaten des Authorization Servers antworteten mit "
+                + $"HTTP {(int)status}.", exception, status);
+        }
+        catch (OAuthDiscoveryException exception) when (OAuthDiscovery.IsTransient(exception))
+        {
+            // Die Metadaten waren gar nicht erreichbar (Netzfehler): eine Unerreichbarkeit wie jede
+            // andere, bald erneut versucht.
+            throw new HttpRequestException(
+                $"Die Metadaten des Authorization Servers für '{config.Slug}' waren nicht erreichbar.",
+                exception);
         }
         catch (OAuthDiscoveryException exception)
         {
-            // Der Token-Endpunkt hat geantwortet und abgelehnt (oder es gibt kein Refresh-Token).
-            // Ein Netzfehler auf dem Weg dorthin ist KEIN Fall für diesen Zweig — der kommt als
-            // HttpRequestException durch und wird wie jede Unerreichbarkeit bald erneut versucht.
-            // Die Meldung nennt bewusst nicht, was der Token-Endpunkt geschrieben hat.
+            // Token-Endpunkt oder Metadaten haben geantwortet und abgelehnt (401/403, andere 4xx),
+            // die Metadaten sind dauerhaft unbrauchbar, oder es gibt kein Refresh-Token. Ein
+            // Netzfehler auf dem Weg zum Token-Endpunkt ist KEIN Fall für diesen Zweig — der kommt
+            // als HttpRequestException durch und wird wie jede Unerreichbarkeit bald erneut
+            // versucht. Die Meldung nennt bewusst nicht, was die Gegenstelle geschrieben hat.
             throw new UpstreamAuthenticationException(
                 $"Das Zugriffstoken für '{config.Slug}' ließ sich nicht erneuern. Der Upstream muss "
                 + "neu autorisiert werden (Server-Verwaltung → Autorisieren).",
@@ -224,12 +258,29 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstr
                 ?? throw new UpstreamAuthenticationException(
                     $"Für '{config.Slug}' liegt kein Zugriffstoken mehr vor — die Verbindung wurde "
                     + "getrennt. Der Upstream muss neu autorisiert werden (Server-Verwaltung → Autorisieren).");
+            EnsureBound(current, resource, oauth, config);
             ForgetRenewal(id, token.AccessToken);
             return current.AccessToken;
         }
 
         ForgetRenewal(id, token.AccessToken);
         return refreshed.AccessToken;
+    }
+
+    /// <summary>
+    /// Weist ein Token ab, das zu einer anderen Anbindung gehört (Plan 0005 F5). Ein Token aus der
+    /// Zeit vor der Bindung gilt als passend (<see cref="UpstreamOAuthToken.IsBoundTo"/>).
+    /// </summary>
+    private static void EnsureBound(
+        UpstreamOAuthToken token, string resource, UpstreamOAuthOptions oauth, UpstreamServerConfig config)
+    {
+        if (!token.IsBoundTo(resource, oauth.ClientId))
+        {
+            throw new UpstreamAuthenticationException(
+                $"Das gespeicherte Zugriffstoken für '{config.Slug}' gehört zu einer anderen "
+                + "OAuth-Anbindung (Endpunkt oder Client-ID geändert). Der Upstream muss neu "
+                + "autorisiert werden (Server-Verwaltung → Autorisieren).");
+        }
     }
 
     /// <summary>
