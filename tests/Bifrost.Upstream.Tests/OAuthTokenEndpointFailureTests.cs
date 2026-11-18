@@ -182,6 +182,140 @@ public sealed class OAuthTokenEndpointFailureTests
         refreshed.RefreshToken.Should().Be(token.RefreshToken);
     }
 
+    /// <summary>
+    /// Plan 0005 F12: Weist der Authorization Server schon den Abruf seiner Metadaten mit 401/403
+    /// ab, ist das eine abgelehnte Anmeldung — keine Unerreichbarkeit im Sekundentakt.
+    /// </summary>
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task Refused_metadata_arrives_as_a_rejected_login(HttpStatusCode status)
+    {
+        using var server = new AuthorizationServer(HttpStatusCode.OK) { MetadataStatus = status };
+        var (connector, config, id) = await ArrangeAsync(server);
+
+        var act = async () => await connector.ConnectAsync(id, config, TestContext.Current.CancellationToken);
+
+        await act.Should().ThrowAsync<UpstreamAuthenticationException>();
+    }
+
+    /// <summary>
+    /// Plan 0005 F12: Gestörte Metadaten (5xx, 429) sind wie ein gestörter Token-Endpunkt eine
+    /// Unerreichbarkeit mit Status — sie werden bald wieder versucht.
+    /// </summary>
+    [Theory]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    public async Task Disturbed_metadata_arrives_as_unreachable(HttpStatusCode status)
+    {
+        using var server = new AuthorizationServer(HttpStatusCode.OK) { MetadataStatus = status };
+        var (connector, config, id) = await ArrangeAsync(server);
+
+        var act = async () => await connector.ConnectAsync(id, config, TestContext.Current.CancellationToken);
+
+        (await act.Should().ThrowAsync<HttpRequestException>()).Which.StatusCode.Should().Be(status);
+    }
+
+    /// <summary>
+    /// Plan 0005 F12: Fehlen die Metadaten dauerhaft (404 auf allen Wegen), ist das ebenfalls eine
+    /// Sache der Anmeldung — von selbst wird es nicht besser.
+    /// </summary>
+    [Fact]
+    public async Task Missing_metadata_arrives_as_a_rejected_login()
+    {
+        using var server = new AuthorizationServer(HttpStatusCode.OK) { MetadataStatus = HttpStatusCode.NotFound };
+        var (connector, config, id) = await ArrangeAsync(server);
+
+        var act = async () => await connector.ConnectAsync(id, config, TestContext.Current.CancellationToken);
+
+        await act.Should().ThrowAsync<UpstreamAuthenticationException>();
+    }
+
+    /// <summary>
+    /// Plan 0005 F13: Ein Aufbau, der sein Token gelesen hat, BEVOR ein neueres gespeichert und als
+    /// abgewiesen gemeldet wurde, darf den Vermerk für das neuere nicht löschen — sonst legte der
+    /// nächste Aufbau das abgewiesene Token ohne Erneuerung vor.
+    /// </summary>
+    [Fact]
+    public async Task A_stale_build_does_not_clear_the_renewal_of_a_newer_token()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var server = new AuthorizationServer(HttpStatusCode.ServiceUnavailable);
+        var (connector, config, id, tokens) = await ArrangeWithStoreAsync(server, expired: false);
+        var newer = ExpiredToken(id, server.Issuer) with
+        {
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            ObtainedAt = DateTimeOffset.UtcNow,
+        };
+
+        // Während der erste Aufbau liest: Ein neueres Token wird gespeichert, mit ihm verbunden und
+        // abgewiesen. Der Aufbau hält danach noch das ältere in der Hand.
+        tokens.OnGet = () =>
+        {
+            tokens.OnGet = null;
+            var stale = tokens.Peek(id);
+            tokens.SaveAsync(newer, ct).GetAwaiter().GetResult();
+            ((IUpstreamCredentialRenewal)connector).RequestCredentialRenewal(id, newer.AccessToken);
+            return stale;
+        };
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var connecting = async () => await connector.ConnectAsync(id, config, ct);
+            await connecting.Should().ThrowAsync<Exception>();
+        }
+
+        server.McpRequests.Should().Be(0, "das abgewiesene neuere Token ging nicht ohne Erneuerung an den Upstream");
+    }
+
+    /// <summary>
+    /// Plan 0005 F5: Ein Token, das für einen anderen Endpunkt oder eine andere Client-ID ausgestellt
+    /// wurde, geht nicht an den Upstream — auch nicht in der Lücke, bevor das Umkonfigurieren es löscht.
+    /// </summary>
+    [Theory]
+    [InlineData("/alt", "gateway")]
+    [InlineData("/mcp", "anderer-client")]
+    public async Task A_token_of_another_binding_is_not_presented(string path, string clientId)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var server = new AuthorizationServer(HttpStatusCode.OK);
+        var (connector, config, id, tokens) = await ArrangeWithStoreAsync(server, expired: false);
+        var bound = ExpiredToken(id, server.Issuer) with
+        {
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            Resource = OAuthAuthorizationAttempt.ResourceFor(new Uri(server.Issuer, path)),
+            ClientId = clientId,
+        };
+        await tokens.SaveAsync(bound, ct);
+
+        var connecting = async () => await connector.ConnectAsync(id, config, ct);
+
+        (await connecting.Should().ThrowAsync<UpstreamAuthenticationException>())
+            .WithMessage("*anderen OAuth-Anbindung*");
+        server.McpRequests.Should().Be(0, "das Token der alten Anbindung ging nicht an den Upstream");
+    }
+
+    /// <summary>
+    /// Plan 0005 F5: Ein Token aus der Zeit vor der Bindung (Bestand nach dem Update) wird
+    /// vorgelegt, und seine erste Erneuerung schreibt die Bindung der aktuellen Anbindung nach.
+    /// </summary>
+    [Fact]
+    public async Task A_token_from_before_the_binding_is_used_and_bound_by_its_refresh()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var server = new AuthorizationServer(HttpStatusCode.OK);
+        var (connector, config, id, tokens) = await ArrangeWithStoreAsync(server, expired: true);
+        (await tokens.GetAsync(id, ct))!.Resource.Should().BeNull("so liegt ein Bestandstoken vor");
+
+        var connecting = async () => await connector.ConnectAsync(id, config, ct);
+        await connecting.Should().ThrowAsync<Exception>("der Upstream selbst antwortet hier mit 503");
+
+        var stored = (await tokens.GetAsync(id, ct))!;
+        stored.Resource.Should().Be(OAuthAuthorizationAttempt.ResourceFor(config.Http!.Endpoint));
+        stored.ClientId.Should().Be("gateway");
+        server.McpRequests.Should().BeGreaterThan(0, "das erneuerte Token ging an den Upstream");
+    }
+
     [Theory]
     [InlineData("invalid_grant", "invalid_grant")]
     [InlineData("""{"error":"invalid_client","error_description":"x"}""", "invalid_client")]
@@ -225,8 +359,13 @@ public sealed class OAuthTokenEndpointFailureTests
     {
         private readonly Dictionary<ServerId, UpstreamOAuthToken> _tokens = [];
 
+        /// <summary>Ersetzt einen Lesevorgang — für das, was zwischen Lesen und Prüfen geschieht.</summary>
+        public Func<UpstreamOAuthToken?>? OnGet { get; set; }
+
+        public UpstreamOAuthToken? Peek(ServerId server) => _tokens.GetValueOrDefault(server);
+
         public Task<UpstreamOAuthToken?> GetAsync(ServerId server, CancellationToken ct)
-            => Task.FromResult(_tokens.GetValueOrDefault(server));
+            => Task.FromResult(OnGet is { } hook ? hook() : _tokens.GetValueOrDefault(server));
 
         public Task SaveAsync(UpstreamOAuthToken token, CancellationToken ct)
         {
@@ -300,7 +439,12 @@ public sealed class OAuthTokenEndpointFailureTests
                     }
 
                     var issuer = Issuer.ToString().TrimEnd('/');
-                    if (context.Request.Url!.AbsolutePath.StartsWith("/.well-known/", StringComparison.Ordinal))
+                    if (context.Request.Url!.AbsolutePath.StartsWith("/.well-known/", StringComparison.Ordinal)
+                        && MetadataStatus != HttpStatusCode.OK)
+                    {
+                        Write(context, MetadataStatus, "{}");
+                    }
+                    else if (context.Request.Url!.AbsolutePath.StartsWith("/.well-known/", StringComparison.Ordinal))
                     {
                         Write(context, HttpStatusCode.OK, $$"""
                             {
@@ -340,6 +484,9 @@ public sealed class OAuthTokenEndpointFailureTests
 
         /// <summary>Läuft, während der Token-Endpunkt antwortet — die Lücke, in der andere schreiben.</summary>
         public Action? OnTokenRequest { get; set; }
+
+        /// <summary>Der Status, mit dem jeder Metadaten-Abruf beantwortet wird; <c>OK</c> liefert sie aus.</summary>
+        public HttpStatusCode MetadataStatus { get; init; } = HttpStatusCode.OK;
 
         /// <summary>Antwortet ohne neues Refresh-Token — RFC 6749 §6 erlaubt das.</summary>
         public bool OmitRefreshToken { get; set; }

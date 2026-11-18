@@ -1108,8 +1108,9 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
             DateTimeOffset.UnixEpoch.AddHours(1), ["mcp:read"], "https://as.example.com",
             DateTimeOffset.UnixEpoch.AddSeconds(second));
 
-        var read = Token(1);
-        await store.SaveAsync(read, ct);
+        // Gelesen wird aus der Ablage: Erst sie vergibt die Kennung, an der „noch dasselbe" hängt (F14).
+        await store.SaveAsync(Token(1), ct);
+        var read = (await store.GetAsync(server, ct))!;
         var refreshed = Token(2);
         (await store.ReplaceAsync(read, refreshed, ct)).Should().BeTrue();
         (await store.GetAsync(server, ct))!.AccessToken.Should().Be(refreshed.AccessToken);
@@ -1134,11 +1135,41 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
     }
 
     /// <summary>
-    /// Plan 0005 E15: Gleichzeitige Speicherungen mit demselben Zeitpunkt bekommen alle einen eigenen
-    /// — der Zeitpunkt wird in der Datenbank weitergestellt, nicht im Speicher jedes Schreibers.
+    /// Plan 0005 F14: Nach Trennen und neuem Autorisieren darf ein Token mit demselben Zeitpunkt des
+    /// Erhalts nicht für das vor dem Trennen gelesene gehalten werden — sonst überschriebe eine späte
+    /// Erneuerung die neue Autorisierung.
     /// </summary>
     [Fact]
-    public async Task UpstreamOAuthTokens_saved_concurrently_each_get_their_own_time()
+    public async Task UpstreamOAuthTokens_are_not_mistaken_for_a_removed_one_with_the_same_time()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = new UpstreamOAuthTokenStore(Factory, DataProtection);
+        var server = ServerId.New();
+        var at = DateTimeOffset.UnixEpoch.AddSeconds(7);
+        UpstreamOAuthToken Token() => new(
+            server, "at-" + Guid.NewGuid().ToString("N"), "rt-" + Guid.NewGuid().ToString("N"),
+            null, ["mcp:read"], "https://as.example.com", at);
+
+        await store.SaveAsync(Token(), ct);
+        var read = (await store.GetAsync(server, ct))!;
+        await store.RemoveAsync(server, ct);
+        var granted = Token();
+        await store.SaveAsync(granted, ct);
+
+        (await store.ReplaceAsync(read, Token(), ct)).Should().BeFalse(
+            "gespeichert ist die neue Autorisierung, nicht das vor dem Trennen gelesene Token");
+        (await store.GetAsync(server, ct))!.AccessToken.Should().Be(granted.AccessToken);
+    }
+
+    /// <summary>
+    /// Plan 0005 E15, F14: Gleichzeitige Speicherungen mit demselben Zeitpunkt bleiben unterscheidbar
+    /// — jede trägt ihre eigene Kennung, und nur das zuletzt gespeicherte Token lässt sich ersetzen.
+    /// Leiten die Schreiber ihr Token vom gespeicherten ab (dieselbe Kennung), vergibt die Ablage in
+    /// derselben Anweisung eine frische.
+    /// </summary>
+    [Fact]
+    public async Task UpstreamOAuthTokens_saved_concurrently_each_keep_their_own_revision()
     {
         MarkSkippedIfUnavailable();
         var ct = TestContext.Current.CancellationToken;
@@ -1151,10 +1182,116 @@ public abstract class PersistenceTestsBase : IAsyncLifetime
 
         await store.SaveAsync(Token(), ct);
         const int writers = 8;
-        await Task.WhenAll(Enumerable.Range(0, writers).Select(_ => Task.Run(() => store.SaveAsync(Token(), ct), ct)));
+        var written = await Task.WhenAll(Enumerable.Range(0, writers).Select(_ => Task.Run(async () =>
+        {
+            var token = Token();
+            return token with { Revision = await store.SaveWithRevisionAsync(token, ct) };
+        }, ct)));
 
-        (await store.GetAsync(server, ct))!.ObtainedAt.UtcTicks.Should().Be(
-            at.UtcTicks + writers, "jede Speicherung hat den Zeitpunkt um genau einen Tick weitergestellt");
+        written.Select(t => t.Revision).Should().OnlyHaveUniqueItems("jede Speicherung hat ihre eigene Kennung");
+        var stored = (await store.GetAsync(server, ct))!;
+        stored.ObtainedAt.Should().Be(at, "der Zeitpunkt ist Angabe, nicht Kennung");
+        var winner = written.Single(t => t.AccessToken == stored.AccessToken);
+        stored.Revision.Should().Be(winner.Revision);
+        foreach (var loser in written.Where(t => t != winner))
+        {
+            (await store.ReplaceAsync(loser, Token(), ct)).Should().BeFalse(
+                "gespeichert ist ein anderes Token mit demselben Zeitpunkt");
+        }
+
+        // Abgeleitet vom gespeicherten, also mit dessen Kennung: Die Ablage vergibt je eine neue.
+        var derived = Enumerable.Range(0, writers)
+            .Select(_ => stored with { AccessToken = "at-" + Guid.NewGuid().ToString("N") })
+            .ToList();
+        await Task.WhenAll(derived.Select(token => Task.Run(() => store.SaveAsync(token, ct), ct)));
+        (await store.GetAsync(server, ct))!.Revision.Should().NotBe(stored.Revision);
+        (await store.ReplaceAsync(stored, Token(), ct)).Should().BeFalse(
+            "eine späte Erneuerung des zuvor gelesenen Tokens überschreibt die neueren nicht");
+    }
+
+    /// <summary>
+    /// Plan 0005 F5, F14: Eine Zeile aus der Zeit vor Bindung und Kennung (Bestand nach dem Update)
+    /// lässt sich lesen und von ihrer Erneuerung ersetzen — die schreibt Bindung und Kennung nach.
+    /// </summary>
+    [Fact]
+    public async Task UpstreamOAuthTokens_from_before_the_binding_are_replaced_and_bound()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = new UpstreamOAuthTokenStore(Factory, DataProtection);
+        var server = ServerId.New();
+        await store.SaveAsync(
+            new UpstreamOAuthToken(
+                server, "at-" + Guid.NewGuid().ToString("N"), "rt-" + Guid.NewGuid().ToString("N"),
+                null, ["mcp:read"], "https://as.example.com", DateTimeOffset.UnixEpoch),
+            ct);
+        await using (var db = await Factory.CreateDbContextAsync(ct))
+        {
+            await db.UpstreamOAuthTokens.Where(r => r.ServerId == server.Value)
+                .ExecuteUpdateAsync(set => set
+                    .SetProperty(r => r.Revision, (Guid?)null)
+                    .SetProperty(r => r.Resource, (string?)null)
+                    .SetProperty(r => r.ClientId, (string?)null), ct);
+        }
+
+        var legacy = (await store.GetAsync(server, ct))!;
+        legacy.Revision.Should().Be(Guid.Empty);
+        legacy.IsBoundTo("https://mcp.example.com/mcp", "gateway").Should().BeTrue();
+
+        var refreshed = new UpstreamOAuthToken(
+            server, "at-" + Guid.NewGuid().ToString("N"), legacy.RefreshToken,
+            null, ["mcp:read"], "https://as.example.com", DateTimeOffset.UnixEpoch.AddHours(1))
+        {
+            Resource = "https://mcp.example.com/mcp",
+            ClientId = "gateway",
+        };
+        (await store.ReplaceAsync(legacy, refreshed, ct)).Should().BeTrue();
+
+        var stored = (await store.GetAsync(server, ct))!;
+        stored.AccessToken.Should().Be(refreshed.AccessToken);
+        stored.Resource.Should().Be("https://mcp.example.com/mcp");
+        stored.ClientId.Should().Be("gateway");
+        stored.Revision.Should().NotBe(Guid.Empty);
+        stored.IsBoundTo("https://mcp.example.com/anders", "gateway").Should().BeFalse(
+            "ab der ersten Erneuerung gilt die strenge Prüfung");
+        (await store.ReplaceAsync(legacy, refreshed, ct)).Should().BeFalse(
+            "das Bestandstoken ist ersetzt; „keine Kennung“ trifft nichts mehr");
+    }
+
+    /// <summary>
+    /// Plan 0005 F5: Der Rückweg der Autorisierung entfernt nur sein eigenes Token. Eine neuere
+    /// Autorisierung, die inzwischen gespeichert wurde, bleibt stehen. Die Bindung reist mit.
+    /// </summary>
+    [Fact]
+    public async Task UpstreamOAuthTokens_are_removed_only_while_unchanged_and_keep_their_binding()
+    {
+        MarkSkippedIfUnavailable();
+        var ct = TestContext.Current.CancellationToken;
+        var store = new UpstreamOAuthTokenStore(Factory, DataProtection);
+        var server = ServerId.New();
+        UpstreamOAuthToken Token() => new UpstreamOAuthToken(
+            server, "at-" + Guid.NewGuid().ToString("N"), null,
+            null, ["mcp:read"], "https://as.example.com", DateTimeOffset.UnixEpoch)
+        {
+            Resource = "https://mcp.example.com/mcp",
+            ClientId = "gateway",
+        };
+
+        var token = Token();
+        var own = token with { Revision = await store.SaveWithRevisionAsync(token, ct) };
+        own.Revision.Should().NotBe(token.Revision, "die Ablage vergibt die Kennung selbst");
+        var read = (await store.GetAsync(server, ct))!;
+        read.Resource.Should().Be("https://mcp.example.com/mcp");
+        read.ClientId.Should().Be("gateway");
+        read.Revision.Should().Be(own.Revision);
+
+        var newer = Token();
+        await store.SaveAsync(newer, ct);
+        (await store.RemoveIfUnchangedAsync(own, ct)).Should().BeFalse();
+        (await store.GetAsync(server, ct))!.AccessToken.Should().Be(newer.AccessToken);
+
+        (await store.RemoveIfUnchangedAsync((await store.GetAsync(server, ct))!, ct)).Should().BeTrue();
+        (await store.GetAsync(server, ct)).Should().BeNull();
     }
 
     [Fact]

@@ -61,10 +61,27 @@ public sealed class UpstreamOAuthTokenStore : IUpstreamOAuthTokenStore
             row.ExpiresAtTicks is { } ticks ? new DateTimeOffset(ticks, TimeSpan.Zero) : null,
             secrets.Scopes ?? [],
             row.Issuer,
-            new DateTimeOffset(row.ObtainedAtTicks, TimeSpan.Zero));
+            new DateTimeOffset(row.ObtainedAtTicks, TimeSpan.Zero))
+        {
+            Resource = row.Resource,
+            ClientId = row.ClientId,
+            // Eine Zeile aus der Zeit vor den Kennungen hat keine — Guid.Empty steht dafür, und
+            // ReplaceAsync/RemoveIfUnchangedAsync vergleichen dann mit „keine Kennung".
+            Revision = row.Revision ?? Guid.Empty,
+        };
     }
 
-    public async Task SaveAsync(UpstreamOAuthToken token, CancellationToken ct)
+    public Task SaveAsync(UpstreamOAuthToken token, CancellationToken ct)
+        => SaveWithRevisionAsync(token, ct);
+
+    /// <summary>
+    /// Speichert unter einer <b>frischen</b> Kennung — bei jedem Einfügen und jedem Überschreiben, gleich
+    /// was das Token mitbringt (Plan 0005 F14). Eine vom Aufrufer mitgebrachte Kennung könnte eine
+    /// schon einmal gespeicherte sein (ein per <c>with</c> abgeleitetes Token), und dann hielte eine
+    /// späte Erneuerung das neue Token für das, das sie gelesen hat (D7). Der Zeitpunkt des Erhalts
+    /// wird unverändert abgelegt; er ist Angabe, keine Kennung.
+    /// </summary>
+    public async Task<Guid> SaveWithRevisionAsync(UpstreamOAuthToken token, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(token);
         var payload = _protector.Protect(JsonSerializer.SerializeToUtf8Bytes(
@@ -72,30 +89,28 @@ public sealed class UpstreamOAuthTokenStore : IUpstreamOAuthTokenStore
         var obtained = token.ObtainedAt.UtcTicks;
         var expires = token.ExpiresAt?.UtcTicks;
 
+        // Je Speicherung eine eigene — auch gleichzeitige Speicherungen bleiben so unterscheidbar (E15).
+        Guid? revision = Guid.NewGuid();
+
         // Zwei Versuche: Legt ein gleichzeitiges Speichern die Zeile zwischen unserem Update und
         // unserem Einfügen an, schreibt der zweite Durchgang über das Update.
         for (var attempt = 0; ; attempt++)
         {
             await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
-
-            // Der Zeitpunkt ist zugleich die Kennung des gespeicherten Tokens (ReplaceAsync). Trägt
-            // das neue denselben wie das alte (oder einen früheren), wird er um einen Tick
-            // weitergestellt — sonst hielte eine späte Erneuerung das neue Token für das, das sie
-            // gelesen hat (Plan 0005 D7). In EINER Anweisung, damit zwei gleichzeitige Speicherungen
-            // nicht beide denselben Folgewert ausrechnen (E15).
             var changed = await db.UpstreamOAuthTokens
                 .Where(r => r.ServerId == token.Server.Value)
                 .ExecuteUpdateAsync(set => set
                     .SetProperty(r => r.Payload, payload)
                     .SetProperty(r => r.Issuer, token.Issuer)
                     .SetProperty(r => r.ExpiresAtTicks, expires)
-                    .SetProperty(
-                        r => r.ObtainedAtTicks,
-                        r => r.ObtainedAtTicks >= obtained ? r.ObtainedAtTicks + 1 : obtained), ct)
+                    .SetProperty(r => r.ObtainedAtTicks, obtained)
+                    .SetProperty(r => r.Resource, token.Resource)
+                    .SetProperty(r => r.ClientId, token.ClientId)
+                    .SetProperty(r => r.Revision, revision), ct)
                 .ConfigureAwait(false);
             if (changed > 0)
             {
-                return;
+                return revision.Value;
             }
 
             db.UpstreamOAuthTokens.Add(new UpstreamOAuthTokenRow
@@ -105,11 +120,14 @@ public sealed class UpstreamOAuthTokenStore : IUpstreamOAuthTokenStore
                 Issuer = token.Issuer,
                 ExpiresAtTicks = expires,
                 ObtainedAtTicks = obtained,
+                Resource = token.Resource,
+                ClientId = token.ClientId,
+                Revision = revision,
             });
             try
             {
                 await db.SaveChangesAsync(ct).ConfigureAwait(false);
-                return;
+                return revision.Value;
             }
             catch (DbUpdateException) when (attempt == 0)
             {
@@ -120,8 +138,9 @@ public sealed class UpstreamOAuthTokenStore : IUpstreamOAuthTokenStore
 
     /// <summary>
     /// Ersetzt nur, wenn noch das gelesene Token gespeichert ist — in einer Anweisung. Erkannt wird es
-    /// am Zeitpunkt seines Erhalts: Die Nutzlast ist verschlüsselt und bei jedem Schreiben anders,
-    /// aber jedes neue Token, ob aus einer Autorisierung oder einer Erneuerung, trägt einen neuen.
+    /// an seiner Kennung (Plan 0005 F14): Die Nutzlast ist verschlüsselt und bei jedem Schreiben
+    /// anders, der Zeitpunkt des Erhalts kann nach Trennen und neuem Autorisieren wiederkehren —
+    /// die Kennung nicht.
     /// </summary>
     public async Task<bool> ReplaceAsync(UpstreamOAuthToken expected, UpstreamOAuthToken replacement, CancellationToken ct)
     {
@@ -129,18 +148,21 @@ public sealed class UpstreamOAuthTokenStore : IUpstreamOAuthTokenStore
         ArgumentNullException.ThrowIfNull(replacement);
         var payload = _protector.Protect(JsonSerializer.SerializeToUtf8Bytes(
             new Secrets(replacement.AccessToken, replacement.RefreshToken, replacement.Scopes)));
-        var obtained = expected.ObtainedAt.UtcTicks;
         var expires = replacement.ExpiresAt?.UtcTicks;
-        // Immer ein anderer Zeitpunkt als der ersetzte (siehe SaveAsync).
-        var obtainedNew = Math.Max(replacement.ObtainedAt.UtcTicks, obtained + 1);
+        var obtained = replacement.ObtainedAt.UtcTicks;
+
+        // Immer eine frische Kennung (siehe SaveWithRevisionAsync).
+        Guid? revision = Guid.NewGuid();
         await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
-        var changed = await db.UpstreamOAuthTokens
-            .Where(r => r.ServerId == expected.Server.Value && r.ObtainedAtTicks == obtained)
+        var changed = await Matching(db, expected)
             .ExecuteUpdateAsync(set => set
                 .SetProperty(r => r.Payload, payload)
                 .SetProperty(r => r.Issuer, replacement.Issuer)
                 .SetProperty(r => r.ExpiresAtTicks, expires)
-                .SetProperty(r => r.ObtainedAtTicks, obtainedNew), ct)
+                .SetProperty(r => r.ObtainedAtTicks, obtained)
+                .SetProperty(r => r.Resource, replacement.Resource)
+                .SetProperty(r => r.ClientId, replacement.ClientId)
+                .SetProperty(r => r.Revision, revision), ct)
             .ConfigureAwait(false);
         return changed == 1;
     }
@@ -151,6 +173,32 @@ public sealed class UpstreamOAuthTokenStore : IUpstreamOAuthTokenStore
         await db.UpstreamOAuthTokens.Where(r => r.ServerId == server.Value)
             .ExecuteDeleteAsync(ct).ConfigureAwait(false);
     }
+
+    /// <summary>Entfernt nur, wenn noch genau dieser Stand gespeichert ist — in einer Anweisung (F5).</summary>
+    public async Task<bool> RemoveIfUnchangedAsync(UpstreamOAuthToken expected, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        return await Matching(db, expected).ExecuteDeleteAsync(ct).ConfigureAwait(false) == 1;
+    }
+
+    /// <summary>
+    /// Die Zeile, solange sie noch den Stand von <paramref name="expected"/> trägt. Eine Zeile aus der
+    /// Zeit vor den Kennungen hat keine; sie wird über „keine Kennung" getroffen, und jedes Schreiben
+    /// gibt ihr eine.
+    /// </summary>
+    private static IQueryable<UpstreamOAuthTokenRow> Matching(BifrostDbContext db, UpstreamOAuthToken expected)
+    {
+        var server = expected.Server.Value;
+        if (expected.Revision == Guid.Empty)
+        {
+            return db.UpstreamOAuthTokens.Where(r => r.ServerId == server && r.Revision == null);
+        }
+
+        Guid? revision = expected.Revision;
+        return db.UpstreamOAuthTokens.Where(r => r.ServerId == server && r.Revision == revision);
+    }
+
 
     /// <summary>Was verschlüsselt liegt. Alles andere steht im Klartext daneben und ist filterbar.</summary>
     private sealed record Secrets(string AccessToken, string? RefreshToken, IReadOnlyList<string>? Scopes);

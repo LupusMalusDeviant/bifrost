@@ -17,7 +17,8 @@ internal sealed record UpgradePayload(
     string ApiKeyPlaintext,
     Guid ApiKeyId,
     string UiUsername,
-    bool OAuthTokenSeeded);
+    bool OAuthTokenSeeded,
+    bool OAuthTokenWithoutBinding = false);
 
 /// <summary>
 /// Der Datenbestand, der ein Upgrade ueberleben muss — geschrieben durch die <b>echten</b> Stores,
@@ -53,6 +54,11 @@ internal static class UpgradePayloadWriter
 
     /// <summary>Der Migrationsstand, ab dem es die Tabelle der Upstream-OAuth-Token gibt.</summary>
     private const string OAuthTokenMigrationSuffix = "_UpstreamOAuthTokens";
+
+    /// <summary>Der Migrationsstand, ab dem ein Token Bindung und Kennung traegt.</summary>
+    private const string OAuthTokenBindingMigrationSuffix = "_UpstreamOAuthTokenBinding";
+
+    private static readonly string[] OAuthScopes = ["mcp:read"];
 
     private static readonly DateTimeOffset OAuthExpiry = new(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
 
@@ -106,7 +112,12 @@ internal static class UpgradePayloadWriter
         await new UiUserService(factory).CreateAsync(username, UiPassword, UiRole.Operator, ct);
 
         var oauth = KnowsOAuthTokens(appliedMigrations);
-        if (oauth)
+        var withoutBinding = oauth && !KnowsOAuthTokenBinding(appliedMigrations);
+        if (withoutBinding)
+        {
+            await WriteTokenWithoutBindingAsync(factory, protection, server, ct);
+        }
+        else if (oauth)
         {
             await new UpstreamOAuthTokenStore(factory, protection).SaveAsync(
                 new UpstreamOAuthToken(
@@ -116,7 +127,45 @@ internal static class UpgradePayloadWriter
         }
 
         return new UpgradePayload(
-            identity, roleId, profileId, server, issued.PlaintextKey, issued.KeyId, username, oauth);
+            identity, roleId, profileId, server, issued.PlaintextKey, issued.KeyId, username, oauth, withoutBinding);
+    }
+
+    /// <summary>
+    /// Ein Token, wie es die Ablage vor Plan 0005 F5/F14 geschrieben hat: ohne Bindung und ohne
+    /// Kennung.
+    ///
+    /// <para>
+    /// <b>Warum hier ausnahmsweise SQL:</b> Die heutige Ablage schreibt die Spalten der Bindung mit,
+    /// und die gibt es auf diesem Fixturestand nicht — ein Speichern scheiterte an „no such column".
+    /// Die alte Ablage gibt es nicht mehr. Geschrieben werden deshalb genau die Spalten der Migration
+    /// <c>UpstreamOAuthTokens</c>, die Nutzlast aber wie damals: derselbe DataProtection-Purpose,
+    /// dieselbe JSON-Form. Dass die heutige Ablage sie lesen kann, prueft <see cref="VerifyAsync"/> —
+    /// genau der Bestand, den eine laufende Instanz beim Update mitbringt.
+    /// </para>
+    /// </summary>
+    private static async Task WriteTokenWithoutBindingAsync(
+        IDbContextFactory<BifrostDbContext> factory, IDataProtectionProvider protection, ServerId server,
+        CancellationToken ct)
+    {
+        var payload = protection.CreateProtector(CryptographicNames.UpstreamOAuthTokenPurpose).Protect(
+            System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                AccessToken = OAuthAccessToken,
+                RefreshToken = OAuthRefreshToken,
+                Scopes = OAuthScopes,
+            }));
+        var serverId = server.Value;
+        const string issuer = "https://as.example.com";
+        long? expires = OAuthExpiry.UtcTicks;
+        var obtained = DateTimeOffset.UnixEpoch.UtcTicks;
+
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await db.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO "UpstreamOAuthTokens" ("ServerId", "Payload", "Issuer", "ExpiresAtTicks", "ObtainedAtTicks")
+            VALUES ({serverId}, {payload}, {issuer}, {expires}, {obtained})
+            """,
+            ct);
     }
 
     /// <summary>
@@ -181,11 +230,26 @@ internal static class UpgradePayloadWriter
             token.RefreshToken.Should().Be(OAuthRefreshToken);
             token.ExpiresAt.Should().Be(OAuthExpiry);
             token.Issuer.Should().Be("https://as.example.com");
+
+            if (payload.OAuthTokenWithoutBinding)
+            {
+                // Plan 0005 F5: Ein Bestandstoken ohne Bindung wird nach dem Update weiter vorgelegt —
+                // sonst muesste jede laufende Instanz ihre Upstreams neu autorisieren.
+                token.Resource.Should().BeNull();
+                token.ClientId.Should().BeNull();
+                token.Revision.Should().Be(Guid.Empty, "die Zeile stammt aus der Zeit vor den Kennungen");
+                token.IsBoundTo("https://mcp.example.com/mcp", "gateway").Should().BeTrue(
+                    "ein Token ohne Bindung gilt als passend, bis seine erste Erneuerung sie nachschreibt");
+            }
         }
     }
 
     public static bool KnowsOAuthTokens(IReadOnlyList<string> migrations)
         => migrations.Any(m => m.EndsWith(OAuthTokenMigrationSuffix, StringComparison.Ordinal));
+
+    /// <summary>Ab diesem Stand traegt ein Token Bindung und Kennung (Plan 0005 F5, F14).</summary>
+    public static bool KnowsOAuthTokenBinding(IReadOnlyList<string> migrations)
+        => migrations.Any(m => m.EndsWith(OAuthTokenBindingMigrationSuffix, StringComparison.Ordinal));
 
     private static UpstreamServerConfig ConfigWithSecret(string slug) => new(
         slug,
