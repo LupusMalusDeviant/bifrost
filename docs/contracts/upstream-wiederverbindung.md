@@ -180,7 +180,8 @@ keine SDK-Typen.
 **Nur ein 404 des MCP-Servers zählt (entschieden am 2026-11-18, Plan 0005 E12).** Ein 404 kann
 auch von einem Zwischenglied kommen (Reverse Proxy, Gateway davor), womöglich nachdem der Upstream
 den Aufruf schon ausgeführt hat. Als verlorene Sitzung gilt deshalb nur ein 404, dessen
-Antwortkörper ein JSON-RPC-Fehler ist (`"jsonrpc": "2.0"` mit `error`); so antworten die
+Antwortkörper ein JSON-RPC-Fehler ist (`"jsonrpc": "2.0"` und ein Objekt `error` mit ganzzahligem
+`code` und einer Zeichenkette `message`); so antworten die
 MCP-SDKs auf eine unbekannte Sitzung. Ein 404 ohne Körper oder mit anderem Körper wird **nicht**
 wiederholt: Der Aufrufer bekommt den Fehler. Der SDK-Client ist danach trotzdem beendet; der nächste
 Aufruf geht nicht mehr an ihn, sondern über eine neue Sitzung (Zeile „beginnt, nachdem das 404
@@ -462,4 +463,23 @@ oder erweitern eine Zusage und brauchen deshalb deine Abnahme:
 | N27 | E10 | **Ersetzt den Zusatz zu N18:** Ein interner Abbruch (Frist des Aufrufs) markiert die Sitzung nicht als verloren. Den Fall aus N18 erkennt allein die Prüfung des beendeten SDK-Clients. |
 | N28 | E11 | `IUpstreamCredentialRenewal` bekommt `RequestCredentialRenewal(ServerId, string? rejectedCredential)` (Standardumsetzung ruft die alte Form). Der Supervisor übergibt das Token, das die abgewiesene Verbindung selbst vorgelegt hat. Der Vermerk wird nur gelöscht, solange er noch das ersetzte Token nennt. |
 | N29 | E14 | `IUpstreamSessionRecovery.IsToolAvailable(string)` wird zu `CheckTool(connection, tool)` → `Available` / `Withheld` / `Stale`. Geprüft wird gegen den Katalog der ausführenden Verbindung; eine ersetzte Hülle läuft über die aktuelle Verbindung. |
-| N30 | E9, E15 | Ein wiederholter Audit-Schreibversuch schreibt nur Kettenstellen, die noch nicht mit demselben Hash stehen. Die Token-Ablage stellt den Zeitpunkt des Erhalts in **einer** Anweisung weiter, sodass auch gleichzeitige Speicherungen je einen eigenen bekommen. |
+| N30 | E9, E15 | Ein wiederholter Audit-Schreibversuch schreibt nur Kettenstellen, die noch nicht mit demselben Hash stehen. ~~Die Token-Ablage stellt den Zeitpunkt des Erhalts in **einer** Anweisung weiter.~~ **Token-Teil ersetzt durch N35.** |
+
+### Viertes Review (`60d8bf9`, Plan 0005 F1 – F15)
+
+**Status: gebaut auf deinen Auftrag „Alle beheben" (F4 auf die Annahme begrenzt, F9 auf dieselbe
+Konfiguration); zur Abnahme.**
+
+| # | Befund | Präzisierung |
+|---|---|---|
+| N31 | F1 | Scheitert ein Verbindungsaufbau, nachdem die Verbindung Zugangsdaten vorgelegt hat (Katalog, Pin-Prüfung), wird der Fehler mit genau diesen Zugangsdaten bereinigt, bevor er Status, Audit, Log oder einen auf den Neuaufbau wartenden Aufrufer erreicht. Fehlerart und Typnamen der Kette bleiben erhalten; die ursprüngliche Ausnahme hängt nicht mehr als innere daran. |
+| N32 | F2, F6 | Ein Loop bucht nach jedem Warten erst, nachdem er geprüft hat, dass er nicht abgelöst ist. Das Schließen einer verlorenen oder ersetzten Verbindung im laufenden Loop ist wie das Stoppen auf `StopJoinTimeout` begrenzt; beim Überschreiten wird ein Fehler geloggt, und der nächste Versuch folgt trotzdem. Das Wecksignal setzt nur der Loop zurück, dem es gehört. Ab dem Beginn des Stoppens (nicht erst ab dem Abbruch) wird keine neue Verbindung veröffentlicht: Ein Neuaufbau, der während des Drains fertig wird, wird geschlossen, und wer auf ihn wartet, bekommt `UpstreamConnectionLostException`. |
+| N33 | F3, F4 | Erst Audit, dann Wirkung — auch beim OAuth-Rückweg, beim Trennen und bei der Pin-Annahme. Rückweg: Weist das Audit ab, 503 ohne gespeichertes Token und ohne Wecken; nach jedem gespeicherten Token folgt `CredentialsChanged`. Annahme: Die Audit-Zeile (mit Hash) steht vor dem Vergleich-und-Tausch; weist das Audit ab, wird nichts angenommen (REST 503, Oberfläche Fehlermeldung); nimmt der Tausch danach nicht an, berichtigt eine Zeile `tool-definition-accept-conflict` die vorige (409). Die übrigen Verwaltungsaktionen folgen dem Muster noch nicht. |
+| N34 | F5 | Jedes Token trägt den Resource Indicator und die Client-ID, mit denen es eingelöst oder erneuert wurde. Der Connector legt ein Token mit fremder Bindung nicht vor (`UpstreamAuthenticationException`). Der Rückweg entfernt bei geänderter Anbindung nur sein eigenes Token (`RemoveIfUnchangedAsync`). **Bestandsregel:** Ein Token ohne jede Bindung (vor dem Update gespeichert) gilt als passend, bis seine erste Erneuerung oder ein neues Autorisieren die Bindung nachschreibt. |
+| N35 | F14 | **Ersetzt die Zeitpunkt-Regel in N14 und N30.** Die Ablage vergibt bei jedem Speichern und Ersetzen eine neue Kennung (`Revision`, Guid); `ReplaceAsync` und `RemoveIfUnchangedAsync` vergleichen nur sie. `ObtainedAt` wird unverändert abgelegt. Neu in `IUpstreamOAuthTokenStore`: `SaveWithRevisionAsync`, `RemoveIfUnchangedAsync`. Migration `UpstreamOAuthTokenBinding` (nur neue, nullable Spalten). |
+| N36 | F7 | Pin-Prüfungen von Verbindungsaufbau und Katalog-Neuabfrage eines Upstreams laufen nacheinander. Eine Neuabfrage auf einer Verbindung, die nicht mehr steht oder deren Nachfolger schon geprüft ist, schreibt keine Pins. |
+| N37 | F9 | Präzisiert N29: Eine ersetzte Hülle reicht ihren Aufruf nur weiter, wenn die aktuelle Verbindung unter derselben Konfiguration läuft (Neuaufbau der Sitzung, Aus- und Einschalten). Nach einem Umkonfigurieren oder Zurückrollen auf eine andere Konfiguration wird der Aufruf mit `UpstreamConnectionLostException` abgewiesen und nirgends gesendet. |
+| N38 | F10 | Ergänzt N26: Ab dem Beginn des Herunterfahrens wird nichts mehr eingetragen. Ein Hinzufügen oder Wiederherstellen, dessen Speichern noch läuft, endet gespeichert und meldet seine Id, erscheint aber weder im Status noch als Ereignis und startet keinen Loop; der Upstream kommt nach dem Neustart. |
+| N39 | F11 | Scheitert der letzte Best-Effort-Versuch nach begonnenem Festschreiben, zählt eine einmalige, befristete Nachzählung nur die fehlenden Kettenstellen als verloren; scheitert sie, zählt der ganze Batch. |
+| N40 | F12, F13 | Auch der Abruf der Authorization-Server-Metadaten wird eingeordnet: 401/403 und dauerhafte Fehler sind eine abgelehnte Anmeldung, 5xx, 429 und Netzfehler eine Unerreichbarkeit. Ein Aufbau, der ein anderes Token als das abgewiesene liest, liest erneut und löscht den Erneuerungsvermerk nur, wenn auch das ein anderes liefert. |
+| N41 | F8, F15 | Zu Abschnitt 4: siehe die verschärfte Erkennung (ganzzahliges `code`, Zeichenkette `message`). Belegt ist auch der Fall, dass ein schon ausgeführter Aufruf läuft, während ein zweiter das 404 bekommt: Der laufende endet mit „nicht wiederholt" und wird genau einmal gesendet. Auch ein nicht wiederholtes 404 (ohne MCP-Fehlerkörper) gilt sofort als Ende des Clients: Ein Aufruf, der danach beginnt, geht nicht mehr an ihn, sondern über eine neue Sitzung. |

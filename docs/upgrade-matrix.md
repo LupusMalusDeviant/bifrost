@@ -45,6 +45,12 @@ INSERT von Hand. Nur so entsteht Geheimtext mit demselben DataProtection-Purpose
 Serialisierung und demselben Schlüsselring wie im Betrieb — ein von Hand eingefügtes BLOB würde
 dieselbe Zeile füllen und trotzdem nichts belegen.
 
+**Eine Ausnahme (seit `UpstreamOAuthTokenBinding`, Plan 0005 F5/F14):** Auf Ständen vor dieser
+Migration schreibt der Harness das OAuth-Token per SQL in genau die damaligen Spalten — der
+heutige Store kennt die neuen Spalten `Resource`, `ClientId` und `Revision` und scheitert dort an
+„no such column". Purpose, Serialisierung und Schlüsselring sind dieselben wie in der alten Ablage.
+Geprüft wird danach: lesbar, ohne Bindung, ohne Revision, und es gilt als passend (Bestandsregel).
+
 Nach dem Upgrade wird zweierlei geprüft:
 
 - **vollständig** — die Zeilen sind noch da und tragen dieselben Werte (Identität, Rolle, Profil,
