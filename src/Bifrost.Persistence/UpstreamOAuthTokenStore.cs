@@ -84,6 +84,32 @@ public sealed class UpstreamOAuthTokenStore : IUpstreamOAuthTokenStore
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Ersetzt nur, wenn noch das gelesene Token gespeichert ist — in einer Anweisung. Erkannt wird es
+    /// am Zeitpunkt seines Erhalts: Die Nutzlast ist verschlüsselt und bei jedem Schreiben anders,
+    /// aber jedes neue Token, ob aus einer Autorisierung oder einer Erneuerung, trägt einen neuen.
+    /// </summary>
+    public async Task<bool> ReplaceAsync(UpstreamOAuthToken expected, UpstreamOAuthToken replacement, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        ArgumentNullException.ThrowIfNull(replacement);
+        var payload = _protector.Protect(JsonSerializer.SerializeToUtf8Bytes(
+            new Secrets(replacement.AccessToken, replacement.RefreshToken, replacement.Scopes)));
+        var obtained = expected.ObtainedAt.UtcTicks;
+        var expires = replacement.ExpiresAt?.UtcTicks;
+        var obtainedNew = replacement.ObtainedAt.UtcTicks;
+        await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var changed = await db.UpstreamOAuthTokens
+            .Where(r => r.ServerId == expected.Server.Value && r.ObtainedAtTicks == obtained)
+            .ExecuteUpdateAsync(set => set
+                .SetProperty(r => r.Payload, payload)
+                .SetProperty(r => r.Issuer, replacement.Issuer)
+                .SetProperty(r => r.ExpiresAtTicks, expires)
+                .SetProperty(r => r.ObtainedAtTicks, obtainedNew), ct)
+            .ConfigureAwait(false);
+        return changed == 1;
+    }
+
     public async Task RemoveAsync(ServerId server, CancellationToken ct)
     {
         await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);

@@ -175,6 +175,28 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
       bei vollem Kanal erneut angeboten wird, zählt nicht mehr bei jedem Versuch als Verlust.
       Gezählt wird, was endgültig verworfen ist (Überlauf, Entfernen, Beenden). `IAuditSink` hat
       dafür `TryRecord` und `ReportDiscarded` (mit Standardumsetzung; eigene Senken laufen weiter).
+  - **Befunde aus dem Codex-Review** (Plan 0005, C1 – C15; Präzisierungen im Vertrag, Abschnitt 10):
+    - **Sicherheit:** Ein gescheiterter Werkzeugaufruf gibt den Antwortkörper des Upstreams nicht
+      mehr an Agent, Vorgangsablage und Trace weiter; Geheimwerte der Konfiguration werden maskiert.
+      Der OAuth-Rückruf und jede abgelehnte Token-Anfrage nennen nur Status und bekannten
+      OAuth-Fehlercode, nie `error_description` oder den Antwortkörper. Eine geänderte
+      Werkzeugdefinition wird zurückgezogen, bevor das Audit gefragt wird — weist es die Zeile ab,
+      bleibt das Werkzeug trotzdem gesperrt.
+    - **Verwaltung:** Eine Anfrage, die hinter dem Entfernen eines Upstreams wartete, holte ihn
+      zurück (unsichtbarer Loop, nach dem Neustart wieder da); jetzt bekommt sie „nicht
+      registriert". Ein abgebrochenes Abschalten ließ den Upstream weiterlaufen; Abschalten und
+      Umkonfigurieren werden ab dem Speichern zu Ende geführt, und Umkonfigurieren speichert vor dem
+      Umschalten.
+    - **OAuth:** Die Erneuerung nach einem 401 übersteht einen gestörten Token-Endpunkt, statt das
+      abgewiesene Token erneut vorzulegen; ein 403 erneuert nicht. Eine Erneuerung im Hintergrund
+      überschreibt kein neues Autorisieren und macht kein „Trennen" rückgängig
+      (`IUpstreamOAuthTokenStore.ReplaceAsync`). Der Anstoß nach dem Autorisieren verpufft nicht
+      mehr, wenn gerade ein Versuch läuft.
+    - **Loop:** Die Frist eines Verbindungsaufbaus gilt auch für Katalogabfrage und Pin-Prüfung. Die
+      Bremse für Neuaufbauten behält ihr Fenster nach dem Auslösen. Eine Verbindung, die sofort nach
+      dem Veröffentlichen verloren geht, bekommt ihren eigenen Neuaufbau. Eine volle Warteschlange
+      zurückgestellter Audit-Zeilen reicht erst nach, bevor sie eine verwirft, und beim Beenden
+      stoppt der Audit-Schreiber nach dem Gateway.
 - **Fehlertexte eines Upstreams konnten dessen Antwortkörper enthalten.** Das MCP-SDK hängt an eine
   HTTP-Fehlermeldung den Antwortkörper der Gegenstelle an; der Text ging ungefiltert in `lastError`,
   Audit und Log. Zitiert ein Upstream in seiner 401-Antwort den vorgelegten Schlüssel, stand er dort.

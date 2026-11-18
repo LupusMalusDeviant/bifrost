@@ -536,8 +536,11 @@ builder.Services.AddBifrostImporting();
 builder.Services.AddBifrostSetupWizard();
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
-builder.Services.AddHostedService<GatewayStartupService>();
+// Der Audit-Schreiber vor dem Gateway: Gestoppt wird in umgekehrter Reihenfolge, und so reicht der
+// Supervisor beim Herunterfahren seine zurückgestellten Zeilen noch in einen offenen Kanal nach,
+// statt dass der schon geschlossen ist (Codex M7).
 builder.Services.AddHostedService<AuditWriterService>();
+builder.Services.AddHostedService<GatewayStartupService>();
 builder.Services.AddHostedService<AuditRetentionService>();
 builder.Services.AddHostedService<TaskExpiryService>();
 builder.Services.AddHostedService<CatalogNotificationService>();

@@ -262,6 +262,42 @@ public sealed class UpstreamReconnectIntegrationTests : IAsyncLifetime
         // Dem SDK Zeit lassen, eine Wiederaufnahme zu versuchen, bevor gezählt wird.
         await Task.Delay(TimeSpan.FromSeconds(2), Ct);
         _upstream.Executions.Should().Be(1, "ein Aufruf, der schon beim Upstream war, läuft nicht ein zweites Mal");
+
+        // Codex M6: Nach dem Neustart kennt der Upstream die alte Sitzung nicht und wiese einen
+        // wiederholten Aufruf ab, bevor er ausgeführt würde — die Ausführungen allein bewiesen dann
+        // nichts. Gezählt wird darum auch, was überhaupt ankam.
+        _upstream.ToolCallPosts.Should().Be(1, "der Aufruf wurde kein zweites Mal geschickt");
+    }
+
+    /// <summary>
+    /// Codex M6: Derselbe Fall mit einem Upstream, der Antwortströme wieder aufnehmen kann und dabei
+    /// läuft — nur der Strom des Aufrufs reißt ab. Hier könnte eine erneut geschickte Anfrage
+    /// tatsächlich ausgeführt werden. Verlangt: genau eine Anfrage, genau eine Ausführung.
+    /// </summary>
+    [Fact]
+    public async Task A_call_whose_stream_breaks_on_a_resumable_upstream_is_executed_once()
+    {
+        await using var upstream = new ScriptedMcpUpstream { Resumable = true };
+        await upstream.StartAsync();
+        var supervisor = CreateSupervisor(healthCheck: TimeSpan.FromMinutes(5));
+        var config = Config(TimeSpan.FromSeconds(5)) with
+        {
+            Http = new HttpTransportOptions(
+                upstream.Endpoint, new Dictionary<string, string> { ["Authorization"] = "Bearer " + Secret }),
+        };
+        var id = await supervisor.AddAsync(config, Ct);
+        await IntegrationSupport.WaitUntilAsync(() => supervisor.GetStatus(id)?.State == UpstreamState.Healthy);
+
+        var call = supervisor.GetConnection(id)!.CallToolAsync("stall", Hello, Ct);
+        await upstream.Stalled.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        upstream.AbortCallInFlight();
+
+        await call.Invoking(t => t).Should().ThrowAsync<Exception>("die Antwort kommt nie");
+        await Task.Delay(TimeSpan.FromSeconds(2), Ct);
+
+        upstream.ToolCallPosts.Should().Be(1, "die Anfrage wurde nicht erneut geschickt");
+        upstream.Executions.Should().Be(1, "das Werkzeug lief genau einmal");
+        TestContext.Current.SendDiagnosticMessage($"Wiederaufnahmen mit Last-Event-ID: {upstream.Resumes}");
     }
 
     [Fact]

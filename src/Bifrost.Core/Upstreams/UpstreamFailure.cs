@@ -100,6 +100,30 @@ public static class UpstreamFailure
         return string.Join(" → ", names);
     }
 
+    /// <summary>
+    /// Der Grund eines gescheiterten Aufrufs, wenn die Konfiguration des Upstreams nicht bekannt ist:
+    /// ohne Antwortkörper der Gegenstelle, eine Zeile, begrenzt. Geheimwerte der Konfiguration kann
+    /// diese Fassung nicht maskieren — wo die Konfiguration bekannt ist, gilt
+    /// <see cref="Describe(Exception, UpstreamServerConfig)"/>.
+    /// </summary>
+    [NoHostExecution("Formuliert einen Text aus einer Ausnahme; startet nichts.")]
+    public static string DescribeWithoutConfig(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is HttpRequestException { StatusCode: { } status })
+            {
+                var code = (int)status;
+                return code is 401 or 403
+                    ? $"Authentifizierung abgelehnt (HTTP {code})."
+                    : $"Die Gegenstelle antwortete mit HTTP {code}.";
+            }
+        }
+
+        return Shape(exception.Message);
+    }
+
     /// <summary>Fremdtext auf das bringen, was hinausdarf: kein Antwortkörper, keine Geheimwerte, eine Zeile.</summary>
     [NoHostExecution("Textbereinigung; startet nichts.")]
     public static string Clean(string? message, UpstreamServerConfig config)
@@ -110,9 +134,23 @@ public static class UpstreamFailure
             return "Unbekannter Fehler.";
         }
 
+        return Shape(UpstreamConnectionTester.ScrubSecrets(CutBody(message), config));
+    }
+
+    private static string CutBody(string message)
+    {
         var cut = message.IndexOf(ResponseBodyMarker, StringComparison.OrdinalIgnoreCase);
-        var text = cut >= 0 ? message[..cut] : message;
-        text = UpstreamConnectionTester.ScrubSecrets(text, config);
+        return cut >= 0 ? message[..cut] : message;
+    }
+
+    private static string Shape(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return "Unbekannter Fehler.";
+        }
+
+        var text = CutBody(message);
         text = string.Join(' ', text.Split(['\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries)).Trim();
         if (text.Length == 0)
         {

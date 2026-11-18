@@ -101,9 +101,11 @@ internal static class UpstreamOAuthEndpoints
 
             if (!string.IsNullOrEmpty(error))
             {
+                // Nur ein bekannter Fehlercode, nicht error_description: Beides kommt aus der
+                // Adresszeile und ist Fremdtext, der in der Antwort an den Browser stünde (Codex H1).
                 return Results.BadRequest(new
                 {
-                    error = $"Der Authorization Server hat abgelehnt: {error}. {error_description}",
+                    error = $"Der Authorization Server hat abgelehnt ({OAuthFlow.KnownErrorCode(error) ?? "unbekannter Fehlercode"}).",
                 });
             }
 

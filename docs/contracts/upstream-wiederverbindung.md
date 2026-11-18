@@ -400,3 +400,20 @@ eine Stunde später regulär wieder abläuft, wird erneut erneuert und nicht als
 gewertet. Erkannt wird das 401 am Lebenszeichen; Upstreams mit festem Schlüssel (ohne OAuth)
 bleiben bei E2. Wer die alte Verbindung noch hält, wartet auf die neue — wie nach einem 404 auf
 die Sitzung. Neuaufbauten wegen eines erneuerten Tokens zählen nicht in die Bremse aus V2.
+
+## 10. Nachträge aus dem Codex-Review vom 2026-11-18
+
+**Status: gebaut auf deinen Auftrag „alle 15 jetzt beheben" (Plan 0005, C1 – C15); zur Abnahme.**
+Die meisten Befunde stellen nur her, was die Abschnitte 1 – 9 schon zusagen. Diese Punkte präzisieren
+oder erweitern eine Zusage und brauchen deshalb deine Abnahme:
+
+| # | Befund | Präzisierung |
+|---|---|---|
+| N1 | C8 | V1 gilt nur für ein **401**. Ein 403 („dieses Token darf das nicht") erneuert nicht und bleibt eine abgelehnte Anmeldung (E2). Die gesunde Minute aus der Präzisierung zu V1 zählt ab der **neuen Verbindung**, nicht ab dem Entschluss zu erneuern. |
+| N2 | C3 | Die Erneuerungsanforderung aus V1 bleibt stehen, bis ein anderes Token gespeichert ist. Ein gestörter Token-Endpunkt (5xx, 429) verbraucht sie nicht; das abgewiesene Token wird nicht noch einmal vorgelegt. |
+| N3 | C10 | `IUpstreamOAuthTokenStore` bekommt `ReplaceAsync(expected, replacement)` mit Standardumsetzung: Eine Erneuerung im Hintergrund ersetzt nur das Token, das sie gelesen hat. Ein neues Autorisieren oder ein „Trennen" in der Zwischenzeit hat Vorrang. |
+| N4 | C9 | `ConnectNowAsync` während eines **laufenden** Versuchs in `Failed` liefert weiter `false`, verpufft aber nicht mehr: Scheitert der laufende Versuch, folgt der nächste ohne Frist (Zähler wie E3). Anlass ist der OAuth-Rückruf, der ein neues Token speichert, während der Versuch noch mit dem alten läuft. |
+| N5 | C12 | Die Bremse aus V2 behält ihre Zeitpunkte, bis sie aus dem Fenster fallen, auch über ihr Auslösen hinweg. Nach der Rückkehr geht ein weiterer Verlust im selben Fenster wieder in die Frist aus Abschnitt 3. |
+| N6 | C6 | Die eine Frist aus Z4 gilt für den **ganzen** Aufbau: verbinden, Katalog holen, Definitionen prüfen. Was nach Ablauf doch noch fertig wird, wird geschlossen und nie veröffentlicht. |
+| N7 | C4 | Abschalten und Umkonfigurieren sind ab dem Speichern beschlossen und werden auch bei einem Abbruch des Aufrufers zu Ende geführt (Drain begrenzt durch die Gnadenfrist). Umkonfigurieren speichert **vor** dem Umschalten; scheitert das Speichern, läuft der alte Stand weiter. |
+| N8 | C1, C7 | P1 – P3 gelten auch für den Rückruf der OAuth-Autorisierung (nur Status und bekannter OAuth-Fehlercode, kein `error_description`, kein Antwortkörper) und für gescheiterte Werkzeugaufrufe an Agent, Vorgangsablage und Trace. |

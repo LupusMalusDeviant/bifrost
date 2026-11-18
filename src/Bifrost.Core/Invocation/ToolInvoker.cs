@@ -6,6 +6,7 @@ using Json.Schema;
 using Bifrost.Abstractions;
 using Bifrost.Core.Approvals;
 using Bifrost.Core.Guardrails;
+using Bifrost.Core.Upstreams;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -142,7 +143,8 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         catch (Exception ex)
         {
             Log.UnexpectedPipelineError(_logger, ex, request.Tool.Value);
-            result = Fail(InvocationStatus.UpstreamError, $"Interner Gateway-Fehler: {ex.Message}", started);
+            result = Fail(InvocationStatus.UpstreamError,
+                $"Interner Gateway-Fehler: {UpstreamFailure.DescribeWithoutConfig(ex)}", started);
         }
 
         Audit(request, entry, result);
@@ -277,7 +279,13 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         }
         catch (Exception ex)
         {
-            return Fail(InvocationStatus.UpstreamError, $"Upstream-Fehler: {ex.Message}", started);
+            // Nicht die Meldung der Ausnahme: Sie kann den Antwortkörper des Upstreams tragen, und
+            // der zitiert womöglich den vorgelegten Schlüssel. Sie ginge an den Agenten, in die
+            // Vorgangsablage und in den Trace (Codex H7).
+            var reason = connection is GuardedUpstreamConnection { Config: { } config }
+                ? UpstreamFailure.Describe(ex, config)
+                : UpstreamFailure.DescribeWithoutConfig(ex);
+            return Fail(InvocationStatus.UpstreamError, $"Upstream-Fehler: {reason}", started);
         }
         }
 

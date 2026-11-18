@@ -61,6 +61,36 @@ public interface IUpstreamOAuthTokenStore
     Task SaveAsync(UpstreamOAuthToken token, CancellationToken ct);
 
     Task RemoveAsync(ServerId server, CancellationToken ct);
+
+    /// <summary>
+    /// Ersetzt <paramref name="expected"/> durch <paramref name="replacement"/> — aber nur, wenn noch
+    /// <paramref name="expected"/> gespeichert ist. Liefert <c>false</c>, wenn inzwischen ein anderes
+    /// Token gespeichert oder das Token entfernt wurde; dann bleibt die Ablage, wie sie ist.
+    /// <para>
+    /// Für die Erneuerung im Hintergrund: Sie liest ein Token, wartet auf den Token-Endpunkt und
+    /// speichert danach. Ein neues Autorisieren oder ein „Trennen" dazwischen überschriebe sie sonst
+    /// — und nach einem Trennen stünde der Upstream wieder autorisiert da (Codex M3).
+    /// </para>
+    /// <para>
+    /// Die Standardumsetzung liest und schreibt nacheinander und ist darum nicht atomar; eine Ablage
+    /// mit Datenbank setzt das in einem Schritt um.
+    /// </para>
+    /// </summary>
+    async Task<bool> ReplaceAsync(UpstreamOAuthToken expected, UpstreamOAuthToken replacement, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        ArgumentNullException.ThrowIfNull(replacement);
+        var current = await GetAsync(expected.Server, ct).ConfigureAwait(false);
+        if (current is null
+            || current.AccessToken != expected.AccessToken
+            || current.ObtainedAt != expected.ObtainedAt)
+        {
+            return false;
+        }
+
+        await SaveAsync(replacement, ct).ConfigureAwait(false);
+        return true;
+    }
 }
 
 /// <summary>
