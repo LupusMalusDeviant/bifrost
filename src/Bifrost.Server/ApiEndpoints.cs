@@ -1213,22 +1213,48 @@ internal static class ApiEndpoints
             // Angenommen wird die Fassung, die der Aufrufer gesehen hat (E7): ?pendingHash=… aus der
             // Liste. Ohne den Parameter die, die gerade gelesen wurde — eine dazwischen neu
             // gemeldete wird dann nicht stillschweigend mit angenommen.
-            var expected = ctx.Request.Query["pendingHash"].ToString() is { Length: > 0 } given
+            var expected = (ctx.Request.Query["pendingHash"].ToString() is { Length: > 0 } given
                 ? given
-                : pin.PendingHash!;
-            if (!await store.AcceptAsync(server, tool, expected, ct))
+                : pin.PendingHash!).ToLowerInvariant();
+            var conflict = Results.Conflict(new
             {
-                return Results.Conflict(new
-                {
-                    error = $"Für '{tool}' steht inzwischen eine andere geänderte Definition an. "
-                        + "Bitte die Liste neu laden und diese Fassung prüfen.",
-                });
+                error = $"Für '{tool}' steht inzwischen eine andere geänderte Definition an. "
+                    + "Bitte die Liste neu laden und diese Fassung prüfen.",
+            });
+            if (!string.Equals(pin.PendingHash, expected, StringComparison.OrdinalIgnoreCase))
+            {
+                return conflict;
             }
 
-            // Erst das Audit, dann die Neuabfrage (E5): Die Annahme gilt ab hier, auch wenn die
+            // Erst das Audit, dann die Annahme (Plan 0005 F4). Umgekehrt stünde bei vollem Kanal im
+            // Compliance-Modus eine Fassung als vertraut da, deren Annahme nirgends belegt ist — und
+            // ein Rug Pull, den niemand nachweisen kann. Die Zeile nennt die Fassung, die angenommen
+            // werden soll; nimmt der Vergleich-und-Tausch sie danach doch nicht an, folgt eine Zeile,
+            // die das sagt. Eine vertraute Fassung ohne Audit-Zeile gibt es so in keiner Reihenfolge.
+            try
+            {
+                AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, server,
+                    $"tool-definition-accepted:{tool}@{expected}");
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                return Results.Json(
+                    new { error = "Das Audit nimmt gerade nicht an; die Fassung wurde nicht angenommen." },
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            if (!await store.AcceptAsync(server, tool, expected, ct))
+            {
+                // Nichts ist vertraut geworden; diese Zeile berichtigt nur die vorige. Nimmt das
+                // Audit sie nicht an, fehlt kein Beleg für eine Annahme.
+                audit.TryRecord(new AuditEvent(
+                    time.GetUtcNow(), Identity(ctx), CallOrigin.Rest, AuditEventKind.ConfigChanged, server,
+                    $"tool-definition-accept-conflict:{tool}@{expected}", null, null, null, null, null));
+                return conflict;
+            }
+
+            // Die Neuabfrage nach Annahme und Audit (E5): Die Annahme gilt ab hier, auch wenn die
             // Neuabfrage scheitert — etwa weil der Upstream die Anmeldung abweist.
-            AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, server,
-                $"tool-definition-accepted:{tool}");
             try
             {
                 await supervisor.RediscoverAsync(server, ct);

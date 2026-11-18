@@ -218,6 +218,75 @@ public sealed class AuditLossVisibilityTests
         sink.UnwrittenCount.Should().Be(0);
     }
 
+    /// <summary>
+    /// Plan 0005 F11: Scheitert der LETZTE Best-Effort-Versuch erst nach dem Festschreiben, stehen
+    /// die Zeilen in der Ablage. Als verloren zählt nur, was dort wirklich fehlt — sonst nennte der
+    /// Bericht (BFR-DB-0007) Lücken, die es nicht gibt.
+    /// </summary>
+    [Fact]
+    public async Task A_last_attempt_that_failed_after_commit_is_not_counted_as_lost()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var name = $"file:{Guid.NewGuid():N}?mode=memory&cache=shared";
+        await using var keepAlive = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={name}");
+        await keepAlive.OpenAsync(ct);
+        var factory = new FailingDbContextFactory(failuresBeforeSuccess: 1, dataSource: name, failAfterFirstCommit: true);
+        var sink = new ChannelAuditSink(capacity: 100);
+        var options = new PersistenceOptions
+        {
+            AuditFlushInterval = TimeSpan.FromMilliseconds(10),
+            AuditRetryInterval = TimeSpan.FromMilliseconds(1),
+            // Versuch 1 scheitert vor dem Schreiben, Versuch 2 — der letzte — nach dem Festschreiben.
+            AuditMaxWriteAttempts = 2,
+        };
+
+        sink.Record(NewEvent("eins"));
+        sink.Record(NewEvent("zwei"));
+        sink.Complete();
+
+        await new AuditBatchWriter(sink, factory, options).RunAsync(CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(20), ct);
+
+        await using var db = factory.CreateDbContext();
+        var rows = await db.AuditEvents.OrderBy(r => r.ChainIndex).ToListAsync(ct);
+        rows.Select(r => (r.ChainIndex, r.Tool)).Should().Equal(
+            [(0L, "eins"), (1L, "zwei")], "der letzte Versuch hat beide Zeilen festgeschrieben, je einmal");
+        sink.UnwrittenCount.Should().Be(0, "was in der Ablage steht, ist nicht verloren");
+        sink.Loss.FirstLossAt.Should().BeNull();
+    }
+
+    /// <summary>
+    /// F11, die Kehrseite: Lässt sich nach dem letzten Versuch nicht feststellen, was steht, zählt
+    /// der ganze Batch als verloren — lieber eine Lücke zu viel gemeldet als eine verschwiegen.
+    /// </summary>
+    [Fact]
+    public async Task A_last_attempt_whose_outcome_cannot_be_checked_counts_every_row()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var name = $"file:{Guid.NewGuid():N}?mode=memory&cache=shared";
+        await using var keepAlive = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={name}");
+        await keepAlive.OpenAsync(ct);
+        var factory = new FailingDbContextFactory(
+            failuresBeforeSuccess: 0, dataSource: name, failAfterFirstCommit: true, failFromAttempt: 2);
+        var sink = new ChannelAuditSink(capacity: 100);
+        var options = new PersistenceOptions
+        {
+            AuditFlushInterval = TimeSpan.FromMilliseconds(10),
+            AuditRetryInterval = TimeSpan.FromMilliseconds(1),
+            AuditMaxWriteAttempts = 1,
+        };
+
+        sink.Record(NewEvent("eins"));
+        sink.Record(NewEvent("zwei"));
+        sink.Complete();
+
+        await new AuditBatchWriter(sink, factory, options).RunAsync(CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(20), ct);
+
+        factory.Attempts.Should().Be(2, "ein Schreibversuch und genau eine Nachzählung");
+        sink.UnwrittenCount.Should().Be(2, "die Nachzählung scheiterte; gezählt wird der ganze Batch");
+    }
+
     private static AuditEvent NewEvent(string tool) => new(
         DateTimeOffset.UtcNow, IdentityId.New(), CallOrigin.Mcp, AuditEventKind.ToolCall,
         ServerId.New(), tool, InvocationStatus.Success, null, 1, 2, TimeSpan.FromMilliseconds(1));
@@ -236,14 +305,20 @@ public sealed class AuditLossVisibilityTests
         private readonly int _failuresBeforeSuccess;
         private readonly string? _dataSource;
         private readonly FailAfterCommit? _failAfterCommit;
+        private readonly int _failFromAttempt;
         private int _attempts;
 
+        /// <param name="failFromAttempt">Ab diesem Versuch scheitert jeder wieder — die Ablage fällt danach aus.</param>
         public FailingDbContextFactory(
-            int failuresBeforeSuccess = int.MaxValue, string? dataSource = null, bool failAfterFirstCommit = false)
+            int failuresBeforeSuccess = int.MaxValue,
+            string? dataSource = null,
+            bool failAfterFirstCommit = false,
+            int failFromAttempt = int.MaxValue)
         {
             _failuresBeforeSuccess = failuresBeforeSuccess;
             _dataSource = dataSource;
             _failAfterCommit = failAfterFirstCommit ? new FailAfterCommit() : null;
+            _failFromAttempt = failFromAttempt;
         }
 
         public int Attempts => Volatile.Read(ref _attempts);
@@ -251,7 +326,7 @@ public sealed class AuditLossVisibilityTests
         public BifrostDbContext CreateDbContext()
         {
             var attempt = Interlocked.Increment(ref _attempts);
-            if (attempt <= _failuresBeforeSuccess)
+            if (attempt <= _failuresBeforeSuccess || attempt >= _failFromAttempt)
             {
                 throw new InvalidOperationException("SQLite Error 5: 'database is locked'.");
             }

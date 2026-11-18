@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Bifrost.Abstractions;
+using Bifrost.Core.Execution;
 
 namespace Bifrost.Core.Upstreams;
 
@@ -211,6 +212,17 @@ public sealed class GuardedUpstreamConnection
         }
 
         var replacement = await _recovery.RebuildAsync(this, ct).ConfigureAwait(false);
+
+        // Weitergereicht wird nur innerhalb derselben Konfiguration (Plan 0005 F9). Ein Neuaufbau der
+        // Sitzung behält sie; ein Umkonfigurieren ersetzt sie — womöglich durch ein anderes Ziel oder
+        // andere Zugangsdaten. Ein Aufruf, der dem alten Upstream galt, geht dort nicht hin.
+        if (!SameConfiguration(Config, replacement.Config))
+        {
+            throw new UpstreamConnectionLostException(
+                "Der Upstream wurde inzwischen umkonfiguriert; der Aufruf galt der vorherigen Konfiguration "
+                + "und wurde nicht gesendet.");
+        }
+
         _replacement = replacement;
         if (toolName is not null && _recovery.CheckTool(replacement, toolName) != ToolAvailability.Available)
         {
@@ -232,6 +244,36 @@ public sealed class GuardedUpstreamConnection
             replacement._sessionLost = true;
             throw;
         }
+    }
+
+    /// <summary>
+    /// Laufen zwei Verbindungen unter derselben Konfiguration (Plan 0005 F9)? Ein Neuaufbau der Sitzung
+    /// verbindet mit genau dem Objekt, das im Supervisor steht — dann genügt der Verweis. Abschalten und
+    /// wieder Einschalten legt ein neues Objekt an, das sich nur in <c>Enabled</c> unterscheidet; das
+    /// gilt als dieselbe Konfiguration (Plan 0005 E14). Verglichen wird dann der Inhalt; was sich nicht
+    /// sicher als gleich zeigt, gilt als verschieden.
+    /// <para>
+    /// Eine Hülle ohne Konfiguration (nur außerhalb des Supervisors gebaut) kann nichts vergleichen
+    /// und reicht weiter wie bisher; der Supervisor gibt jeder Verbindung ihre Konfiguration mit.
+    /// </para>
+    /// </summary>
+    [NoHostExecution("Vergleicht nur zwei Konfigurationen; startet nichts.")]
+    internal static bool SameConfiguration(UpstreamServerConfig? own, UpstreamServerConfig? replacement)
+    {
+        if (own is null || ReferenceEquals(own, replacement))
+        {
+            return true;
+        }
+
+        if (replacement is null)
+        {
+            return false;
+        }
+
+        return string.Equals(
+            JsonSerializer.Serialize(own with { Enabled = true }),
+            JsonSerializer.Serialize(replacement with { Enabled = true }),
+            StringComparison.Ordinal);
     }
 
     /// <summary>

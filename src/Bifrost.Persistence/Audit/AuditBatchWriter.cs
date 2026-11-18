@@ -164,6 +164,10 @@ public sealed partial class AuditBatchWriter
     private async Task WriteRowsAsync(List<AuditEventRow> rows, CancellationToken ct, bool mayExist = false)
     {
         var attempt = 0;
+
+        // Hat ein Versuch das Festschreiben begonnen? Nur dann können Zeilen in der Ablage stehen,
+        // obwohl der Versuch scheiterte (F11). Scheiterte jeder schon vorher, fehlt alles.
+        var mayHaveCommitted = mayExist;
         while (true)
         {
             try
@@ -179,6 +183,7 @@ public sealed partial class AuditBatchWriter
                 if (toWrite.Count > 0)
                 {
                     db.AuditEvents.AddRange(toWrite);
+                    mayHaveCommitted = true;
                     await db.SaveChangesAsync(ct).ConfigureAwait(false);
                 }
 
@@ -201,14 +206,49 @@ public sealed partial class AuditBatchWriter
                 {
                     // Ab hier ist das Log nachweislich lückenhaft. Die Zahl geht in die
                     // Verlustauskunft der Senke und von dort in den Diagnosebericht — ein Verwerfen
-                    // ohne Spur gibt es nicht mehr.
-                    _sink.ReportBatchDiscarded(rows.Count);
-                    Log.BatchDiscarded(_logger, rows.Count, attempt, _sink.UnwrittenCount);
+                    // ohne Spur gibt es nicht mehr. Gezählt wird, was wirklich fehlt (F11): Auch der
+                    // letzte Versuch kann nach dem Festschreiben gescheitert sein.
+                    var lost = mayHaveCommitted
+                        ? await CountMissingAfterFailureAsync(rows, ct).ConfigureAwait(false)
+                        : rows.Count;
+                    if (lost == 0)
+                    {
+                        _sink.ReportPersistenceSuccess();
+                        return;
+                    }
+
+                    _sink.ReportBatchDiscarded(lost);
+                    Log.BatchDiscarded(_logger, lost, attempt, _sink.UnwrittenCount);
                     return;
                 }
 
                 await Task.Delay(_options.AuditRetryInterval, _time, ct).ConfigureAwait(false);
             }
+        }
+    }
+
+    /// <summary>Wie lange die Nachzählung nach dem letzten gescheiterten Versuch höchstens dauert.</summary>
+    private static readonly TimeSpan ReconcileTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Zählt nach dem letzten gescheiterten Best-Effort-Versuch, wie viele Zeilen wirklich fehlen
+    /// (Plan 0005 F11). Ein Versuch, befristet; scheitert auch er, gilt der ganze Batch als verloren —
+    /// lieber eine Lücke zu viel gemeldet als eine verschwiegen.
+    /// </summary>
+    private async Task<int> CountMissingAfterFailureAsync(List<AuditEventRow> rows, CancellationToken ct)
+    {
+        try
+        {
+            using var deadline = new CancellationTokenSource(ReconcileTimeout, _time);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+            await using var db = await _factory.CreateDbContextAsync(linked.Token).ConfigureAwait(false);
+            var missing = await MissingAsync(db, rows, linked.Token).ConfigureAwait(false);
+            return missing.Count;
+        }
+        catch (Exception ex)
+        {
+            Log.ReconcileFailed(_logger, ex, rows.Count);
+            return rows.Count;
         }
     }
 
@@ -326,6 +366,11 @@ public sealed partial class AuditBatchWriter
                 + "(siehe Diagnosecode BFR-DB-0007).")]
         public static partial void BatchDiscarded(
             ILogger logger, int count, int attempts, long total);
+
+        [LoggerMessage(Level = LogLevel.Error,
+            Message = "Nach dem letzten gescheiterten Versuch war nicht festzustellen, welche der "
+                + "{Count} Ereignisse schon geschrieben sind — alle gelten als verloren.")]
+        public static partial void ReconcileFailed(ILogger logger, Exception ex, int count);
 
         [LoggerMessage(Level = LogLevel.Warning,
             Message = "Audit-Channel war voll: {Count} Ereignisse wurden verworfen (Kapazität erhöhen oder DB-Last prüfen).")]

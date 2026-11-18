@@ -194,13 +194,26 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection, IPresentedCre
                 && version.ValueKind == JsonValueKind.String
                 && version.GetString() == "2.0"
                 && root.TryGetProperty("error", out var error)
-                && error.ValueKind == JsonValueKind.Object;
+                && IsJsonRpcErrorObject(error);
         }
         catch (JsonException)
         {
             return false;
         }
     }
+
+    /// <summary>
+    /// Ein Fehlerobjekt nach JSON-RPC 2.0 (5.1): ganzzahliges <c>code</c> und <c>message</c> als
+    /// Zeichenkette. Irgendein Objekt unter <c>error</c> (auch <c>{}</c>) beweist nicht, dass der
+    /// MCP-Server antwortet (Plan 0005 F8).
+    /// </summary>
+    private static bool IsJsonRpcErrorObject(JsonElement error)
+        => error.ValueKind == JsonValueKind.Object
+            && error.TryGetProperty("code", out var code)
+            && code.ValueKind == JsonValueKind.Number
+            && code.TryGetInt64(out _)
+            && error.TryGetProperty("message", out var text)
+            && text.ValueKind == JsonValueKind.String;
 
     private async Task<UpstreamInventory> DiscoverCoreAsync(CancellationToken ct)
     {
