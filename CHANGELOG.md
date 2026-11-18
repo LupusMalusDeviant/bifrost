@@ -73,6 +73,11 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   warten jetzt, bis die Seite das Formular verlassen hat und die Zielseite gelesen ist. Ein Weg,
   der dabei oder beim Warten auf den Circuit die Frist reißt, nennt Adresse, Seitenzustand und was
   der Browser gemeldet hat.
+- **Das Warten nach dem Abschicken lief selten ins Leere** (Befund vom 2026-11-17, e2e auf
+  `main`). Die Seite stand schon auf `/login?failed=true`, vollständig geladen, und Playwright
+  wartete trotzdem 30 s auf ein Ladeereignis — lokal war es einmal in 95 Läufen aufgetreten.
+  Gewartet wird jetzt im Browser selbst: Adresse gewechselt und Seite geparst. Warum Playwright
+  das Ereignis verlor, ist nicht nachgestellt.
 - **Der Test zur Sicherung bei aktivem WAL flatterte** (Befund vom 2026-11-16, CI unter Windows).
   Die Verbindung, die das WAL offen halten sollte, hatte die Datenbank nie gelesen und hielt es
   deshalb nicht fest. Nachgestellt: Leert ein parallel laufender Test die Verbindungspools, schreibt

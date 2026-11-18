@@ -132,22 +132,43 @@ internal sealed class UiSession : IAsyncDisposable
     /// Adresse <paramref name="from"/> verlassen hat. Für alles, was der Browser selbst abschickt
     /// (Anmelden, Abmelden) — dort gibt es keinen Circuit, der das Ende meldet.
     /// <para>
-    /// Gewartet wird bis <c>DOMContentLoaded</c> der Zielseite, nicht bis <c>load</c>: Die Antwort
-    /// ist dann da und lesbar, mehr braucht kein Weg. In einem von 95 lokalen Läufen (Chromium,
-    /// 2026-11-16) hatte die Seite das Formular schon verlassen, und <c>load</c> kam trotzdem
-    /// 30 s lang nicht; warum, ist nicht geklärt. Läuft die Frist wieder ab, nennt der Fehler
-    /// jetzt den Zustand der Seite.
+    /// <b>Gefragt wird der Browser, nicht Playwrights Navigationsbuchhaltung.</b> Bis 2026-11-17
+    /// stand hier <c>Page.WaitForURLAsync</c> — erst bis <c>load</c>, dann bis
+    /// <c>DOMContentLoaded</c>. Beides lief zweimal 30 s ins Leere, obwohl die Seite längst
+    /// angekommen war: lokal einmal in 95 Läufen (Chromium, 2026-11-16), dann im e2e-Lauf auf
+    /// <c>main</c> (2026-11-17, „Adresse: /login?failed=true; readyState: complete"). Playwright
+    /// hatte die Adresse vor sich und wartete trotzdem auf ein Ladeereignis, das es dieser
+    /// Navigation nicht mehr zuordnete. Warum, ist nicht nachgestellt; der Ablauf ist ein POST mit
+    /// anschließender Weiterleitung.
+    /// </para>
+    /// <para>
+    /// Jetzt prüft die Seite selbst: Adresse nicht mehr die des Formulars und
+    /// <c>document.readyState</c> nicht mehr <c>loading</c>. <c>WaitForFunctionAsync</c> wiederholt
+    /// die Prüfung über den Seitenwechsel hinweg. Läuft die Frist ab, nennt der Fehler den Zustand
+    /// der Seite.
     /// </para>
     /// </summary>
     public async Task SubmitAndWaitToLeaveAsync(string buttonSelector, string from)
     {
+        // Die Prüfung unten vergleicht mit `location.href`. Stimmt `from` damit schon vor dem
+        // Klick nicht überein, wäre sie sofort erfüllt und wartete auf nichts — genau der Fehler,
+        // gegen den sie gebaut ist (WebKit, 2026-11-16).
+        var before = await Page.EvaluateAsync<string>("() => location.href");
+        if (before != from)
+        {
+            throw new InvalidOperationException(
+                $"SubmitAndWaitToLeaveAsync: Die Seite steht auf '{before}', nicht auf '{from}'. "
+                + "Ohne gleichen Ausgangspunkt würde das Warten sofort enden.");
+        }
+
         await Page.ClickAsync(buttonSelector);
 
         try
         {
-            await Page.WaitForURLAsync(
-                url => url != from,
-                new PageWaitForURLOptions { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = 30000 });
+            await Page.WaitForFunctionAsync(
+                "from => location.href !== from && document.readyState !== 'loading'",
+                from,
+                new PageWaitForFunctionOptions { Timeout = 30000, PollingInterval = 100 });
         }
         catch (TimeoutException timeout)
         {
