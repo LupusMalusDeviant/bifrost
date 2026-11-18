@@ -1,6 +1,6 @@
 # Vertrag: Selbsttätige Wiederverbindung von Upstreams
 
-**Stand:** 2026-11-16 · **Status:** abgenommen am 2026-11-16, E1 – E6 wie vorgeschlagen · **Gilt für:** [Plan 0005](../plans/0005-upstream-wiederverbindung.md)
+**Stand:** 2026-11-18 · **Status:** abgenommen am 2026-11-16, E1 – E6 wie vorgeschlagen; Änderungen V1 – V5 (Abschnitt 9) abgenommen am 2026-11-18 · **Gilt für:** [Plan 0005](../plans/0005-upstream-wiederverbindung.md)
 **Präzisierung in Abschnitt 4** („Gleichzeitige Aufrufe — gemessen"), entstanden beim Bau aus einer
 Messung am echten SDK: ebenfalls am 2026-11-16 abgenommen.
 **Anlass:** Ausfall auf Badwolf am 2026-11-16 — der Upstream „whiskers" blieb zwölf Stunden auf
@@ -380,11 +380,11 @@ Jeweils mit meinem Vorschlag; der Vertrag oben ist so geschrieben, als wäre er 
 | E5 | Bei OAuth-Upstreams gibt es schon einen Link „Verbinden" (startet die Autorisierung). Zwei fast gleiche Beschriftungen nebeneinander? | Den bestehenden Link in „Autorisieren" umbenennen. Nicht Teil des Auftrags — nur mit Zustimmung. |
 | E6 | Eigenes ADR? | Nein. Der Vertrag ändert die Vorgabe einer Policy aus ADR-0005, nicht die Architektur. Auf Wunsch als ADR-0029. |
 
-## 9. Änderungen zur Abnahme (Entwurf vom 2026-11-18)
+## 9. Änderungen vom 2026-11-18
 
-**Status: nicht abgenommen.** Aus den Lesedurchgängen nach dem Merge (Plan 0005, „Restarbeiten").
-Jede Zeile ändert eine Zusage oben; gebaut wird erst nach der Abnahme. Bis dahin gilt der Vertrag
-in den Abschnitten 1 – 8 unverändert.
+**Status: abgenommen am 2026-11-18, V1 – V5 wie vorgeschlagen.** Aus den Lesedurchgängen nach dem Merge (Plan 0005, „Restarbeiten").
+Wo eine Zeile einer Zusage in den Abschnitten 1 – 8 widerspricht, gilt die Spalte „Vorschlag" dieser
+Tabelle; die Alternativen sind verworfen.
 
 | # | Fund | Heute (Vertrag) | Vorschlag | Alternative |
 |---|---|---|---|---|
@@ -393,3 +393,10 @@ in den Abschnitten 1 – 8 unverändert.
 | V3 | S3, T4 | `IAuditSink.Record` wirft bei vollem Kanal; jeder Wurf zählt in `AuditLossFacts` als Verlust — auch ein Nachreich-Versuch einer zurückgestellten Zeile (bei vollem Kanal je Versuch und Lebenszeichen). Verworfene Zeilen (Überlauf der 32, Entfernen) zählen nie. | `IAuditSink` bekommt `bool TryRecord(AuditEvent)`: nimmt an oder gibt `false` zurück, **ohne** als Verlust zu zählen. Der Loop reicht damit nach. Als Verlust zählt eine Zeile genau dann, wenn sie **verworfen** wird (Überlauf, Entfernen, Beenden). | So lassen und die Verfälschung von BFR-DB-0007 in der Diagnose dokumentieren. |
 | V4 | S6 | Nicht geregelt. Die Audit-Zeile zu einer geänderten Werkzeugdefinition (Rug-Pull-Prüfung) geht direkt ans Audit; bei vollem Kanal im Compliance-Modus scheitert damit jeder Verbindungsversuch. | **So lassen (fail-closed)** und hier festschreiben: Eine Definitionsänderung, die das Audit nicht annimmt, verhindert die Verbindung. Sie ist ein Sicherheitsereignis; eine Verbindung, deren Prüfung nicht belegt werden kann, wird nicht aufgebaut. | Zurückstellen wie die Zustandszeilen; die Verbindung kommt zustande, das Werkzeug bleibt zurückgehalten. |
 | V5 | M3 | P1 – P3 erlauben, was von einer fremden Meldung nach Abschneiden des Antwortkörpers und Maskieren übrig bleibt. | **So lassen**, mit der schon gebauten Verschärfung: Auch „Verbindung testen" läuft durch dieselbe Bereinigung, und P3 maskiert zusätzlich das OAuth-Client-Secret und die Werte geheimnisartiger Stdio-Schalter (`--token=…`, `--api-key …`). Begründung: Rund 140 Stellen im Gateway werfen Standardtypen mit eigenem, nützlichem Text (Spec-Fehler bei OpenAPI/OpenRPC, Container- und CLI-Prüfungen). | Für **unbekannte** Ausnahmetypen formuliert das Gateway den Grund vollständig selbst („Verbindung gescheitert (`IOException`)" plus Ziel). Nimmt Betreibern die Diagnose oben, bis diese Stellen eigene Typen haben. |
+
+**Präzisierung zu V1 beim Bau (2026-11-18).** „Ein 401 auf dieser neuen Verbindung" heißt: ein 401,
+bevor die neue Verbindung eine Minute gesund war (`HealthyResetWindow`, wie Z5). Ein Token, das
+eine Stunde später regulär wieder abläuft, wird erneut erneuert und nicht als abgelehnte Anmeldung
+gewertet. Erkannt wird das 401 am Lebenszeichen; Upstreams mit festem Schlüssel (ohne OAuth)
+bleiben bei E2. Wer die alte Verbindung noch hält, wartet auf die neue — wie nach einem 404 auf
+die Sitzung. Neuaufbauten wegen eines erneuerten Tokens zählen nicht in die Bremse aus V2.

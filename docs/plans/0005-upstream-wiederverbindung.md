@@ -2,7 +2,7 @@
 
 **Stand:** 2026-11-18 · **Status:** W0 – W9 erledigt (gemergt als `0140a3b`, auf Badwolf
 abgenommen); von den Restarbeiten W10 – W13 und W15 – W17 erledigt, W14 und W18 teilweise;
-V1 – V5 liegen als Entwurf in Abschnitt 9 des Vertrags zur Abnahme
+V1 – V5 am 2026-11-18 abgenommen (Vertrag Abschnitt 9), V1 – V3 gebaut
 **Vertrag:** [docs/contracts/upstream-wiederverbindung.md](../contracts/upstream-wiederverbindung.md)
 
 Gebaut wird erst, wenn der Vertrag abgenommen ist. Die Reihenfolge ist so gewählt, dass nach jedem
@@ -191,11 +191,11 @@ bekommt zuerst eine Vertragsänderung (V-Pakete); gebaut wird es erst nach deine
 | W16 | L5 | OAuth: Der Rückruf nach dem Autorisieren stößt sofort einen Verbindungsversuch an; ein 5xx des Token-Endpunkts zählt als „nicht erreichbar", nicht als abgelehnte Anmeldung. | `[Claude-prüfbar]`, erledigt; der Anstoß im Rückruf hat keinen eigenen Test (braucht einen echten Authorization Server, den es nur im Keycloak-Lauf gibt) |
 | W17 | U7 | Späte Verbindungen eines Connectors, der seinen Abbruch ignoriert: je Upstream zählen, ab einer Schwelle einmal melden. | `[Claude-prüfbar]`, erledigt |
 | W18 | L7 | Testlücken: freier Port, den ein paralleler Test belegen kann; WASI-Proben gegen den Stand auf `main` prüfen. | `[Claude-prüfbar]`, Port erledigt (gebundener Socket ohne `Listen`); die WASI-Proben sind offen |
-| V1 | H1 | OAuth-Token läuft auf stehender Verbindung ab → heute bis zu 15 min Ausfall. Vorschlag: ein 401 auf stehender Verbindung erneuert das Token und verbindet sofort einmal neu, erst ein zweites 401 gilt als abgelehnt (E2). | `[braucht Nutzer]` Vertrag, danach `[Claude-prüfbar]` |
-| V2 | L2 | Neuaufbauten der Sitzung ohne Bremse (Lastverteiler ohne feste Zuordnung). Vorschlag: mehr als drei Neuaufbauten in fünf Minuten gelten als Ausfall mit Backoff. | `[braucht Nutzer]` Vertrag, danach `[Claude-prüfbar]` |
-| V3 | S3, T4 | Verlustzählung des Audits: `IAuditSink` bekommt einen Weg, eine Zeile anzubieten, ohne dass eine Abweisung als Verlust zählt; verworfene Zeilen zählen dafür. | `[braucht Nutzer]` Vertrag, danach `[Claude-prüfbar]` |
-| V4 | S6 | Audit-Zeile der Rug-Pull-Prüfung bei vollem Audit: heute scheitert jeder Verbindungsversuch. Entscheidung: so lassen (fail-closed) oder zurückstellen wie die Zustandszeilen. | `[braucht Nutzer]` |
-| V5 | M3 | Fremdtext unbekannter Ausnahmetypen: so lassen (P3 bereinigt, rund 140 Gateway-Stellen werfen Standardtypen mit nützlichem Text) oder nur noch Gateway-Text. | `[braucht Nutzer]` |
+| V1 | H1 | OAuth-Token läuft auf stehender Verbindung ab → heute bis zu 15 min Ausfall. Vorschlag: ein 401 auf stehender Verbindung erneuert das Token und verbindet sofort einmal neu, erst ein zweites 401 gilt als abgelehnt (E2). | Vertrag abgenommen am 2026-11-18; `[Claude-prüfbar]`, erledigt |
+| V2 | L2 | Neuaufbauten der Sitzung ohne Bremse (Lastverteiler ohne feste Zuordnung). Vorschlag: mehr als drei Neuaufbauten in fünf Minuten gelten als Ausfall mit Backoff. | Vertrag abgenommen am 2026-11-18; `[Claude-prüfbar]`, erledigt |
+| V3 | S3, T4 | Verlustzählung des Audits: `IAuditSink` bekommt einen Weg, eine Zeile anzubieten, ohne dass eine Abweisung als Verlust zählt; verworfene Zeilen zählen dafür. | Vertrag abgenommen am 2026-11-18; `[Claude-prüfbar]`, erledigt |
+| V4 | S6 | Audit-Zeile der Rug-Pull-Prüfung bei vollem Audit: heute scheitert jeder Verbindungsversuch. Entscheidung: so lassen (fail-closed) oder zurückstellen wie die Zustandszeilen. | entschieden am 2026-11-18: so lassen (fail-closed), im Vertrag festgeschrieben |
+| V5 | M3 | Fremdtext unbekannter Ausnahmetypen: so lassen (P3 bereinigt, rund 140 Gateway-Stellen werfen Standardtypen mit nützlichem Text) oder nur noch Gateway-Text. | entschieden am 2026-11-18: so lassen, P3 verschärft (W14) |
 | — | außerhalb | `ToolInvoker` reicht Fremdtext eines gescheiterten Aufrufs an Agent und Audit; der lastempfindliche p95-Test steht in der funktionalen Suite. Eigene Aufgaben, nicht Teil dieses Vertrags. | `[braucht Nutzer]` |
 
 ## Prüfliste für den Nutzer

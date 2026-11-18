@@ -683,6 +683,71 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
     }
 
     /// <summary>
+    /// Darf ein abgewiesenes Lebenszeichen zu einer Erneuerung der Zugangsdaten führen (V1)? Nur bei
+    /// einem OAuth-Upstream, dessen Connector erneuern kann, nur bei einer abgelehnten Anmeldung — und
+    /// nur, wenn die letzte Erneuerung mindestens eine gesunde Minute zurückliegt: Ein 401 gleich auf
+    /// der neuen Verbindung ist eine abgelehnte Anmeldung (E2), ein Token, das eine Stunde später
+    /// wieder abläuft, nicht.
+    /// </summary>
+    private bool MayRenewCredentials(Entry entry, Exception exception)
+    {
+        if (entry.Config.Http?.OAuth is null
+            || !_connectors.TryGetValue(entry.Config.Kind, out var connector)
+            || connector is not IUpstreamCredentialRenewal
+            || UpstreamFailure.Classify(exception) != UpstreamFailureKind.Authentication)
+        {
+            return false;
+        }
+
+        lock (entry.Gate)
+        {
+            return entry.LastCredentialRenewalAt is not { } last
+                || _time.GetUtcNow() - last >= _options.HealthyResetWindow;
+        }
+    }
+
+    private void RequestCredentialRenewal(Entry entry)
+    {
+        if (_connectors.TryGetValue(entry.Config.Kind, out var connector)
+            && connector is IUpstreamCredentialRenewal renewal)
+        {
+            renewal.RequestCredentialRenewal(entry.Id);
+        }
+    }
+
+    /// <summary>Mehr Neuaufbauten der Sitzung als diese in <see cref="RebuildWindow"/> gelten als Ausfall (V2).</summary>
+    internal const int MaxRebuildsPerWindow = 3;
+
+    internal static readonly TimeSpan RebuildWindow = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Vermerkt einen anstehenden Neuaufbau und sagt, ob es damit zu viele sind. Ist die Bremse
+    /// gezogen, beginnt die Zählung von vorn — sonst löste nach der Rückkehr schon der nächste
+    /// Verlust sie wieder aus.
+    /// </summary>
+    private bool TooManyRebuilds(Entry entry)
+    {
+        var now = _time.GetUtcNow();
+        lock (entry.Gate)
+        {
+            var recent = entry.RecentRebuilds;
+            while (recent.Count > 0 && now - recent.Peek() >= RebuildWindow)
+            {
+                recent.Dequeue();
+            }
+
+            recent.Enqueue(now);
+            if (recent.Count <= MaxRebuildsPerWindow)
+            {
+                return false;
+            }
+
+            recent.Clear();
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Bedient eine stehende Verbindung, bis sie verloren geht. Kehrt nie regulär zurück: Entweder
     /// der Loop wird abgebrochen, oder die Methode wirft den Verlust.
     /// <para>
@@ -718,8 +783,42 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
                 await Task.Delay(Timeout.InfiniteTimeSpan, _time, ct).ConfigureAwait(false);
             }
 
-            SetState(entry, UpstreamState.Degraded, "Sitzung verloren, wird neu aufgebaut.");
-            Quietly(() => Log.UpstreamSessionLost(_logger, entry.Config.Slug));
+            bool renewing;
+            lock (entry.Gate)
+            {
+                renewing = entry.CredentialRenewalRequested;
+                entry.CredentialRenewalRequested = false;
+                if (renewing)
+                {
+                    entry.LastCredentialRenewalAt = _time.GetUtcNow();
+                }
+            }
+
+            if (renewing)
+            {
+                // V1: Der Upstream hat das Token auf der stehenden Verbindung abgewiesen. Einmal
+                // erneuern und sofort neu verbinden — ohne Frist, ohne Fehlversuch. Wer die alte
+                // Hülle noch hält, wartet auf die neue Verbindung.
+                RequestCredentialRenewal(entry);
+                connection.MarkReplaced();
+                SetState(entry, UpstreamState.Degraded, "Anmeldung abgewiesen, Zugriffstoken wird erneuert.");
+                Quietly(() => Log.UpstreamCredentialsRenewing(_logger, entry.Config.Slug));
+            }
+            else if (TooManyRebuilds(entry))
+            {
+                // V2: Eine Sitzung, die immer wieder verloren geht (etwa hinter einem Lastverteiler
+                // ohne feste Zuordnung), ist ein Ausfall — mit Frist statt Neuaufbau im Sekundentakt.
+                var lost = new UpstreamConnectionLostException(
+                    $"Die Sitzung geht wiederholt verloren: mehr als {MaxRebuildsPerWindow} Neuaufbauten in "
+                    + $"{RebuildWindow.TotalMinutes:0} min.");
+                Complete(entry, rebuild, pending => pending.TrySetException(lost));
+                throw lost;
+            }
+            else
+            {
+                SetState(entry, UpstreamState.Degraded, "Sitzung verloren, wird neu aufgebaut.");
+                Quietly(() => Log.UpstreamSessionLost(_logger, entry.Config.Slug));
+            }
 
             Session replacement;
             try
@@ -740,9 +839,14 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             }
             catch (Exception ex)
             {
+                // Die innere Ausnahme bleibt dran: Ein abgelehntes Refresh oder ein 401 auf der neuen
+                // Verbindung ist damit eine abgelehnte Anmeldung (E2), nicht „nicht erreichbar".
                 var reason = UpstreamFailure.Describe(ex, entry.Config);
                 var lost = new UpstreamConnectionLostException(
-                    $"Sitzung verloren, Neuaufbau gescheitert: {reason}", ex);
+                    renewing
+                        ? $"Zugriffstoken erneuert, Verbindung gescheitert: {reason}"
+                        : $"Sitzung verloren, Neuaufbau gescheitert: {reason}",
+                    ex);
                 Complete(entry, rebuild, pending => pending.TrySetException(lost));
                 throw lost;
             }
@@ -812,6 +916,16 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             }
             catch (UpstreamSessionLostException)
             {
+                return TakeRebuild(entry);
+            }
+            catch (Exception ex) when (MayRenewCredentials(entry, ex))
+            {
+                // V1: abgewiesenes Token — ServeAsync erneuert es und verbindet sofort neu.
+                lock (entry.Gate)
+                {
+                    entry.CredentialRenewalRequested = true;
+                }
+
                 return TakeRebuild(entry);
             }
             catch (Exception ex)
@@ -1570,7 +1684,14 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
 
         lock (entry.AuditGate)
         {
-            FlushDeferredLifecycle(entry);
+            if (!FlushDeferredLifecycle(entry))
+            {
+                // Die Zeile der Aktion stünde sonst vor älteren des Loops — und das Audit nimmt
+                // gerade ohnehin nichts an. Die Aktion wird verweigert, bevor sie wirkt (L4).
+                throw new InvalidOperationException(
+                    $"Das Audit nimmt gerade nicht an; die Aktion an '{entry.Config.Slug}' wird verweigert.");
+            }
+
             _audit.Record(LifecycleEvent(entry, detail));
         }
     }
@@ -1594,7 +1715,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         }
 
         string? droppedDetail = null;
-        Exception? refusal = null;
+        bool refused;
         int pending;
         lock (entry.AuditGate)
         {
@@ -1605,17 +1726,14 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             }
 
             entry.DeferredLifecycle.Add(LifecycleEvent(entry, detail));
-
-            try
-            {
-                FlushDeferredLifecycle(entry);
-            }
-            catch (Exception ex)
-            {
-                refusal = ex;
-            }
-
+            refused = !FlushDeferredLifecycle(entry);
             pending = entry.DeferredLifecycle.Count;
+        }
+
+        if (droppedDetail is not null)
+        {
+            // Erst die verworfene Zeile ist ein Verlust, nicht jede Abweisung davor (V3).
+            Quietly(() => _audit?.ReportDiscarded(1));
         }
 
         // Auch die Meldungen hier dürfen nicht werfen: Der Aufrufer schreibt danach womöglich noch
@@ -1629,9 +1747,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
                 Log.UpstreamAuditLineDropped(_logger, entry.Config.Slug, pending, droppedDetail);
             }
 
-            if (refusal is not null)
+            if (refused)
             {
-                Log.UpstreamAuditDeferred(_logger, entry.Config.Slug, UpstreamFailure.TypeChain(refusal), pending);
+                Log.UpstreamAuditDeferred(_logger, entry.Config.Slug, pending);
             }
         }
         catch (Exception)
@@ -1654,19 +1772,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
 
         lock (entry.AuditGate)
         {
-            if (entry.DeferredLifecycle.Count == 0)
-            {
-                return;
-            }
-
-            try
-            {
-                FlushDeferredLifecycle(entry);
-            }
-            catch (Exception)
-            {
-                // Weiter abgewiesen: Die Zeilen bleiben stehen bis zum nächsten Anlauf.
-            }
+            // Weiter abgewiesen: Die Zeilen bleiben stehen bis zum nächsten Anlauf. Über TryRecord
+            // zählt das nicht als Verlust (V3).
+            FlushDeferredLifecycle(entry);
         }
     }
 
@@ -1690,25 +1798,31 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             return;
         }
 
-        try
-        {
-            Log.UpstreamAuditLinesDiscarded(_logger, entry.Config.Slug, lost);
-        }
-        catch (Exception)
-        {
-            // Beim Entfernen und Beenden darf eine Log-Ausgabe, die wirft, nichts aufhalten.
-        }
+        // Beim Entfernen und Beenden darf weder die Meldung ans Audit noch die Log-Ausgabe etwas
+        // aufhalten.
+        Quietly(() => _audit?.ReportDiscarded(lost));
+        Quietly(() => Log.UpstreamAuditLinesDiscarded(_logger, entry.Config.Slug, lost));
     }
 
-    /// <summary>Reicht zurückgestellte Zeilen in ihrer Reihenfolge nach; wirft bei der ersten Abweisung.</summary>
-    private void FlushDeferredLifecycle(Entry entry)
+    /// <summary>
+    /// Reicht zurückgestellte Zeilen in ihrer Reihenfolge nach und hält bei der ersten Abweisung
+    /// an. <c>true</c>, wenn nichts mehr wartet. Wirft nicht: Angeboten wird über
+    /// <see cref="IAuditSink.TryRecord"/>, und eine Abweisung zählt nicht als Verlust (V3).
+    /// </summary>
+    private bool FlushDeferredLifecycle(Entry entry)
     {
         var deferred = entry.DeferredLifecycle;
         while (deferred.Count > 0)
         {
-            _audit!.Record(deferred[0]);
+            if (!_audit!.TryRecord(deferred[0]))
+            {
+                return false;
+            }
+
             deferred.RemoveAt(0);
         }
+
+        return true;
     }
 
     private AuditEvent LifecycleEvent(Entry entry, string detail)
@@ -1849,6 +1963,15 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         /// <summary>Ob der Loop gerade wirklich wartet — erst nach aller Buchführung zum letzten Versuch.</summary>
         public bool LoopWaiting { get; set; }
 
+        /// <summary>Das Lebenszeichen hat ein abgewiesenes Token gemeldet; ServeAsync erneuert es (V1). Unter <see cref="Gate"/>.</summary>
+        public bool CredentialRenewalRequested { get; set; }
+
+        /// <summary>Wann zuletzt wegen eines abgewiesenen Tokens erneuert wurde (V1). Unter <see cref="Gate"/>.</summary>
+        public DateTimeOffset? LastCredentialRenewalAt { get; set; }
+
+        /// <summary>Zeitpunkte der Sitzungs-Neuaufbauten in den letzten fünf Minuten (V2); unter <see cref="Gate"/>.</summary>
+        public Queue<DateTimeOffset> RecentRebuilds { get; } = new();
+
         /// <summary>Verbindungsaufbauten, die ihre Frist überschritten haben und noch nicht zurück sind (U7).</summary>
 #pragma warning disable SA1401 // Feld statt Eigenschaft: Interlocked braucht eine Referenz.
         public int PendingLateConnects;
@@ -1959,9 +2082,8 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
             ILogger logger, string slug, string exceptionTypes, int attempts);
 
         [LoggerMessage(Level = LogLevel.Warning,
-            Message = "Upstream {Slug}: Das Audit hat eine Zustandszeile nicht angenommen; sie wird bei jedem Versuch, jedem Lebenszeichen und vor der nächsten Zeile erneut angeboten ({Pending} zurückgestellt). [{ExceptionTypes}]")]
-        public static partial void UpstreamAuditDeferred(
-            ILogger logger, string slug, string exceptionTypes, int pending);
+            Message = "Upstream {Slug}: Das Audit hat eine Zustandszeile nicht angenommen; sie wird bei jedem Versuch, jedem Lebenszeichen und vor der nächsten Zeile erneut angeboten ({Pending} zurückgestellt).")]
+        public static partial void UpstreamAuditDeferred(ILogger logger, string slug, int pending);
 
         [LoggerMessage(Level = LogLevel.Error,
             Message = "Upstream {Slug}: Die älteste zurückgestellte Zustandszeile fürs Audit ist verworfen — zu viele warten aufs Nachreichen ({Pending}). Verworfen: {Detail}")]
@@ -1986,6 +2108,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IAsyncDisp
         [LoggerMessage(Level = LogLevel.Error,
             Message = "Changed-Handler warf eine Exception — Handler müssen exception-frei sein. [{ExceptionTypes}]")]
         public static partial void ChangedHandlerThrew(ILogger logger, string exceptionTypes);
+
+        [LoggerMessage(Level = LogLevel.Warning,
+            Message = "Upstream {Slug}: Der Upstream hat das Zugriffstoken abgewiesen — es wird erneuert und sofort neu verbunden.")]
+        public static partial void UpstreamCredentialsRenewing(ILogger logger, string slug);
 
         [LoggerMessage(Level = LogLevel.Warning,
             Message = "Upstream {Slug}: {Count} Verbindungsaufbauten hängen nach Ablauf ihrer Frist noch — "

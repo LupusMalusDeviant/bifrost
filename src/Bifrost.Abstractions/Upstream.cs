@@ -642,6 +642,17 @@ public interface IUpstreamConnector
 }
 
 /// <summary>
+/// Ein Connector, dessen Zugangsdaten sich vor dem nächsten Verbindungsaufbau erneuern lassen —
+/// etwa ein OAuth-Token, das der Upstream auf der stehenden Verbindung mit 401 abweist, obwohl es
+/// laut Ablaufzeit noch gälte (Vertrag „Selbsttätige Wiederverbindung", V1).
+/// </summary>
+public interface IUpstreamCredentialRenewal
+{
+    /// <summary>Der nächste <see cref="IUpstreamConnector.ConnectAsync"/> für diesen Upstream erneuert seine Zugangsdaten, statt die gespeicherten zu nehmen.</summary>
+    void RequestCredentialRenewal(ServerId id);
+}
+
+/// <summary>
 /// Wie die Angabe zur ausgehandelten Protokollfassung zu lesen ist.
 /// <para>
 /// <b>Warum drei Werte und nicht zwei:</b> „Es steht keine Fassung da" hat zwei völlig

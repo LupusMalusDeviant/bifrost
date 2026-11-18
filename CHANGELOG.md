@@ -163,6 +163,18 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     - „Verbindung testen" bereinigt seine Fehlermeldung wie Status und Audit (ohne Antwortkörper);
       maskiert werden zusätzlich das OAuth-Client-Secret und Werte geheimnisartiger Stdio-Schalter
       (`--token=…`, `--api-key …`). Ein werfender Changed-Handler wird nur mit Typnamen geloggt.
+  - **Vertragsänderungen V1 – V3** (abgenommen am 2026-11-18):
+    - **OAuth-Token läuft auf der stehenden Verbindung ab** (bisher bis zu 15 min Ausfall): Weist
+      der Upstream das Token beim Lebenszeichen mit 401 ab, erneuert der Gateway es und verbindet
+      sofort neu, ohne Frist und ohne Fehlversuch. Erst ein 401 innerhalb der ersten Minute danach
+      oder ein abgelehntes Refresh gilt als abgelehnte Anmeldung (15 min).
+    - **Sitzung geht immer wieder verloren** (etwa hinter einem Lastverteiler ohne feste
+      Zuordnung): Mehr als drei Neuaufbauten in fünf Minuten gelten als Ausfall mit der üblichen
+      Frist, statt im Sekundentakt neu aufzubauen.
+    - **Verlustzählung des Audits** (Diagnose BFR-DB-0007): Eine zurückgestellte Zustandszeile, die
+      bei vollem Kanal erneut angeboten wird, zählt nicht mehr bei jedem Versuch als Verlust.
+      Gezählt wird, was endgültig verworfen ist (Überlauf, Entfernen, Beenden). `IAuditSink` hat
+      dafür `TryRecord` und `ReportDiscarded` (mit Standardumsetzung; eigene Senken laufen weiter).
 - **Fehlertexte eines Upstreams konnten dessen Antwortkörper enthalten.** Das MCP-SDK hängt an eine
   HTTP-Fehlermeldung den Antwortkörper der Gegenstelle an; der Text ging ungefiltert in `lastError`,
   Audit und Log. Zitiert ein Upstream in seiner 401-Antwort den vorgelegten Schlüssel, stand er dort.

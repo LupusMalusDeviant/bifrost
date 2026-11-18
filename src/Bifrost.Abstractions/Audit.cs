@@ -64,6 +64,34 @@ public sealed record PagedResult<T>(IReadOnlyList<T> Items, long TotalCount, int
 public interface IAuditSink
 {
     void Record(AuditEvent evt);
+
+    /// <summary>
+    /// Bietet ein Ereignis an: <c>true</c>, wenn es angenommen ist, sonst <c>false</c> — ohne zu
+    /// werfen und <b>ohne</b> dass eine Abweisung als Verlust zählt. Für Aufrufer, die ein
+    /// abgewiesenes Ereignis selbst aufbewahren und später erneut anbieten (Vertrag
+    /// „Selbsttätige Wiederverbindung", V3). Verloren ist es erst, wenn der Aufrufer es aufgibt;
+    /// das meldet er über <see cref="ReportDiscarded"/>.
+    /// </summary>
+    bool TryRecord(AuditEvent evt)
+    {
+        try
+        {
+            Record(evt);
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Meldet Ereignisse, die ein Aufrufer nach <see cref="TryRecord"/> endgültig aufgegeben hat —
+    /// sie zählen als Verlust wie ein bei der Annahme verworfenes Ereignis.
+    /// </summary>
+    void ReportDiscarded(int count)
+    {
+    }
 }
 
 /// <summary>Abfrage-Seite des Audits für UI und Export (FR-23).</summary>
