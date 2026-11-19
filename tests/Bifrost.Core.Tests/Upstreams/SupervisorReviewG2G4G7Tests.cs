@@ -149,13 +149,17 @@ public sealed class SupervisorReviewG2G4G7Tests
                 () => ProbeRefused(connection),
                 because: "der Drain muss begonnen haben");
 
+            // Fiele ein Lebenszeichen im Drain, scheiterte es. Seit H3 geht im Drain keines mehr hinaus:
+            // Über mehrere Prüfintervalle bleibt es bei der Zahl von vorher, und die Toleranz zählt nichts.
             probe.FailPing = true;
             var pingsBefore = probe.Pings;
-            await TestData.WaitUntilAdvancingAsync(
-                _time,
-                () => probe.DisposeCount > 0 || probe.Pings >= pingsBefore + 4,
-                because: "das Lebenszeichen muss im Drain mehrfach über die Toleranz hinaus scheitern");
+            for (var i = 0; i < 50; i++)
+            {
+                _time.Advance(TimeSpan.FromMilliseconds(100));
+                await Task.Delay(10, Ct);
+            }
 
+            probe.Pings.Should().Be(pingsBefore, "im Drain geht kein Lebenszeichen hinaus (H3)");
             probe.DisposeCount.Should().Be(0, "die Verbindung, auf deren Aufruf der Drain wartet, bleibt offen");
             _audit.Events.Where(e => e.Kind == AuditEventKind.ServerLifecycle)
                 .Select(e => e.Detail).Should().NotContain(d => d!.Contains("Failed", StringComparison.Ordinal),
