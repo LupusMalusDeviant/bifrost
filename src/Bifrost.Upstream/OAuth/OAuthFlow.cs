@@ -197,8 +197,10 @@ public static class OAuthFlow
         Dictionary<string, string> form, IReadOnlyList<string> requestedScopes,
         DateTimeOffset now, CancellationToken ct)
     {
+        // Ein unauflösbarer Name ist ein Netzfehler, keine Ablehnung (Plan 0005 G3): Er reist mit
+        // seiner SocketException, damit die Erneuerung ihn als Unerreichbarkeit einordnet.
         await RemoteSpecFetcher
-            .EnsureTargetAllowedAsync(tokenEndpoint, options.AllowPrivateTargets, Fail, ct)
+            .CheckTargetAsync(tokenEndpoint, options.AllowPrivateTargets, Fail, OAuthDiscovery.Unresolvable, ct)
             .ConfigureAwait(false);
 
         form["client_id"] = options.ClientId;

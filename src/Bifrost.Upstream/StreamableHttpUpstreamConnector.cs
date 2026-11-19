@@ -231,10 +231,12 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstr
         }
         catch (OAuthDiscoveryException exception) when (OAuthDiscovery.IsTransient(exception))
         {
-            // Die Metadaten waren gar nicht erreichbar (Netzfehler): eine Unerreichbarkeit wie jede
-            // andere, bald erneut versucht.
+            // Metadaten oder Token-Endpunkt waren gar nicht erreichbar (Netzfehler, auch ein Name,
+            // der sich bei der Zielprüfung nicht auflösen ließ — Plan 0005 G3): eine
+            // Unerreichbarkeit wie jede andere, bald erneut versucht.
             throw new HttpRequestException(
-                $"Die Metadaten des Authorization Servers für '{config.Slug}' waren nicht erreichbar.",
+                $"Die Metadaten oder der Token-Endpunkt des Authorization Servers für '{config.Slug}' "
+                + "waren nicht erreichbar.",
                 exception);
         }
         catch (OAuthDiscoveryException exception)
