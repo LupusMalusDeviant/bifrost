@@ -17,6 +17,13 @@ public sealed class ToolDefinitionPinStore : IToolDefinitionPinStore
     private readonly TimeProvider _time;
     private readonly ConcurrentDictionary<(Guid Server, string Tool), ToolDefinitionPin> _cache = new();
 
+    // H5: Je Upstream eine Sperre über Datenbankschritt UND Cache-Veröffentlichung. Ohne sie konnte
+    // ein Schreibvorgang seine Zeile lesen, ForgetServerAsync Zeilen und Cache leeren und der
+    // Schreibvorgang die alte Zeile danach in den Cache zurücktragen — ein Phantom-Pin in All bis
+    // zum Neustart. Die Sperren bleiben stehen, auch wenn der Upstream vergessen ist: Entfernte man
+    // sie, könnten ein Wartender auf der alten und ein Neuer auf einer frischen Sperre zugleich laufen.
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _serverLocks = new();
+
     public ToolDefinitionPinStore(IDbContextFactory<BifrostDbContext> factory, TimeProvider time)
     {
         ArgumentNullException.ThrowIfNull(factory);
@@ -50,6 +57,21 @@ public sealed class ToolDefinitionPinStore : IToolDefinitionPinStore
         ArgumentException.ThrowIfNullOrWhiteSpace(tool);
         ArgumentException.ThrowIfNullOrWhiteSpace(hash);
 
+        var gate = LockFor(server);
+        await gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            return await VerifyLockedAsync(server, tool, hash, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<ToolDefinitionVerdict> VerifyLockedAsync(
+        ServerId server, string tool, string hash, CancellationToken ct)
+    {
         await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
         var row = await db.ToolDefinitionPins
             .FirstOrDefaultAsync(r => r.ServerId == server.Value && r.Tool == tool, ct)
@@ -104,6 +126,32 @@ public sealed class ToolDefinitionPinStore : IToolDefinitionPinStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tool);
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedPendingHash);
+
+        bool accepted;
+        var gate = LockFor(server);
+        await gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            accepted = await AcceptLockedAsync(server, tool, expectedPendingHash, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        // Benachrichtigt wird ausserhalb der Sperre: Ein Abonnent, der den Store wieder anfasst,
+        // darf sich nicht an ihr festlaufen.
+        if (accepted)
+        {
+            Changed?.Invoke(this, new ToolDefinitionPinChangedEventArgs(server));
+        }
+
+        return accepted;
+    }
+
+    private async Task<bool> AcceptLockedAsync(
+        ServerId server, string tool, string expectedPendingHash, CancellationToken ct)
+    {
         await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
 
         // Ein Schritt in der Datenbank (E7): Steht inzwischen eine andere Fassung an, trifft die
@@ -128,24 +176,33 @@ public sealed class ToolDefinitionPinStore : IToolDefinitionPinStore
             _cache[(server.Value, tool)] = ToPin(row);
         }
 
-        if (changed == 1)
-        {
-            Changed?.Invoke(this, new ToolDefinitionPinChangedEventArgs(server));
-        }
-
         return changed == 1;
     }
 
     public async Task ForgetServerAsync(ServerId server, CancellationToken ct)
     {
-        await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
-        await db.ToolDefinitionPins.Where(r => r.ServerId == server.Value)
-            .ExecuteDeleteAsync(ct).ConfigureAwait(false);
-        foreach (var key in _cache.Keys.Where(k => k.Server == server.Value).ToList())
+        // H5: Unter derselben Sperre wie die Schreibvorgänge. Ein laufender Vorgang veröffentlicht
+        // vollständig, bevor hier gelöscht wird; einer, der danach kommt, liest die Datenbank neu.
+        var gate = LockFor(server);
+        await gate.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            _cache.TryRemove(key, out _);
+            await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            await db.ToolDefinitionPins.Where(r => r.ServerId == server.Value)
+                .ExecuteDeleteAsync(ct).ConfigureAwait(false);
+            foreach (var key in _cache.Keys.Where(k => k.Server == server.Value).ToList())
+            {
+                _cache.TryRemove(key, out _);
+            }
+        }
+        finally
+        {
+            gate.Release();
         }
     }
+
+    private SemaphoreSlim LockFor(ServerId server) =>
+        _serverLocks.GetOrAdd(server.Value, static _ => new SemaphoreSlim(1, 1));
 
     private static ToolDefinitionPin ToPin(ToolDefinitionPinRow row) => new(
         new ServerId(row.ServerId),
