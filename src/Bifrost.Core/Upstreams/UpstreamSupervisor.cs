@@ -686,7 +686,23 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
                 int attempt;
                 lock (entry.Gate)
                 {
+                    // Unter derselben Sperre, unter der ein Nachfolger seinen Zustand bekommt (StartLoop):
+                    // Ein abgelöster Loop zählt keinen Versuch mehr und vermerkt keinen laufenden.
+                    if (ct.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
                     attempt = ++entry.Attempt;
+
+                    // H4: Ab hier bis zum Verbuchen läuft ein Versuch — auch während des Schließens der
+                    // verlorenen Verbindung, das bis zu StopJoinTimeout dauern kann. Ohne diese Marke
+                    // stünde der Zustand dort noch auf Healthy oder Degraded, und es wartete niemand:
+                    // CredentialsChanged verwürfe ein neues Token, und an einer gesetzten Grenze bliebe
+                    // der Upstream stehen (E13). Zurückgesetzt wird die Marke in WakeAfterFailure — beide
+                    // Wege unten (MarkFailed, SetFailedState) kommen dort vorbei, außer der Loop ist
+                    // abgelöst; dann setzt sie StartLoop des Nachfolgers zurück.
+                    entry.AttemptRunning = true;
                 }
 
                 // Vor dem geschützten Block bestimmt: Eine ausdrücklich gesetzte Obergrenze (E1) gilt
@@ -1292,6 +1308,15 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
             {
                 ct.ThrowIfCancellationRequested();
                 throw new UpstreamConnectionLostException("Die Health-Schleife wurde unerwartet beendet.");
+            }
+
+            // H3: Im Drain geht kein Lebenszeichen mehr hinaus (N45). Ein 404 darauf beendete den
+            // Client — samt den zugelassenen Aufrufen, auf die der Drain wartet (D13). Gezählt wird
+            // dann auch nichts gegen die Toleranz; die Filter unten fangen nur ein Lebenszeichen, das
+            // schon vor dem Beginn des Stoppens unterwegs war.
+            if (IsStopping(entry))
+            {
+                continue;
             }
 
             try
@@ -1920,7 +1945,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
         GuardedUpstreamConnection? connection;
         lock (entry.Gate)
         {
-            connection = entry.Connection;
+            // H3: Im Drain bleibt die Neuabfrage ohne Wirkung, wie ohne Verbindung (N45). Ein 404 auf
+            // tools/list beendete sonst den Client samt den Aufrufen, auf die der Drain wartet; der
+            // nächste Aufbau holt den Katalog ohnehin neu und prüft ihn.
+            connection = entry.Stopping ? null : entry.Connection;
         }
 
         if (connection is null)
@@ -1981,6 +2009,14 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
         await entry.RediscoveryLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // H3: Geprüft wird nach dem Warten auf die Sperre, nicht nur davor: Wer hinter einer
+            // laufenden Abfrage wartet, bekommt die Sperre womöglich erst im Drain — und sendet dann
+            // nichts mehr (N45). Turnusmäßige und ausdrückliche Abfrage gleich.
+            if (IsStopping(entry))
+            {
+                return;
+            }
+
             await RefreshInventoryCoreAsync(entry, connection, raiseAlways, ct).ConfigureAwait(false);
         }
         finally

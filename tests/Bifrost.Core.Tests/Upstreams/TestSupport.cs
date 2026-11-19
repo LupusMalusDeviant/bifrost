@@ -213,11 +213,19 @@ internal sealed class FakeUpstreamConnection : IUpstreamConnection, IPresentedCr
     /// <summary>Wenn gesetzt, wartet das Lebenszeichen darauf — ohne seinen Abbruch zu beachten.</summary>
     public Task? PingHang { get; set; }
 
+    /// <summary>Wie oft das Lebenszeichen diese Verbindung erreicht hat — auch die gescheiterten.</summary>
+    public int PingCalls => Volatile.Read(ref _pingCalls);
+
+    private int _pingCalls;
+
     public Task PingAsync(CancellationToken ct)
-        => PingHang is { } hang ? hang
-        : PingException is { } ex
-            ? Task.FromException(ex)
-            : _failPing ? Task.FromException(new IOException("Verbindung tot (Test).")) : Task.CompletedTask;
+    {
+        Interlocked.Increment(ref _pingCalls);
+        return PingHang is { } hang ? hang
+            : PingException is { } ex
+                ? Task.FromException(ex)
+                : _failPing ? Task.FromException(new IOException("Verbindung tot (Test).")) : Task.CompletedTask;
+    }
 
     /// <summary>Wenn gesetzt, wirft DisposeAsync diese Exception — ein Aufräumen, das scheitert.</summary>
     public Exception? DisposeException { get; set; }
