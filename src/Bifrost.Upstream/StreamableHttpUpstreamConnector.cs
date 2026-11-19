@@ -118,7 +118,29 @@ public sealed class StreamableHttpUpstreamConnector : IUpstreamConnector, IUpstr
                 : HttpTransportMode.StreamableHttp,
         });
 
-        var client = await McpClient.CreateAsync(transport, cancellationToken: ct).ConfigureAwait(false);
+        // Alles, was dieser Aufbau dem Upstream vorlegt: das Token und die statischen Kopfzeilen der
+        // Konfiguration. Die Kennung der Gateway-Instanz ist kein Geheimnis.
+        var presented = new List<string>(options.Headers?.Values ?? []);
+        if (accessToken is not null)
+        {
+            presented.Add(accessToken);
+        }
+
+        McpClient client;
+        try
+        {
+            client = await McpClient.CreateAsync(transport, cancellationToken: ct).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (CredentialRedaction.Exposes(exception, presented))
+        {
+            // G1: Der Handshake (initialize) hat das Token schon vorgelegt, aber es entsteht keine
+            // Verbindung, die es nennen könnte. Zitiert der Upstream es in seiner Absage — etwa in
+            // einem JSON-RPC-Fehler auf initialize mit HTTP 200 —, kennt es außerhalb dieser Methode
+            // niemand mehr, und Status, Audit, Log und ein auf den Neuaufbau wartender Aufrufer
+            // bekämen es ungefiltert. Deshalb wird HIER bereinigt.
+            throw HandshakeFailure.Sanitize(exception, presented);
+        }
+
         if (accessToken is null)
         {
             return new SdkUpstreamConnection(id, client);
