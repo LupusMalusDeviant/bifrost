@@ -148,7 +148,7 @@ public static class OAuthDiscovery
         }
 
         return new ProtectedResourceMetadata(
-            json.TryGetProperty("resource", out var resource) ? resource.GetString() ?? string.Empty : string.Empty,
+            ReadString(json, "resource") ?? string.Empty,
             servers,
             ReadStringArray(json, "scopes_supported"));
     }
@@ -211,16 +211,20 @@ public static class OAuthDiscovery
         return exception.StatusCode is { } status
             ? (int)status >= 500 || status == HttpStatusCode.TooManyRequests
             : exception.InnerException is HttpRequestException { StatusCode: null }
+                    or System.Net.Sockets.SocketException
                 || (exception.InnerException is OAuthDiscoveryException inner && IsTransient(inner));
     }
 
     private static AuthorizationServerMetadata ReadServerMetadata(
         JsonElement json, Uri issuer, bool allowPrivateTargets)
     {
-        var declaredIssuer = json.TryGetProperty("issuer", out var iss) ? iss.GetString() : null;
+        // Die Form ist schon in FetchJsonAsync geprüft (ein Objekt); ein 'issuer', der keine
+        // Zeichenkette ist, zählt wie ein fehlender (Plan 0005 G3) — sonst warf GetString() eine
+        // InvalidOperationException, die die übrigen Well-known-Pfade übersprang.
+        var declaredIssuer = ReadString(json, "issuer");
         if (string.IsNullOrEmpty(declaredIssuer))
         {
-            throw new OAuthDiscoveryException("Metadaten ohne 'issuer'.");
+            throw new OAuthDiscoveryException("Metadaten ohne 'issuer' als Zeichenkette.");
         }
 
         // Der Issuer im Dokument muss der sein, den wir angefragt haben. Weicht er ab, beschreibt
@@ -270,7 +274,7 @@ public static class OAuthDiscovery
             // Dieselbe Zielprüfung wie bei den Schemaimporten: Auflösung aller Adressen, Abweisung
             // von Loopback/privat/Link-Local, Weiterleitungen einzeln geprüft.
             body = await RemoteSpecFetcher.FetchAsync(
-                    url, allowPrivateTargets, TimeSpan.FromSeconds(15), Fail, ct)
+                    url, allowPrivateTargets, TimeSpan.FromSeconds(15), Fail, Unresolvable, ct)
                 .ConfigureAwait(false);
         }
         catch (HttpRequestException exception)
@@ -292,18 +296,41 @@ public static class OAuthDiscovery
             };
         }
 
+        JsonElement root;
         try
         {
             using var document = JsonDocument.Parse(body);
-            return document.RootElement.Clone();
+            root = document.RootElement.Clone();
         }
         catch (JsonException exception)
         {
             throw new OAuthDiscoveryException($"'{url}' lieferte kein gültiges JSON: {exception.Message}");
         }
+
+        // Erst die Form, dann die Felder (Plan 0005 G3): Auf einem Array oder einer Zahl wirft
+        // TryGetProperty eine InvalidOperationException — die fing die Kandidatenschleife nicht, und
+        // ein Unsinnsdokument auf dem ersten Pfad verdeckte ein gültiges auf dem zweiten.
+        if (root.ValueKind is not JsonValueKind.Object)
+        {
+            throw new OAuthDiscoveryException($"'{url}' lieferte kein JSON-Objekt.");
+        }
+
+        return root;
     }
 
     private static Exception Fail(string message) => new OAuthDiscoveryException(message);
+
+    /// <summary>
+    /// Ein Name, der sich bei der Zielprüfung nicht auflösen ließ, ist ein Netzfehler wie jeder
+    /// andere (Plan 0005 G3) — die <see cref="System.Net.Sockets.SocketException"/> reist mit, damit
+    /// <see cref="IsTransient"/> ihn als Unerreichbarkeit erkennt und nicht als Ablehnung.
+    /// </summary>
+    internal static Exception Unresolvable(string message, Exception inner) => new OAuthDiscoveryException(message, inner);
+
+    private static string? ReadString(JsonElement json, string name)
+        => json.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.String
+            ? value.GetString()
+            : null;
 
     private static Uri? ReadUri(JsonElement json, string name)
         => json.TryGetProperty(name, out var value)
@@ -316,6 +343,7 @@ public static class OAuthDiscovery
         => !json.TryGetProperty(name, out var array) || array.ValueKind is not JsonValueKind.Array
             ? []
             : [.. array.EnumerateArray()
+                .Where(e => e.ValueKind is JsonValueKind.String)
                 .Select(e => e.GetString())
                 .Where(s => Uri.TryCreate(s, UriKind.Absolute, out _))
                 .Select(s => new Uri(s!))];
@@ -323,7 +351,7 @@ public static class OAuthDiscovery
     private static IReadOnlyList<string> ReadStringArray(JsonElement json, string name)
         => !json.TryGetProperty(name, out var array) || array.ValueKind is not JsonValueKind.Array
             ? []
-            : [.. array.EnumerateArray().Select(e => e.GetString()).Where(s => !string.IsNullOrEmpty(s)).Select(s => s!)];
+            : [.. array.EnumerateArray().Where(e => e.ValueKind is JsonValueKind.String).Select(e => e.GetString()).Where(s => !string.IsNullOrEmpty(s)).Select(s => s!)];
 }
 
 /// <summary>Die Autorisierung eines Upstreams ließ sich nicht ermitteln oder ist nicht verwendbar.</summary>

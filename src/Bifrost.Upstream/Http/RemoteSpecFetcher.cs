@@ -27,9 +27,21 @@ internal static class RemoteSpecFetcher
     /// <summary>So viele Weiterleitungen werden verfolgt — jede davon geprüft.</summary>
     private const int MaxRedirects = 3;
 
-    public static async Task<string> FetchAsync(
+    public static Task<string> FetchAsync(
         Uri location, bool allowPrivateTargets, TimeSpan timeout,
         Func<string, Exception> fail, CancellationToken ct)
+        => FetchAsync(location, allowPrivateTargets, timeout, fail, unresolvable: null, ct);
+
+    /// <summary>
+    /// Wie oben; <paramref name="unresolvable"/> baut die Ausnahme für einen Namen, der sich nicht
+    /// auflösen ließ, und bekommt die <see cref="SocketException"/> der Auflösung mit. Ein Aufrufer,
+    /// der eine Unerreichbarkeit von einer Abweisung unterscheiden muss (die OAuth-Erkennung, Plan
+    /// 0005 G3), erkennt den Netzfehler so an seiner inneren Ausnahme — wie bei einem Abruf ohne
+    /// Zielprüfung, wo derselbe Fehler als <see cref="HttpRequestException"/> käme.
+    /// </summary>
+    public static async Task<string> FetchAsync(
+        Uri location, bool allowPrivateTargets, TimeSpan timeout,
+        Func<string, Exception> fail, Func<string, Exception, Exception>? unresolvable, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(location);
         ArgumentNullException.ThrowIfNull(fail);
@@ -58,7 +70,7 @@ internal static class RemoteSpecFetcher
         var current = location;
         for (var hop = 0; hop <= MaxRedirects; hop++)
         {
-            await EnsureTargetAllowedAsync(current, allowPrivateTargets, fail, ct).ConfigureAwait(false);
+            await CheckTargetAsync(current, allowPrivateTargets, fail, unresolvable, ct).ConfigureAwait(false);
             using var response = await http
                 .GetAsync(current, HttpCompletionOption.ResponseHeadersRead, ct)
                 .ConfigureAwait(false);
@@ -87,8 +99,19 @@ internal static class RemoteSpecFetcher
     /// <b>alle</b> Adressen des Namens: Ein Name, der auf eine öffentliche und eine private Adresse
     /// zeigt, wäre sonst ein Schlupfloch.
     /// </summary>
-    public static async Task EnsureTargetAllowedAsync(
+    public static Task EnsureTargetAllowedAsync(
         Uri target, bool allowPrivateTargets, Func<string, Exception> fail, CancellationToken ct)
+        => CheckTargetAsync(target, allowPrivateTargets, fail, unresolvable: null, ct);
+
+    /// <summary>
+    /// Die Prüfung aus <see cref="EnsureTargetAllowedAsync"/>, mit eigener Fehlerart für einen
+    /// Namen, der sich nicht auflösen ließ (siehe <see cref="FetchAsync(Uri, bool, TimeSpan, Func{string, Exception}, Func{string, Exception, Exception}?, CancellationToken)"/>).
+    /// Eigener Name statt Überladung: Die Sicherheitstests rufen <see cref="EnsureTargetAllowedAsync"/>
+    /// über Reflexion beim Namen auf.
+    /// </summary>
+    public static async Task CheckTargetAsync(
+        Uri target, bool allowPrivateTargets, Func<string, Exception> fail,
+        Func<string, Exception, Exception>? unresolvable, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(fail);
@@ -117,7 +140,8 @@ internal static class RemoteSpecFetcher
             }
             catch (SocketException exception)
             {
-                throw fail($"Host '{target.Host}' ließ sich nicht auflösen: {exception.Message}");
+                var message = $"Host '{target.Host}' ließ sich nicht auflösen: {exception.Message}";
+                throw unresolvable is null ? fail(message) : unresolvable(message, exception);
             }
         }
 

@@ -23,6 +23,12 @@
     }
     else
     {
+        @* Ergebnis von „Neue Fassung annehmen" — direkt über der Tabelle, wo der Knopf steht, und
+           nicht unten am Formular (Plan 0005 G6: ein Konflikt wurde vorher gar nicht gemeldet). *@
+        @if (_pinMessage is not null)
+        {
+            <p data-testid="pin-message" role="status" class="@(_pinOk ? "msg-ok" : "msg-err")">@_pinMessage</p>
+        }
         <div class="table-wrap">
             <table>
                 <thead><tr><th>Slug</th><th>Status</th><th>Tools</th><th>Letzter Fehler</th><th></th></tr></thead>
@@ -451,6 +457,10 @@
 
     private bool _busy, _ok;
     private string? _message;
+
+    /// <summary>Ergebnis der letzten Annahme einer geänderten Tool-Definition (G6).</summary>
+    private string? _pinMessage;
+    private bool _pinOk;
 
     /// <summary>Der letzte Verbindungstest als Zeitlinie (WP4.6); null = es lief noch keiner.</summary>
     private Bifrost.Core.Diagnostics.Upstreams.UpstreamDiagnosticReport? _diagnosis;
@@ -933,6 +943,7 @@
     private async Task AcceptDefinition(ServerId id, string slug, string tool, string? pendingHash)
     {
         _busy = true;
+        _pinMessage = null;
         try
         {
             // Angenommen wird die Fassung, die beim Anzeigen anstand (E7). Steht inzwischen eine
@@ -955,23 +966,35 @@
             }
             catch (Exception)
             {
-                _ok = false;
-                _message = $"Das Audit nimmt gerade nicht an; die neue Fassung von '{tool}' wurde nicht angenommen.";
+                _pinOk = false;
+                _pinMessage = $"Das Audit nimmt gerade nicht an; die neue Fassung von '{tool}' wurde nicht angenommen.";
                 return;
             }
 
             if (!await ToolPins.AcceptAsync(id, tool, expected, CancellationToken.None))
             {
-                // Nichts ist vertraut geworden; die Zeile berichtigt nur die vorige.
-                Audit.TryRecord(new AuditEvent(
+                // Nichts ist vertraut geworden; die Zeile berichtigt nur die vorige. Verwirft das
+                // Audit sie (voller Kanal), zählt sie als Verlust (Plan 0005 G6) — sonst stünde
+                // eine Annahme im Audit, die es nicht gab, ohne sichtbare Lücke.
+                if (!Audit.TryRecord(new AuditEvent(
                     Time.GetUtcNow(), null, CallOrigin.Ui, AuditEventKind.ConfigChanged, id,
                     $"ui:{user}:tool-definition-accept-conflict:{slug}__{tool}@{expected}",
-                    null, null, null, null, null));
+                    null, null, null, null, null)))
+                {
+                    Audit.ReportDiscarded(1);
+                }
+
+                _pinOk = false;
+                _pinMessage = $"Die neue Fassung von '{tool}' wurde nicht angenommen: Inzwischen steht "
+                    + "eine andere geänderte Definition an. Bitte die jetzt angezeigte Fassung prüfen "
+                    + "und erneut annehmen.";
                 return;
             }
 
             // Die Neuabfrage nach Annahme und Audit (E5): Die Annahme gilt, auch wenn die
             // Neuabfrage scheitert.
+            _pinOk = true;
+            _pinMessage = $"Die neue Fassung von '{tool}' ist angenommen.";
             try
             {
                 await ConcreteSupervisor.RediscoverAsync(id, CancellationToken.None);
@@ -979,6 +1002,8 @@
             catch (Exception)
             {
                 // Den Grund zeigt der Status des Upstreams nach dem Neuladen.
+                _pinMessage = $"Die neue Fassung von '{tool}' ist angenommen. Die Neuabfrage des "
+                    + "Katalogs ist gescheitert; den Grund zeigt der Status des Upstreams.";
             }
         }
         finally

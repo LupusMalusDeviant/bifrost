@@ -1246,10 +1246,16 @@ internal static class ApiEndpoints
             if (!await store.AcceptAsync(server, tool, expected, ct))
             {
                 // Nichts ist vertraut geworden; diese Zeile berichtigt nur die vorige. Nimmt das
-                // Audit sie nicht an, fehlt kein Beleg für eine Annahme.
-                audit.TryRecord(new AuditEvent(
+                // Audit sie nicht an (voller Kanal), stünde dort eine Annahme, die es nicht gab —
+                // darum zählt die verworfene Berichtigung als Verlust (Plan 0005 G6): Wer das Audit
+                // liest, sieht dann wenigstens, dass ihm eine Zeile fehlt.
+                if (!audit.TryRecord(new AuditEvent(
                     time.GetUtcNow(), Identity(ctx), CallOrigin.Rest, AuditEventKind.ConfigChanged, server,
-                    $"tool-definition-accept-conflict:{tool}@{expected}", null, null, null, null, null));
+                    $"tool-definition-accept-conflict:{tool}@{expected}", null, null, null, null, null)))
+                {
+                    audit.ReportDiscarded(1);
+                }
+
                 return conflict;
             }
 
