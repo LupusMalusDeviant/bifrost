@@ -317,6 +317,50 @@ Muster „erst Wirkung, dann Audit" in den übrigen Verwaltungsaktionen.
 Gemeinsames Muster von F2, F5, F6, F7, F9, F14: Es fehlt eine Generation je Loop bzw.
 Konfigurationsfassung bzw. Token-Revision, gegen die spät eintreffende Schritte geprüft werden.
 
+### Fünftes Codex-Review vom 2026-11-18 (`60d8bf9..fb43db0`)
+
+Codex (gpt-6.2-sol) meldet 13 Befunde (3 hoch, 8 mittel, 2 niedrig, kein kritischer). Jeder ist
+gegen den Code geprüft (nur gelesen). „Schwere" ist die geprüfte Einschätzung. Auf den Auftrag „Die
+sieben echten" sind **G1 – G7 behoben, Abnahme offen** (Vertrag N42 – N48; jeder neue Test gegen
+`fb43db0` rot belegt). G8 – G13 sind nicht behoben. Gegen die abgenommenen Abschnitte 1 – 9 fand Codex keinen Widerspruch; N38 muss N26
+ausdrücklich ersetzen.
+
+| # | Codex | Inhalt | Urteil | Herkunft | Schwere | Marke |
+|---|---|---|---|---|---|---|
+| G1 | H1 | Zitiert der Upstream das Token in einem JSON-RPC-Fehler auf `initialize` (HTTP 200), wird es nirgends maskiert: Der Connector wirft vor dem Entstehen der Verbindung, die Bereinigung aus F1 setzt erst bei der Katalogabfrage an. Erreicht Status, Audit, Log und über die Neuaufbau-Ausnahme den Agenten. | echt | alt, F1 unvollständig | mittel – hoch | `[Claude-prüfbar]` |
+| G2 | M2 | `CredentialsChanged` verpufft in `Degraded`/`Healthy`, ohne das Merkzeichen zu setzen. Scheitert ein laufender Neuaufbau danach mit dem alten Token, ist der Upstream erschöpft bzw. sitzt die 15 min ab, obwohl ein gültiges Token vorliegt. Widerspricht 3.3 und N12. | echt, breiter als gemeldet | alt | mittel | `[Claude-prüfbar]` |
+| G3 | M6 | Ein DNS-Fehler beim Metadatenabruf (Standard ohne private Ziele) wird zur abgelehnten Anmeldung (15 min, falscher Hinweis „neu autorisieren"). Außerdem: Unsinn auf dem ersten Well-known-Pfad (Array, `issuer` kein Text) überspringt die übrigen Pfade und wird kurz wiederholt. | echt | DNS: neu (F12); Rest alt | mittel / niedrig | `[Claude-prüfbar]` |
+| G4 | M3 | Das Lebenszeichen läuft während des Drains weiter; überschreitet es die Toleranz, schließt der Loop die Verbindung, auf deren Aufrufe der Drain wartet, und bucht `Failed` mitten im Abschalten. | echt | alt | mittel – niedrig | `[Claude-prüfbar]` |
+| G5 | H2 | Zwei Aufrufe über dieselbe alte Hülle: Wechselt der zweite die Ersatzverbindung, bevor der erste seinen Fehler formatiert, wird mit dem falschen Token bereinigt. Braucht einen zitierenden Upstream und eine Ersetzung genau im Fenster. | echt, enges Rennen | alt | niedrig – mittel | `[Claude-prüfbar]` |
+| G6 | M8 | Pin-Annahme: Geht die Berichtigungszeile (`TryRecord`) bei vollem Kanal verloren, wird kein Verlust gezählt; im Audit steht eine Annahme, die nicht stattfand. Die Oberfläche meldet den Konflikt gar nicht. | echt, selten | neu (F4) | niedrig – mittel | `[Claude-prüfbar]` |
+| G7 | M5 | Eine laufende Neuabfrage kann nach dem Entfernen des Upstreams noch einen Pin einfügen (Zeile und Anzeige bis zum Neustart). `RemoveAsync` nimmt die Prüf-Sperre nicht. | echt, enges Fenster | gemischt | niedrig | `[Claude-prüfbar]` |
+| G8 | M4 | Ressourcen und Prompts haben die Prüfung auf eine veraltete Hülle nicht: Nach Aus-/Einschalten scheitert eine Ressource mit „wird gestoppt", wo ein Werkzeug übergeben wird (Ungleichbehandlung gegen Abschnitt 4). Senden über einen alten Transport ist nur theoretisch. | teilweise | alt | niedrig | `[Claude-prüfbar]` |
+| G9 | M1 | Ein später OAuth-Rückruf kann ein neueres Token überschreiben; das Umkonfigurieren löscht ohne Bedingung. Braucht einen hängenden Token-Endpunkt und einen zweiten, vollständigen Browser-Durchlauf in Sekunden. | teilweise | alt, durch F5 entschärft | niedrig | `[Claude-prüfbar]` |
+| G10 | H3 | Ein abgelöster Loop könnte die Live-Verbindung seines Nachfolgers abhängen. Zwischen Abbruchprüfung und Abhängen liegt nur synchroner Code; erreichbar nur, wenn ein Thread länger als 10 s steht. | teilweise, theoretisch | alt | niedrig | `[Claude-prüfbar]` |
+| G11 | L1 | Registrieren gegen Herunterfahren: Restfenster nur bei einem Thread, der zwischen zwei synchronen Anweisungen 10 s steht. | teilweise, theoretisch | gemischt | niedrig | `[Claude-prüfbar]` |
+| G12 | L2 | Die Audit-Nachzählung ist nur über das Abbruchsignal befristet; im schlimmsten Fall blockiert sie bis zum Standard-Timeout der Datenbank (30 s je aufgegebenem Batch). | teilweise | neu (F11) | niedrig | `[Claude-prüfbar]` |
+| G13 | M7 | Die volle Endpunkt-URL (mit Query) steht in einer OAuth-Fehlermeldung an den Browser. Kein Leck: nur Admins, die die URL ohnehin sehen; nicht in Audit oder Log. Hygiene. | nicht als Leck | alt | niedrig | `[Claude-prüfbar]` |
+
+Neu durch die vierte Runde sind G3 (DNS), G6 und G12; der Rest war schon vorher im Code.
+
+**Stand der Behebung (G1 – G7):**
+
+| # | Fix | Test (rot gegen `fb43db0`) |
+|---|---|---|
+| G1 | `StreamableHttpUpstreamConnector` bereinigt den Handshake-Fehler (`HandshakeFailure`, `CredentialRedaction`). Dabei gefunden (schon vorher im Code): Teilten zwei Geheimwerte ihre ersten sechs Zeichen, blieb der Rest des zweiten stehen; jetzt werden alle Treffer am unveränderten Text gesucht | `HandshakeCredentialLeakTests` (4); `RedactionCorpusTests.The_upstream_failure_path_masks_presented_credentials_whole_and_cut` |
+| G2 | `Entry.AttemptRunning` statt Anzeigezustand in `CredentialsChanged` | `SupervisorReviewG2G4G7Tests` (2) |
+| G3 | DNS-Fehler mit innerer `SocketException`, auch am Token-Endpunkt; Formprüfung der Well-known-Dokumente | `OAuthDiscoveryClassificationTests` (6) |
+| G4 | Im Drain: Ping-Fehler ignoriert, keine Erneuerung, keine Katalogabfrage, Loop schließt nichts | `SupervisorReviewG2G4G7Tests` (1) |
+| G5 | `CountedAsync` bereinigt auf der ausführenden Verbindung | `ReplacementCredentialLeakTests` (1) |
+| G6 | `ReportDiscarded(1)` bei verworfener Berichtigung; Meldung `pin-message` in der Oberfläche | `ToolDefinitionAcceptLossTests` (1) |
+| G7 | `Entry.PinsRetired`; späte Prüfung räumt selbst nach | `SupervisorReviewG2G4G7Tests` (1) |
+
+Offen dazu: Die Konfliktmeldung der Oberfläche (G6) hat keinen automatischen Test (kein bUnit im
+Repo, die Playwright-Tests laufen nicht in der CI). Bei G7 steht ein spät geschriebener Pin bis zum
+Nachräumen kurz in der Anzeige; eine harte Bedingung im `ToolDefinitionPinStore` wäre die
+gründlichere Lösung. Nebenbefund, nicht behoben: `StartLoop` setzt `CredentialRenewalRequested` nicht
+zurück.
+
 ## Prüfliste für den Nutzer
 
 1. ~~Vertrag lesen und abnehmen; die sechs Fragen in Abschnitt 8 beantworten.~~ Erledigt am

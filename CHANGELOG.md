@@ -256,6 +256,21 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     - **Einordnung und Zählung:** 401/403 beim Metadatenabruf der Erneuerung ist eine abgelehnte
       Anmeldung, 5xx/429 eine Unerreichbarkeit. Der letzte Audit-Schreibversuch zählt nur wirklich
       fehlende Zeilen als Verlust.
+  - **Befunde aus dem fünften Codex-Review** (Plan 0005, G1 – G7; Vertrag Abschnitt 10, N42 – N48):
+    - **Sicherheit:** Scheitert `initialize` mit einem Fehler, der das vorgelegte Token oder einen
+      Kopfzeilenwert zitiert, bereinigt der Connector ihn selbst; Fehlerart, Status und Fehlercode
+      bleiben. Ein Aufrufsfehler wird auf der Verbindung bereinigt, die ihn ausgeführt hat, auch
+      wenn die Hülle des Aufrufers inzwischen auf eine andere Verbindung zeigt. Teilen zwei
+      Geheimwerte denselben Anfang, wird jetzt auch der Rest des zweiten maskiert.
+    - **Neues Token:** Wird während eines Sitzungs-Neuaufbaus neu autorisiert, folgt nach dessen
+      Scheitern sofort ein Versuch mit dem neuen Token, auch an einer gesetzten Grenze.
+    - **Stoppen:** Ein fehlendes Lebenszeichen im Drain schließt die Verbindung nicht mehr und bucht
+      kein `Failed`. Ein entfernter Upstream behält keinen Pin aus einer gleichzeitig laufenden
+      Neuabfrage.
+    - **OAuth-Erkennung:** Ein nicht auflösbarer Name ist eine Unerreichbarkeit (kurze Frist), keine
+      abgelehnte Anmeldung. Ein unbrauchbares Well-known-Dokument lässt den nächsten Pfad versuchen.
+    - **Pin-Annahme:** Eine verworfene Berichtigungszeile zählt als Audit-Verlust; die Oberfläche
+      meldet einen Konflikt über der Servertabelle.
 - **Fehlertexte eines Upstreams konnten dessen Antwortkörper enthalten.** Das MCP-SDK hängt an eine
   HTTP-Fehlermeldung den Antwortkörper der Gegenstelle an; der Text ging ungefiltert in `lastError`,
   Audit und Log. Zitiert ein Upstream in seiner 401-Antwort den vorgelegten Schlüssel, stand er dort.

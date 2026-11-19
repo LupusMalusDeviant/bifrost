@@ -366,6 +366,27 @@ public class RedactionCorpusTests
     }
 
     /// <summary>
+    /// Der Weg der Upstream-Fehlertexte (Plan 0005 G1, G5): Ein Upstream zitiert, was ihm vorgelegt
+    /// wurde — ganz oder angeschnitten. Beides darf weder in Status, Audit, Log noch beim Aufrufer
+    /// ankommen.
+    /// </summary>
+    [Fact]
+    public void The_upstream_failure_path_masks_presented_credentials_whole_and_cut()
+    {
+        var quoted = "Upstream lehnt ab: " + string.Join(' ', SecretCorpus.All)
+            + " | angeschnitten: " + string.Join(' ', SecretCorpus.All.Select(secret => secret[..^2]));
+
+        SecretCorpus.FirstLeakIn(quoted).Should().NotBeNull("sonst prueft der Test nichts");
+
+        var scrubbed = CredentialRedaction.Scrub(quoted, SecretCorpus.All);
+
+        SecretCorpus.FirstLeakIn(scrubbed).Should().BeNull(
+            "der Fehlertext eines Upstreams geht an Status, Audit, Log und den wartenden Aufrufer");
+        CredentialRedaction.Exposes(new InvalidOperationException(quoted), SecretCorpus.All).Should().BeTrue();
+        CredentialRedaction.Exposes(new InvalidOperationException(scrubbed), SecretCorpus.All).Should().BeFalse();
+    }
+
+    /// <summary>
     /// <b>Der Waechter ueber die Redigierer selbst.</b> Jede Stelle, die etwas maskiert, ist ein
     /// Ausgabeweg — und jeder Ausgabeweg muss gegen den Korpus laufen. Kommt ein Redigierer dazu,
     /// dessen Ergebnis kein Test gegen den Korpus haelt, wird der Test rot und verlangt eine
@@ -397,6 +418,9 @@ public class RedactionCorpusTests
             // wegen ihres Namens in dieses Netz — dieselbe Ausnahme wie bei den beiden Regelzeilen
             // darueber.
             "Bifrost.Abstractions.Operations.SupportBundleRedaction",
+            // Plan 0005 G1/G5: Bereinigt Fehlertexte eines Upstreams mit den Zugangsdaten, die die
+            // Verbindung vorgelegt hat (Handshake, Aufrufe). Sein Korpustest steht unten.
+            "Bifrost.Abstractions.CredentialRedaction",
         };
 
         var redactors = BifrostAssemblies.AllTypes()

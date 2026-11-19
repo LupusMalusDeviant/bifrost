@@ -34,32 +34,79 @@ public static class CredentialRedaction
             return message;
         }
 
-        // Längste zuerst: Sonst zerlegt ein kurzer Wert einen längeren, der ihn enthält, und der
-        // Rest des längeren bleibt stehen.
-        var ordered = candidates
-            .Where(candidate => !string.IsNullOrEmpty(candidate.Value))
-            .Distinct()
-            .OrderByDescending(candidate => candidate.Value.Length)
-            .ToList();
-
-        foreach (var (value, _) in ordered)
+        // Alle Treffer werden am unveränderten Text gesucht und erst danach gemeinsam ersetzt. Der
+        // frühere Weg — ein Wert nach dem anderen — verlor Werte mit gemeinsamem Anfang: Maskierte der
+        // eine nur das gemeinsame Stück („sk-ant-…"), fehlte dem anderen danach der Anker, und sein
+        // Rest blieb stehen. Überlappende und aneinanderstoßende Treffer werden zu einem.
+        var ranges = new List<(int Start, int End)>();
+        foreach (var (value, prefixable) in candidates
+                     .Where(candidate => !string.IsNullOrEmpty(candidate.Value))
+                     .Distinct())
         {
             // Sehr kurze Werte würden halbe Fehlermeldungen zerschießen und sind ohnehin keine Secrets.
             if (value.Length >= 4)
             {
-                message = message.Replace(value, "***", StringComparison.Ordinal);
+                AddOccurrences(message, value, ranges);
             }
-        }
 
-        foreach (var (value, prefixable) in ordered)
-        {
             if (prefixable && value.Length > MinimumPrefixLength)
             {
-                message = MaskPrefixes(message, value);
+                AddPrefixes(message, value, ranges);
             }
         }
 
-        return message;
+        if (ranges.Count == 0)
+        {
+            return message;
+        }
+
+        ranges.Sort();
+        var masked = new System.Text.StringBuilder(message.Length);
+        var position = 0;
+        var index = 0;
+        while (index < ranges.Count)
+        {
+            var (start, end) = ranges[index];
+            while (++index < ranges.Count && ranges[index].Start <= end)
+            {
+                end = Math.Max(end, ranges[index].End);
+            }
+
+            masked.Append(message, position, start - position).Append("***");
+            position = end;
+        }
+
+        return masked.Append(message, position, message.Length - position).ToString();
+    }
+
+    private static void AddOccurrences(string message, string value, List<(int Start, int End)> ranges)
+    {
+        for (var hit = message.IndexOf(value, StringComparison.Ordinal);
+             hit >= 0;
+             hit = message.IndexOf(value, hit + 1, StringComparison.Ordinal))
+        {
+            ranges.Add((hit, hit + value.Length));
+        }
+    }
+
+    /// <summary>Jedes Textstück, das mit mindestens <see cref="MinimumPrefixLength"/> Zeichen des Werts beginnt.</summary>
+    private static void AddPrefixes(string message, string secret, List<(int Start, int End)> ranges)
+    {
+        var probe = secret[..MinimumPrefixLength];
+        for (var hit = message.IndexOf(probe, StringComparison.Ordinal);
+             hit >= 0;
+             hit = message.IndexOf(probe, hit + 1, StringComparison.Ordinal))
+        {
+            var length = MinimumPrefixLength;
+            while (hit + length < message.Length
+                && length < secret.Length
+                && message[hit + length] == secret[length])
+            {
+                length++;
+            }
+
+            ranges.Add((hit, hit + length));
+        }
     }
 
     /// <summary>
@@ -127,39 +174,5 @@ public static class CredentialRedaction
         }
 
         return string.Join(" → ", names);
-    }
-
-    private static string MaskPrefixes(string message, string secret)
-    {
-        var probe = secret[..MinimumPrefixLength];
-        System.Text.StringBuilder? masked = null;
-        var position = 0;
-        while (position < message.Length)
-        {
-            var hit = message.IndexOf(probe, position, StringComparison.Ordinal);
-            if (hit < 0)
-            {
-                break;
-            }
-
-            var length = MinimumPrefixLength;
-            while (hit + length < message.Length
-                && length < secret.Length
-                && message[hit + length] == secret[length])
-            {
-                length++;
-            }
-
-            masked ??= new System.Text.StringBuilder(message.Length);
-            masked.Append(message, position, hit - position).Append("***");
-            position = hit + length;
-        }
-
-        if (masked is null)
-        {
-            return message;
-        }
-
-        return masked.Append(message, position, message.Length - position).ToString();
     }
 }
