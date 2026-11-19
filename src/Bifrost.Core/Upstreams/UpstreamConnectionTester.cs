@@ -99,94 +99,18 @@ public sealed class UpstreamConnectionTester : IUpstreamConnectionTester
             return message;
         }
 
-        // Längste zuerst: Sonst zerlegt ein kurzer Wert einen längeren, der ihn enthält, und der
-        // Rest des längeren bleibt stehen.
+        // Der Abgleich selbst liegt in den Abstractions, damit auch ein Connector mit genau den
+        // Zugangsdaten bereinigen kann, die er vorgelegt hat (Plan 0005 G1).
         var candidates = (config is null ? Enumerable.Empty<string>() : Secrets(config))
             .Concat(presented ?? [])
             .Where(value => !string.IsNullOrEmpty(value))
-            .SelectMany(Variants)
-            .Concat(config is null ? Enumerable.Empty<(string Value, bool Prefixable)>() : SwitchSecrets(config))
-            .Distinct()
-            .OrderByDescending(candidate => candidate.Value.Length)
-            .ToList();
-
-        foreach (var (value, _) in candidates)
-        {
-            // Sehr kurze Werte würden halbe Fehlermeldungen zerschießen und sind ohnehin keine Secrets.
-            if (value.Length >= 4)
-            {
-                message = message.Replace(value, "***", StringComparison.Ordinal);
-            }
-        }
-
-        foreach (var (value, prefixable) in candidates)
-        {
-            if (prefixable && value.Length > MinimumPrefixLength)
-            {
-                message = MaskPrefixes(message, value);
-            }
-        }
-
-        return message;
+            .SelectMany(CredentialRedaction.Variants)
+            .Concat(config is null ? Enumerable.Empty<(string Value, bool Prefixable)>() : SwitchSecrets(config));
+        return CredentialRedaction.Scrub(message, candidates);
     }
 
     /// <summary>Ab so vielen übereinstimmenden Anfangszeichen gilt ein Textstück als Teil eines Geheimwerts.</summary>
-    public const int MinimumPrefixLength = 6;
-
-    /// <summary>
-    /// Ein Kopfzeilenwert der Form „Bearer abc…" ist zweierlei: der ganze Wert und der Teil nach
-    /// dem Schema. Das Anfangsstück wird nur am zweiten gemessen — sonst maskierte „Bearer" als
-    /// Anfang von „Bearer abc…" das Wort in jeder Meldung, die es benutzt.
-    /// </summary>
-    private static IEnumerable<(string Value, bool Prefixable)> Variants(string secret)
-    {
-        var space = secret.IndexOf(' ', StringComparison.Ordinal);
-        var hasScheme = space is > 0 and <= 10
-            && space < secret.Length - 1
-            && secret.AsSpan(0, space).IndexOfAnyExceptInRange('A', 'z') < 0;
-        if (!hasScheme)
-        {
-            yield return (secret, true);
-            yield break;
-        }
-
-        yield return (secret, false);
-        yield return (secret[(space + 1)..].TrimStart(), true);
-    }
-
-    private static string MaskPrefixes(string message, string secret)
-    {
-        var probe = secret[..MinimumPrefixLength];
-        System.Text.StringBuilder? masked = null;
-        var position = 0;
-        while (position < message.Length)
-        {
-            var hit = message.IndexOf(probe, position, StringComparison.Ordinal);
-            if (hit < 0)
-            {
-                break;
-            }
-
-            var length = MinimumPrefixLength;
-            while (hit + length < message.Length
-                && length < secret.Length
-                && message[hit + length] == secret[length])
-            {
-                length++;
-            }
-
-            masked ??= new System.Text.StringBuilder(message.Length);
-            masked.Append(message, position, hit - position).Append("***");
-            position = hit + length;
-        }
-
-        if (masked is null)
-        {
-            return message;
-        }
-
-        return masked.Append(message, position, message.Length - position).ToString();
-    }
+    public const int MinimumPrefixLength = CredentialRedaction.MinimumPrefixLength;
 
     private static IEnumerable<string> Secrets(UpstreamServerConfig config)
     {

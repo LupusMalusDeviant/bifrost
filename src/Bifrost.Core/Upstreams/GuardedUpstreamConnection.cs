@@ -148,6 +148,14 @@ public sealed class GuardedUpstreamConnection
 
             return await WithTimeoutAsync(operation, operationName, ct).ConfigureAwait(false);
         }
+        catch (Exception exception) when (CredentialRedaction.Exposes(exception, PresentedCredentials))
+        {
+            // G5: Bereinigt wird HIER, auf der Verbindung, die den Aufruf ausgeführt hat, und bevor
+            // der Fehler sie verlässt. Der Aufrufer formuliert ihn später über die Hülle, die er in
+            // der Hand hält — deren Ersatzverbindung kann bis dahin schon eine andere sein, und deren
+            // Token ist nicht das, das der Upstream hier zitiert hat.
+            throw UpstreamFailure.SanitizeAttempt(exception, DescribeFailure(exception));
+        }
         finally
         {
             Interlocked.Decrement(ref _inFlight);

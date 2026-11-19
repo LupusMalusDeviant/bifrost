@@ -94,25 +94,10 @@ public static class UpstreamFailure
     /// stehen danach die Typnamen der ursprünglichen Kette.
     /// </summary>
     [NoHostExecution("Liest Typnamen; startet nichts.")]
-    public static string TypeChain(Exception exception)
-    {
-        ArgumentNullException.ThrowIfNull(exception);
-        var names = new List<string>();
-        for (var current = exception; current is not null && names.Count < 6; current = current.InnerException)
-        {
-            names.Add(current.GetType().Name);
-            if (current.Data[OriginalTypesKey] is string original)
-            {
-                names.Add(original);
-                break;
-            }
-        }
-
-        return string.Join(" → ", names);
-    }
+    public static string TypeChain(Exception exception) => CredentialRedaction.TypeChain(exception);
 
     /// <summary>Unter diesem Schlüssel trägt eine bereinigte Ausnahme die Typnamen der ursprünglichen Kette.</summary>
-    private const string OriginalTypesKey = "Bifrost.UpstreamFailure.OriginalTypes";
+    private const string OriginalTypesKey = CredentialRedaction.OriginalTypesDataKey;
 
     /// <summary>
     /// Ersetzt den Fehlschlag einer schon aufgebauten Verbindung durch einen mit bereinigter Meldung
@@ -133,6 +118,41 @@ public static class UpstreamFailure
         Exception sanitized = Classify(exception) == UpstreamFailureKind.Authentication
             ? new UpstreamAuthenticationException(sanitizedMessage)
             : new UpstreamConnectionLostException(sanitizedMessage);
+        sanitized.Data[OriginalTypesKey] = TypeChain(exception);
+        return sanitized;
+    }
+
+    /// <summary>
+    /// Ersetzt den Fehlschlag eines Aufrufs durch einen mit bereinigter Meldung, solange noch feststeht,
+    /// welche Verbindung ihn ausgeführt hat (Plan 0005 G5). Später, beim Formulieren über die Hülle,
+    /// die der Aufrufer in der Hand hält, ist das nicht mehr sicher: Deren Ersatzverbindung kann
+    /// inzwischen eine andere sein — mit einem anderen Token.
+    /// <para>
+    /// Zeitüberschreitung, Abbruch und Sitzungsverlust behalten ihren Typ: Aufrufer und Wiederholung
+    /// unterscheiden daran. Alles andere wird wie bei <see cref="Sanitize"/> ersetzt (Fehlerart und
+    /// Typnamen bleiben).
+    /// </para>
+    /// </summary>
+    /// <param name="exception">Der ursprüngliche Fehlschlag.</param>
+    /// <param name="sanitizedMessage">Der Grund, schon bereinigt — mit den Zugangsdaten der ausführenden Verbindung.</param>
+    [NoHostExecution("Verpackt eine Ausnahme; startet nichts.")]
+    internal static Exception SanitizeAttempt(Exception exception, string sanitizedMessage)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        ArgumentNullException.ThrowIfNull(sanitizedMessage);
+
+        Exception? sanitized = exception switch
+        {
+            TimeoutException => new TimeoutException(sanitizedMessage),
+            OperationCanceledException canceled => new OperationCanceledException(sanitizedMessage, canceled.CancellationToken),
+            UpstreamSessionLostException => new UpstreamSessionLostException(sanitizedMessage),
+            _ => null,
+        };
+        if (sanitized is null)
+        {
+            return Sanitize(exception, sanitizedMessage);
+        }
+
         sanitized.Data[OriginalTypesKey] = TypeChain(exception);
         return sanitized;
     }
