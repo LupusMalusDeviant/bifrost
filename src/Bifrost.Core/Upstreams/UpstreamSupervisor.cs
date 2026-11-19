@@ -151,6 +151,16 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
             // hier ist das Entfernen beschlossen und wird auch ohne den Aufrufer zu Ende geführt;
             // sonst bliebe ein gestoppter Server zurück, der nach dem Neustart wieder hochkommt.
             await _store.RemoveAsync(id, ct).ConfigureAwait(false);
+
+            // G7: Ab hier schreibt keine Prüfung mehr Pins für diesen Upstream fort. Eine, die schon im
+            // Schreiben steckt (eine explizite Neuabfrage nimmt keine Verwaltungssperre), räumt nach
+            // ihrem Schreiben selbst nach — sonst stünde nach dem Vergessen unten ein Pin für einen
+            // Server, den es nicht mehr gibt. Das Entfernen wartet dafür auf nichts.
+            lock (entry.Gate)
+            {
+                entry.PinsRetired = true;
+            }
+
             await StopLoopAsync(entry, drain, CancellationToken.None).ConfigureAwait(false);
             ReleaseDeferredLifecycle(entry);
             entry.Removed = true;
@@ -298,10 +308,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
 
         lock (entry.Gate)
         {
-            if (!entry.Config.Enabled || entry.State is UpstreamState.Stopped or UpstreamState.Healthy
-                or UpstreamState.Degraded)
+            if (!entry.Config.Enabled || entry.State is UpstreamState.Stopped)
             {
-                // Aus bleibt aus (Z2); eine stehende Verbindung braucht keinen Anstoß.
+                // Aus bleibt aus (Z2).
                 return;
             }
 
@@ -316,9 +325,19 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
                 return;
             }
 
-            // Ein Versuch läuft — beim ersten Aufbau (Starting) oder als Wiederholung. Liest er noch
-            // das alte Token, scheitert er; dann folgt der nächste ohne Frist (Plan 0005 D11).
-            entry.CredentialsChanged = true;
+            // Ein Versuch läuft — beim ersten Aufbau (Starting), als Wiederholung (Failed) oder als
+            // Neuaufbau einer verlorenen Sitzung bzw. nach einem erneuerten Token (Degraded, G2). Liest
+            // er noch das alte Token, scheitert er; dann folgt der nächste ohne Frist (Plan 0005 D11).
+            // Maßgeblich ist, ob ein Versuch läuft, nicht der Anzeigezustand: Ein Neuaufbau steht auf
+            // Degraded, und ein dort verworfenes Signal ließe den Upstream die lange Frist nach E2 —
+            // oder an einer gesetzten Grenze für immer — warten, obwohl ein gültiges Token vorliegt.
+            if (entry.AttemptRunning || entry.State is UpstreamState.Starting or UpstreamState.Failed)
+            {
+                entry.CredentialsChanged = true;
+            }
+
+            // Sonst steht die Verbindung (Healthy, oder Degraded wegen eines fehlenden Lebenszeichens):
+            // Sie braucht keinen Anstoß (N12).
         }
     }
 
@@ -329,6 +348,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
     private static TaskCompletionSource WakeAfterFailure(Entry entry)
     {
         var wake = NewWake();
+
+        // Der Versuch ist verbucht; ab hier trägt das Wecksignal ein neues Token (G2).
+        entry.AttemptRunning = false;
         if (entry.CredentialsChanged)
         {
             entry.CredentialsChanged = false;
@@ -439,6 +461,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
             // Ein abgelöster Loop setzt das nicht mehr zurück (F2) — es gehört ab hier dem neuen.
             entry.LoopWaiting = false;
             entry.CredentialsChanged = false;
+            entry.AttemptRunning = false;
             entry.CatalogRefused = null;
             entry.RenewalUnconfirmed = false;
         }
@@ -610,6 +633,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
                     }
 
                     firstAttempt = false;
+                    MarkConnecting(entry);
                     var session = await EstablishAsync(entry, _options.ConnectAttemptTimeout, ct).ConfigureAwait(false);
                     if (!Publish(entry, session, afterSessionLoss: false, ct))
                     {
@@ -635,6 +659,23 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
                 // einem Nachfolger — Zähler, Zustand, Verbindung und Audit wären dann dessen.
                 if (ct.IsCancellationRequested)
                 {
+                    return;
+                }
+
+                // G4: Wird der Upstream gerade gestoppt, gehört das Schließen der Verbindung allein dem
+                // Stopp-Pfad. Ein Verlust im Drain — etwa eine abgewiesene Katalogabfrage — schließt hier
+                // nichts und bucht kein Failed mitten im Abschalten; der Loop wartet nur auf seinen Abbruch.
+                if (IsStopping(entry))
+                {
+                    try
+                    {
+                        await Task.Delay(Timeout.InfiniteTimeSpan, _time, ct).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        // erwartetes Ende
+                    }
+
                     return;
                 }
 
@@ -903,6 +944,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
                 entry.LastHealthyAt = now;
                 entry.Wake = null;
                 entry.CredentialsChanged = false;
+                entry.AttemptRunning = false;
                 entry.CatalogRefused = null;
                 entry.RebuildRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -1144,6 +1186,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
             }
 
             Session replacement;
+            MarkConnecting(entry);
             try
             {
                 replacement = await EstablishAsync(entry, _options.SessionRebuildTimeout, ct).ConfigureAwait(false);
@@ -1267,7 +1310,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
             {
                 return TakeRebuild(entry);
             }
-            catch (Exception ex) when (MayRenewCredentials(entry, ex, healthySince))
+            catch (Exception ex) when (!IsStopping(entry) && MayRenewCredentials(entry, ex, healthySince))
             {
                 // V1: abgewiesenes Token — ServeAsync erneuert es und verbindet sofort neu.
                 lock (entry.Gate)
@@ -1276,6 +1319,14 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
                 }
 
                 return TakeRebuild(entry);
+            }
+            catch (Exception) when (IsStopping(entry))
+            {
+                // G4: Der Upstream wird gestoppt und wartet nur noch auf laufende Aufrufe. Das Schließen
+                // der Verbindung gehört ab hier allein dem Stopp-Pfad: Ein Lebenszeichen, das im Drain
+                // fehlt, zählt nicht gegen die Toleranz, bucht weder Degraded noch Failed und schließt
+                // nicht die Verbindung, auf deren Aufrufe der Drain wartet.
+                continue;
             }
             catch (Exception ex)
             {
@@ -1334,7 +1385,9 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
                 }
             }
 
-            if (now >= nextCatalogPoll)
+            // Im Drain wird der Katalog nicht mehr gefragt (G4): Eine Abweisung schlösse sonst die
+            // Verbindung, auf deren Aufrufe der Drain wartet.
+            if (now >= nextCatalogPoll && !IsStopping(entry))
             {
                 nextCatalogPoll = now + _options.CatalogPollInterval;
                 try
@@ -1599,6 +1652,28 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
                     entry.LoopWaiting = false;
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Ein Verbindungsaufbau beginnt — erster Versuch, Wiederholung oder Neuaufbau der Sitzung (G2).
+    /// Bis er veröffentlicht oder als gescheitert verbucht ist, merkt sich
+    /// <see cref="CredentialsChanged(ServerId)"/> ein neues Token für den nächsten Versuch.
+    /// </summary>
+    private static void MarkConnecting(Entry entry)
+    {
+        lock (entry.Gate)
+        {
+            entry.AttemptRunning = true;
+        }
+    }
+
+    /// <summary>Wird der Upstream gerade gestoppt (Drain eingeschlossen)?</summary>
+    private static bool IsStopping(Entry entry)
+    {
+        lock (entry.Gate)
+        {
+            return entry.Stopping;
         }
     }
 
@@ -2047,8 +2122,20 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
                 }
             }
 
+            ThrowIfPinsRetired(entry);
             var hash = ToolDefinitionHash.Compute(tool);
             var verdict = await pins.VerifyAsync(entry.Id, tool.Name, hash, ct).ConfigureAwait(false);
+
+            // G7: Wurde der Upstream entfernt, während die Prüfung schrieb, hat das Entfernen seine
+            // Pins womöglich schon vergessen — und dieser hier kam danach. Er wird mit allen übrigen
+            // noch einmal vergessen. Da das Entfernen das Merkzeichen VOR seinem Vergessen setzt, sieht
+            // jede Prüfung, deren Schreiben danach endet, es hier.
+            if (PinsRetired(entry))
+            {
+                await ForgetRetiredPinsAsync(entry).ConfigureAwait(false);
+                ThrowIfPinsRetired(entry);
+            }
+
             if (verdict is ToolDefinitionVerdict.Changed)
             {
                 quarantined.Add(tool.Name);
@@ -2086,6 +2173,41 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
         return quarantined.Count == 0
             ? (inventory, [])
             : (inventory with { Tools = kept }, quarantined);
+    }
+
+    private static bool PinsRetired(Entry entry)
+    {
+        lock (entry.Gate)
+        {
+            return entry.PinsRetired;
+        }
+    }
+
+    private static void ThrowIfPinsRetired(Entry entry)
+    {
+        if (PinsRetired(entry))
+        {
+            throw new UpstreamConnectionLostException(
+                "Der Upstream wurde entfernt; seine Werkzeugdefinitionen werden nicht mehr festgehalten.");
+        }
+    }
+
+    /// <summary>
+    /// Vergisst die Pins eines entfernten Upstreams noch einmal — für eine Prüfung, deren Schreiben erst
+    /// nach dem Vergessen beim Entfernen endete (G7). Wirft nicht: Der Aufrufer meldet ohnehin, dass der
+    /// Upstream fort ist; scheitert das Nachräumen, steht es im Log.
+    /// </summary>
+    private async Task ForgetRetiredPinsAsync(Entry entry)
+    {
+        try
+        {
+            await _pins!.ForgetServerAsync(entry.Id, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            var types = UpstreamFailure.TypeChain(ex);
+            Quietly(() => Log.RetiredPinsForgetFailed(_logger, entry.Config.Slug, types));
+        }
     }
 
     /// <summary>
@@ -2669,6 +2791,18 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
         public bool CredentialsChanged { get; set; }
 
         /// <summary>
+        /// Ein Verbindungsaufbau läuft oder ist gescheitert, aber noch nicht verbucht — unabhängig vom
+        /// angezeigten Zustand (G2): Der Neuaufbau einer Sitzung steht auf Degraded. Unter <see cref="Gate"/>.
+        /// </summary>
+        public bool AttemptRunning { get; set; }
+
+        /// <summary>
+        /// Der Upstream ist entfernt; seine Pins sind vergessen oder werden es gleich (G7). Eine Prüfung,
+        /// die danach noch schreibt, räumt selbst nach. Unter <see cref="Gate"/>.
+        /// </summary>
+        public bool PinsRetired { get; set; }
+
+        /// <summary>
         /// Eine ausgelöste Katalogabfrage wurde mit 401/403 abgewiesen (E5). Der Loop der stehenden
         /// Verbindung liest es nach dem Wecken und beendet die Verbindung. Nur unter <see cref="Gate"/>.
         /// </summary>
@@ -2844,6 +2978,10 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
                 + "der Connector beachtet seinen Abbruch nicht. Jeder hält bis zu seinem Ende Ressourcen "
                 + "(Prozess, Socket).")]
         public static partial void LateConnectsPiling(ILogger logger, string slug, int count);
+
+        [LoggerMessage(Level = LogLevel.Error,
+            Message = "Upstream {Slug}: Nach dem Entfernen ließ sich ein spät geschriebener Pin nicht vergessen; er steht womöglich noch in der Ablage. [{ExceptionTypes}]")]
+        public static partial void RetiredPinsForgetFailed(ILogger logger, string slug, string exceptionTypes);
 
         [LoggerMessage(Level = LogLevel.Error,
             Message = "Upstream {Slug} ließ sich beim Beenden des Gateways nicht sauber stoppen. [{ExceptionTypes}]")]
