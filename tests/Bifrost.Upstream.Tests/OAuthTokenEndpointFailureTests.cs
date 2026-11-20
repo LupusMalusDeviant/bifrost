@@ -13,6 +13,9 @@ namespace Bifrost.Upstream.Tests;
 /// </summary>
 public sealed class OAuthTokenEndpointFailureTests
 {
+    /// <summary>Die Obergrenze einer Token-Laufzeit (N53): zehn Jahre in Sekunden.</summary>
+    private const long TenYears = 10L * 365 * 24 * 60 * 60;
+
     [Theory]
     [InlineData(HttpStatusCode.ServiceUnavailable)]
     [InlineData(HttpStatusCode.InternalServerError)]
@@ -328,6 +331,9 @@ public sealed class OAuthTokenEndpointFailureTests
     [InlineData("""{"access_token":"ACCESS","scope":["a"]}""")]
     [InlineData("""{"access_token":"ACCESS","refresh_token":{}}""")]
     [InlineData("""{"access_token":"ACCESS","expires_in":"bald"}""")]
+    [InlineData("""{"access_token":"\uD800"}""")]
+    [InlineData("""{"access_token":"ACCESS","scope":"\uDC00 a"}""")]
+    [InlineData("""{"access_token":"ACCESS","refresh_token":"\uD800"}""")]
     public async Task A_malformed_token_response_arrives_as_a_rejected_login(string body)
     {
         var access = "at-" + Guid.NewGuid().ToString("N");
@@ -341,12 +347,19 @@ public sealed class OAuthTokenEndpointFailureTests
         server.McpRequests.Should().Be(0, "ohne brauchbares Token geht nichts an den Upstream");
     }
 
-    /// <summary>H7: Manche Anbieter senden die Laufzeit als Text; der wird gelesen, nicht verworfen.</summary>
+    /// <summary>
+    /// H7, I8: Manche Anbieter senden die Laufzeit als Text; der wird gelesen, nicht verworfen. Eine
+    /// Kommazahl wird abgerundet, alles über zehn Jahre (als Zahl wie als Text) auf zehn Jahre begrenzt.
+    /// </summary>
     [Theory]
-    [InlineData("\"3600\"")]
-    [InlineData("3600.7")]
-    [InlineData("99999999999999")]
-    public async Task The_lifetime_is_read_from_text_fractions_and_huge_numbers(string expiresIn)
+    [InlineData("\"3600\"", 3600L)]
+    [InlineData("3600.7", 3600L)]
+    [InlineData("99999999999999", TenYears)]
+    [InlineData("\"99999999999999999999999\"", TenYears)]
+    [InlineData("99999999999999999999999", TenYears)]
+    [InlineData("1e400", TenYears)]
+    [InlineData("-5", 0L)]
+    public async Task The_lifetime_is_read_from_text_fractions_and_huge_numbers(string expiresIn, long expectedSeconds)
     {
         using var server = new AuthorizationServer(HttpStatusCode.OK)
         {
@@ -359,7 +372,7 @@ public sealed class OAuthTokenEndpointFailureTests
             token, new Uri(server.Issuer, "/token"), new UpstreamOAuthOptions("gateway", AllowPrivateTargets: true),
             "http://127.0.0.1/mcp", now, TestContext.Current.CancellationToken);
 
-        refreshed.ExpiresAt.Should().NotBeNull().And.BeAfter(now.AddMinutes(59));
+        refreshed.ExpiresAt.Should().Be(now + TimeSpan.FromSeconds(expectedSeconds));
     }
 
     [Theory]

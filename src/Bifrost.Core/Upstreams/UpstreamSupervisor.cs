@@ -171,7 +171,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
             // Hinzufügen und Entfernen und stehen für immer in der Verwaltungsansicht.
             if (_pins is not null)
             {
-                await _pins.ForgetServerAsync(id, CancellationToken.None).ConfigureAwait(false);
+                await _pins.ForgetServerAsync(id, () => NoSuccessor(entry), CancellationToken.None).ConfigureAwait(false);
             }
 
             // Ebenso sein OAuth-Token (E2): Es hängt nur an der ServerId und gälte sonst für nichts mehr.
@@ -665,7 +665,48 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
                 // G4: Wird der Upstream gerade gestoppt, gehört das Schließen der Verbindung allein dem
                 // Stopp-Pfad. Ein Verlust im Drain — etwa eine abgewiesene Katalogabfrage — schließt hier
                 // nichts und bucht kein Failed mitten im Abschalten; der Loop wartet nur auf seinen Abbruch.
-                if (IsStopping(entry))
+                // Plan 0005 I4: Geprüft wird unter entry.Gate, unter der auch der Stopp sein Stopping
+                // setzt — vorher lag die Prüfung davor, und ein Stopp dazwischen fand die Verbindung schon
+                // vom Fehlerpfad geschlossen, während sein Drain noch auf laufende Aufrufe wartete.
+                //
+                // Z1: Was ab hier scheitert, darf den Loop nicht beenden. Die Buchführung schreibt ins
+                // Audit, und das Audit darf werfen (im Compliance-Modus bei vollem Kanal). Ein Loop,
+                // der daran stirbt, hinterlässt genau den Zustand, den es nicht mehr geben soll:
+                // Failed, und niemand versucht es wieder.
+                int attempt;
+                bool stopping;
+                Detached lost = default;
+                lock (entry.Gate)
+                {
+                    // Unter derselben Sperre, unter der ein Nachfolger seinen Zustand bekommt (StartLoop):
+                    // Ein abgelöster Loop zählt keinen Versuch mehr und vermerkt keinen laufenden.
+                    if (ct.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    stopping = entry.Stopping;
+                    attempt = stopping ? entry.Attempt : ++entry.Attempt;
+
+                    // H4: Ab hier bis zum Verbuchen läuft ein Versuch — auch während des Schließens der
+                    // verlorenen Verbindung, das bis zu StopJoinTimeout dauern kann. Ohne diese Marke
+                    // stünde der Zustand dort noch auf Healthy oder Degraded, und es wartete niemand:
+                    // CredentialsChanged verwürfe ein neues Token, und an einer gesetzten Grenze bliebe
+                    // der Upstream stehen (E13). Zurückgesetzt wird die Marke in WakeAfterFailure — beide
+                    // Wege unten (MarkFailed, SetFailedState) kommen dort vorbei, außer der Loop ist
+                    // abgelöst; dann setzt sie StartLoop des Nachfolgers zurück.
+                    if (!stopping)
+                    {
+                        entry.AttemptRunning = true;
+
+                        // I4: Die Verbindung wird hier gelöst, nicht erst beim Schließen: Ab jetzt gehört
+                        // sie dem Fehlerpfad, und ein Stopp, der danach beginnt, findet keine mehr, deren
+                        // Aufrufe er abwarten müsste. Geschlossen wird unten, ohne Sperre.
+                        lost = DetachConnection(entry);
+                    }
+                }
+
+                if (stopping)
                 {
                     try
                     {
@@ -677,32 +718,6 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
                     }
 
                     return;
-                }
-
-                // Z1: Was ab hier scheitert, darf den Loop nicht beenden. Die Buchführung schreibt ins
-                // Audit, und das Audit darf werfen (im Compliance-Modus bei vollem Kanal). Ein Loop,
-                // der daran stirbt, hinterlässt genau den Zustand, den es nicht mehr geben soll:
-                // Failed, und niemand versucht es wieder.
-                int attempt;
-                lock (entry.Gate)
-                {
-                    // Unter derselben Sperre, unter der ein Nachfolger seinen Zustand bekommt (StartLoop):
-                    // Ein abgelöster Loop zählt keinen Versuch mehr und vermerkt keinen laufenden.
-                    if (ct.IsCancellationRequested)
-                    {
-                        return;
-                    }
-
-                    attempt = ++entry.Attempt;
-
-                    // H4: Ab hier bis zum Verbuchen läuft ein Versuch — auch während des Schließens der
-                    // verlorenen Verbindung, das bis zu StopJoinTimeout dauern kann. Ohne diese Marke
-                    // stünde der Zustand dort noch auf Healthy oder Degraded, und es wartete niemand:
-                    // CredentialsChanged verwürfe ein neues Token, und an einer gesetzten Grenze bliebe
-                    // der Upstream stehen (E13). Zurückgesetzt wird die Marke in WakeAfterFailure — beide
-                    // Wege unten (MarkFailed, SetFailedState) kommen dort vorbei, außer der Loop ist
-                    // abgelöst; dann setzt sie StartLoop des Nachfolgers zurück.
-                    entry.AttemptRunning = true;
                 }
 
                 // Vor dem geschützten Block bestimmt: Eine ausdrücklich gesetzte Obergrenze (E1) gilt
@@ -724,7 +739,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
 
                     // Befristet (F2, Z1): Ein Prozess oder Container, der beim Beenden hängt, hielte
                     // sonst jeden weiteren Versuch für immer auf.
-                    await WithinCloseTimeoutAsync(entry, CleanupConnectionAsync(entry), ct).ConfigureAwait(false);
+                    await WithinCloseTimeoutAsync(entry, DisposeDetachedAsync(lost), ct).ConfigureAwait(false);
 
                     // F2, N20: Nach dem Warten zuerst prüfen, ob dieser Loop abgelöst ist. Hat das
                     // Stoppen nach seiner Frist aufgegeben, gehört der Eintrag schon einem Nachfolger.
@@ -1804,30 +1819,47 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
         }
     }
 
-    private async Task CleanupConnectionAsync(Entry entry)
+    private Task CleanupConnectionAsync(Entry entry)
     {
-        GuardedUpstreamConnection? connection;
-        TaskCompletionSource<GuardedUpstreamConnection>? rebuild;
+        Detached detached;
         lock (entry.Gate)
         {
-            connection = entry.Connection;
-            entry.Connection = null;
-            entry.Inventory = null;
-            entry.ToolCount = 0;
-            entry.RebuildRequested = null;
-            rebuild = entry.Rebuild;
-            entry.Rebuild = null;
+            detached = DetachConnection(entry);
         }
 
+        return DisposeDetachedAsync(detached);
+    }
+
+    /// <summary>Was beim Lösen der Verbindung vom Eintrag abfällt — geschlossen wird es danach, ohne Sperre.</summary>
+    private readonly record struct Detached(
+        GuardedUpstreamConnection? Connection, TaskCompletionSource<GuardedUpstreamConnection>? Rebuild);
+
+    /// <summary>
+    /// Löst Verbindung, Inventar und wartenden Neuaufbau vom Eintrag. Nur unter <see cref="Entry.Gate"/>:
+    /// Wer hier löst, hat die Verbindung für sich beansprucht (Plan 0005 I4).
+    /// </summary>
+    private static Detached DetachConnection(Entry entry)
+    {
+        var detached = new Detached(entry.Connection, entry.Rebuild);
+        entry.Connection = null;
+        entry.Inventory = null;
+        entry.ToolCount = 0;
+        entry.RebuildRequested = null;
+        entry.Rebuild = null;
+        return detached;
+    }
+
+    private async Task DisposeDetachedAsync(Detached detached)
+    {
         // Wer noch auf einen Neuaufbau wartet, bekommt eine Antwort statt einer Wartezeit bis zu
         // seinem eigenen Zeitlimit.
-        if (rebuild is not null && rebuild.TrySetException(new UpstreamConnectionLostException(
+        if (detached.Rebuild is { } rebuild && rebuild.TrySetException(new UpstreamConnectionLostException(
                 "Die Sitzung ging verloren, und der Upstream ist nicht mehr verbunden.")))
         {
             Observe(rebuild.Task);
         }
 
-        if (connection is not null)
+        if (detached.Connection is { } connection)
         {
             await DisposeQuietlyAsync(connection).ConfigureAwait(false);
         }
@@ -2019,6 +2051,11 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
 
             await RefreshInventoryCoreAsync(entry, connection, raiseAlways, ct).ConfigureAwait(false);
         }
+        catch (UpstreamCatalogWithheldException) when (IsStopping(entry))
+        {
+            // I3: Der Drain begann mitten in der Abfrage; die Verbindung hat vor der nächsten Anfrage
+            // aufgehört. Ohne Wirkung wie eine Abfrage, die erst im Drain käme (N49) — kein Fehler.
+        }
         finally
         {
             entry.RediscoveryLock.Release();
@@ -2028,7 +2065,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
     private async Task RefreshInventoryCoreAsync(
         Entry entry, GuardedUpstreamConnection connection, bool raiseAlways, CancellationToken ct)
     {
-        var inventory = await connection.DiscoverAsync(ct).ConfigureAwait(false);
+        var inventory = await connection.DiscoverAsync(() => !IsStopping(entry), ct).ConfigureAwait(false);
         var (screened, quarantined) = await ScreenInventoryAsync(entry, inventory, connection, standing: true, ct)
             .ConfigureAwait(false);
 
@@ -2237,7 +2274,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
     {
         try
         {
-            await _pins!.ForgetServerAsync(entry.Id, CancellationToken.None).ConfigureAwait(false);
+            await _pins!.ForgetServerAsync(entry.Id, () => NoSuccessor(entry), CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -2245,6 +2282,15 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
             Quietly(() => Log.RetiredPinsForgetFailed(_logger, entry.Config.Slug, types));
         }
     }
+
+    /// <summary>
+    /// Plan 0005 I1: Die Pins einer <see cref="ServerId"/> gehören dem Eintrag, der unter ihr steht.
+    /// Ist dieselbe Id nach dem Entfernen neu eingetragen (Konfigurations-Import mit der Id aus dem
+    /// Export), räumt der alte Eintrag nichts mehr — sonst löschte er die Pins, die die erste Prüfung
+    /// des Nachfolgers gerade geschrieben hat, und eine geänderte Definition gälte als Erstsichtung.
+    /// </summary>
+    private bool NoSuccessor(Entry retired)
+        => !_entries.TryGetValue(retired.Id, out var current) || ReferenceEquals(current, retired);
 
     /// <summary>
     /// Nimmt Werkzeuge, deren Definition sich geändert hat, sofort aus dem geltenden Inventar — ehe

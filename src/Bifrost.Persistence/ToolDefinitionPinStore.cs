@@ -179,14 +179,28 @@ public sealed class ToolDefinitionPinStore : IToolDefinitionPinStore
         return changed == 1;
     }
 
-    public async Task ForgetServerAsync(ServerId server, CancellationToken ct)
+    public Task ForgetServerAsync(ServerId server, CancellationToken ct)
+        => ForgetServerAsync(server, static () => true, ct);
+
+    public async Task ForgetServerAsync(ServerId server, Func<bool> stillRetired, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(stillRetired);
+
         // H5: Unter derselben Sperre wie die Schreibvorgänge. Ein laufender Vorgang veröffentlicht
         // vollständig, bevor hier gelöscht wird; einer, der danach kommt, liest die Datenbank neu.
+        // Das Entfernen wartet damit höchstens auf einen laufenden Datenbankschritt, nicht auf eine
+        // Katalogabfrage (N51).
         var gate = LockFor(server);
         await gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // I1: Erst unter der Sperre gefragt — ist die Id inzwischen neu eingetragen, gehören die
+            // Pins dem Nachfolger, auch wenn sie schon vor ihm geschrieben wurden.
+            if (!stillRetired())
+            {
+                return;
+            }
+
             await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
             await db.ToolDefinitionPins.Where(r => r.ServerId == server.Value)
                 .ExecuteDeleteAsync(ct).ConfigureAwait(false);

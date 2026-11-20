@@ -150,6 +150,29 @@ internal sealed class FakeUpstreamConnection : IUpstreamConnection, IPresentedCr
         return DiscoverException is { } ex ? throw ex : inventory;
     }
 
+    /// <summary>Folgeanfragen des Katalogs (wie <c>resources/list</c>), die hinausgegangen wären.</summary>
+    public int FollowUpRequests => Volatile.Read(ref _followUpRequests);
+
+    /// <summary>Folgeanfragen, die die Verbindung auf die Frage nach dem Weitermachen hin unterließ (I3).</summary>
+    public int FollowUpsWithheld => Volatile.Read(ref _followUpsWithheld);
+
+    private int _followUpRequests;
+    private int _followUpsWithheld;
+
+    /// <summary>Wie eine SDK-Verbindung: nach <c>tools/list</c> eine Folgeanfrage — nur, wenn sie noch darf.</summary>
+    public async Task<UpstreamInventory> DiscoverAsync(Func<bool> mayContinue, CancellationToken ct)
+    {
+        var inventory = await DiscoverAsync(ct).ConfigureAwait(false);
+        if (!mayContinue())
+        {
+            Interlocked.Increment(ref _followUpsWithheld);
+            throw new UpstreamCatalogWithheldException("Folgeanfrage unterlassen (Test).");
+        }
+
+        Interlocked.Increment(ref _followUpRequests);
+        return inventory;
+    }
+
     /// <summary>Wenn gesetzt, wirft CallToolAsync diese Exception.</summary>
     public Exception? CallException { get; set; }
 

@@ -196,6 +196,9 @@ internal sealed class ContainerBackedUpstreamConnection(
 
     public Task<UpstreamInventory> DiscoverAsync(CancellationToken ct) => inner.DiscoverAsync(ct);
 
+    public Task<UpstreamInventory> DiscoverAsync(Func<bool> mayContinue, CancellationToken ct)
+        => inner.DiscoverAsync(mayContinue, ct);
+
     public Task<System.Text.Json.JsonElement> CallToolAsync(
         string toolName, System.Text.Json.JsonElement args, CancellationToken ct)
         => inner.CallToolAsync(toolName, args, ct);

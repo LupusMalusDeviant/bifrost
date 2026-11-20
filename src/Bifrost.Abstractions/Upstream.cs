@@ -784,6 +784,15 @@ public interface IUpstreamConnection : IAsyncDisposable
 
     Task<UpstreamInventory> DiscoverAsync(CancellationToken ct);
 
+    /// <summary>
+    /// Wie <see cref="DiscoverAsync(CancellationToken)"/>; vor jeder Folgeanfrage des Katalogs
+    /// (<c>resources/list</c>, <c>prompts/list</c>) fragt eine Verbindung, die mehrere Anfragen
+    /// schickt, <paramref name="mayContinue"/>. Gilt es nicht mehr, sendet sie nichts weiter und wirft
+    /// <see cref="UpstreamCatalogWithheldException"/> (Plan 0005 I3: kein Katalogverkehr im Drain).
+    /// Eine Verbindung mit nur einer Anfrage braucht die Frage nicht.
+    /// </summary>
+    Task<UpstreamInventory> DiscoverAsync(Func<bool> mayContinue, CancellationToken ct) => DiscoverAsync(ct);
+
     Task<JsonElement> CallToolAsync(string toolName, JsonElement args, CancellationToken ct);
 
     /// <summary>Liest eine Resource des Upstreams (FR-04); Ergebnis ist das serialisierte ReadResourceResult.</summary>

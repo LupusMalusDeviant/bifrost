@@ -396,6 +396,38 @@ warten auf deine Entscheidung.
 | H8 | Wortlaut N47 berichtigt | N47 | `OAuthDiscoveryClassificationTests.Nonsense_beside_a_disturbed_path_arrives_as_unreachable` (hält das schon richtige Verhalten fest, grün) |
 | H9 | Ablehnung hinter der Tiefengrenze wird als innerstes Glied angehängt | N54 | `HandshakeFailureDepthTests` (2 rot, 1 Schutz der Grenze) |
 
+### Siebtes Codex-Review vom 2026-11-20 (`079bb33..74c5129`)
+
+Codex (gpt-6.2-sol) meldet 8 Befunde (1 hoch, 5 mittel, 2 niedrig, kein kritischer) zur Behebung
+von H3 – H9. Jeder ist gegen den Code geprüft (nur gelesen, nichts behoben); I5 zusätzlich mit
+einem Probelauf gegen .NET 10. Spalten wie in der sechsten Runde.
+
+| # | Codex | Inhalt | Urteil | Herkunft | Schwere | Marke |
+|---|---|---|---|---|---|---|
+| I1 | hoch | Eine ausdrückliche Neuabfrage des alten Eintrags steckt beim Entfernen im Schreiben; ihr spätes Nachräumen (`ForgetRetiredPinsAsync`, `UpstreamSupervisor.cs:2236`) vergisst alle Pins der `ServerId`. Wird dieselbe Id inzwischen per Konfigurations-Import wiederhergestellt (`ServerConfigurationPorts.cs:129`, Id aus dem Export) und hat ihre erste Prüfung schon Pins geschrieben, löscht das späte Nachräumen sie. Die nächste Abfrage nimmt dann eine geänderte Definition als Erstsichtung an (Z6). Das Nachräumen kennt nur die Id, nicht die Registrierung. Das Fenster ist eine Datenbankoperation lang, das Wiederherstellen ein Verwaltungsschritt. | echt, sehr schmal | G7 (nicht durch H5) | niedrig – mittel | `[Claude-prüfbar]` |
+| I2 | mittel | `ForgetServerAsync` wartet auf die Sperre je Upstream, die `VerifyAsync`/`AcceptAsync` für ihren Datenbankschritt halten (`ToolDefinitionPinStore.cs:186`); das Entfernen hält dabei die Verwaltungssperre. N46 sagt „Das Entfernen wartet auf keine Prüfung“. Es wartet nur auf einen laufenden Datenbankschritt, nicht auf die Katalogabfrage; hängt die Datenbank, hinge das Vergessen selbst ebenso. Die Tests geben die blockierte Operation nach einer Frist frei und sähen ein echtes Warten nicht. | teilweise (Wortlaut N46/N51) | neu (H5) | niedrig | `[Claude-prüfbar]` |
+| I3 | mittel | Läuft `tools/list` schon, wenn der Drain beginnt, schickt `SdkUpstreamConnection.ListAsync` danach noch `resources/list` und `prompts/list` (`SdkUpstreamConnection.cs:257 – 265`) ohne neue Prüfung. Ein 404 darauf könnte nach D13 einen laufenden Aufruf beenden. N49 nennt das Restfenster zwischen Prüfung und Senden, aber nur für eine Anfrage, nicht für die Folgeanfragen. | echt | H3 unvollständig | niedrig | `[Claude-prüfbar]` |
+| I4 | mittel | Der Fehlerpfad des Loops prüft `IsStopping` außerhalb von `entry.Gate` (`UpstreamSupervisor.cs:665`); unter der Sperre prüft er nur `ct`, und den bricht der Stopp erst nach dem Drain ab. Beginnt der Stopp dazwischen, schließt `CleanupConnectionAsync` die Verbindung, während der Drain noch auf laufende Aufrufe wartet (verletzt G4/N45). Auslöser ist ein gescheitertes Lebenszeichen oder ein Sitzungsverlust; die Verbindung ist dann meist ohnehin gestört. | echt | G4 (alt) | niedrig – mittel | `[Claude-prüfbar]` |
+| I5 | mittel | Ein Token-Feld mit einzelnem Surrogat-Escape (`"\uD800"`) hat `ValueKind == String`, `GetString()` wirft `InvalidOperationException` (Probelauf .NET 10 bestätigt). Der Rückruf fängt nur `OAuthDiscoveryException` (`UpstreamOAuthEndpoints.cs:130`) → 500 statt 400; die Erneuerung wird „nicht erreichbar“. | echt | H7 unvollständig | mittel | `[Claude-prüfbar]` |
+| I6 | mittel | Die Schema-Erkennung gilt für jeden Geheimwert, nicht nur für Kopfzeilen: Ein Umgebungswert, der mit `Token ` beginnt, wird ab dem Teil nach dem Leerzeichen gemessen. Unmaskiert bleiben dann das Wort und bis zu 5 Zeichen danach. Das ist dieselbe Restmenge (unter 6 Zeichen), die P3 für jeden Wert hinnimmt; das Schema-Wort selbst ist nicht geheim. Wortlaut: P3 nennt nur „Bearer“ und „Basic“, N52 erweitert die Liste. | teilweise (Wortlaut P3/N52) | neu (H6) | niedrig | entschieden 2026-11-20: Liste aus N52 abgenommen, keine Codeänderung |
+| I7 | niedrig | Zwei Autorisierungen während eines laufenden Versuchs setzen dasselbe `CredentialsChanged` und bringen einen Versuch. E13 sagt „ein Versuch je Autorisierung“. Der zweite Versuch nähme dasselbe (neueste) Token; das Zusammenlegen ist sinnvoll und galt schon vor H4 für jeden laufenden Versuch. | Wortlaut E13/N50 | alt | — | entschieden 2026-11-20: Zusammenlegen bleibt, N50 präzisiert |
+| I8 | niedrig | (a) `expires_in` als Ziffern-Text über `long.MaxValue` wird abgelehnt, als JSON-Zahl begrenzt. (b) Ein ausdrückliches `null` in `refresh_token`, `scope`, `expires_in` gilt als fehlend; N53 sagt „vorhanden, aber kein Text“. (c) Der Laufzeit-Test prüft nur „länger als 59 min“ und sähe weder Aufrunden noch eine fehlende Zehn-Jahres-Grenze. | (a), (c) echt, (b) Wortlaut | neu (H7) | niedrig | `[Claude-prüfbar]` |
+
+Echt und zu beheben: I1, I3, I4, I5, I8 (a, c). Nur der Vertragswortlaut ist falsch: I2 (N46/N51), I8 (b)
+(N53: `null` gilt als fehlend). I6 und I7 sind am 2026-11-20 entschieden (siehe Marke).
+
+**Stand der Behebung (Auftrag „Echte beheben"; Abnahme offen):** I6 und I7 sind ohne
+Codeänderung entschieden (Vertrag N52, N50).
+
+| # | Fix | Vertrag | Test |
+|---|---|---|---|
+| I1 | Entfernen und spätes Nachräumen vergessen Pins nur, solange unter der Id kein Nachfolger steht; gefragt unter der Pin-Sperre | N55 | `SupervisorReviewG2G4G7Tests.I1_…` (rot ohne Fix); `ToolDefinitionPinForgetRaceTests.A_conditional_forget_asks_its_condition_under_the_lock` (echte SQLite; ohne die neue Überladung nicht übersetzbar, kein eigener Rot-Lauf) |
+| I2 | Nur Wortlaut: N51 sagt, worauf das Entfernen wartet | N51 | — |
+| I3 | Die SDK-Verbindung fragt vor `resources/list` und `prompts/list`, ob sie weitermachen darf; im Drain endet die Abfrage ohne Fehler | N56 | `SupervisorReviewH3H4Tests.I3_…` (rot ohne Fix). Die SDK-Verbindung selbst ist nur über den Supervisor-Test und das Fake abgedeckt |
+| I4 | Stopp-Prüfung und Lösen der Verbindung im Fehlerpfad unter `entry.Gate` | N57 | Kein eigener Test: Der Wettlauf braucht einen Haltepunkt zwischen zwei Anweisungen, den es nicht gibt. Die G4-/H3-Tests decken den Drain weiter ab |
+| I5 | Ungültiger Text in Token-Feldern wird zum Formfehler | N58 | `OAuthTokenEndpointFailureTests` (3 neue Fälle, rot ohne Fix) |
+| I8 | (a) Ziffern-Text über `long` begrenzt; Unendlich begrenzt vor der Umwandlung; (b) Wortlaut N53; (c) Laufzeit-Test prüft genaue Werte | N53, N58 | `OAuthTokenEndpointFailureTests.The_lifetime_…` (7 Fälle, 1 rot ohne Fix) |
+
 ## Prüfliste für den Nutzer
 
 1. ~~Vertrag lesen und abnehmen; die sechs Fragen in Abschnitt 8 beantworten.~~ Erledigt am

@@ -184,6 +184,56 @@ public sealed class SupervisorReviewH3H4Tests
     }
 
     /// <summary>
+    /// Plan 0005 I3: Eine ausdrückliche Neuabfrage steckt in <c>tools/list</c>, als das Stoppen
+    /// beginnt. Danach schickt die Verbindung keine Folgeanfrage (<c>resources/list</c>,
+    /// <c>prompts/list</c>) mehr, und die Neuabfrage endet ohne Fehler wie eine im Drain (N49).
+    /// </summary>
+    [Fact]
+    public async Task I3_a_catalog_query_under_way_when_the_drain_begins_sends_no_follow_up()
+    {
+        FakeUpstreamConnection? upstream = null;
+        var connector = new FakeUpstreamConnector
+        {
+            DefaultBehavior = (id, _) => upstream = new FakeUpstreamConnection { Id = id, PushesCatalogChanges = false },
+        };
+        await using var supervisor = Create(connector);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("i3-folge"), Ct);
+        await TestData.WaitUntilAsync(() => supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+
+        var discovering = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (read, release) = StartBlockingRead(supervisor, server, upstream!);
+        var disable = Task.CompletedTask;
+        try
+        {
+            var followUps = upstream!.FollowUpRequests;
+            var discoveries = upstream.DiscoverCalls;
+            upstream.DiscoverHook = () => discovering.Task;
+            var rediscover = supervisor.RediscoverAsync(server, Ct);
+            await TestData.WaitUntilAsync(
+                () => upstream.DiscoverCalls == discoveries + 1, because: "die Neuabfrage muss in tools/list stecken");
+
+            disable = supervisor.SetEnabledAsync(server, false, Ct);
+            await WaitForDrainAsync(supervisor, server);
+
+            discovering.SetResult();
+            await rediscover.WaitAsync(Bound, Ct);
+            upstream.FollowUpRequests.Should().Be(followUps, "im Drain geht keine Folgeanfrage des Katalogs hinaus");
+            upstream.FollowUpsWithheld.Should().Be(1, "die Verbindung wurde vor der Folgeanfrage gefragt");
+            upstream.DisposeCount.Should().Be(0, "die Verbindung, auf deren Aufruf der Drain wartet, bleibt offen");
+
+            release();
+            await read.WaitAsync(Bound, Ct);
+        }
+        finally
+        {
+            discovering.TrySetResult();
+            await FinishAsync(release, disable);
+        }
+
+        supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Stopped);
+    }
+
+    /// <summary>
     /// H3: Eine ausdrückliche Neuabfrage, die erst im Drain beginnt, bleibt ohne Wirkung — wie eine
     /// Neuabfrage ohne Verbindung. Der nächste Aufbau holt den Katalog ohnehin neu und prüft ihn.
     /// </summary>
