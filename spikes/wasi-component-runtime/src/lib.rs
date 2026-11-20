@@ -33,10 +33,10 @@ const CONTROL_PLANE_WIT: &str = include_str!("../../../docs/spikes/fixtures/cont
 ///
 /// Der Wert muss der gepinnten wasmtime-Version entsprechen — nicht nur der Ehrlichkeit halber:
 /// Er trennt im Cache die Kompilate verschiedener Runtime-Stände. Stand er nach einem Sprung noch
-/// auf dem alten Wert (so geschehen bei 47.0.2 → 47.0.3 → 48.0.8), meldet das Audit eine Runtime,
+/// auf dem alten Wert (so geschehen bei 47.0.2 → 47.0.3 → 48.0.8 → 48.0.10), meldet das Audit eine Runtime,
 /// die nicht läuft, und der Cache hält alte und neue Kompilate für dieselben. Der Test
 /// `the_runtime_version_names_the_pinned_wasmtime` hält ihn deshalb gegen `Cargo.lock`.
-pub const RUNTIME_VERSION: &str = "wasmtime-48.0.8";
+pub const RUNTIME_VERSION: &str = "wasmtime-48.0.10";
 const WASI_GUEST_COMPONENT: &[u8] = include_bytes!("../fixtures/wasi-p2-guest.component.wasm");
 /// Mit `wasm32-wasip2` gebauter Reactor-Guest, der `mcpmcp:spike/tools` exportiert — die
 /// Gegenprobe zum Interface-Aufruf. Quelle: `guest-interface/`, Vertrag:

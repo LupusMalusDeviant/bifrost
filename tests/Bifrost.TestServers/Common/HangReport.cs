@@ -53,7 +53,13 @@ public static class HangReport
     /// Die zuletzt beobachteten Tests, ältester zuerst. Der <b>letzte</b> Eintrag ist der, der beim
     /// Schreiben lief; ohne die Vorgänger fehlt der Zusammenhang, der einen Hänger meist erklärt.
     /// </param>
-    public static string Write(string repositoryRoot, string reason, IReadOnlyList<string> sequence)
+    /// <param name="children">
+    /// Die aktiven Kindprozesse; ohne Angabe die echten (<see cref="Children"/>). Ein Test, der den
+    /// Bericht ohne Kinder prüft, gibt eine leere Liste vor: Die echte Liste enthält die Kindprozesse
+    /// parallel laufender Tests desselben Testhosts.
+    /// </param>
+    public static string Write(
+        string repositoryRoot, string reason, IReadOnlyList<string> sequence, IReadOnlyList<string>? children = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repositoryRoot);
         ArgumentNullException.ThrowIfNull(sequence);
@@ -90,7 +96,7 @@ public static class HangReport
 
         text.AppendLine();
         text.AppendLine("── Aktive Kindprozesse ──");
-        var children = Children();
+        children ??= Children();
         if (children.Count == 0)
         {
             text.AppendLine("  (keine — der Haenger liegt dann im Testhost selbst, siehe Dump)");
