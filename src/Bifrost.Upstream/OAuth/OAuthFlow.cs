@@ -416,6 +416,12 @@ public static class OAuthFlow
         {
             return null;
         }
+        catch (InvalidOperationException)
+        {
+            // Plan 0005 J7: Ein Text mit ungültigem Escape (einzelnes Surrogat) ist kein bekannter Code.
+            // Würfe das hier, ginge der HTTP-Status verloren — die Ablehnung würde „nicht erreichbar".
+            return null;
+        }
     }
 
     private static string Base64Url(byte[] bytes)

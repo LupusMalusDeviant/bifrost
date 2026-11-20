@@ -428,6 +428,42 @@ Codeänderung entschieden (Vertrag N52, N50).
 | I5 | Ungültiger Text in Token-Feldern wird zum Formfehler | N58 | `OAuthTokenEndpointFailureTests` (3 neue Fälle, rot ohne Fix) |
 | I8 | (a) Ziffern-Text über `long` begrenzt; Unendlich begrenzt vor der Umwandlung; (b) Wortlaut N53; (c) Laufzeit-Test prüft genaue Werte | N53, N58 | `OAuthTokenEndpointFailureTests.The_lifetime_…` (7 Fälle, 1 rot ohne Fix) |
 
+### Achtes Codex-Review vom 2026-11-20 (`74c5129..fd6c5d5`)
+
+Codex (gpt-6.2-sol) meldet 9 Befunde (1 hoch, 6 mittel, 2 niedrig, kein kritischer). Jeder ist gegen
+den Code geprüft (nur gelesen, nichts behoben). Spalten wie in den Runden davor.
+
+| # | Codex | Inhalt | Urteil | Herkunft | Schwere | Marke |
+|---|---|---|---|---|---|---|
+| J1 | hoch | `RemoveAsync` gibt die Id frei (`_entries.TryRemove`), vergisst dann Pins und löscht erst danach das OAuth-Token. Ein Import mit derselben Id und anderem Endpunkt könnte in der Lücke ein **ungebundenes** Alt-Token (vor F5 gespeichert; `IsBoundTo` lässt es passieren) an den neuen Endpunkt schicken; umgekehrt könnte das alte Entfernen ein gerade gespeichertes Token des Nachfolgers löschen. Gebundene Token schützt `EnsureBound`. Die Lücke ist so lang wie zwei Datenbankschritte; ein Import und eine OAuth-Anmeldung dauern Sekunden. | echt, theoretisch | E2/F5 (alt) | niedrig – mittel (Geheimnis an falsches Ziel) | `[Claude-prüfbar]` |
+| J2 | mittel | Eine alte Prüfung, die `ThrowIfPinsRetired` schon passiert hat, kann nach Entfernen und Wiederherstellen noch einen Pin für die Id schreiben: einen Pin für ein Werkzeug, das der Nachfolger nicht meldet, oder einen anderen ausstehenden Hash. Keine Rechteausweitung (eine Annahme braucht weiter den angezeigten Hash), aber eine falsche Anzeige. Der I1-Test prüft das nicht. Gleiches Fenster wie J1. | echt, theoretisch | G7/I1 | niedrig | `[Claude-prüfbar]` |
+| J3 | mittel | Das SDK holt mehrseitige Listen intern ganz (`ListToolsAsync`/`ListResourcesAsync`/`ListPromptsAsync`); die Frage aus N56 greift nur zwischen den Listen, nicht zwischen Seiten. | echt | I3 unvollständig | niedrig (Seiten selten, 404 im Drain selten) | `[Claude-prüfbar]` |
+| J4 | mittel | Aufbau und Neuaufbau (`EstablishCoreAsync`, Z. 878) rufen `DiscoverAsync` ohne Frage. Ein Neuaufbau, der während des Drains läuft, schickt Folgeanfragen über die **neue** Sitzung; `Publish` verwirft sie danach. Ein 404 dort beendet nicht die alte Sitzung, auf deren Aufruf der Drain wartet. | teilweise | I3 (Umfang) | niedrig | `[Claude-prüfbar]` |
+| J5 | mittel | Gelingt der laufende Versuch mit dem alten Token A, löscht `Publish` `CredentialsChanged`; die neuen Token B/C wirken erst bei der nächsten Erneuerung. Das deckt sich mit N12 (eine stehende Verbindung braucht keinen Anstoß); N50 sagt „danach folgt ein Versuch" ohne die Einschränkung „nach einem Fehlschlag". | Wortlaut N50 | — | — | `[Claude-prüfbar]` (N50 präzisieren) |
+| J6 | mittel | Seit I4 löst der Fehlerpfad die Verbindung, bevor er Fehlerart und Frist berechnet. Wirft dabei etwas (Jitter-Quelle, `Describe`), führt der `catch`-Zweig nach `Failed`, ohne zu schließen: Verbindung offen, wartender Neuaufbau ohne Antwort. Vorher blieb sie am Eintrag, und ein späteres Stoppen schloss sie. | echt | neu (I4) | niedrig (Auslöser nur fehlerhafte Optionen) | `[Claude-prüfbar]` |
+| J7 | mittel | `KnownErrorCode` liest `error` mit `GetString()`; ein Surrogat-Escape im Fehlerkörper einer 401 wirft `InvalidOperationException` vor dem Bau der `OAuthDiscoveryException` → Erneuerung „nicht erreichbar", Rückruf 500. | echt | I5 unvollständig (alt) | mittel | `[Claude-prüfbar]` |
+| J8 | niedrig | (a) `long.TryParse` nimmt angehängte NUL-Zeichen an („3600\0" → 3600). (b) `GetDouble` rundet eine Zahl knapp unter einer ganzen Sekunde vor `Math.Floor` auf. | echt, ohne Wirkung (höchstens 1 s) | I8 | niedrig | `[Claude-prüfbar]` |
+| J9 | niedrig | §5.2 sagt, der Connector werfe `UpstreamAuthenticationException`, wo „die Erneuerung scheiterte"; V1, N40 und N47 ordnen einen Ausfall des Token-Endpunkts als Unerreichbarkeit ein. | echt (Dokument) | alt | niedrig | `[Claude-prüfbar]` |
+
+Echt und mit Wirkung: J1, J6, J7. Echt, aber theoretisch oder ohne Wirkung: J2, J3, J8. Teilweise: J4.
+Nur Wortlaut: J5 (N50), J9 (§5.2).
+
+**Beobachtung:** Seit der sechsten Runde liegen die Befunde in denselben drei Bereichen — Drain,
+Entfernen/Wiederherstellen derselben Id, Lesen der Token-Antwort — und jede Runde findet die nächste
+Kante des vorigen Fixes. J1 und J2 hätten mit I1 dieselbe Wurzel: Das Entfernen gibt die Id frei, bevor
+es fertig ist. Ein Umbau, der Entfernen und Wiederherstellen je Id ordnet (Pins und Token vergessen,
+**bevor** die Id frei wird), löste J1, J2 und I1 an einer Stelle.
+
+**Stand (Auftrag „Option 2, klein anfangen und pushen", 2026-11-20; Abnahme offen):**
+
+| # | Stand | Vertrag | Test |
+|---|---|---|---|
+| J6 | Behoben: Schließen der gelösten Verbindung beginnt vor der Berechnung von Fehlerart und Frist | N59 | `SupervisorReviewG2G4G7Tests.J6_…` (rot ohne Fix) |
+| J7 | Behoben: `KnownErrorCode` behandelt ungültigen Text als unbekannten Code | N60 | `OAuthTokenEndpointFailureTests.A_refusal_with_an_undecodable_error_code_…` (rot ohne Fix), dazu ein Fall in `Only_known_error_codes_pass` |
+| J5 | Wortlaut N50 präzisiert | N50 | — |
+| J9 | Wortlaut § 5.2 an V1/N40 angeglichen (Berichtigung in einem abgenommenen Abschnitt) | § 5.2 | — |
+| J1, J2, J3, J4, J8 | **offen** `[Claude-prüfbar]` — eigener Schritt; für J1/J2 Vertragsnachtrag „Entfernen gibt die Id erst frei, wenn Pins und Token vergessen sind" | — | — |
+
 ## Prüfliste für den Nutzer
 
 1. ~~Vertrag lesen und abnehmen; die sechs Fragen in Abschnitt 8 beantworten.~~ Erledigt am
