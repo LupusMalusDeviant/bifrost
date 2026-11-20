@@ -271,6 +271,18 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
       abgelehnte Anmeldung. Ein unbrauchbares Well-known-Dokument lässt den nächsten Pfad versuchen.
     - **Pin-Annahme:** Eine verworfene Berichtigungszeile zählt als Audit-Verlust; die Oberfläche
       meldet einen Konflikt über der Servertabelle.
+  - **Befunde aus dem sechsten Codex-Review** (Plan 0005, H3 – H9; Vertrag Abschnitt 10, N47 berichtigt, N49 ff.):
+    - **Maskierung:** Ein Geheimnis mit Leerzeichen (Passphrase) wird ab dem ersten Zeichen maskiert;
+      nur bekannte Schemata wie `Bearer` bleiben als Wort stehen. Eine Ablehnung tief in einer
+      bereinigten Fehlerkette geht nicht mehr verloren.
+    - **Token-Antwort:** Eine Antwort mit HTTP 200 in falscher Form (Array, Feld vom falschen Typ)
+      ist eine abgelehnte Anmeldung statt „nicht erreichbar"; beim Rückruf 400 statt 500.
+      `expires_in` als Text („3600") wird gelesen.
+    - **Stoppen und neues Token:** Im Drain gehen weder Lebenszeichen noch Katalogabfragen hinaus.
+      Ein neues Token, das gespeichert wird, während eine verlorene Verbindung noch geschlossen
+      wird, bringt einen Versuch, auch an einer gesetzten Grenze.
+    - **Pins:** Wird ein Upstream vergessen, während eine Annahme oder Erstsichtung läuft, bleibt
+      kein Pin im Cache zurück.
 - **Fehlertexte eines Upstreams konnten dessen Antwortkörper enthalten.** Das MCP-SDK hängt an eine
   HTTP-Fehlermeldung den Antwortkörper der Gegenstelle an; der Text ging ungefiltert in `lastError`,
   Audit und Log. Zitiert ein Upstream in seiner 401-Antwort den vorgelegten Schlüssel, stand er dort.

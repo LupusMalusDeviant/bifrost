@@ -131,6 +131,36 @@ public class ConnectionTesterScrubTests
     }
 
     [Fact]
+    public void A_secret_with_a_space_is_masked_from_its_first_character()
+    {
+        // H6: Ein kurzes Erstwort ist nicht automatisch ein Schema. Eine Passphrase „abc def…" wurde
+        // sonst nur am Teil nach dem Leerzeichen gemessen, und ihr Anfang blieb stehen.
+        var secret = "abc " + Guid.NewGuid().ToString("N");
+
+        CredentialRedaction.Scrub($"abgelehnt: {secret[..9]}", [secret])
+            .Should().Be("abgelehnt: ***");
+        CredentialRedaction.Scrub($"abgelehnt: {secret}", [secret])
+            .Should().Be("abgelehnt: ***");
+    }
+
+    [Theory]
+    [InlineData("Bearer")]
+    [InlineData("bearer")]
+    [InlineData("Basic")]
+    [InlineData("Token")]
+    public void A_known_scheme_word_stays_readable_but_the_value_after_it_is_masked(string scheme)
+    {
+        var value = Guid.NewGuid().ToString("N");
+        var header = $"{scheme} {value}";
+
+        var scrubbed = CredentialRedaction.Scrub(
+            $"{scheme}-Anmeldung abgelehnt, Wert {value[..8]}…", [header]);
+
+        scrubbed.Should().Contain($"{scheme}-Anmeldung", "das Schema-Wort allein ist kein Geheimnis")
+            .And.NotContain(value[..8]);
+    }
+
+    [Fact]
     public async Task The_connection_test_drops_the_response_body_of_the_upstream()
     {
         var connector = new FakeUpstreamConnector

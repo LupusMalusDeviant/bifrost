@@ -316,6 +316,52 @@ public sealed class OAuthTokenEndpointFailureTests
         server.McpRequests.Should().BeGreaterThan(0, "das erneuerte Token ging an den Upstream");
     }
 
+    /// <summary>
+    /// Plan 0005 H7: Eine Token-Antwort mit HTTP 200 in falscher Form ist eine abgelehnte Anmeldung
+    /// wie ungültiges JSON — nicht „nicht erreichbar" mit kurzer Frist. Vorher warf das Lesen eine
+    /// InvalidOperationException, die am Connector vorbeilief.
+    /// </summary>
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("\"text\"")]
+    [InlineData("""{"access_token":1,"expires_in":3600}""")]
+    [InlineData("""{"access_token":"ACCESS","scope":["a"]}""")]
+    [InlineData("""{"access_token":"ACCESS","refresh_token":{}}""")]
+    [InlineData("""{"access_token":"ACCESS","expires_in":"bald"}""")]
+    public async Task A_malformed_token_response_arrives_as_a_rejected_login(string body)
+    {
+        var access = "at-" + Guid.NewGuid().ToString("N");
+        using var server = new AuthorizationServer(HttpStatusCode.OK) { TokenBody = () => body.Replace("ACCESS", access) };
+        var (connector, config, id) = await ArrangeAsync(server);
+
+        var act = async () => await connector.ConnectAsync(id, config, TestContext.Current.CancellationToken);
+
+        (await act.Should().ThrowAsync<UpstreamAuthenticationException>())
+            .Which.Message.Should().NotContain(access);
+        server.McpRequests.Should().Be(0, "ohne brauchbares Token geht nichts an den Upstream");
+    }
+
+    /// <summary>H7: Manche Anbieter senden die Laufzeit als Text; der wird gelesen, nicht verworfen.</summary>
+    [Theory]
+    [InlineData("\"3600\"")]
+    [InlineData("3600.7")]
+    [InlineData("99999999999999")]
+    public async Task The_lifetime_is_read_from_text_fractions_and_huge_numbers(string expiresIn)
+    {
+        using var server = new AuthorizationServer(HttpStatusCode.OK)
+        {
+            TokenBody = () => $$"""{"access_token":"at-{{Guid.NewGuid():N}}","expires_in":{{expiresIn}}}""",
+        };
+        var token = ExpiredToken(new ServerId(Guid.NewGuid()), server.Issuer);
+        var now = DateTimeOffset.UtcNow;
+
+        var refreshed = await OAuthFlow.RefreshAsync(
+            token, new Uri(server.Issuer, "/token"), new UpstreamOAuthOptions("gateway", AllowPrivateTargets: true),
+            "http://127.0.0.1/mcp", now, TestContext.Current.CancellationToken);
+
+        refreshed.ExpiresAt.Should().NotBeNull().And.BeAfter(now.AddMinutes(59));
+    }
+
     [Theory]
     [InlineData("invalid_grant", "invalid_grant")]
     [InlineData("""{"error":"invalid_client","error_description":"x"}""", "invalid_client")]
@@ -463,7 +509,7 @@ public sealed class OAuthTokenEndpointFailureTests
                     else if (tokenStatus == HttpStatusCode.OK)
                     {
                         OnTokenRequest?.Invoke();
-                        Write(context, HttpStatusCode.OK, OmitRefreshToken
+                        Write(context, HttpStatusCode.OK, TokenBody is { } body ? body() : OmitRefreshToken
                             ? $$"""{"access_token":"at-{{Guid.NewGuid():N}}","expires_in":3600}"""
                             : $$"""{"access_token":"at-{{Guid.NewGuid():N}}","refresh_token":"rt-{{Guid.NewGuid():N}}","expires_in":3600}""");
                     }
@@ -490,6 +536,9 @@ public sealed class OAuthTokenEndpointFailureTests
 
         /// <summary>Antwortet ohne neues Refresh-Token — RFC 6749 §6 erlaubt das.</summary>
         public bool OmitRefreshToken { get; set; }
+
+        /// <summary>Ersetzt den Körper einer erfolgreichen Token-Antwort (HTTP 200).</summary>
+        public Func<string>? TokenBody { get; init; }
 
         public void Dispose()
         {

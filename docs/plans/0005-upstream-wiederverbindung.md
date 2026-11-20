@@ -361,6 +361,41 @@ Nachräumen kurz in der Anzeige; eine harte Bedingung im `ToolDefinitionPinStore
 gründlichere Lösung. Nebenbefund, nicht behoben: `StartLoop` setzt `CredentialRenewalRequested` nicht
 zurück.
 
+### Sechstes Codex-Review vom 2026-11-19 (`fb43db0..079bb33`)
+
+Codex (gpt-6.2-sol) meldet 9 Befunde (2 hoch, 5 mittel, 2 niedrig, kein kritischer) zur Behebung
+von G1 – G7. Jeder ist gegen den Code geprüft (nur gelesen, nichts behoben). „Schwere" ist die
+geprüfte Einschätzung; die Spalte „Codex" nennt Codex' Stufe. Gegen die abgenommenen Abschnitte
+1 – 9 fand Codex keinen Widerspruch; der Widerspruch in N47 besteht zu N40, nicht zu §§ 2/5.2.
+
+| # | Codex | Inhalt | Urteil | Herkunft | Schwere | Marke |
+|---|---|---|---|---|---|---|
+| H1 | hoch | Ein `CallToolResult` mit `isError: true` geht ohne jede Bereinigung an den Agenten (`SdkUpstreamConnection.cs:300` → `ToolInvoker.cs:267` → `GatewayMcpHandlers.cs:427`). Zitiert der Upstream das Token, steht es beim Agenten; der Secret-Guard fängt nur bekannte Muster (JWT nur `Observe`). Schärfer als gemeldet: Der eigene OpenAPI-Connector legt bei 401/403 den Antwortkörper als `isError`-Text ab (`OpenApiUpstreamConnector.cs:159`), OpenRPC übernimmt Fehlermeldung und `data`. E3 hatte `isError`-Inhalte als Nutzlast gewertet; N8 nennt „gescheiterte Werkzeugaufrufe an den Agenten", lässt aber offen, ob ein `isError`-Ergebnis dazuzählt. Kein Test. | echt, Vertragslücke | alt | mittel – hoch | `[braucht Nutzer]` (N49: gelten P1 – P3 für `isError`-Ergebnisse?) |
+| H2 | hoch | Im Modus BestEffort zählt `Record` bei vollem Kanal nur den Verlust; Pin-Annahme, OAuth-Rückruf und Trennen wirken trotzdem. Vertragsgemäß: F4/N33 verlangen das Abweisen nur, wo das Audit abweist (Compliance); BestEffort ist nach ADR-0007 gezählter Verlust (`LostAtIntake`, BFR-DB-0007). Codex' Vorschlag (`TryRecord`, 503) wäre eine neue Entscheidung: diese drei Aktionen in jedem Modus audit-pflichtig. | vertragskonform | alt (ea783a8) | — | `[braucht Nutzer]` (Auslegung von F4) |
+| H3 | mittel | Im Drain geht das Lebenszeichen weiter (`WatchAsync` prüft `Stopping` erst im `catch`, Z. 1299); `PingAsync` und `DiscoverAsync` laufen an der Zulassung vorbei. Die Katalogabfrage prüft `Stopping` vor dem Warten auf `RediscoveryLock`, nicht danach; `RediscoverAsync` prüft gar nicht. Ein 404 beendet nach D13 den SDK-Client samt laufendem Aufruf. Der Supervisor selbst schließt im Drain nichts; derselbe 404 träfe außerhalb des Drains genauso. Der G4-Test spritzt eine `IOException` ein und sieht das nicht. | teilweise | G4 unvollständig | niedrig | `[Claude-prüfbar]` |
+| H4 | mittel | Fenster zwischen Verbindungsverlust und `Failed`: `RunLoopAsync` zählt den Versuch (Z. 687) und wartet dann auf `CleanupConnectionAsync` (bis 10 s). Währenddessen `Wake == null`, `AttemptRunning == false`, Zustand `Healthy`/`Degraded` → `CredentialsChanged` setzt nichts. Mit `maxRetries = 0` bleibt der Upstream erschöpft (verletzt E13), sonst sitzt er nach einem Anmeldefehler die 15 min ab. | echt | G2 unvollständig | mittel | `[Claude-prüfbar]` |
+| H5 | mittel | (a) Eine Prüfung, die `ThrowIfPinsRetired` schon passiert hat, schreibt nach dem Entfernen; scheitert das Nachräumen, bleibt der Pin. Das ist das in N46 und oben genannte Restrisiko. (b) Neu: `AcceptAsync` liest die Zeile, `ForgetServerAsync` löscht Zeilen und Cache, `AcceptAsync` schreibt die alte Zeile in den Cache zurück (`ToolDefinitionPinStore.cs:123 – 128`). Nur Anzeige bis zum Neustart; `VerifyAsync` liest die Datenbank. Ein verwaister Pin wirkt nach einem Konfigurations-Import mit derselben Id als Basis, ohne Rechteausweitung. | (a) bekanntes Restrisiko, (b) echt | G7 unvollständig | niedrig | `[Claude-prüfbar]` |
+| H6 | mittel | (a) Ganze Werte unter 4 Zeichen werden nicht maskiert: bewusst (Kommentar, `ConnectionTesterScrubTests`, Umgebungswerte wie „1"), kein Befund. (b) Die Schema-Heuristik nimmt jedes Erstwort bis 10 Zeichen im Bereich `A` – `z` als Schema. Für ein Geheimnis `abc defghijk1234` bleibt `abc defgh` in einer Meldung unmaskiert. Nur bei Geheimnissen mit Leerzeichen (Passphrasen). P3 nennt nur „Bearer"/„Basic". | (a) nicht echt, (b) teilweise | alt | niedrig – mittel | `[Claude-prüfbar]` |
+| H7 | mittel | Token-Antwort mit HTTP 200 und falscher Form (Array, `access_token` als Zahl, `expires_in` als Text, wie manche Anbieter es senden) wirft `InvalidOperationException` (`OAuthFlow.cs:254 – 272`). Der Connector fängt nur `OAuthDiscoveryException` → Fehlerart „nicht erreichbar" statt Anmeldung; beim Rückruf 500 statt 400. Gleiche Art wie G3, dort nur die Discovery behoben. | echt | alt | mittel | `[Claude-prüfbar]` |
+| H8 | niedrig | N47 („liefert keiner ein brauchbares Dokument, ist das ein dauerhafter Fehler") widerspricht wörtlich N40: Ist ein anderer Pfad gestört (5xx), entscheidet der Code richtig auf Unerreichbarkeit. Nur Wortlaut. | echt (Dokument) | neu (N47) | niedrig | `[Claude-prüfbar]` |
+| H9 | niedrig | `HandshakeFailure` baut höchstens 8 Glieder nach; ein 401/403 tiefer in der Kette ginge verloren, die Fehlerart kippte auf „nicht erreichbar". SDK und `HttpClient` liefern 1 – 3 Glieder. Widerspricht in diesem Fall N42 („Fehlerart bleibt"). | teilweise, theoretisch | neu (G1) | niedrig | `[Claude-prüfbar]` |
+
+Neu durch die fünfte Runde sind H3, H4, H5 (b), H8 und H9 (Lücken in G1, G2, G4, G7 und N47); H1,
+H6 und H7 waren schon vorher im Code, H2 ist eine Auslegungsfrage.
+
+**Stand der Behebung (H3 – H9, Auftrag „H3 bis H9 zuerst beheben"; Abnahme offen):** H1 und H2
+warten auf deine Entscheidung.
+
+| # | Fix | Vertrag | Test (rot gegen `079bb33`) |
+|---|---|---|---|
+| H3 | Kein Ping im Drain; Katalogabfrage prüft das Stoppen nach dem Warten auf `RediscoveryLock`; `RediscoverAsync` im Drain ohne Wirkung | N49 | `SupervisorReviewH3H4Tests` (3); G4-Test angepasst (verlangte laufende Pings) |
+| H4 | `AttemptRunning` ab dem Zählen des Fehlschlags; ein abgelöster Loop zählt keinen Versuch mehr | N50 | `SupervisorReviewH3H4Tests` (1) |
+| H5 | (b) Sperre je Upstream um Datenbankschritt und Cache in `ToolDefinitionPinStore` (Prüfen, Annehmen, Vergessen); (a) bleibt Restrisiko nach N46 | N51 | `ToolDefinitionPinForgetRaceTests` (2, echte SQLite) |
+| H6 | Schema nur aus fester Liste (`Bearer`, `Basic`, …) | N52 | `ConnectionTesterScrubTests` (1 rot, 4 Fälle Schutz des Schema-Worts) |
+| H7 | Formprüfung der Token-Antwort; `expires_in` als Text/Kommazahl, begrenzt | N53 | `OAuthTokenEndpointFailureTests` (9 Fälle) |
+| H8 | Wortlaut N47 berichtigt | N47 | `OAuthDiscoveryClassificationTests.Nonsense_beside_a_disturbed_path_arrives_as_unreachable` (hält das schon richtige Verhalten fest, grün) |
+| H9 | Ablehnung hinter der Tiefengrenze wird als innerstes Glied angehängt | N54 | `HandshakeFailureDepthTests` (2 rot, 1 Schutz der Grenze) |
+
 ## Prüfliste für den Nutzer
 
 1. ~~Vertrag lesen und abnehmen; die sechs Fragen in Abschnitt 8 beantworten.~~ Erledigt am
