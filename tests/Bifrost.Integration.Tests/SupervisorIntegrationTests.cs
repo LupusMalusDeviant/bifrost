@@ -104,53 +104,6 @@ public class SupervisorIntegrationTests
         supervisor.GetInventory(crashId)!.Tools.Should().Contain(t => t.Name == "echo");
     }
 
-    [Fact]
-    public async Task Dispose_leaves_no_zombie_processes()
-    {
-        // Steady-State abwarten: SDK-Dispose vorheriger Tests kehrt zurück, bevor deren
-        // Kindprozesse vollständig beendet sind — eine Momentaufnahme wäre eine Race-Baseline.
-        var baseline = await StableEchoServerCountAsync();
-
-        var supervisor = IntegrationSupport.CreateSupervisor();
-        var id = await supervisor.AddAsync(
-            IntegrationSupport.StdioServer("echo", "EchoServer"), TestContext.Current.CancellationToken);
-        await IntegrationSupport.WaitUntilAsync(
-            () => supervisor.GetStatus(id)?.State == UpstreamState.Healthy);
-
-        UpstreamProcessLookup.FindByExecutableName("Bifrost.TestServers.EchoServer").Count
-            .Should().BeGreaterThan(baseline, "der Upstream-Prozess muss laufen");
-
-        await supervisor.DisposeAsync();
-
-        await IntegrationSupport.WaitUntilAsync(
-            () => UpstreamProcessLookup.FindByExecutableName("Bifrost.TestServers.EchoServer").Count == baseline,
-            timeoutMs: 10000,
-            because: "nach Host-Shutdown darf kein Kindprozess überleben (WP1-DoD, ADR-0005)");
-    }
-
-    private static async Task<int> StableEchoServerCountAsync()
-    {
-        var last = -1;
-        var stableSamples = 0;
-        for (var i = 0; i < 40; i++)
-        {
-            var count = UpstreamProcessLookup.FindByExecutableName("Bifrost.TestServers.EchoServer").Count;
-            if (count == last)
-            {
-                if (++stableSamples >= 6)
-                {
-                    return count;
-                }
-            }
-            else
-            {
-                stableSamples = 0;
-                last = count;
-            }
-
-            await Task.Delay(250);
-        }
-
-        return last;
-    }
+    // Dispose_leaves_no_zombie_processes steht in SupervisorShutdownProcessTests: Er zählt Prozesse
+    // der ganzen Maschine und läuft deshalb nicht parallel zu anderen Tests.
 }
