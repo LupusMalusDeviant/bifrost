@@ -251,25 +251,34 @@ public static class OAuthFlow
             throw new OAuthDiscoveryException("Token-Antwort ist kein gültiges JSON.");
         }
 
-        var accessToken = json.TryGetProperty("access_token", out var at) ? at.GetString() : null;
+        // Die Form wird geprüft, bevor gelesen wird (Plan 0005 H7, wie G3 bei der Discovery): Ein Array
+        // oder ein Feld vom falschen Typ würfe sonst eine InvalidOperationException, die am Connector
+        // vorbeiläuft und als „nicht erreichbar" (kurze Frist) endet, beim Rückruf als 500.
+        if (json.ValueKind != JsonValueKind.Object)
+        {
+            throw new OAuthDiscoveryException("Token-Antwort ist kein JSON-Objekt.");
+        }
+
+        var accessToken = ReadTokenString(json, "access_token");
         if (string.IsNullOrEmpty(accessToken))
         {
             throw new OAuthDiscoveryException("Token-Antwort ohne 'access_token'.");
         }
 
-        var expires = json.TryGetProperty("expires_in", out var exp) && exp.TryGetInt64(out var seconds)
-            ? now + TimeSpan.FromSeconds(seconds)
+        // Begrenzt: Ein absurder Wert würfe sonst in TimeSpan eine Ausnahme am selben Fehlerweg vorbei.
+        var expires = ReadSeconds(json, "expires_in") is { } seconds
+            ? now + TimeSpan.FromSeconds(Math.Clamp(seconds, 0, MaximumTokenLifetimeSeconds))
             : (DateTimeOffset?)null;
 
         // Der Server darf weniger gewähren, als angefragt wurde — dann gilt seine Angabe.
-        var granted = json.TryGetProperty("scope", out var scope) && scope.GetString() is { Length: > 0 } text
+        var granted = ReadTokenString(json, "scope") is { Length: > 0 } text
             ? text.Split(' ', StringSplitOptions.RemoveEmptyEntries)
             : [.. requestedScopes];
 
         return new UpstreamOAuthToken(
             server,
             accessToken,
-            json.TryGetProperty("refresh_token", out var rt) ? rt.GetString() : null,
+            ReadTokenString(json, "refresh_token"),
             expires,
             granted,
             issuer,
@@ -285,6 +294,49 @@ public static class OAuthFlow
     }
 
     private static Exception Fail(string message) => new OAuthDiscoveryException(message);
+
+    /// <summary>Zehn Jahre — länger lebt kein Token, das ein Anbieter ernst meint.</summary>
+    private const long MaximumTokenLifetimeSeconds = 10L * 365 * 24 * 60 * 60;
+
+    /// <summary>Ein Textfeld der Token-Antwort; fehlt es oder ist es <c>null</c>, gibt es nichts. Ein anderer Typ ist ein Formfehler.</summary>
+    private static string? ReadTokenString(JsonElement json, string name)
+    {
+        if (!json.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        return value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : throw new OAuthDiscoveryException($"Token-Antwort: '{name}' ist kein Text.");
+    }
+
+    /// <summary>
+    /// Eine Laufzeit in Sekunden. Manche Anbieter senden sie als Text („3600"); der wird gelesen,
+    /// solange er eine ganze Zahl ist. Alles andere ist ein Formfehler.
+    /// </summary>
+    private static long? ReadSeconds(JsonElement json, string name)
+    {
+        if (!json.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number)
+        {
+            // Eine Kommazahl galt vorher als „keine Angabe"; abgerundet ist sie nützlicher.
+            return value.TryGetInt64(out var number) ? number : (long)Math.Floor(value.GetDouble());
+        }
+
+        if (value.ValueKind == JsonValueKind.String
+            && long.TryParse(value.GetString(), System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+        {
+            return parsed;
+        }
+
+        throw new OAuthDiscoveryException($"Token-Antwort: '{name}' ist keine ganze Zahl.");
+    }
 
     /// <summary>
     /// Die Fehlercodes aus RFC 6749 (5.2, 4.1.2.1) und RFC 8707. Nur sie werden aus einer Antwort

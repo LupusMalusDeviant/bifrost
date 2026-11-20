@@ -30,9 +30,23 @@ internal static class HandshakeFailure
         ArgumentNullException.ThrowIfNull(presented);
 
         var chain = new List<Exception>();
-        for (var current = exception; current is not null && chain.Count < MaxDepth; current = current.InnerException)
+        var current = exception;
+        for (; current is not null && chain.Count < MaxDepth; current = current.InnerException)
         {
             chain.Add(current);
+        }
+
+        // Hinter der Tiefengrenze kann noch die Ablehnung stecken, die die Fehlerart bestimmt (Plan
+        // 0005 H9, N42 „die Fehlerart bleibt"). Dann wird dieses eine Glied als innerstes angehängt —
+        // sonst kippte eine abgelehnte Anmeldung zu „nicht erreichbar", nur weil ihr Text bereinigt wurde.
+        for (; current is not null; current = current.InnerException)
+        {
+            if (current is UpstreamAuthenticationException
+                || current is HttpRequestException { StatusCode: System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden })
+            {
+                chain.Add(current);
+                break;
+            }
         }
 
         Exception? rebuilt = null;

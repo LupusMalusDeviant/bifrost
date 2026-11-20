@@ -103,6 +103,28 @@ public sealed class OAuthDiscoveryClassificationTests
         server.McpRequests.Should().Be(0);
     }
 
+    /// <summary>
+    /// N47 in der Fassung nach H8: Liefert ein Pfad Unsinn und sind die übrigen gestört (503), ist
+    /// das eine Unerreichbarkeit — der gestörte Pfad entscheidet, nicht der Unsinn.
+    /// </summary>
+    [Fact]
+    public async Task Nonsense_beside_a_disturbed_path_arrives_as_unreachable()
+    {
+        using var server = new MetadataServer(firstPathBody: "[]", otherPathsValid: false, HttpStatusCode.ServiceUnavailable);
+        var id = new ServerId(Guid.NewGuid());
+        var tokens = new OAuthTokenEndpointFailureTests.MemoryTokens();
+        await tokens.SaveAsync(ExpiredToken(id, server.Issuer), Ct);
+        var connector = new StreamableHttpUpstreamConnector(tokens: tokens);
+
+        var act = async () => await connector.ConnectAsync(id, Config(new Uri(server.Issuer, "/mcp")), Ct)
+            .WaitAsync(TimeSpan.FromMinutes(1), Ct);
+
+        var thrown = (await act.Should().ThrowAsync<Exception>()).Which;
+        Chain(thrown).Should().NotContain(e => e is UpstreamAuthenticationException);
+        Chain(thrown).OfType<HttpRequestException>().Should().Contain(e => e.StatusCode == HttpStatusCode.ServiceUnavailable);
+        server.McpRequests.Should().Be(0);
+    }
+
     private static IEnumerable<Exception> Chain(Exception exception)
     {
         for (Exception? current = exception; current is not null; current = current.InnerException)
@@ -136,7 +158,7 @@ public sealed class OAuthDiscoveryClassificationTests
         private int _mcpRequests;
         private int _fallbackRequests;
 
-        public MetadataServer(string firstPathBody, bool otherPathsValid)
+        public MetadataServer(string firstPathBody, bool otherPathsValid, HttpStatusCode otherPathsStatus = HttpStatusCode.OK)
         {
             for (var attempt = 0; ; attempt++)
             {
@@ -179,7 +201,7 @@ public sealed class OAuthDiscoveryClassificationTests
                     else if (path.StartsWith("/.well-known/", StringComparison.Ordinal))
                     {
                         Interlocked.Increment(ref _fallbackRequests);
-                        Write(context, HttpStatusCode.OK, otherPathsValid
+                        Write(context, otherPathsStatus, otherPathsValid
                             ? $$"""
                                 {
                                   "issuer": "{{issuer}}",

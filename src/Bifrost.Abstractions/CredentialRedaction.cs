@@ -19,6 +19,11 @@ public static class CredentialRedaction
     /// <summary>Unter diesem Schlüssel trägt eine bereinigte Ausnahme die Typnamen der ursprünglichen Kette.</summary>
     public const string OriginalTypesDataKey = "Bifrost.UpstreamFailure.OriginalTypes";
 
+    /// <summary>Die Authentifizierungsschemata, deren Wort vor dem eigentlichen Geheimnis steht (Groß-/Kleinschreibung egal).</summary>
+    private static readonly HashSet<string> KnownSchemes = new(
+        ["Bearer", "Basic", "Digest", "Token", "Bot", "DPoP", "ApiKey", "Negotiate", "NTLM"],
+        StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Maskiert die Geheimwerte <paramref name="secrets"/> samt ihrer Anfangsstücke.</summary>
     public static string Scrub(string message, IEnumerable<string>? secrets)
         => Scrub(message, (secrets ?? []).Where(value => !string.IsNullOrEmpty(value)).SelectMany(Variants));
@@ -113,14 +118,19 @@ public static class CredentialRedaction
     /// Ein Kopfzeilenwert der Form „Bearer abc…" ist zweierlei: der ganze Wert und der Teil nach
     /// dem Schema. Das Anfangsstück wird nur am zweiten gemessen — sonst maskierte „Bearer" als
     /// Anfang von „Bearer abc…" das Wort in jeder Meldung, die es benutzt.
+    /// <para>
+    /// Als Schema gilt nur ein bekanntes Wort (Plan 0005 H6). Vorher galt jedes kurze Erstwort aus
+    /// Buchstaben; bei einem Geheimnis mit Leerzeichen („abc defghijk…", eine Passphrase) wurde der
+    /// Anfang dann nur am Rest gemessen, und „abc defgh" blieb in einer Meldung stehen.
+    /// </para>
     /// </summary>
     public static IEnumerable<(string Value, bool Prefixable)> Variants(string secret)
     {
         ArgumentNullException.ThrowIfNull(secret);
         var space = secret.IndexOf(' ', StringComparison.Ordinal);
-        var hasScheme = space is > 0 and <= 10
+        var hasScheme = space > 0
             && space < secret.Length - 1
-            && secret.AsSpan(0, space).IndexOfAnyExceptInRange('A', 'z') < 0;
+            && KnownSchemes.Contains(secret[..space]);
         if (!hasScheme)
         {
             yield return (secret, true);
