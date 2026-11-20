@@ -243,6 +243,44 @@ public sealed class SupervisorReviewG2G4G7Tests
         pins.All.Should().NotContain(p => p.Server == server, "die Anzeige zeigt keinen Pin des entfernten Upstreams");
     }
 
+    /// <summary>
+    /// Plan 0005 I1: Wie G7, aber dieselbe Id wird wiederhergestellt (Konfigurations-Import mit der Id
+    /// aus dem Export), bevor das Schreiben der alten Neuabfrage endet. Deren spätes Nachräumen darf die
+    /// Pins des Nachfolgers nicht löschen — sonst gälte eine geänderte Definition als Erstsichtung.
+    /// </summary>
+    [Fact]
+    public async Task I1_a_late_cleanup_of_a_removed_upstream_leaves_the_pins_of_its_restored_successor()
+    {
+        var pins = new BarrierPinStore();
+        var connector = new FakeUpstreamConnector();
+        await using var supervisor = Create(connector, pins);
+        var config = TestData.StdioConfig("i1-wieder");
+        var server = await supervisor.AddAsync(config, Ct);
+        await TestData.WaitUntilAsync(() => supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+
+        connector.Connections[0].Inventory = TestData.InventoryWithTools("echo", "neu");
+        pins.Arm("neu");
+        var rediscover = supervisor.RediscoverAsync(server, Ct);
+        await pins.NoPinFound.Task.WaitAsync(Bound, Ct);
+        await supervisor.RemoveAsync(server, DrainPolicy.Immediate, Ct).WaitAsync(Bound, Ct);
+
+        await supervisor.RestoreAsync(server, new UpstreamConfigVersion(new ConfigVersionId(2), config, _time.GetUtcNow()), Ct);
+        await TestData.WaitUntilAsync(() => supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        pins.Stored.Should().Contain((server, "echo"), "die erste Prüfung des Nachfolgers hat ihren Pin geschrieben");
+
+        pins.Release();
+        try
+        {
+            await rediscover.WaitAsync(Bound, Ct);
+        }
+        catch (UpstreamConnectionLostException)
+        {
+            // erwartet: Der alte Eintrag ist fort, seine Neuabfrage meldet es.
+        }
+
+        pins.Stored.Should().Contain((server, "echo"), "das späte Nachräumen des alten Eintrags lässt die Pins des Nachfolgers stehen");
+    }
+
     /// <summary>Eine Verbindung mit einem langen Aufruf, zählbaren Lebenszeichen und echtem Schließen.</summary>
     private sealed class DrainProbeConnection : IUpstreamConnection
     {

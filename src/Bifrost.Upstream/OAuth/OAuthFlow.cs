@@ -306,9 +306,21 @@ public static class OAuthFlow
             return null;
         }
 
-        return value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : throw new OAuthDiscoveryException($"Token-Antwort: '{name}' ist kein Text.");
+        if (value.ValueKind != JsonValueKind.String)
+        {
+            throw new OAuthDiscoveryException($"Token-Antwort: '{name}' ist kein Text.");
+        }
+
+        // Plan 0005 I5: Ein Text mit ungültigem Escape (ein einzelnes Surrogat wie "\uD800") hat die
+        // Art String, wirft beim Lesen aber eine InvalidOperationException — am Connector vorbei.
+        try
+        {
+            return value.GetString();
+        }
+        catch (InvalidOperationException)
+        {
+            throw new OAuthDiscoveryException($"Token-Antwort: '{name}' ist kein gültiger Text.");
+        }
     }
 
     /// <summary>
@@ -324,15 +336,42 @@ public static class OAuthFlow
 
         if (value.ValueKind == JsonValueKind.Number)
         {
-            // Eine Kommazahl galt vorher als „keine Angabe"; abgerundet ist sie nützlicher.
-            return value.TryGetInt64(out var number) ? number : (long)Math.Floor(value.GetDouble());
+            if (value.TryGetInt64(out var number))
+            {
+                return number;
+            }
+
+            // Eine Kommazahl galt vorher als „keine Angabe"; abgerundet ist sie nützlicher. Zu große
+            // Zahlen liest .NET als ±Unendlich; begrenzt wird vor der Umwandlung (Plan 0005 I8).
+            var fraction = value.GetDouble();
+            return fraction >= MaximumTokenLifetimeSeconds ? MaximumTokenLifetimeSeconds
+                : fraction <= 0 ? 0
+                : (long)Math.Floor(fraction);
         }
 
-        if (value.ValueKind == JsonValueKind.String
-            && long.TryParse(value.GetString(), System.Globalization.NumberStyles.None,
-                System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+        if (value.ValueKind == JsonValueKind.String)
         {
-            return parsed;
+            string? text;
+            try
+            {
+                text = value.GetString();
+            }
+            catch (InvalidOperationException)
+            {
+                text = null;
+            }
+
+            if (long.TryParse(text, System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+            {
+                return parsed;
+            }
+
+            // I8: Ziffern über long.MaxValue sind wie die gleiche JSON-Zahl — begrenzt, nicht abgelehnt.
+            if (!string.IsNullOrEmpty(text) && text.All(char.IsAsciiDigit))
+            {
+                return MaximumTokenLifetimeSeconds;
+            }
         }
 
         throw new OAuthDiscoveryException($"Token-Antwort: '{name}' ist keine ganze Zahl.");

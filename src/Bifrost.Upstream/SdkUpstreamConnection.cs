@@ -96,7 +96,22 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection, IPresentedCre
     public event EventHandler<UpstreamNotificationEventArgs>? NotificationReceived;
 
     public Task<UpstreamInventory> DiscoverAsync(CancellationToken ct)
-        => WithSessionCheckAsync(() => DiscoverCoreAsync(ct));
+        => DiscoverAsync(static () => true, ct);
+
+    public Task<UpstreamInventory> DiscoverAsync(Func<bool> mayContinue, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(mayContinue);
+        return WithSessionCheckAsync(() => DiscoverCoreAsync(mayContinue, ct));
+    }
+
+    /// <summary>Plan 0005 I3: Vor jeder Folgeanfrage des Katalogs — im Drain geht keine mehr hinaus.</summary>
+    private static void ThrowUnlessMayContinue(Func<bool> mayContinue)
+    {
+        if (!mayContinue())
+        {
+            throw new UpstreamCatalogWithheldException("Die Katalogabfrage endet vor der nächsten Anfrage (Drain).");
+        }
+    }
 
     public Task<JsonElement> CallToolAsync(string toolName, JsonElement args, CancellationToken ct)
         => WithSessionCheckAsync(() => CallToolCoreAsync(toolName, args, ct));
@@ -225,7 +240,7 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection, IPresentedCre
             && error.TryGetProperty("message", out var text)
             && text.ValueKind == JsonValueKind.String;
 
-    private async Task<UpstreamInventory> DiscoverCoreAsync(CancellationToken ct)
+    private async Task<UpstreamInventory> DiscoverCoreAsync(Func<bool> mayContinue, CancellationToken ct)
     {
         IList<McpClientTool> tools;
         try
@@ -254,6 +269,7 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection, IPresentedCre
         var resources = new List<ResourceDescriptor>();
         if (_client.ServerCapabilities?.Resources is not null)
         {
+            ThrowUnlessMayContinue(mayContinue);
             var listed = await _client.ListResourcesAsync(cancellationToken: ct).ConfigureAwait(false);
             resources.AddRange(listed.Select(r => new ResourceDescriptor(
                 new Uri(r.Uri, UriKind.RelativeOrAbsolute), r.Name, r.Description, r.MimeType)));
@@ -262,6 +278,7 @@ internal sealed class SdkUpstreamConnection : IUpstreamConnection, IPresentedCre
         var prompts = new List<PromptDescriptor>();
         if (_client.ServerCapabilities?.Prompts is not null)
         {
+            ThrowUnlessMayContinue(mayContinue);
             var listed = await _client.ListPromptsAsync(cancellationToken: ct).ConfigureAwait(false);
             prompts.AddRange(listed.Select(p => new PromptDescriptor(p.Name, p.Description)));
         }

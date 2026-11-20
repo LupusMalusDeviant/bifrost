@@ -106,6 +106,38 @@ public sealed class ToolDefinitionPinForgetRaceTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// Plan 0005 I1: Die Bedingung eines späten Aufräumens wird erst unter der Sperre des Upstreams
+    /// gefragt. Wartet das Vergessen auf eine laufende Erstsichtung und gehört die Id inzwischen einem
+    /// Nachfolger, bleibt dessen Pin stehen — in der Datenbank und im Cache.
+    /// </summary>
+    [Fact]
+    public async Task A_conditional_forget_asks_its_condition_under_the_lock()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var server = ServerId.New();
+        var store = new ToolDefinitionPinStore(_factory, TimeProvider.System);
+
+        _gate.ArmSave();
+        var verify = store.VerifyAsync(server, "read_file", new string('a', 64), ct);
+        await _gate.Reached.WaitAsync(ct);
+
+        var retired = true;
+        var forget = store.ForgetServerAsync(server, () => Volatile.Read(ref retired), ct);
+        await Task.Delay(TimeSpan.FromMilliseconds(200), ct);
+        forget.IsCompleted.Should().BeFalse("das Vergessen wartet auf den laufenden Datenbankschritt");
+
+        // Die Id ist jetzt neu eingetragen; der wartende Vorgang räumt nichts mehr.
+        Volatile.Write(ref retired, false);
+        _gate.Release();
+        await verify;
+        await forget;
+
+        store.All.Should().ContainSingle(p => p.Server == server);
+        await using var db = await _factory.CreateDbContextAsync(ct);
+        (await db.ToolDefinitionPins.CountAsync(r => r.ServerId == server.Value, ct)).Should().Be(1);
+    }
+
+    /// <summary>
     /// Startet das Vergessen und lässt den angehaltenen Vorgang los, sobald es fertig ist — oder
     /// nach einer Frist, falls es (wie mit Schutz) auf den angehaltenen Vorgang warten muss. Die
     /// Frist entscheidet nur die Reihenfolge, nicht das Ergebnis: Mit Schutz ist der Ausgang in

@@ -283,6 +283,15 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
       wird, bringt einen Versuch, auch an einer gesetzten Grenze.
     - **Pins:** Wird ein Upstream vergessen, während eine Annahme oder Erstsichtung läuft, bleibt
       kein Pin im Cache zurück.
+  - **Befunde aus dem siebten Codex-Review** (Plan 0005, I1 – I8; Vertrag N55 – N58):
+    - **Pins nach Wiederherstellen:** Wird ein Upstream entfernt und mit derselben Id wieder
+      eingespielt, löscht ein spätes Aufräumen des alten Eintrags die Pins des neuen nicht mehr.
+    - **Stoppen:** Eine Katalogabfrage, die beim Beginn des Stoppens schon läuft, schickt keine
+      weiteren Anfragen. Ein Verbindungsverlust kurz vor dem Stoppen schließt die Verbindung nicht
+      mehr unter laufenden Aufrufen weg, auf die das Stoppen wartet.
+    - **Token-Antwort:** Ein ungültiger Text (einzelnes Surrogat) in einem Token-Feld ist eine
+      abgelehnte Anmeldung statt eines Serverfehlers. `expires_in` wird als Zahl wie als Text gleich
+      auf zehn Jahre begrenzt.
 - **Fehlertexte eines Upstreams konnten dessen Antwortkörper enthalten.** Das MCP-SDK hängt an eine
   HTTP-Fehlermeldung den Antwortkörper der Gegenstelle an; der Text ging ungefiltert in `lastError`,
   Audit und Log. Zitiert ein Upstream in seiner 401-Antwort den vorgelegten Schlüssel, stand er dort.

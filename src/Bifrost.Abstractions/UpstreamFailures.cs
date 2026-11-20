@@ -61,3 +61,26 @@ public sealed class UpstreamSessionLostException : Exception
     {
     }
 }
+
+/// <summary>
+/// Plan 0005 I3: Eine Katalogabfrage hat vor ihrer nächsten Anfrage (<c>resources/list</c>,
+/// <c>prompts/list</c>) aufgehört, weil sie nicht mehr weitermachen durfte — der Upstream wird
+/// gestoppt. Bewusst keine <see cref="OperationCanceledException"/>: Die gilt am Rand der Verbindung
+/// als abgebaute Verbindung. Hier ist nichts abgebaut, es ging nur nichts mehr hinaus.
+/// </summary>
+public sealed class UpstreamCatalogWithheldException : Exception
+{
+    public UpstreamCatalogWithheldException()
+    {
+    }
+
+    public UpstreamCatalogWithheldException(string message)
+        : base(message)
+    {
+    }
+
+    public UpstreamCatalogWithheldException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
+}

@@ -79,6 +79,15 @@ public interface IToolDefinitionPinStore
 
     /// <summary>Entfernt alle Pins eines Upstreams (wenn er selbst entfernt wird).</summary>
     Task ForgetServerAsync(ServerId server, CancellationToken ct);
+
+    /// <summary>
+    /// Wie <see cref="ForgetServerAsync(ServerId, CancellationToken)"/>, aber nur, wenn
+    /// <paramref name="stillRetired"/> beim Löschen noch gilt (Plan 0005 I1). Eine Ablage mit
+    /// Sperre je Upstream fragt erst unter dieser Sperre: Ist dieselbe Id inzwischen neu eingetragen
+    /// und hat ihre erste Prüfung schon Pins geschrieben, löscht ein spätes Aufräumen sie nicht.
+    /// </summary>
+    Task ForgetServerAsync(ServerId server, Func<bool> stillRetired, CancellationToken ct)
+        => stillRetired() ? ForgetServerAsync(server, ct) : Task.CompletedTask;
 }
 
 public sealed class ToolDefinitionPinChangedEventArgs : EventArgs

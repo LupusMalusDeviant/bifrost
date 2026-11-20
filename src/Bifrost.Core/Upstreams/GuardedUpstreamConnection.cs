@@ -91,6 +91,9 @@ public sealed class GuardedUpstreamConnection
     public Task<UpstreamInventory> DiscoverAsync(CancellationToken ct)
         => WithTimeoutAsync((inner, token) => inner.DiscoverAsync(token), "discover", ct);
 
+    public Task<UpstreamInventory> DiscoverAsync(Func<bool> mayContinue, CancellationToken ct)
+        => WithTimeoutAsync((inner, token) => inner.DiscoverAsync(mayContinue, token), "discover", ct);
+
     public Task<JsonElement> CallToolAsync(string toolName, JsonElement args, CancellationToken ct)
         => CallToolAsync(string.Empty, toolName, args, ct);
 
