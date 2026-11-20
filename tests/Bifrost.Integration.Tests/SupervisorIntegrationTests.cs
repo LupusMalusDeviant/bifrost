@@ -104,6 +104,5 @@ public class SupervisorIntegrationTests
         supervisor.GetInventory(crashId)!.Tools.Should().Contain(t => t.Name == "echo");
     }
 
-    // Dispose_leaves_no_zombie_processes steht in SupervisorShutdownProcessTests: Er zählt Prozesse
-    // der ganzen Maschine und läuft deshalb nicht parallel zu anderen Tests.
+    // Dispose_leaves_no_zombie_processes steht in SupervisorShutdownProcessTests.
 }
