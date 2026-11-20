@@ -79,7 +79,7 @@ public sealed class HangReportTests
         try
         {
             var report = await File.ReadAllTextAsync(
-                HangReport.Write(root, "Testfall ohne Kinder", []), ct);
+                HangReport.Write(root, "Testfall ohne Kinder", [], children: []), ct);
 
             report.Should().Contain("Aktive Kindprozesse");
             report.Should().Contain("keine — der Haenger liegt dann im Testhost selbst");

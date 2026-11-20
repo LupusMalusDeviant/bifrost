@@ -37,6 +37,12 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   `BIFROST_BACKUP_DIR` (Vorgabe `<BIFROST_DATA_DIR>/backups`); ein bloßer Name liegt dort, ein Pfad
   außerhalb wird abgewiesen. *Upgrade:* `--out /irgendwo/x.zip` durch einen Namen ersetzen oder
   `BIFROST_BACKUP_DIR` auf den gewünschten Ort setzen; vorhandene Archive dorthin verschieben.
+- **WASI-Sandbox: wasmtime 48.0.8 → 48.0.10** (Befund der Gates vom 2026-11-20). `cargo audit` meldete
+  zwei neue Einträge: RUSTSEC-2026-0587 (7.5, Ausbruch aus der WASI-Dateisystem-Sandbox unter Windows
+  über eine Pfadkomponente mit Laufwerksbuchstaben) und RUSTSEC-2026-0571 (unbegrenzter Speicher bei
+  leeren Body-Schreibvorgängen über HTTP/2 in `wasmtime-wasi-http`). Mitgezogen: `wasmtime-wasi` und
+  die Cranelift-Crates auf 0.135.10; die Runtime-Kennung lautet jetzt `wasmtime-48.0.10`. Ein Modul-Cache
+  aus 48.0.8 wird dadurch nicht mehr getroffen und neu kompiliert.
 - **WASI-Sandbox: wasmtime 47.0.3 → 48.0.8** (Befund der Gates vom 2026-11-16, nicht aus CodeQL).
   `cargo audit` meldete für den Host 30 Schwachstellen: 23 in `wasmtime`, 6 in `wasmtime-wasi`, eine
   in `cap-primitives` — darunter drei kritische (RUSTSEC-2026-0327, -0379, -0482); Trivy meldete
