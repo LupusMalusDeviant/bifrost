@@ -723,6 +723,13 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
                 // Vor dem geschützten Block bestimmt: Eine ausdrücklich gesetzte Obergrenze (E1) gilt
                 // auch dann, wenn die Buchführung scheitert.
                 var exhausted = policy.MaxRetries is { } max && attempt > max;
+                // J6: Das Schließen der gelösten Verbindung beginnt sofort, vor allem, was scheitern
+                // kann (Fehlerart, Beschreibung, Frist mit Jitter). Sonst bliebe sie bei einem Fehler
+                // dort offen — gelöst vom Eintrag, also auch für ein späteres Stoppen unerreichbar —,
+                // und ein wartender Neuaufbau bekäme keine Antwort.
+                var closing = DisposeDetachedAsync(lost);
+                Observe(closing);
+
                 TimeSpan? delay = null;
                 var planned = false;
                 UpstreamFailureKind? kind = null;
@@ -739,7 +746,7 @@ public sealed partial class UpstreamSupervisor : IUpstreamSupervisor, IUpstreamC
 
                     // Befristet (F2, Z1): Ein Prozess oder Container, der beim Beenden hängt, hielte
                     // sonst jeden weiteren Versuch für immer auf.
-                    await WithinCloseTimeoutAsync(entry, DisposeDetachedAsync(lost), ct).ConfigureAwait(false);
+                    await WithinCloseTimeoutAsync(entry, closing, ct).ConfigureAwait(false);
 
                     // F2, N20: Nach dem Warten zuerst prüfen, ob dieser Loop abgelöst ist. Hat das
                     // Stoppen nach seiner Frist aufgegeben, gehört der Eintrag schon einem Nachfolger.

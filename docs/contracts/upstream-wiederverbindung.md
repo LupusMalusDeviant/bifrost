@@ -292,7 +292,9 @@ public sealed class UpstreamSessionLostException : Exception { /* übliche Konst
   geht die Kette der inneren Ausnahmen durch; `HttpRequestException` mit 401 oder 403 und
   `UpstreamAuthenticationException` ergeben `Authentication`, alles andere `Unreachable`.
 - Der HTTP-Connector wirft `UpstreamAuthenticationException`, wo heute eine
-  `InvalidOperationException` sagt, dass kein OAuth-Token vorliegt oder die Erneuerung scheiterte.
+  `InvalidOperationException` sagt, dass kein OAuth-Token vorliegt oder die Erneuerung abgelehnt
+  wurde. Ein gestörter Token-Endpunkt (5xx, 429, Netzfehler) ist eine Unerreichbarkeit (V1, N40;
+  Wortlaut berichtigt nach Plan 0005 J9).
 
 ### 5.3 REST
 
@@ -505,7 +507,7 @@ Konfiguration); zur Abnahme.**
 | # | Befund | Präzisierung |
 |---|---|---|
 | N49 | H3 | Präzisiert N45: Ab dem Beginn des Stoppens geht kein Lebenszeichen mehr hinaus (es wird auch nichts gegen die Toleranz gezählt). Eine Katalogabfrage, turnusmäßig oder ausdrücklich, prüft das Stoppen auch nach dem Warten auf die Prüf-Sperre und sendet dann nichts; eine ausdrückliche Neuabfrage im Drain bleibt ohne Wirkung wie ohne Verbindung (keine Fehlermeldung). Restfenster: Beginnt das Stoppen zwischen Prüfung und Senden, kann eine Anfrage noch hinausgehen. |
-| N50 | H4 | Präzisiert N44: Ein Versuch gilt als laufend ab dem Zählen des Fehlschlags, also auch während die verlorene Verbindung noch geschlossen wird (bis zu 10 s). Ein neues Token in diesem Fenster bringt einen Versuch, auch an einer gesetzten Grenze (E13). Mehrere Autorisierungen während desselben laufenden Versuchs zählen als eine: Danach folgt ein Versuch mit dem neuesten Token (Plan 0005 I7, entschieden am 2026-11-20). |
+| N50 | H4 | Präzisiert N44: Ein Versuch gilt als laufend ab dem Zählen des Fehlschlags, also auch während die verlorene Verbindung noch geschlossen wird (bis zu 10 s). Ein neues Token in diesem Fenster bringt einen Versuch, auch an einer gesetzten Grenze (E13). Mehrere Autorisierungen während desselben laufenden Versuchs zählen als eine: Scheitert der laufende Versuch, folgt ein Versuch mit dem neuesten Token (Plan 0005 I7, entschieden am 2026-11-20); gelingt er mit dem älteren Token, steht die Verbindung, und das neueste wirkt mit der nächsten Erneuerung (N12, Plan 0005 J5). |
 | N51 | H5 | Ergänzt N46: Je Upstream sind Datenbankschritt und Cache-Eintrag der Pin-Ablage (Prüfen, Annehmen, Vergessen) eine Einheit; ein Vergessen während einer Annahme oder Erstsichtung hinterlässt weder Zeile noch Cache-Eintrag. Unverändert bleibt das Restrisiko aus N46: Scheitert das Nachräumen einer späten Prüfung an der Datenbank, steht ein Pin bis zum nächsten Vergessen in der Ablage. Zu N46 (Plan 0005 I2): Das Entfernen wartet damit höchstens auf einen laufenden Datenbankschritt der Ablage, nicht auf eine Prüfung (Katalogabfrage). |
 | N52 | H6 | Zu P3 und N42: Als Authentifizierungsschema vor einem Kopfzeilenwert gilt nur ein bekanntes Wort (`Bearer`, `Basic`, `Digest`, `Token`, `Bot`, `DPoP`, `ApiKey`, `Negotiate`, `NTLM`; Groß-/Kleinschreibung egal). Nur dann wird der Anfang am Teil nach dem Schema gemessen und das Schema-Wort bleibt lesbar. Jeder andere Wert mit Leerzeichen (eine Passphrase) wird ab seinem ersten Zeichen maskiert. Ganze Werte unter 4 Zeichen werden weiterhin nicht maskiert (Umgebungswerte wie „1" oder „on"). **Liste abgenommen am 2026-11-20 (Plan 0005 I6):** Sie gilt für jeden Geheimwert, auch für Umgebungswerte und Argumente; was nach einem Schema-Wort an Restmenge unter 6 Zeichen unmaskiert bleibt, entspricht der Restmenge aus P3. |
 | N53 | H7 | Zu N40 und N47: Auch die Token-Antwort (Einlösen und Erneuern) wird auf ihre Form geprüft. Kein JSON-Objekt, oder `access_token`, `refresh_token`, `scope` vorhanden, aber kein Text: abgelehnte Anmeldung wie bei ungültigem JSON (beim Rückruf 400, nicht 500). `expires_in` wird als Zahl oder als Text aus Ziffern gelesen, eine Kommazahl abgerundet, auf höchstens zehn Jahre begrenzt; anderes ist ein Formfehler. Ein ausdrückliches `null` gilt wie ein fehlendes Feld (Plan 0005 I8). |
@@ -521,3 +523,12 @@ Konfiguration); zur Abnahme.**
 | N56 | I3 | Ergänzt N49: Eine Katalogabfrage, die beim Beginn des Stoppens schon unterwegs ist, schickt keine Folgeanfrage (`resources/list`, `prompts/list`) mehr und endet ohne Fehler. Neu in Abstractions: `IUpstreamConnection.DiscoverAsync(Func<bool> mayContinue, CancellationToken)` (Standardumsetzung: wie ohne Frage) und `UpstreamCatalogWithheldException`. Das Restfenster aus N49 bleibt je Anfrage. |
 | N57 | I4 | Ergänzt G4 und N45: Bei einem Verlust prüft der Fehlerpfad das Stoppen unter derselben Sperre, unter der der Stopp sein Stoppen vermerkt, und löst dort die Verbindung vom Eintrag. Wer zuerst kommt, gehört sie: Beginnt der Stopp zuerst, schließt der Fehlerpfad nichts; löst der Fehlerpfad zuerst, findet der Stopp keine Verbindung mehr, auf deren Aufrufe er warten müsste. |
 | N58 | I5, I8 | Ergänzt N53: Ein Text mit ungültigem Escape (einzelnes Surrogat) in `access_token`, `refresh_token` oder `scope` ist ein Formfehler (abgelehnte Anmeldung, beim Rückruf 400). `expires_in` über zehn Jahre wird als Zahl wie als Text aus Ziffern auf zehn Jahre begrenzt, auch jenseits von `long`; negative Werte gelten als 0. |
+
+### Achtes Review (`fd6c5d5`, Plan 0005 J1 – J9)
+
+**Status: J6 und J7 gebaut auf deinen Auftrag „klein anfangen und pushen"; J5 und J9 sind Wortlaut (N50, § 5.2); J1 – J4 und J8 bleiben offen; zur Abnahme.**
+
+| # | Befund | Präzisierung |
+|---|---|---|
+| N59 | J6 | Ergänzt N57: Hat der Fehlerpfad die Verbindung gelöst, beginnt ihr Schließen sofort, vor der Berechnung von Fehlerart und Frist. Scheitert diese, ist die Verbindung trotzdem geschlossen und ein wartender Neuaufbau beantwortet. |
+| N60 | J7 | Ergänzt N58: Auch im Fehlerkörper des Token-Endpunkts gilt ein `error` mit ungültigem Text als unbekannter Code; der HTTP-Status bleibt, ein 401/403 bleibt eine abgelehnte Anmeldung. |

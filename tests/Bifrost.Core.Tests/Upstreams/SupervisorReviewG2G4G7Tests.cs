@@ -28,7 +28,7 @@ public sealed class SupervisorReviewG2G4G7Tests
 
     private static JsonElement NoArguments => JsonSerializer.SerializeToElement(new { });
 
-    private UpstreamSupervisor Create(FakeUpstreamConnector connector, IToolDefinitionPinStore? pins = null)
+    private UpstreamSupervisor Create(FakeUpstreamConnector connector, IToolDefinitionPinStore? pins = null, Func<double>? jitter = null)
         => new(
             [connector],
             new InMemoryUpstreamConfigStore(_time),
@@ -43,7 +43,7 @@ public sealed class SupervisorReviewG2G4G7Tests
                 AuthenticationRetryInterval = TimeSpan.FromMinutes(15),
                 ConnectAttemptTimeout = TimeSpan.FromSeconds(60),
                 SessionRebuildTimeout = TimeSpan.FromSeconds(15),
-                JitterSource = () => 0d,
+                JitterSource = jitter ?? (() => 0d),
             },
             _time,
             audit: _audit,
@@ -279,6 +279,31 @@ public sealed class SupervisorReviewG2G4G7Tests
         }
 
         pins.Stored.Should().Contain((server, "echo"), "das späte Nachräumen des alten Eintrags lässt die Pins des Nachfolgers stehen");
+    }
+
+    /// <summary>
+    /// Plan 0005 J6: Seit I4 löst der Fehlerpfad die Verbindung vom Eintrag, bevor er Fehlerart und Frist
+    /// berechnet. Wirft dabei etwas — hier die Jitter-Quelle —, muss die gelöste Verbindung trotzdem
+    /// geschlossen werden; sonst bliebe sie offen und für jedes spätere Stoppen unerreichbar.
+    /// </summary>
+    [Fact]
+    public async Task J6_a_failing_delay_computation_still_closes_the_detached_connection()
+    {
+        var jitterFails = 0;
+        var connector = new FakeUpstreamConnector();
+        await using var supervisor = Create(
+            connector,
+            jitter: () => Volatile.Read(ref jitterFails) == 1 ? throw new InvalidOperationException("Jitter (Test).") : 0d);
+        var server = await supervisor.AddAsync(TestData.StdioConfig("j6-jitter"), Ct);
+        await TestData.WaitUntilAsync(() => supervisor.GetStatus(server)?.State == UpstreamState.Healthy);
+        var first = connector.Connections[0];
+
+        Volatile.Write(ref jitterFails, 1);
+        first.PingException = new IOException("Lebenszeichen fehlt (Test).");
+
+        await TestData.WaitUntilAdvancingAsync(
+            _time, () => first.DisposeCount > 0, because: "die gelöste Verbindung muss geschlossen werden");
+        supervisor.GetStatus(server)!.State.Should().Be(UpstreamState.Failed);
     }
 
     /// <summary>Eine Verbindung mit einem langen Aufruf, zählbaren Lebenszeichen und echtem Schließen.</summary>

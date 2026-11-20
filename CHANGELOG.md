@@ -292,6 +292,10 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     - **Token-Antwort:** Ein ungültiger Text (einzelnes Surrogat) in einem Token-Feld ist eine
       abgelehnte Anmeldung statt eines Serverfehlers. `expires_in` wird als Zahl wie als Text gleich
       auf zehn Jahre begrenzt.
+  - **Befunde aus dem achten Codex-Review** (Plan 0005, J6 und J7; Vertrag N59, N60):
+    - Scheitert nach einem Verbindungsverlust die Berechnung der Wartezeit, wird die verlorene
+      Verbindung trotzdem geschlossen.
+    - Ein 401 des Token-Endpunkts mit ungültigem Text im Fehlercode bleibt eine abgelehnte Anmeldung.
 - **Fehlertexte eines Upstreams konnten dessen Antwortkörper enthalten.** Das MCP-SDK hängt an eine
   HTTP-Fehlermeldung den Antwortkörper der Gegenstelle an; der Text ging ungefiltert in `lastError`,
   Audit und Log. Zitiert ein Upstream in seiner 401-Antwort den vorgelegten Schlüssel, stand er dort.

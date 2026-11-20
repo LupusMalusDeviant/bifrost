@@ -203,6 +203,23 @@ public sealed class OAuthTokenEndpointFailureTests
     }
 
     /// <summary>
+    /// Plan 0005 J7: Ein 401 des Token-Endpunkts mit ungültigem Text im <c>error</c>-Feld (einzelnes
+    /// Surrogat) bleibt eine abgelehnte Anmeldung. Vorher warf das Lesen des Fehlercodes, bevor der
+    /// Status festgehalten war, und die Erneuerung galt als „nicht erreichbar".
+    /// </summary>
+    [Fact]
+    public async Task A_refusal_with_an_undecodable_error_code_stays_a_rejected_login()
+    {
+        using var server = new AuthorizationServer(HttpStatusCode.Unauthorized) { ErrorBody = """{"error":"\uD800"}""" };
+        var (connector, config, id) = await ArrangeAsync(server);
+
+        var act = async () => await connector.ConnectAsync(id, config, TestContext.Current.CancellationToken);
+
+        await act.Should().ThrowAsync<UpstreamAuthenticationException>();
+        server.McpRequests.Should().Be(0);
+    }
+
+    /// <summary>
     /// Plan 0005 F12: Gestörte Metadaten (5xx, 429) sind wie ein gestörter Token-Endpunkt eine
     /// Unerreichbarkeit mit Status — sie werden bald wieder versucht.
     /// </summary>
@@ -380,6 +397,7 @@ public sealed class OAuthTokenEndpointFailureTests
     [InlineData("""{"error":"invalid_client","error_description":"x"}""", "invalid_client")]
     [InlineData("""{"error":"Bearer geheim"}""", null)]
     [InlineData("geheim", null)]
+    [InlineData("""{"error":"\uD800"}""", null)]
     public void Only_known_error_codes_pass(string input, string? expected)
         => OAuthFlow.KnownErrorCode(input).Should().Be(expected);
 
@@ -528,7 +546,7 @@ public sealed class OAuthTokenEndpointFailureTests
                     }
                     else
                     {
-                        Write(context, tokenStatus, """{"error":"temporarily_unavailable","error_description":"geheim-aus-dem-token-endpunkt"}""");
+                        Write(context, tokenStatus, ErrorBody ?? """{"error":"temporarily_unavailable","error_description":"geheim-aus-dem-token-endpunkt"}""");
                     }
                 }
             });
@@ -552,6 +570,9 @@ public sealed class OAuthTokenEndpointFailureTests
 
         /// <summary>Ersetzt den Körper einer erfolgreichen Token-Antwort (HTTP 200).</summary>
         public Func<string>? TokenBody { get; init; }
+
+        /// <summary>Wenn gesetzt, der Fehlerkörper des Token-Endpunkts bei einem Status ungleich 200.</summary>
+        public string? ErrorBody { get; init; }
 
         public void Dispose()
         {
