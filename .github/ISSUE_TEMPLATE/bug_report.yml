@@ -44,9 +44,9 @@ body:
     attributes:
       label: Version
       description: >-
-        The image tag or digest, or the commit if you built from source. `bifrost --version`
+        The image tag or digest, or the commit if you built from source. `faolan --version`
         reports the commit for the CLI.
-      placeholder: "0.12.0 / ghcr.io/lupusmalusdeviant/bifrost@sha256:... / commit 71e4acf"
+      placeholder: "0.12.0 / ghcr.io/lupusmalusdeviant/faolan@sha256:... / commit 71e4acf"
     validations:
       required: true
 
@@ -83,8 +83,8 @@ body:
         and a browser discards it over plain HTTP without any error — anywhere.
       options:
         - http://localhost:8080 directly
-        - Behind a TLS reverse proxy (BIFROST_TRUSTED_PROXIES set)
-        - Behind a TLS reverse proxy (BIFROST_TRUSTED_PROXIES not set)
+        - Behind a TLS reverse proxy (FAOLAN_TRUSTED_PROXIES set)
+        - Behind a TLS reverse proxy (FAOLAN_TRUSTED_PROXIES not set)
         - Plain HTTP on a hostname or IP
         - Not relevant to this report
     validations:
@@ -93,7 +93,7 @@ body:
   - type: textarea
     id: doctor
     attributes:
-      label: "`bifrost doctor` output"
+      label: "`faolan doctor` output"
       description: >-
         Paste the report if the gateway runs. It is safe to paste: it never names the location of
         key material and never shows a password. Findings carry stable codes (`BFR-DB-0002`) that
@@ -115,7 +115,7 @@ body:
     attributes:
       label: Configuration (redacted)
       description: >-
-        The relevant `BIFROST_*` variables and, for an upstream problem, the transport
+        The relevant `FAOLAN_*` variables and, for an upstream problem, the transport
         configuration. **Remove every secret value.** If a value matters but is secret, say what
         shape it has rather than what it is.
       render: text

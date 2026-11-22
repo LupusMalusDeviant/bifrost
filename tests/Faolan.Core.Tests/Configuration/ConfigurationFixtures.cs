@@ -119,7 +119,7 @@ internal static class ConfigurationFixtures
             new UpstreamServerConfig(
                 "mit-wasi", "WASI-Component", UpstreamTransportKind.Wasi, Enabled: true,
                 Wasi: new WasiTransportOptions(
-                    "bifrost-wasi-host",
+                    "faolan-wasi-host",
                     "component.wasm",
                     "component.sig",
                     ["cHVibGlzaGVy"],

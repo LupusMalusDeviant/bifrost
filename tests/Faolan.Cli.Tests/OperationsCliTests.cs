@@ -269,7 +269,7 @@ public class OperationsCliTests
     [Fact]
     public async Task Config_export_writes_the_payload_locally()
     {
-        var target = Path.Combine(Path.GetTempPath(), $"bifrost-export-{Guid.NewGuid():N}.json");
+        var target = Path.Combine(Path.GetTempPath(), $"faolan-export-{Guid.NewGuid():N}.json");
         var handler = new RecordingHandler(_ => Json(HttpStatusCode.OK,
             """
             {"formatVersion":1,"productVersion":"0.11.0","createdAt":"2026-07-31T12:00:00Z",
@@ -292,7 +292,7 @@ public class OperationsCliTests
     [Fact]
     public async Task Config_import_stops_at_conflicts_without_applying_anything()
     {
-        var file = Path.Combine(Path.GetTempPath(), $"bifrost-import-{Guid.NewGuid():N}.json");
+        var file = Path.Combine(Path.GetTempPath(), $"faolan-import-{Guid.NewGuid():N}.json");
         await File.WriteAllTextAsync(file, "{}", TestContext.Current.CancellationToken);
         var handler = new RecordingHandler(_ => Json(HttpStatusCode.OK,
             """
@@ -318,7 +318,7 @@ public class OperationsCliTests
     [Fact]
     public async Task Config_import_applies_after_the_plan()
     {
-        var file = Path.Combine(Path.GetTempPath(), $"bifrost-import-{Guid.NewGuid():N}.json");
+        var file = Path.Combine(Path.GetTempPath(), $"faolan-import-{Guid.NewGuid():N}.json");
         await File.WriteAllTextAsync(file, "{}", TestContext.Current.CancellationToken);
         var handler = new RecordingHandler(request =>
             request.RequestUri!.AbsolutePath.EndsWith("/plan", StringComparison.Ordinal)
@@ -499,7 +499,7 @@ public class OperationsCliTests
     {
         var handler = new RecordingHandler(_ => Text("a\nb\nc\n"));
         var output = new StringWriter();
-        var target = Path.Combine(Path.GetTempPath(), $"bifrost-audit-{Guid.NewGuid():N}.jsonl");
+        var target = Path.Combine(Path.GetTempPath(), $"faolan-audit-{Guid.NewGuid():N}.jsonl");
 
         try
         {
@@ -647,7 +647,7 @@ public class OperationsCliTests
                 ? Json(HttpStatusCode.OK, PlanJson)
                 : Json(HttpStatusCode.OK, ApplicationJson));
         var output = new StringWriter();
-        var undoFile = Path.Combine(Path.GetTempPath(), $"bifrost-undo-{Guid.NewGuid():N}.json");
+        var undoFile = Path.Combine(Path.GetTempPath(), $"faolan-undo-{Guid.NewGuid():N}.json");
 
         try
         {
@@ -698,7 +698,7 @@ public class OperationsCliTests
     {
         var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.NoContent));
         var output = new StringWriter();
-        var undoFile = Path.Combine(Path.GetTempPath(), $"bifrost-undo-{Guid.NewGuid():N}.json");
+        var undoFile = Path.Combine(Path.GetTempPath(), $"faolan-undo-{Guid.NewGuid():N}.json");
         await File.WriteAllTextAsync(undoFile, ApplicationJson, TestContext.Current.CancellationToken);
 
         try
@@ -725,7 +725,7 @@ public class OperationsCliTests
     /// <summary>Ein Pack-Dokument auf der Platte; der Inhalt prüft der Gateway, nicht die CLI.</summary>
     private static string PackFile()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"bifrost-pack-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"faolan-pack-{Guid.NewGuid():N}.json");
         File.WriteAllText(path, """{"manifest":{},"payload":"{}","signatureBase64":"AA=="}""");
         return path;
     }

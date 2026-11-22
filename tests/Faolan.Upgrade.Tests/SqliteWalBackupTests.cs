@@ -37,7 +37,7 @@ public sealed class SqliteWalBackupTests : IAsyncLifetime
     private const string Passphrase = "eine-passphrase-fuer-das-wal-archiv";
 
     private readonly string _root = Path.Combine(
-        Path.GetTempPath(), $"bifrost-wal-backup-{Guid.NewGuid():N}");
+        Path.GetTempPath(), $"faolan-wal-backup-{Guid.NewGuid():N}");
 
     public ValueTask InitializeAsync()
     {

@@ -116,7 +116,7 @@ public sealed class PostgresUpgradeMatrixTests : IClassFixture<PostgresContainer
         // Der Schluesselring liegt im Arbeitsverzeichnis des Tests; er gehoert nicht in die
         // Datenbank und reist bei PostgreSQL auch nicht mit ihr.
         var keyDirectory = Path.Combine(
-            Path.GetTempPath(), $"bifrost-upgrade-pg-{Guid.NewGuid():N}");
+            Path.GetTempPath(), $"faolan-upgrade-pg-{Guid.NewGuid():N}");
         var protection = UpgradeHarness.KeyRing(keyDirectory);
 
         try
@@ -174,7 +174,7 @@ public sealed class PostgresUpgradeMatrixTests : IClassFixture<PostgresContainer
     private async Task<IDbContextFactory<FaolanDbContext>> NewDatabaseAsync(string name)
     {
         var sanitised = new string([.. name.ToLowerInvariant().Where(char.IsLetterOrDigit)]);
-        var dbName = $"bifrost_up_{sanitised}_{Guid.NewGuid():N}";
+        var dbName = $"faolan_up_{sanitised}_{Guid.NewGuid():N}";
         dbName = dbName[..Math.Min(dbName.Length, 60)];
 
         await using (var admin = new NpgsqlConnection(_fixture.Container!.GetConnectionString()))

@@ -5,7 +5,7 @@ namespace Faolan.Server.Operations;
 /// <summary>
 /// Der Riegel nach einem Restore (<c>BFR-F-0047</c>).
 /// <para>
-/// <b>Warum es ihn gibt.</b> <c>bifrost restore</c> tauscht Datenbank, Key-Ring und
+/// <b>Warum es ihn gibt.</b> <c>faolan restore</c> tauscht Datenbank, Key-Ring und
 /// Instanzkonfiguration auf der Platte. Der laufende Prozess merkt davon nichts: Er hält seine
 /// Datenbankverbindung, seinen entschlüsselten Key-Ring und seine Zwischenspeicher weiter — und
 /// entscheidet damit gegen den Zustand, den der Restore gerade ersetzt hat. Im Piloten vom

@@ -112,7 +112,7 @@ internal static class ServerArchitecture
     private static bool CarriesConfig(Type type)
         => type == typeof(UpstreamServerConfig)
             || (type.IsGenericType && type.GetGenericArguments().Any(CarriesConfig))
-            || (type.Namespace?.StartsWith("Bifrost.", StringComparison.Ordinal) == true
+            || (type.Namespace?.StartsWith("Faolan.", StringComparison.Ordinal) == true
                 && type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                     .Any(property => property.PropertyType == typeof(UpstreamServerConfig)));
 

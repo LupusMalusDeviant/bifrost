@@ -118,7 +118,7 @@ public class ImportSecretSeparationTests
                 new UpstreamServerConfig(
                     "wasi-fall", "WASI-Fall", UpstreamTransportKind.Wasi, false,
                     Wasi: new WasiTransportOptions(
-                        "/opt/host/bifrost-wasi",
+                        "/opt/host/faolan-wasi",
                         "/opt/pakete/component.wasm",
                         "/opt/pakete/component.sig",
                         ["dGVzdA=="],

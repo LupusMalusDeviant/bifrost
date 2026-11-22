@@ -350,7 +350,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Image bauen
-        run: docker build -t bifrost:security-scan .
+        run: docker build -t faolan:security-scan .
 
       - name: Trivy — Containerfilesystem (blockiert bei CRITICAL/HIGH)
         id: image_scan
@@ -366,13 +366,13 @@ jobs:
             "${TRIVY_IMAGE}" image \
             --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed=false \
             --format sarif --output /out/trivy-image.sarif \
-            --no-progress bifrost:security-scan
+            --no-progress faolan:security-scan
 
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             "${TRIVY_IMAGE}" image \
             --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed=false \
-            --exit-code 1 --no-progress bifrost:security-scan
+            --exit-code 1 --no-progress faolan:security-scan
 
       # `--scanners vuln,misconfig` ohne `secret`: Das Secret-Gate ist gitleaks (Job
       # `secrets`). Trivys Secret-Scanner ueber den ganzen Baum lief lokal in das

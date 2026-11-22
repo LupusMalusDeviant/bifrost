@@ -7,7 +7,7 @@ namespace Faolan.Cli.Tests;
 
 /// <summary>
 /// Der Distributionsvertrag (docs/plans/m1-distribution-contract.md §2) verlangt, dass
-/// <c>bifrost --version</c> SemVer <em>und</em> Commit-SHA nennt. Diese Tests halten die Zusage
+/// <c>faolan --version</c> SemVer <em>und</em> Commit-SHA nennt. Diese Tests halten die Zusage
 /// fest: Sie prüfen nicht die Formatierung um ihrer selbst willen, sondern dass die
 /// Build-Verdrahtung (VersionPrefix + SourceLink) den Commit überhaupt bis ins Programm trägt.
 /// </summary>
@@ -33,7 +33,7 @@ public class CliVersionTests
 
         exit.Should().Be(GatewayCli.Success);
         var text = output.ToString();
-        text.Should().StartWith($"bifrost {CliVersion.SemVer}");
+        text.Should().StartWith($"faolan {CliVersion.SemVer}");
         text.Should().Contain(CliVersion.Commit);
     }
 
@@ -91,7 +91,7 @@ public class CliVersionTests
         // Version im Repository steigt: Die Ausgabe muss immer beide Angaben tragen.
         var human = CliVersion.Describe(jsonOutput: false);
 
-        Regex.IsMatch(human, @"^bifrost \S+\r?\nCommit:\s+\S+\r?\nLaufzeit:\s+\S")
+        Regex.IsMatch(human, @"^faolan \S+\r?\nCommit:\s+\S+\r?\nLaufzeit:\s+\S")
             .Should().BeTrue($"unerwartetes Format:{Environment.NewLine}{human}");
     }
 

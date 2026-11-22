@@ -87,7 +87,7 @@ public sealed class ContainerRuntimeCheck : IDiagnosticCheck
 /// BFR-RT-0002 — das WASI-Host-Binary liegt am konfigurierten Pfad.
 /// <para>
 /// Ohne den Host lässt sich kein Connector-Paket proben, und ungeprobt wird nichts aktiv. Im
-/// Container-Image liegt er unter <c>/usr/local/bin/bifrost-wasi-host</c>.
+/// Container-Image liegt er unter <c>/usr/local/bin/faolan-wasi-host</c>.
 /// </para>
 /// </summary>
 public sealed class WasiHostCheck : IDiagnosticCheck
@@ -119,7 +119,7 @@ public sealed class WasiHostCheck : IDiagnosticCheck
                 Code,
                 $"FAOLAN_WASI_HOST zeigt auf '{path}', dort liegt keine Datei.",
                 "Pfad korrigieren. Im Container-Image liegt der Host unter "
-                + "/usr/local/bin/bifrost-wasi-host. Ohne ihn lässt sich ein Connector-Paket nicht "
+                + "/usr/local/bin/faolan-wasi-host. Ohne ihn lässt sich ein Connector-Paket nicht "
                 + "proben — und ungeprobt wird nichts aktiv.",
                 details));
     }

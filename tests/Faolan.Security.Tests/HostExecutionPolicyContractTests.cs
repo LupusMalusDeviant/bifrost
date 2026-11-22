@@ -103,7 +103,7 @@ public class HostExecutionPolicyContractTests : IClassFixture<SecurityGatewayFix
         var isolated = new UpstreamServerConfig(
             "wasi", "Isoliert", UpstreamTransportKind.Wasi, Enabled: true,
             Wasi: new WasiTransportOptions(
-                "bifrost-wasi-host", "component.wasm", "component.sig", ["cHVibGlzaGVy"]));
+                "faolan-wasi-host", "component.wasm", "component.sig", ["cHVibGlzaGVy"]));
 
         var decision = policy!.Evaluate(isolated);
 

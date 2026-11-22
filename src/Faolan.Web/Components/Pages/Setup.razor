@@ -21,7 +21,7 @@
         <p class="muted" style="margin-top:0">
             Beim ersten Start legt der Gateway ein Setup-Token an und schreibt es in
             <code>&lt;datadir&gt;/config/bootstrap-token.txt</code> — nicht ins Log. Im Container:
-            <code>docker compose exec bifrost cat /data/config/bootstrap-token.txt</code>.
+            <code>docker compose exec faolan cat /data/config/bootstrap-token.txt</code>.
             Das Token gilt einmal und nur für kurze Zeit.
         </p>
         <form action="/auth/setup" method="post">

@@ -2,17 +2,17 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <AssemblyName>bifrost-connector</AssemblyName>
+    <AssemblyName>faolan-connector</AssemblyName>
     <RootNamespace>Faolan.ConnectorKit</RootNamespace>
-    <Description>Connector Developer Kit (M6/WP6.5): Pakete fuer B.I.F.R.O.S.T bauen, signieren
+    <Description>Connector Developer Kit (M6/WP6.5): Pakete fuer Faolan bauen, signieren
       und pruefen — ohne laufendes Gateway.</Description>
     <PackAsTool>true</PackAsTool>
-    <ToolCommandName>bifrost-connector</ToolCommandName>
+    <ToolCommandName>faolan-connector</ToolCommandName>
     <PackageId>Faolan.ConnectorKit</PackageId>
   </PropertyGroup>
 
   <!--
-    Warum ein eigenes Programm und nicht ein Befehl in 'bifrost'.
+    Warum ein eigenes Programm und nicht ein Befehl in 'faolan'.
 
     Die Gateway-CLI ist der oeffentliche HTTP-Client und haelt bewusst KEINE Projektreferenz — sie
     dupliziert dafuer sogar Exitcode-Konstanten (siehe OperationsCli). Das Kit braucht dagegen

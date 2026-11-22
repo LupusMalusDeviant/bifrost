@@ -440,7 +440,7 @@ public class CliUpstreamConnectorTests
     [Fact]
     public async Task Path_parameters_cannot_escape_their_access_roots()
     {
-        var allowedRoot = Path.Combine(Path.GetTempPath(), $"bifrost-cli-root-{Guid.NewGuid():N}");
+        var allowedRoot = Path.Combine(Path.GetTempPath(), $"faolan-cli-root-{Guid.NewGuid():N}");
         Directory.CreateDirectory(allowedRoot);
         var allowedFile = Path.Combine(allowedRoot, "allowed.txt");
         await File.WriteAllTextAsync(

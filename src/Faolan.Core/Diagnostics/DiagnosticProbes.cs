@@ -91,7 +91,15 @@ public sealed record DatabaseDiagnosticFacts(
     IReadOnlyList<string>? AppliedMigrations = null,
     IReadOnlyList<string>? PendingMigrations = null,
     string? ServerVersion = null,
-    int? ServerMajorVersion = null);
+    int? ServerMajorVersion = null,
+    InstanceContentFacts? Content = null);
+
+/// <summary>
+/// Wie viel diese Instanz besitzt — gezählt, nicht entschlüsselt. Für BFR-DB-0008: Eine Instanz ohne
+/// jeden Upstream, jede Rolle und jeden Schlüssel ist neu — oder läuft auf dem falschen Volume.
+/// <c>null</c> im übergeordneten Record heißt „nicht gezählt" (etwa weil Migrationen ausstehen).
+/// </summary>
+public sealed record InstanceContentFacts(int Upstreams, int Roles, int ApiKeys);
 
 /// <summary>
 /// Die Lage der PostgreSQL-Sicherungswerkzeuge auf <b>diesem</b> Rechner (ADR-0024 E2).
@@ -184,7 +192,7 @@ public sealed class SystemFileProbe : IFileProbe
 
     public string? ProbeWritable(string path)
     {
-        var probeFile = Path.Combine(path, $".bifrost-doctor-{Guid.NewGuid():N}.tmp");
+        var probeFile = Path.Combine(path, $".faolan-doctor-{Guid.NewGuid():N}.tmp");
         try
         {
             using (var stream = new FileStream(probeFile, FileMode.CreateNew, FileAccess.Write))

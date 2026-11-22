@@ -37,7 +37,7 @@ public static class HangReport
         "Faolan.TestServers.HttpServer",
         "Faolan.TestServers.OrphanHost",
         "Faolan.TestServers.CliProbe",
-        "bifrost-wasi-host",
+        "faolan-wasi-host",
     ];
 
     /// <summary>Wohin der Bericht geht — ein Verzeichnis, das die CI als Artefakt einsammelt.</summary>

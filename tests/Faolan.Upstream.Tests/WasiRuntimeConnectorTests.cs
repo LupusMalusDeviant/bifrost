@@ -33,7 +33,7 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
     public async ValueTask InitializeAsync()
     {
         // Der Stub prüft die Signatur nicht — Inhalt und Länge sind hier egal, der Pfad zählt.
-        _componentPath = Path.Combine(Path.GetTempPath(), $"bifrost-{Guid.NewGuid():N}.wasm");
+        _componentPath = Path.Combine(Path.GetTempPath(), $"faolan-{Guid.NewGuid():N}.wasm");
         _signaturePath = Path.ChangeExtension(_componentPath, ".sig");
         await File.WriteAllBytesAsync(_componentPath, [0x00, 0x61, 0x73, 0x6D], TestContext.Current.CancellationToken);
         await File.WriteAllBytesAsync(_signaturePath, new byte[64], TestContext.Current.CancellationToken);
@@ -319,7 +319,7 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
         await using var connection = await ConnectAsync();
 
         var readResource = () => connection.ReadResourceAsync(
-            new Uri("bifrost://x"), TestContext.Current.CancellationToken);
+            new Uri("faolan://x"), TestContext.Current.CancellationToken);
         var getPrompt = () => connection.GetPromptAsync("p", null, TestContext.Current.CancellationToken);
 
         await readResource.Should().ThrowAsync<NotSupportedException>();
@@ -359,7 +359,7 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
 
     /// <summary>
     /// Der bloße Dateiname reicht als Verweis — so steht der Host im Image
-    /// (<c>bifrost-wasi-host</c>), und gestartet wird ohnehin der Pfad des Betreibers.
+    /// (<c>faolan-wasi-host</c>), und gestartet wird ohnehin der Pfad des Betreibers.
     /// </summary>
     [Fact]
     public async Task The_bare_file_name_of_the_operator_host_is_accepted()

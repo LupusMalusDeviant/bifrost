@@ -18,7 +18,7 @@ concurrency:
 env:
   # Fest aus dem Vertrag (Abschnitt 1). Bewusst nicht aus github.repository abgeleitet:
   # GHCR verlangt Kleinschreibung, der Owner schreibt sich aber gemischt.
-  REGISTRY_IMAGE: ghcr.io/lupusmalusdeviant/bifrost
+  REGISTRY_IMAGE: ghcr.io/lupusmalusdeviant/faolan
 
 jobs:
   # ── verify ──────────────────────────────────────────────────────────────────
@@ -330,7 +330,7 @@ jobs:
             echo "org.opencontainers.image.version=${VERSION}"
             echo "org.opencontainers.image.licenses=MIT"
             echo "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "org.opencontainers.image.title=B.I.F.R.O.S.T"
+            echo "org.opencontainers.image.title=Faolan"
             echo "org.opencontainers.image.description=Self-hosted meta-MCP gateway: one endpoint for your agents and every MCP server behind it."
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
@@ -346,7 +346,7 @@ jobs:
           platforms: linux/amd64
           load: true
           push: false
-          tags: bifrost:smoke-amd64
+          tags: faolan:smoke-amd64
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Build linux/arm64 (nur laden, noch kein Push)
@@ -356,7 +356,7 @@ jobs:
           platforms: linux/arm64
           load: true
           push: false
-          tags: bifrost:smoke-arm64
+          tags: faolan:smoke-arm64
           labels: ${{ steps.meta.outputs.labels }}
 
       # Der Vertrag verspricht, dass ein Pull per Digest auf amd64 UND arm64 gesund startet.
@@ -380,7 +380,7 @@ jobs:
 
           smoke() {
             local IMAGE="$1" PLATFORM="$2" EXPECTED_ARCH="$3" PORT="$4"
-            local NAME="bifrost-smoke-${EXPECTED_ARCH}"
+            local NAME="faolan-smoke-${EXPECTED_ARCH}"
             echo "::group::Smoke $PLATFORM ($IMAGE)"
 
             # 1) Architektur: der Build hat gebaut, was er bauen sollte.
@@ -411,7 +411,7 @@ jobs:
           msg=json.dumps({'id':1,'type':'hello','protocolVersion':'$WASI_VERSION'}).encode()
           sys.stdout.buffer.write(struct.pack('>I',len(msg))+msg)" \
               | docker run -i --rm --platform "$PLATFORM" \
-                  --entrypoint /usr/local/bin/bifrost-wasi-host "$IMAGE" host \
+                  --entrypoint /usr/local/bin/faolan-wasi-host "$IMAGE" host \
               | tr -d '\0')
             echo "Host-Antwort: $ANSWER"
             local EXPECTED
@@ -442,8 +442,8 @@ jobs:
             return 1
           }
 
-          smoke bifrost:smoke-amd64 linux/amd64 amd64 8080
-          smoke bifrost:smoke-arm64 linux/arm64 arm64 8081
+          smoke faolan:smoke-amd64 linux/amd64 amd64 8080
+          smoke faolan:smoke-arm64 linux/arm64 arm64 8081
 
       # Login erst hier: bis zum bestandenen Smoke braucht der Lauf keinen Schreibzugriff
       # auf die Registry.
@@ -561,7 +561,7 @@ jobs:
         env:
           ERWARTET: ${{ needs.verify.outputs.version }}
         run: |
-          BIN=out/${{ matrix.rid }}/bifrost
+          BIN=out/${{ matrix.rid }}/faolan
           if [ "${{ runner.os }}" = "Windows" ]; then BIN="$BIN.exe"; else chmod +x "$BIN"; fi
           "$BIN" --help
           "$BIN" --version
@@ -580,13 +580,13 @@ jobs:
           VERSION: ${{ needs.verify.outputs.image_version }}
         run: |
           mkdir -p dist
-          NAME="bifrost-cli-$VERSION-${{ matrix.rid }}"
+          NAME="faolan-cli-$VERSION-${{ matrix.rid }}"
           cd out/${{ matrix.rid }}
           if [ "${{ runner.os }}" = "Windows" ]; then
-            7z a -tzip "../../dist/$NAME.zip" bifrost.exe LICENSE
+            7z a -tzip "../../dist/$NAME.zip" faolan.exe LICENSE
           else
-            chmod +x bifrost   # ohne das landet die Datei ohne x-Bit im tar
-            tar -czf "../../dist/$NAME.tar.gz" bifrost LICENSE
+            chmod +x faolan   # ohne das landet die Datei ohne x-Bit im tar
+            tar -czf "../../dist/$NAME.tar.gz" faolan LICENSE
           fi
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -656,7 +656,7 @@ jobs:
       packages: write # Vertrag §6, ergaenzt am 2026-07-31: Cosign legt die Signatur in der Registry ab
 
     env:
-      IMAGE: ghcr.io/lupusmalusdeviant/bifrost
+      IMAGE: ghcr.io/lupusmalusdeviant/faolan
       IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
       # Die Version kommt aus `verify`; der Fallback leitet sie aus dem Tag ab, damit der
       # Block auch dann laeuft, wenn WP1.1 den Output anders benennt.
@@ -665,7 +665,7 @@ jobs:
       VERSION: ${{ needs.verify.outputs.image_version || github.ref_name }}
       # Die Identitaet, gegen die spaeter jeder Anwender prueft. Genau dieser Ausdruck steht
       # auch in docs/security/verifying-releases.md — Aenderungen hier brechen die Anleitung.
-      COSIGN_IDENTITY: ^https://github\.com/LupusMalusDeviant/bifrost/\.github/workflows/release\.yml@refs/tags/v
+      COSIGN_IDENTITY: ^https://github\.com/LupusMalusDeviant/(bifrost|faolan)/\.github/workflows/release\.yml@refs/tags/v
       COSIGN_ISSUER: https://token.actions.githubusercontent.com
 
     steps:
@@ -737,11 +737,11 @@ jobs:
           # Quelle ist der DIGEST, nicht das Tag: sonst beschreibt die SBOM womoeglich ein
           # anderes Image als das signierte.
           syft "${IMAGE}@${IMAGE_DIGEST}" \
-            -o "cyclonedx-json=sbom/bifrost-${VERSION}-image.cdx.json"
+            -o "cyclonedx-json=sbom/faolan-${VERSION}-image.cdx.json"
 
           # Die SBOM muss die veroeffentlichte Version nennen, sonst ist sie nicht zuordenbar
           # (Pflichtenheft WP1.2, Test "SBOM referenziert korrekte Version").
-          if ! grep -q "${IMAGE_DIGEST}" "sbom/bifrost-${VERSION}-image.cdx.json"; then
+          if ! grep -q "${IMAGE_DIGEST}" "sbom/faolan-${VERSION}-image.cdx.json"; then
             echo "::error::Die Image-SBOM nennt den signierten Digest nicht."
             exit 1
           fi
@@ -753,9 +753,9 @@ jobs:
           mkdir -p sbom extract
           shopt -s nullglob
           COUNT=0
-          for ARCHIVE in dist/bifrost-cli-"${VERSION}"-*.tar.gz dist/bifrost-cli-"${VERSION}"-*.zip; do
+          for ARCHIVE in dist/faolan-cli-"${VERSION}"-*.tar.gz dist/faolan-cli-"${VERSION}"-*.zip; do
             BASE="$(basename "$ARCHIVE")"
-            RID="${BASE#bifrost-cli-"${VERSION}"-}"
+            RID="${BASE#faolan-cli-"${VERSION}"-}"
             RID="${RID%.tar.gz}"; RID="${RID%.zip}"
             rm -rf "extract/$RID"; mkdir -p "extract/$RID"
             case "$ARCHIVE" in
@@ -763,7 +763,7 @@ jobs:
               *.zip)    unzip -q "$ARCHIVE" -d "extract/$RID" ;;
             esac
             syft "dir:extract/$RID" \
-              -o "cyclonedx-json=sbom/bifrost-cli-${VERSION}-${RID}.cdx.json"
+              -o "cyclonedx-json=sbom/faolan-cli-${VERSION}-${RID}.cdx.json"
             COUNT=$((COUNT + 1))
           done
           # Vertrag §2 nennt fuenf Runtime-IDs. Weniger Archive heisst: der Job `cli` hat
@@ -855,7 +855,7 @@ jobs:
           if [ -f .trivyignore.yaml ]; then
             IGNORE=(--ignorefile /work/.trivyignore.yaml)
           fi
-          for S in sbom/bifrost-cli-*.cdx.json; do
+          for S in sbom/faolan-cli-*.cdx.json; do
             echo "::group::Trivy $S"
             docker run --rm -v "$PWD:/work" -w /work "${TRIVY_IMAGE}" \
               sbom --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed=false \
@@ -900,38 +900,38 @@ jobs:
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ env.IMAGE_DIGEST }}
-          sbom-path: sbom/bifrost-${{ env.VERSION }}-image.cdx.json
+          sbom-path: sbom/faolan-${{ env.VERSION }}-image.cdx.json
           push-to-registry: true
 
       - name: SBOM-Attestation — CLI win-x64
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
-          subject-path: dist/bifrost-cli-${{ env.VERSION }}-win-x64.zip
-          sbom-path: sbom/bifrost-cli-${{ env.VERSION }}-win-x64.cdx.json
+          subject-path: dist/faolan-cli-${{ env.VERSION }}-win-x64.zip
+          sbom-path: sbom/faolan-cli-${{ env.VERSION }}-win-x64.cdx.json
 
       - name: SBOM-Attestation — CLI linux-x64
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
-          subject-path: dist/bifrost-cli-${{ env.VERSION }}-linux-x64.tar.gz
-          sbom-path: sbom/bifrost-cli-${{ env.VERSION }}-linux-x64.cdx.json
+          subject-path: dist/faolan-cli-${{ env.VERSION }}-linux-x64.tar.gz
+          sbom-path: sbom/faolan-cli-${{ env.VERSION }}-linux-x64.cdx.json
 
       - name: SBOM-Attestation — CLI linux-arm64
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
-          subject-path: dist/bifrost-cli-${{ env.VERSION }}-linux-arm64.tar.gz
-          sbom-path: sbom/bifrost-cli-${{ env.VERSION }}-linux-arm64.cdx.json
+          subject-path: dist/faolan-cli-${{ env.VERSION }}-linux-arm64.tar.gz
+          sbom-path: sbom/faolan-cli-${{ env.VERSION }}-linux-arm64.cdx.json
 
       - name: SBOM-Attestation — CLI osx-x64
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
-          subject-path: dist/bifrost-cli-${{ env.VERSION }}-osx-x64.tar.gz
-          sbom-path: sbom/bifrost-cli-${{ env.VERSION }}-osx-x64.cdx.json
+          subject-path: dist/faolan-cli-${{ env.VERSION }}-osx-x64.tar.gz
+          sbom-path: sbom/faolan-cli-${{ env.VERSION }}-osx-x64.cdx.json
 
       - name: SBOM-Attestation — CLI osx-arm64
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
-          subject-path: dist/bifrost-cli-${{ env.VERSION }}-osx-arm64.tar.gz
-          sbom-path: sbom/bifrost-cli-${{ env.VERSION }}-osx-arm64.cdx.json
+          subject-path: dist/faolan-cli-${{ env.VERSION }}-osx-arm64.tar.gz
+          sbom-path: sbom/faolan-cli-${{ env.VERSION }}-osx-arm64.cdx.json
 
       # ---------------------------------------------------------------------------------
       # 5. Signatur — keyless ueber OIDC, kein langlebiges Secret (Vertrag §7)
@@ -988,7 +988,7 @@ jobs:
             --signer-workflow "${{ github.repository }}/.github/workflows/release.yml"
 
           echo "P5: GitHub-Attestation fuer ein CLI-Archiv"
-          gh attestation verify "dist/bifrost-cli-${VERSION}-linux-x64.tar.gz" \
+          gh attestation verify "dist/faolan-cli-${VERSION}-linux-x64.tar.gz" \
             --repo "${{ github.repository }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1003,7 +1003,7 @@ jobs:
           # Belegt, dass die Signatur an DIESES Repository und DIESEN Workflow gebunden ist
           # und nicht bloss "irgendwie von Sigstore" stammt.
           if cosign verify \
-               --certificate-identity-regexp '^https://github\.com/example-org/nicht-bifrost/' \
+               --certificate-identity-regexp '^https://github\.com/example-org/nicht-faolan/' \
                --certificate-oidc-issuer "$COSIGN_ISSUER" \
                "${IMAGE}@${IMAGE_DIGEST}" > /dev/null 2>&1; then
             echo "::error::N1 hat NICHT abgelehnt — eine fremde Identitaet wurde akzeptiert."
@@ -1035,9 +1035,9 @@ jobs:
           # ---- N3: veraendertes Archiv --------------------------------------------------
           # Belegt, dass die Pruefsummenkette wirklich am Inhalt haengt.
           rm -rf negativprobe && mkdir -p negativprobe
-          cp "dist/bifrost-cli-${VERSION}-linux-x64.tar.gz" negativprobe/
+          cp "dist/faolan-cli-${VERSION}-linux-x64.tar.gz" negativprobe/
           cp dist/checksums.txt negativprobe/
-          printf 'manipuliert' >> "negativprobe/bifrost-cli-${VERSION}-linux-x64.tar.gz"
+          printf 'manipuliert' >> "negativprobe/faolan-cli-${VERSION}-linux-x64.tar.gz"
           if (cd negativprobe && sha256sum --check --ignore-missing checksums.txt > /dev/null 2>&1); then
             echo "::error::N3 hat NICHT abgelehnt — ein veraendertes Archiv galt als unversehrt."
             FEHLER=1
@@ -1182,7 +1182,7 @@ jobs:
           VERSION: ${{ needs.verify.outputs.image_version }}
           PRERELEASE: ${{ needs.verify.outputs.prerelease }}
         run: |
-          FLAGS=(--title "B.I.F.R.O.S.T $VERSION" --notes-file notiz.md)
+          FLAGS=(--title "Faolan $VERSION" --notes-file notiz.md)
           # Vertrag/FR-P007: Ein Pre-Release wird als solches markiert. `latest` setzt dieser
           # Workflow NIE — weder als Image-Tag noch als Release-Markierung.
           if [ "$PRERELEASE" = "true" ]; then FLAGS+=(--prerelease); fi

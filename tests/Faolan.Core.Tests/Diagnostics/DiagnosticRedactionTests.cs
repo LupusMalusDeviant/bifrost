@@ -24,8 +24,8 @@ internal static class SecretCorpus
     public const string GatewayApiKey = "mcpk_9f3c2a7e5b1d4086cafe";
     public const string Passphrase = "Tr0ub4dor-3-erfunden";
     public const string PostgresConnection =
-        "Host=db;Port=5432;Database=bifrost;Username=bifrost;Password=" + Passphrase;
-    public const string UpstreamUrlWithCredentials = "https://bifrost:" + Passphrase + "@upstream.example/mcp";
+        "Host=db;Port=5432;Database=faolan;Username=faolan;Password=" + Passphrase;
+    public const string UpstreamUrlWithCredentials = "https://faolan:" + Passphrase + "@upstream.example/mcp";
     public const string BearerHeader = "Authorization: Bearer erfundenes-bearer-token-4711";
     public const string BearerValue = "erfundenes-bearer-token-4711";
     public const string PrivateKey =
@@ -164,7 +164,7 @@ public class DiagnosticReportLeakTests
             ["FAOLAN_KEYRING_CERT_PASSWORD"] = SecretCorpus.Passphrase,
             ["FAOLAN_PUBLIC_BASE_URL"] = "https://gateway.example.com",
             ["FAOLAN_TRUSTED_PROXIES"] = "172.17.0.1",
-            ["FAOLAN_WASI_HOST"] = "/usr/local/bin/bifrost-wasi-host",
+            ["FAOLAN_WASI_HOST"] = "/usr/local/bin/faolan-wasi-host",
             // Alt benannte Variablen: Der Check nennt ihre NAMEN — ihre Werte dürfen nie mitkommen.
             ["MCPMCP_KEYRING_CERT_PASSWORD"] = SecretCorpus.Passphrase,
             ["MCPMCP_UPSTREAM_TOKEN"] = SecretCorpus.GitHubToken,

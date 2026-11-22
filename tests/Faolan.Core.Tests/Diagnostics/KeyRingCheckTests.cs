@@ -84,7 +84,7 @@ public class KeyRingCheckTests
     {
         var (context, _) = World(new Dictionary<string, string>
         {
-            ["FAOLAN_KEYRING_CERT_PATH"] = "/run/secrets/bifrost-keyring-pfx",
+            ["FAOLAN_KEYRING_CERT_PATH"] = "/run/secrets/faolan-keyring-pfx",
         });
 
         var result = await new KeyRingProtectionCheck().RunAsync(context, TestContext.Current.CancellationToken);

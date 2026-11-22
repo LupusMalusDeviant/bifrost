@@ -40,7 +40,7 @@ public sealed class SqliteConcurrentWriterTests : IAsyncLifetime
     private const int WritersPerRow = 15;
 
     private readonly string _directory = Path.Combine(
-        Path.GetTempPath(), $"bifrost-sqlite-concurrency-{Guid.NewGuid():N}");
+        Path.GetTempPath(), $"faolan-sqlite-concurrency-{Guid.NewGuid():N}");
 
     private string _dbPath = string.Empty;
     private IDbContextFactory<FaolanDbContext> _factory = null!;
@@ -48,7 +48,7 @@ public sealed class SqliteConcurrentWriterTests : IAsyncLifetime
     public async ValueTask InitializeAsync()
     {
         Directory.CreateDirectory(_directory);
-        _dbPath = Path.Combine(_directory, "bifrost.db");
+        _dbPath = Path.Combine(_directory, "faolan.db");
         _factory = new TestDbContextFactory(new DbContextOptionsBuilder<FaolanDbContext>()
             .UseFaolanDatabase(FaolanDbOptions.Sqlite, $"Data Source={_dbPath}")
             .Options);

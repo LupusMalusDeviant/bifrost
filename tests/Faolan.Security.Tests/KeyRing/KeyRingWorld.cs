@@ -27,7 +27,7 @@ internal sealed class KeyRingWorld : IDisposable
 {
     public KeyRingWorld()
     {
-        DataDirectory = Path.Combine(Path.GetTempPath(), $"bifrost-keyring-{Guid.NewGuid():N}");
+        DataDirectory = Path.Combine(Path.GetTempPath(), $"faolan-keyring-{Guid.NewGuid():N}");
         Directory.CreateDirectory(DataDirectory);
         SecretsDirectory = Path.Combine(DataDirectory, "..", $"secrets-{Guid.NewGuid():N}");
         Directory.CreateDirectory(SecretsDirectory);
@@ -100,7 +100,7 @@ internal sealed class KeyRingWorld : IDisposable
             Path.Combine(SecretsDirectory, name + ".pfx"),
             Path.Combine(SecretsDirectory, name + ".pfx.password"),
             TimeProvider.System,
-            $"CN=bifrost-{name}");
+            $"CN=faolan-{name}");
 
     /// <summary>Stellt die Betriebsart 'file-secret' her: Zertifikat plus Passwort aus einer Datei.</summary>
     public KeyRingCertificateCreation UseFileSecret(string name = "keyring")

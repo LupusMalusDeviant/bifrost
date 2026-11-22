@@ -29,7 +29,7 @@ public sealed class ToolDefinitionPinForgetRaceTests : IAsyncLifetime
     private static readonly TimeSpan ForgetGrace = TimeSpan.FromSeconds(2);
 
     private readonly string _directory = Path.Combine(
-        Path.GetTempPath(), $"bifrost-pin-race-{Guid.NewGuid():N}");
+        Path.GetTempPath(), $"faolan-pin-race-{Guid.NewGuid():N}");
 
     private readonly PinGate _gate = new();
     private IDbContextFactory<FaolanDbContext> _factory = null!;
@@ -37,7 +37,7 @@ public sealed class ToolDefinitionPinForgetRaceTests : IAsyncLifetime
     public async ValueTask InitializeAsync()
     {
         Directory.CreateDirectory(_directory);
-        var dbPath = Path.Combine(_directory, "bifrost.db");
+        var dbPath = Path.Combine(_directory, "faolan.db");
         _factory = new TestDbContextFactory(new DbContextOptionsBuilder<FaolanDbContext>()
             .UseFaolanDatabase(FaolanDbOptions.Sqlite, $"Data Source={dbPath}")
             .AddInterceptors(_gate.Reader, _gate.Save)

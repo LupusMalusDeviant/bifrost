@@ -24,8 +24,8 @@ namespace Faolan.Integration.Tests.OAuth;
 /// </summary>
 public sealed class KeycloakFixture : IAsyncLifetime
 {
-    public const string Realm = "bifrost-test";
-    public const string ClientId = "bifrost-gateway";
+    public const string Realm = "faolan-test";
+    public const string ClientId = "faolan-gateway";
     public const string ClientSecret = "gateway-test-secret";
     public const string Username = "pilot";
     public const string Password = "pilot-test-passwort";

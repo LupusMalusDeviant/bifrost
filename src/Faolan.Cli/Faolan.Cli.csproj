@@ -2,11 +2,11 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <AssemblyName>bifrost</AssemblyName>
+    <AssemblyName>faolan</AssemblyName>
     <RootNamespace>Faolan.Cli</RootNamespace>
-    <Description>Offizieller, öffentlicher HTTP-Client für das B.I.F.R.O.S.T-Gateway.</Description>
+    <Description>Offizieller, öffentlicher HTTP-Client für das Faolan-Gateway.</Description>
     <PackAsTool>true</PackAsTool>
-    <ToolCommandName>bifrost</ToolCommandName>
+    <ToolCommandName>faolan</ToolCommandName>
     <PackageId>Faolan.Cli</PackageId>
   </PropertyGroup>
 

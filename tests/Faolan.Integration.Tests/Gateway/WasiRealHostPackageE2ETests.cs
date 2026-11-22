@@ -30,7 +30,7 @@ namespace Faolan.Integration.Tests.Gateway;
 /// </summary>
 public sealed class WasiRealHostPackageE2ETests : IClassFixture<RealWasiHostGatewayFixture>
 {
-    private const string PackageId = "com.bifrost.fixture-guest";
+    private const string PackageId = "com.faolan.fixture-guest";
 
     private readonly RealWasiHostGatewayFixture _gw;
 

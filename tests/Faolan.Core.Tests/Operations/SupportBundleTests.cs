@@ -18,7 +18,7 @@ namespace Faolan.Core.Tests.Operations;
 public sealed class SupportBundleTests : IDisposable
 {
     private readonly string _dataDirectory =
-        Path.Combine(Path.GetTempPath(), $"bifrost-bundle-{Guid.NewGuid():N}");
+        Path.Combine(Path.GetTempPath(), $"faolan-bundle-{Guid.NewGuid():N}");
 
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 8, 2, 12, 0, 0, TimeSpan.Zero));
 
@@ -133,7 +133,7 @@ public sealed class SupportBundleTests : IDisposable
         var lines = Enumerable.Range(0, 50).Select(i => $"Zeile {i}").ToList();
         lines.Add($"conn: Host=db;Password={SecretCorpus.ConnectionString}");
         await File.WriteAllLinesAsync(
-            Path.Combine(logs.FullName, "bifrost.log"), lines, TestContext.Current.CancellationToken);
+            Path.Combine(logs.FullName, "faolan.log"), lines, TestContext.Current.CancellationToken);
 
         var service = CreateService();
         var target = Path.Combine(_dataDirectory, "mit-log.zip");
@@ -142,7 +142,7 @@ public sealed class SupportBundleTests : IDisposable
             new SupportBundleRequest(LogTailLines: 5, OutputPath: target), TestContext.Current.CancellationToken);
 
         result.SkippedCategories.Should().BeEmpty("mit vorhandener Logdatei wird nichts uebersprungen");
-        result.Manifest.Files.Should().Contain(f => f.Path == "logs/bifrost.log");
+        result.Manifest.Files.Should().Contain(f => f.Path == "logs/faolan.log");
 
         var content = ReadAll(target);
         content.Should().Contain("Zeile 49", "das Ende des Logs ist der interessante Teil");
@@ -302,8 +302,8 @@ public sealed class SupportBundleTests : IDisposable
                 ["databaseReachable"] = "True",
                 ["upstream:github"] = "Healthy",
                 ["connection"] = withCanaries
-                    ? $"Host=db;Username=bifrost;Password={SecretCorpus.ConnectionString}"
-                    : "Host=db;Username=bifrost",
+                    ? $"Host=db;Username=faolan;Password={SecretCorpus.ConnectionString}"
+                    : "Host=db;Username=faolan",
             });
     }
 }

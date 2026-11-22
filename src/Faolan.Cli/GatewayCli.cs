@@ -299,16 +299,16 @@ public sealed class GatewayCli
     public const string UsageText =
         """
         Nutzung:
-          bifrost [--json] [--config PATH] [--token-stdin] status
-          bifrost [Optionen] tools search <query>
-          bifrost [Optionen] tools describe <tool>
-          bifrost [Optionen] tools invoke <tool> --json '{...}'
-          bifrost [Optionen] tools invoke <tool> --file <args.json|->
-          bifrost [Optionen] servers list|add|enable|disable|remove
-          bifrost [Optionen] approvals list|approve|deny
-          bifrost [Optionen] audit tail
-          bifrost --version
-          bifrost --help
+          faolan [--json] [--config PATH] [--token-stdin] status
+          faolan [Optionen] tools search <query>
+          faolan [Optionen] tools describe <tool>
+          faolan [Optionen] tools invoke <tool> --json '{...}'
+          faolan [Optionen] tools invoke <tool> --file <args.json|->
+          faolan [Optionen] servers list|add|enable|disable|remove
+          faolan [Optionen] approvals list|approve|deny
+          faolan [Optionen] audit tail
+          faolan --version
+          faolan --help
 
         Konfigurationsimport (M4):
 
@@ -325,7 +325,7 @@ public sealed class GatewayCli
     /// <summary>
     /// Behandelt die beiden Befehle, die weder Konfiguration noch erreichbares Gateway brauchen:
     /// <c>--version</c> und <c>--help</c>. Sie muessen vor dem Laden der Konfiguration laufen,
-    /// sonst scheitert <c>bifrost --version</c> an einer kaputten Endpunkt-Einstellung — also
+    /// sonst scheitert <c>faolan --version</c> an einer kaputten Endpunkt-Einstellung — also
     /// genau dann, wenn man die Version fuer eine Fehlermeldung braucht.
     /// </summary>
     /// <returns>

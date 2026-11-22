@@ -23,7 +23,7 @@ namespace Faolan.Integration.Tests.Operations;
 /// <b>BFR-F-0047 — der Riegel nach einem Restore.</b>
 /// <para>
 /// Gefunden im Piloten vom 2026-08-05 auf einer echten Installation aus dem veröffentlichten
-/// Release: <c>bifrost restore --replace --yes</c> endete mit Exit 0 und
+/// Release: <c>faolan restore --replace --yes</c> endete mit Exit 0 und
 /// „Wiederhergestellt: Database, KeyRing, Config" — und danach bekam der API-Key <b>aus dem
 /// Archiv</b> ein <c>401</c>, während der Schlüssel des soeben <b>überschriebenen</b> Zustands
 /// weiter <c>200</c> bekam. Erst ein Neustart drehte es um. Der Restore war also richtig und

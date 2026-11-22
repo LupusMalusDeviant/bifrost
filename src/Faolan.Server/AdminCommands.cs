@@ -27,7 +27,7 @@ internal static class AdminCommands
     /// <para>
     /// Er läuft im Serverprozess und nicht in der CLI, aus demselben Grund wie die
     /// Key-Ring-Kommandos: Hier entsteht ein Geheimnis, und es soll den Rechner nicht verlassen.
-    /// Im Container: <c>docker compose run --rm bifrost dotnet Faolan.Server.dll --bootstrap-init</c>.
+    /// Im Container: <c>docker compose run --rm faolan dotnet Faolan.Server.dll --bootstrap-init</c>.
     /// </para>
     /// </summary>
     public const string BootstrapInit = "--bootstrap-init";
@@ -37,7 +37,7 @@ internal static class AdminCommands
     /// <para>
     /// Genau das ist der Punkt: Ein offener Migrationseintrag verweigert den Schreibbetrieb, indem
     /// der Start abbricht — der Prozess kommt also gar nicht erst hoch. Der gleichnamige
-    /// REST-Endpunkt und <c>bifrost db unblock</c> greifen dann ins Leere, weil niemand antwortet.
+    /// REST-Endpunkt und <c>faolan db unblock</c> greifen dann ins Leere, weil niemand antwortet.
     /// Deshalb läuft dieser Weg hier, im Serverprozess, vor dem Gateway-Start und ohne ihn.
     /// </para>
     /// <para>

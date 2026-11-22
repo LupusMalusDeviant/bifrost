@@ -178,7 +178,7 @@ public sealed class MigrationSafetyPostgresTests : IAsyncLifetime
     private async Task<(IDbContextFactory<FaolanDbContext> Factory, string ConnectionString)> NewDatabaseAsync(
         string name)
     {
-        var dbName = $"bifrost_ms_{name}_{Guid.NewGuid():N}"[..40].ToLowerInvariant();
+        var dbName = $"faolan_ms_{name}_{Guid.NewGuid():N}"[..40].ToLowerInvariant();
 
         await using (var admin = new NpgsqlConnection(_container!.GetConnectionString()))
         {

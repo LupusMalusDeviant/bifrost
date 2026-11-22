@@ -79,6 +79,6 @@ public static class ClientConfigSnippets
             .Select(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '_' ? c : '-')]);
 
         cleaned = cleaned.Trim('-');
-        return cleaned.Length == 0 ? "bifrost" : cleaned;
+        return cleaned.Length == 0 ? "faolan" : cleaned;
     }
 }

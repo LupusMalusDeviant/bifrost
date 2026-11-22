@@ -2,7 +2,7 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "bifrost",
+      "name": "faolan",
       "//": "ASPNETCORE_ENVIRONMENT=Development ist PFLICHT, nicht Geschmack: Ausserhalb davon laedt ASP.NET die Static Web Assets nicht, '_framework/blazor.web.js' kommt mit 200 und NULL Byte, der Blazor-Circuit startet nie — und in der gesamten Oberflaeche tut kein Knopf etwas, waehrend die Seiten serverseitig gerendert werden und benutzbar aussehen. 'dotnet run --environment Development' hilft nicht, das Argument wird verschluckt; die Variable muss aus der Umgebung kommen.",
       "runtimeExecutable": "cmd",
       "runtimeArgs": ["/c", "set ASPNETCORE_ENVIRONMENT=Development && dotnet run --project src/Faolan.Server/Faolan.Server.csproj --urls http://localhost:5199"],

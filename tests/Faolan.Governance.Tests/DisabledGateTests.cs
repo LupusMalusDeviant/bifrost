@@ -57,7 +57,7 @@ public sealed class DisabledGateTests
     [Fact]
     public void Every_gate_variable_is_set_by_a_workflow()
     {
-        var pattern = new Regex(@"BIFROST_(RUN|REQUIRE)_[A-Z0-9_]+", RegexOptions.Compiled);
+        var pattern = new Regex(@"FAOLAN_(RUN|REQUIRE)_[A-Z0-9_]+", RegexOptions.Compiled);
 
         var inTests = RepoTree.CSharpFiles("tests")
             .SelectMany(file => pattern.Matches(file.Content).Select(m => m.Value))
@@ -85,7 +85,7 @@ public sealed class DisabledGateTests
     [Fact]
     public void Every_gate_variable_is_named_in_the_contributing_guide()
     {
-        var pattern = new Regex(@"BIFROST_(RUN|REQUIRE)_[A-Z0-9_]+", RegexOptions.Compiled);
+        var pattern = new Regex(@"FAOLAN_(RUN|REQUIRE)_[A-Z0-9_]+", RegexOptions.Compiled);
 
         var inTests = RepoTree.CSharpFiles("tests")
             .SelectMany(file => pattern.Matches(file.Content).Select(m => m.Value))

@@ -289,7 +289,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Build image
-        run: docker build -t bifrost:ci .
+        run: docker build -t faolan:ci .
 
       # Plan 0003, WP7.1: Der WASI-Host wird MIT ausgeliefert. Ohne diese Prüfung wäre "der
       # Pluginpfad ist deploybar" eine Behauptung — ein fehlendes oder für die falsche
@@ -314,7 +314,7 @@ jobs:
           import json,struct,sys
           msg=json.dumps({'id':1,'type':'hello','protocolVersion':'$VERSION'}).encode()
           sys.stdout.buffer.write(struct.pack('>I',len(msg))+msg)" \
-            | docker run -i --rm --entrypoint /usr/local/bin/bifrost-wasi-host bifrost:ci host \
+            | docker run -i --rm --entrypoint /usr/local/bin/faolan-wasi-host faolan:ci host \
             | tr -d '\0')
           echo "Host-Antwort: $ANSWER"
 
@@ -330,7 +330,7 @@ jobs:
 
       - name: Container läuft non-root (WP7.2)
         run: |
-          CONTAINER_UID=$(docker run --rm --entrypoint id bifrost:ci -u)
+          CONTAINER_UID=$(docker run --rm --entrypoint id faolan:ci -u)
           echo "Container-UID: $CONTAINER_UID"
           if [ "$CONTAINER_UID" = "0" ]; then
             echo "::error::Der Container läuft als root."
@@ -347,7 +347,7 @@ jobs:
       # ein verdoppeltes Image durchzulassen.
       - name: Verify image size < 350 MB (WP7 DoD, angehoben in v0.6.2)
         run: |
-          BYTES=$(docker image inspect bifrost:ci --format '{{.Size}}')
+          BYTES=$(docker image inspect faolan:ci --format '{{.Size}}')
           MB=$((BYTES / 1024 / 1024))
           echo "Image size: ${MB} MB"
           if [ "$MB" -ge 350 ]; then
@@ -362,7 +362,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Verify linux/arm64 image builds
-        run: docker buildx build --platform linux/arm64 -t bifrost:ci-arm64 .
+        run: docker buildx build --platform linux/arm64 -t faolan:ci-arm64 .
 
       - name: Compose-Beispiele sind gültig (SQLite-Default und Postgres-Override)
         run: |
@@ -371,14 +371,14 @@ jobs:
 
       - name: Smoke-test container starts and answers /healthz
         run: |
-          docker run -d --name bifrost-ci -p 8080:8080 bifrost:ci
+          docker run -d --name faolan-ci -p 8080:8080 faolan:ci
           for i in $(seq 1 30); do
-            if docker exec bifrost-ci dotnet Faolan.Server.dll --healthcheck; then
-              echo "healthy"; docker rm -f bifrost-ci; exit 0
+            if docker exec faolan-ci dotnet Faolan.Server.dll --healthcheck; then
+              echo "healthy"; docker rm -f faolan-ci; exit 0
             fi
             sleep 2
           done
           echo "::error::Container wurde nicht healthy."
-          docker logs bifrost-ci
-          docker rm -f bifrost-ci
+          docker logs faolan-ci
+          docker rm -f faolan-ci
           exit 1

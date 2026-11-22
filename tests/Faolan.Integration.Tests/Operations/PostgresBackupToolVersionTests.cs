@@ -205,7 +205,7 @@ public sealed class PostgresBackupToolVersionCheckTests
             Environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["FAOLAN_DB_PROVIDER"] = provider,
-                ["FAOLAN_DB_CONNECTION"] = "Host=127.0.0.1;Database=bifrost",
+                ["FAOLAN_DB_CONNECTION"] = "Host=127.0.0.1;Database=faolan",
             },
             Database = database,
             PostgresBackupTools = tools,

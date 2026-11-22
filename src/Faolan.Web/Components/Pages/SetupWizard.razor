@@ -168,7 +168,7 @@
             return;
         }
 
-        var handle = await Js.InvokeAsync<string?>("bifrostSetup.read");
+        var handle = await Js.InvokeAsync<string?>("faolanSetup.read");
         var owner = await UserAsync();
         var resumed = Sessions.Reopen(handle, owner);
 
@@ -180,7 +180,7 @@
         {
             _notice = resumed.Reason;
             _session = Sessions.Start();
-            await Js.InvokeVoidAsync("bifrostSetup.write", _session.Handle);
+            await Js.InvokeVoidAsync("faolanSetup.write", _session.Handle);
         }
 
         _facts = await Wizard.ReadFactsAsync(CancellationToken.None);
@@ -295,7 +295,7 @@
             Sessions.Discard(session.Handle);
         }
 
-        await Js.InvokeVoidAsync("bifrostSetup.clear");
+        await Js.InvokeVoidAsync("faolanSetup.clear");
         Nav.NavigateTo("/", forceLoad: true);
     }
 
@@ -423,7 +423,7 @@
             <p class="muted" style="margin-top:0">
                 Beim ersten Start legt der Gateway ein Setup-Token an und schreibt es in
                 <code>&lt;datadir&gt;/config/bootstrap-token.txt</code> — nicht ins Log. Im Container:
-                <code>docker compose exec bifrost cat /data/config/bootstrap-token.txt</code>.
+                <code>docker compose exec faolan cat /data/config/bootstrap-token.txt</code>.
                 @if (_facts.Access.ExpiresAt is { } expires)
                 {
                     <text> Es gilt bis @expires.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) UTC.</text>

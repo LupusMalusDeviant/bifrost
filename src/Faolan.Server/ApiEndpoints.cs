@@ -478,7 +478,7 @@ internal static class ApiEndpoints
 
             ctx.Response.ContentType = AuditExportWriter.ContentType(chosen);
             ctx.Response.Headers.ContentDisposition =
-                $"attachment; filename=bifrost-audit.{AuditExportWriter.FileExtension(chosen)}";
+                $"attachment; filename=faolan-audit.{AuditExportWriter.FileExtension(chosen)}";
 
             return Results.Stream(
                 stream => WriteExportAsync(stream, export, request, chosen, ct),

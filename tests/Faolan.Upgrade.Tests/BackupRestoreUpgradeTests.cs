@@ -42,7 +42,7 @@ public sealed class BackupRestoreUpgradeTests : IAsyncLifetime
     private const string OlderProductVersion = "0.10.0";
 
     private readonly string _root = Path.Combine(
-        Path.GetTempPath(), $"bifrost-upgrade-archiv-{Guid.NewGuid():N}");
+        Path.GetTempPath(), $"faolan-upgrade-archiv-{Guid.NewGuid():N}");
 
     public ValueTask InitializeAsync()
     {

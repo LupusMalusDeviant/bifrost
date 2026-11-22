@@ -135,7 +135,7 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
 
     /// <summary>
     /// Der Host, der gestartet wird: immer der des Betreibers. Die Konfiguration darf ihn nennen —
-    /// als denselben Pfad oder als bloßen Dateinamen (<c>bifrost-wasi-host</c>, so steht er im
+    /// als denselben Pfad oder als bloßen Dateinamen (<c>faolan-wasi-host</c>, so steht er im
     /// Image) —, aber nicht auf ein anderes Programm umlenken.
     /// </summary>
     private string ResolveHost(UpstreamServerConfig config, WasiTransportOptions options)

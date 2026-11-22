@@ -95,7 +95,7 @@ public static class ErrorBodies
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>{{status}} — B.I.F.R.O.S.T</title>
+          <title>{{status}} — Faolan</title>
           <style>
             :root { --void:#080d14; --text:#dbe9f7; --muted:#7c93ad; --ice:#6fd3ff; }
             html, body { height: 100%; margin: 0; background: var(--void); color: var(--text);
@@ -114,7 +114,7 @@ public static class ErrorBodies
         </head>
         <body>
           <main>
-            <div class="brand">B.I.F.R.O.S.T &middot; MCP Gateway</div>
+            <div class="brand">Faolan &middot; MCP Gateway</div>
             <div class="code">{{status}}</div>
             <p>{{message}}</p>
             <a href="/">Zur Übersicht</a>

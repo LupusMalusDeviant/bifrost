@@ -100,7 +100,7 @@ public sealed class CliLegacyEnvironmentTests
 
     private static async Task<(int ExitCode, string Stderr)> RunCliAsync(IReadOnlyDictionary<string, string> environment)
     {
-        var cli = Path.Combine(AppContext.BaseDirectory, "bifrost.dll");
+        var cli = Path.Combine(AppContext.BaseDirectory, "faolan.dll");
         File.Exists(cli).Should().BeTrue($"die gebaute CLI liegt neben den Tests ({cli})");
 
         var start = new ProcessStartInfo("dotnet")

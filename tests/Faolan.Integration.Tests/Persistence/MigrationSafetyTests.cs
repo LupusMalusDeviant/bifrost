@@ -23,7 +23,7 @@ namespace Faolan.Integration.Tests.Persistence;
 public sealed class MigrationSafetyTests : IAsyncLifetime
 {
     private readonly string _directory = Path.Combine(
-        Path.GetTempPath(), $"bifrost-migsafe-{Guid.NewGuid():N}");
+        Path.GetTempPath(), $"faolan-migsafe-{Guid.NewGuid():N}");
 
     public ValueTask InitializeAsync()
     {

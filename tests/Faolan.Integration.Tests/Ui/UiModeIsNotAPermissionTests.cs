@@ -174,7 +174,7 @@ public sealed class UiModeIsNotAPermissionTests : IClassFixture<GatewayFixture>
             TestContext.Current.CancellationToken);
 
         var setCookie = response.Headers.GetValues("Set-Cookie")
-            .FirstOrDefault(v => v.StartsWith("bifrost-ui=", StringComparison.Ordinal));
+            .FirstOrDefault(v => v.StartsWith("faolan-ui=", StringComparison.Ordinal));
         setCookie.Should().NotBeNull($"die Anmeldung als {role} muss ein Sitzungscookie setzen");
 
         return setCookie!.Split(';')[0];

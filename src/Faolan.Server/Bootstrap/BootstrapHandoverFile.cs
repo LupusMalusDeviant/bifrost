@@ -81,7 +81,7 @@ public sealed class BootstrapHandoverFile : IBootstrapHandover
 
     private static string Content(string token, DateTimeOffset expiresAt) =>
         $"""
-         B.I.F.R.O.S.T — Erstzugang
+         Faolan — Erstzugang
 
          Dieses Token richtet EINEN Administrator ein. Es gilt einmal und nur bis:
            {expiresAt:u}

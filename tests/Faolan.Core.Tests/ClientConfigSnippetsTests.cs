@@ -39,7 +39,7 @@ public class ClientConfigSnippetsTests
     [InlineData("CI Agent", "ci-agent")]
     [InlineData("  Build/Deploy  ", "build-deploy")]
     [InlineData("Ümläute!", "ml-ute")]
-    [InlineData("---", "bifrost")]
+    [InlineData("---", "faolan")]
     public void Names_are_sanitized_because_clients_use_them_as_keys(string input, string expected)
     {
         // Ein Leerzeichen im Schlüssel führt je nach Client zu einem stillen Fehler statt zu

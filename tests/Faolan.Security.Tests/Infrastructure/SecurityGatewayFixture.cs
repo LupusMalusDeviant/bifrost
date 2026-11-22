@@ -22,7 +22,7 @@ namespace Faolan.Security.Tests.Infrastructure;
 public class SecurityGatewayFixture : WebApplicationFactory<Program>
 {
     private readonly string _dataDir = Path.Combine(
-        Path.GetTempPath(), $"bifrost-sec-{Guid.NewGuid():N}");
+        Path.GetTempPath(), $"faolan-sec-{Guid.NewGuid():N}");
 
     /// <summary>Alles, was der Dienst waehrend des Tests geschrieben hat.</summary>
     public CapturingLogProvider Log { get; } = new();

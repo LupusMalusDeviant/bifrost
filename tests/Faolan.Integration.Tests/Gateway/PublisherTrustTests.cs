@@ -31,7 +31,7 @@ public sealed class PublisherTrustTests : IClassFixture<GatewayFixture>, IAsyncL
     public async ValueTask InitializeAsync()
     {
         var ct = TestContext.Current.CancellationToken;
-        _componentPath = Path.Combine(Path.GetTempPath(), $"bifrost-trust-{Guid.NewGuid():N}.wasm");
+        _componentPath = Path.Combine(Path.GetTempPath(), $"faolan-trust-{Guid.NewGuid():N}.wasm");
         _signaturePath = Path.ChangeExtension(_componentPath, ".sig");
         await File.WriteAllBytesAsync(_componentPath, [0x00, 0x61, 0x73, 0x6D], ct);
         await File.WriteAllBytesAsync(_signaturePath, new byte[64], ct);

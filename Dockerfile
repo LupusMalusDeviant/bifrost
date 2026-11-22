@@ -62,23 +62,23 @@ RUN case "$TARGETARCH" in \
     && CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
        cargo build --locked --release --target "$TARGET" \
-    && cp "target/$TARGET/release/faolan-wasi-component-spike" /bifrost-wasi-host
+    && cp "target/$TARGET/release/faolan-wasi-component-spike" /faolan-wasi-host
 
 # ── Runtime (Ubuntu-noble-Basis mit Shell, non-root; ~230 MB < 300 MB) ───────
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
 WORKDIR /app
 COPY --from=build /app ./
-# Fester Pfad im Image. BIFROST_WASI_HOST (unten) macht ihn zum Host dieser Instanz: Gestartet wird
+# Fester Pfad im Image. FAOLAN_WASI_HOST (unten) macht ihn zum Host dieser Instanz: Gestartet wird
 # nur dieser; ein WASI-Upstream darf ihn nennen, aber nicht auf ein anderes Programm umlenken.
-COPY --from=wasi-host /bifrost-wasi-host /usr/local/bin/bifrost-wasi-host
+COPY --from=wasi-host /faolan-wasi-host /usr/local/bin/faolan-wasi-host
 
 # Datenverzeichnis (SQLite-DB + DataProtection-Keys) beschreibbar anlegen und dem non-root
 # app-User geben. Chiseled-Images haben keine Shell für RUN chmod — die Ubuntu-Basis schon,
 # was diese Verzeichnisrechte zuverlässig macht.
 RUN mkdir -p /data && chown app:app /data && chmod 0770 /data
 
-ENV BIFROST_DATA_DIR=/data \
-    BIFROST_WASI_HOST=/usr/local/bin/bifrost-wasi-host \
+ENV FAOLAN_DATA_DIR=/data \
+    FAOLAN_WASI_HOST=/usr/local/bin/faolan-wasi-host \
     ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 USER app

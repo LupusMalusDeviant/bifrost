@@ -96,7 +96,7 @@ public sealed class OpenApiDocumentGenerator : IDisposable
             ["openapi"] = "3.1.0",
             ["info"] = new JsonObject
             {
-                ["title"] = "B.I.F.R.O.S.T REST-Fassade",
+                ["title"] = "Faolan REST-Fassade",
                 ["description"] = "RBAC-gefilterte Sicht dieses API-Keys auf die aggregierten Tools (FR-17/18).",
                 ["version"] = "1.0.0",
             },

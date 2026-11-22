@@ -19,7 +19,7 @@ namespace Faolan.Integration.Tests.Gateway;
 /// </summary>
 public class GatewayFixture : WebApplicationFactory<Program>
 {
-    private readonly string _dataDir = Path.Combine(Path.GetTempPath(), $"bifrost-e2e-{Guid.NewGuid():N}");
+    private readonly string _dataDir = Path.Combine(Path.GetTempPath(), $"faolan-e2e-{Guid.NewGuid():N}");
 
     /// <summary>
     /// Was der Gateway mitgeschrieben hat. Ohne das ist ein „die Rueckfrage kam nicht zustande"

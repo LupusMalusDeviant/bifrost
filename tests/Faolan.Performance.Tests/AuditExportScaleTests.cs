@@ -154,7 +154,7 @@ public sealed class AuditExportScaleTests
         public static async Task<AuditFixture> CreateAsync(int rows, CancellationToken ct)
         {
             AuditEvent fixtureFirst;
-            var path = Path.Combine(Path.GetTempPath(), $"bifrost-audit-scale-{Guid.NewGuid():N}.db");
+            var path = Path.Combine(Path.GetTempPath(), $"faolan-audit-scale-{Guid.NewGuid():N}.db");
             var options = new DbContextOptionsBuilder<FaolanDbContext>()
                 .UseFaolanDatabase(FaolanDbOptions.Sqlite, $"Data Source={path}")
                 .Options;

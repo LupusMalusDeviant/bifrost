@@ -80,7 +80,7 @@ public static class UiNavigation
     /// der Beleg dafuer, dass der Modus keine Berechtigungsgrenze ist, und kein Versehen.
     /// </para>
     /// </summary>
-    public const string ModeCookieName = "bifrost-ui-mode";
+    public const string ModeCookieName = "faolan-ui-mode";
 
     /// <summary>Der Wert im Cookie fuer <see cref="UiMode.Advanced"/>.</summary>
     public const string AdvancedCookieValue = "advanced";
@@ -106,7 +106,7 @@ public static class UiNavigation
     public const string SetupWizardRoute = "/first-run";
 
     /// <summary>Name des Cookies, in dem die Kennung des laufenden Wizard-Vorgangs liegt.</summary>
-    public const string SetupHandleCookieName = "bifrost-setup";
+    public const string SetupHandleCookieName = "faolan-setup";
 
     /// <summary>
     /// Alle Menuepunkte in Anzeigereihenfolge.

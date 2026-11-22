@@ -24,7 +24,7 @@ namespace Faolan.Upgrade.Tests;
 public sealed class SqliteUpgradeMatrixTests : IAsyncLifetime
 {
     private readonly string _directory = Path.Combine(
-        Path.GetTempPath(), $"bifrost-upgrade-sqlite-{Guid.NewGuid():N}");
+        Path.GetTempPath(), $"faolan-upgrade-sqlite-{Guid.NewGuid():N}");
 
     /// <summary>
     /// Jeder veroeffentlichte Migrationsstand ist ein Matrixfeld. Die Liste kommt aus der

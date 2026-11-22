@@ -48,8 +48,8 @@ public sealed class TracingTests
         lock (captured)
         {
             var own = captured.FirstOrDefault(a =>
-                a.OperationName == "bifrost.tool_call"
-                && a.GetTagItem("bifrost.tool") is string tool
+                a.OperationName == "faolan.tool_call"
+                && a.GetTagItem("faolan.tool") is string tool
                 && tool.StartsWith(world.Slug, StringComparison.Ordinal));
             return own is null
                 ? ([], world)
@@ -64,11 +64,11 @@ public sealed class TracingTests
             InvokerTestWorld.Request(w.RegisterAdmin(), w.Echo, new { message = "hi" }),
             TestContext.Current.CancellationToken));
 
-        var call = activities.Should().ContainSingle(a => a.OperationName == "bifrost.tool_call").Subject;
-        call.GetTagItem("bifrost.tool").Should().Be(world.Echo.Value);
-        call.GetTagItem("bifrost.server").Should().Be(world.Slug);
-        call.GetTagItem("bifrost.status").Should().Be(nameof(InvocationStatus.Success));
-        call.GetTagItem("bifrost.origin").Should().NotBeNull();
+        var call = activities.Should().ContainSingle(a => a.OperationName == "faolan.tool_call").Subject;
+        call.GetTagItem("faolan.tool").Should().Be(world.Echo.Value);
+        call.GetTagItem("faolan.server").Should().Be(world.Slug);
+        call.GetTagItem("faolan.status").Should().Be(nameof(InvocationStatus.Success));
+        call.GetTagItem("faolan.origin").Should().NotBeNull();
         call.Status.Should().Be(ActivityStatusCode.Ok);
     }
 
@@ -84,12 +84,12 @@ public sealed class TracingTests
             InvokerTestWorld.Request(w.RegisterAdmin(), w.Echo, new { message = "hi" }),
             TestContext.Current.CancellationToken));
 
-        var call = activities.Single(a => a.OperationName == "bifrost.tool_call");
-        var upstream = activities.Should().ContainSingle(a => a.OperationName == "bifrost.upstream_call").Subject;
+        var call = activities.Single(a => a.OperationName == "faolan.tool_call");
+        var upstream = activities.Should().ContainSingle(a => a.OperationName == "faolan.upstream_call").Subject;
 
         upstream.ParentSpanId.Should().Be(call.SpanId, "der Fremdanteil gehört unter den Aufruf");
         upstream.Kind.Should().Be(ActivityKind.Client);
-        upstream.GetTagItem("bifrost.upstream_tool").Should().Be("echo",
+        upstream.GetTagItem("faolan.upstream_tool").Should().Be("echo",
             "im Kind-Span steht der native Name, nicht der namespaced");
     }
 
@@ -109,10 +109,10 @@ public sealed class TracingTests
                 TestContext.Current.CancellationToken);
         });
 
-        var call = activities.Single(a => a.OperationName == "bifrost.tool_call");
-        call.GetTagItem("bifrost.status").Should().Be(nameof(InvocationStatus.Denied));
+        var call = activities.Single(a => a.OperationName == "faolan.tool_call");
+        call.GetTagItem("faolan.status").Should().Be(nameof(InvocationStatus.Denied));
         call.Status.Should().Be(ActivityStatusCode.Error);
-        activities.Should().NotContain(a => a.OperationName == "bifrost.upstream_call",
+        activities.Should().NotContain(a => a.OperationName == "faolan.upstream_call",
             "was abgelehnt wurde, hat den Upstream nie erreicht");
     }
 

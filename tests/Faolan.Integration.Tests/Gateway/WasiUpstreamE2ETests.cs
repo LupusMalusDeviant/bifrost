@@ -41,7 +41,7 @@ public sealed class WasiUpstreamE2ETests : IClassFixture<GatewayFixture>, IAsync
     {
         var ct = TestContext.Current.CancellationToken;
         // Der Stub-Host verifiziert nicht — hier zählen nur die Pfade, nicht der Inhalt.
-        _componentPath = Path.Combine(Path.GetTempPath(), $"bifrost-e2e-{Guid.NewGuid():N}.wasm");
+        _componentPath = Path.Combine(Path.GetTempPath(), $"faolan-e2e-{Guid.NewGuid():N}.wasm");
         _signaturePath = Path.ChangeExtension(_componentPath, ".sig");
         await File.WriteAllBytesAsync(_componentPath, [0x00, 0x61, 0x73, 0x6D], ct);
         await File.WriteAllBytesAsync(_signaturePath, new byte[64], ct);

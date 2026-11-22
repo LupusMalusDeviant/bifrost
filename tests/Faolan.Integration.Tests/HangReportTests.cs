@@ -29,7 +29,7 @@ public sealed class HangReportTests
     public async Task The_report_names_a_child_process_that_is_really_running()
     {
         var ct = TestContext.Current.CancellationToken;
-        var root = Path.Combine(Path.GetTempPath(), $"bifrost-hang-{Guid.NewGuid():N}");
+        var root = Path.Combine(Path.GetTempPath(), $"faolan-hang-{Guid.NewGuid():N}");
 
         using var child = Process.Start(new ProcessStartInfo(TestPaths.EchoServerExecutable)
         {
@@ -74,7 +74,7 @@ public sealed class HangReportTests
     public async Task Without_children_the_report_says_so_instead_of_staying_silent()
     {
         var ct = TestContext.Current.CancellationToken;
-        var root = Path.Combine(Path.GetTempPath(), $"bifrost-hang-{Guid.NewGuid():N}");
+        var root = Path.Combine(Path.GetTempPath(), $"faolan-hang-{Guid.NewGuid():N}");
 
         try
         {

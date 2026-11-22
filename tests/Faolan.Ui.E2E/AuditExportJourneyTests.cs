@@ -52,7 +52,7 @@ public sealed class AuditExportJourneyTests
             ct);
         seeded.IsSuccessStatusCode.Should().BeTrue();
 
-        var target = Path.Combine(Path.GetTempPath(), $"bifrost-ui-audit-{Guid.NewGuid():N}.jsonl");
+        var target = Path.Combine(Path.GetTempPath(), $"faolan-ui-audit-{Guid.NewGuid():N}.jsonl");
 
         try
         {

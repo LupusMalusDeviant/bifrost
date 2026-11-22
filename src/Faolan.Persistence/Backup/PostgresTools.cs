@@ -102,7 +102,7 @@ public static class PostgresTools
         + "RHEL/Fedora: 'dnf install postgresql'; macOS: 'brew install libpq'; "
         + "Windows: die 'Command Line Tools' des PostgreSQL-Installers) — oder "
         + $"{BinDirectoryVariable} auf das Verzeichnis setzen, in dem sie liegen. "
-        + "Im Bifrost-Container ist das Clientpaket enthalten; fehlt es dort, ist ein fremdes Image "
+        + "Im Faolan-Container ist das Clientpaket enthalten; fehlt es dort, ist ein fremdes Image "
         + "im Spiel.";
 
     /// <summary>
@@ -314,7 +314,7 @@ public static class PostgresTools
               + $"Version führt) — oder {BinDirectoryVariable} auf ein Verzeichnis setzen, in dem "
               + "ein passender Client liegt. Es gibt bewusst keinen Rückfall auf einen "
               + "selbstgebauten Zeilenexport (ADR-0024 E2).\n"
-              + $"Vorher sichtbar ist diese Lage in 'bifrost doctor' unter {VersionDiagnosticCode}."
+              + $"Vorher sichtbar ist diese Lage in 'faolan doctor' unter {VersionDiagnosticCode}."
             : "";
 
     private static IEnumerable<string> WithExtensions(string basePath)
@@ -407,7 +407,7 @@ public static class PostgresTools
         ArgumentNullException.ThrowIfNull(arguments);
         ArgumentNullException.ThrowIfNull(target);
 
-        var secrets = Directory.CreateTempSubdirectory("bifrost-pg-");
+        var secrets = Directory.CreateTempSubdirectory("faolan-pg-");
         try
         {
             var startInfo = new ProcessStartInfo(executable)

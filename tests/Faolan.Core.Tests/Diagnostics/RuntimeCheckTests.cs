@@ -85,9 +85,9 @@ public class WasiHostCheckTests
     public async Task A_present_binary_passes()
     {
         var files = new FakeFileProbe();
-        files.Files.Add("/usr/local/bin/bifrost-wasi-host");
+        files.Files.Add("/usr/local/bin/faolan-wasi-host");
         var context = DiagnosticWorld.Context(
-            new Dictionary<string, string> { ["FAOLAN_WASI_HOST"] = "/usr/local/bin/bifrost-wasi-host" },
+            new Dictionary<string, string> { ["FAOLAN_WASI_HOST"] = "/usr/local/bin/faolan-wasi-host" },
             files);
 
         var result = await new WasiHostCheck().RunAsync(context, TestContext.Current.CancellationToken);

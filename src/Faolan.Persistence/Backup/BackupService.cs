@@ -61,7 +61,7 @@ public sealed class BackupService : IBackupService
             targetDirectory,
             $".{Path.GetFileName(targetPath)}.{Guid.NewGuid():N}.tmp");
 
-        var work = Directory.CreateTempSubdirectory("bifrost-backup-");
+        var work = Directory.CreateTempSubdirectory("faolan-backup-");
         try
         {
             var (entries, migrationId) = await CollectEntriesAsync(request.Sections, work.FullName, ct)

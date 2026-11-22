@@ -63,7 +63,7 @@ public sealed class SupportBundleApiTests : IClassFixture<GatewayFixture>
                     Isolation: new IsolationOptions(IsolationMode.Host))),
             TestContext.Current.CancellationToken);
 
-        var target = Path.Combine(Path.GetTempPath(), $"bifrost-bundle-{Guid.NewGuid():N}.zip");
+        var target = Path.Combine(Path.GetTempPath(), $"faolan-bundle-{Guid.NewGuid():N}.zip");
         try
         {
             var response = await client.PostAsJsonAsync(
@@ -96,7 +96,7 @@ public sealed class SupportBundleApiTests : IClassFixture<GatewayFixture>
     public async Task Creating_a_bundle_is_audited()
     {
         var client = await AdminClientAsync();
-        var target = Path.Combine(Path.GetTempPath(), $"bifrost-bundle-{Guid.NewGuid():N}.zip");
+        var target = Path.Combine(Path.GetTempPath(), $"faolan-bundle-{Guid.NewGuid():N}.zip");
 
         try
         {

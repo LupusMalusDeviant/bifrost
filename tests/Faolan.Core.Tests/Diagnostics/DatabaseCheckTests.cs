@@ -53,7 +53,7 @@ public class DatabaseProviderCheckTests
         var context = DiagnosticWorld.Context(new Dictionary<string, string>
         {
             ["FAOLAN_DB_PROVIDER"] = "postgres",
-            ["FAOLAN_DB_CONNECTION"] = "Host=db;Username=bifrost;Password=Tr0ub4dor3",
+            ["FAOLAN_DB_CONNECTION"] = "Host=db;Username=faolan;Password=Tr0ub4dor3",
         });
 
         var result = await new DatabaseProviderCheck().RunAsync(context, TestContext.Current.CancellationToken);
@@ -258,6 +258,61 @@ public class SqliteDatabaseFileCheckTests
         });
 
         var result = await new SqliteDatabaseFileCheck().RunAsync(context, TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(CheckStatus.Skipped);
+    }
+}
+
+/// <summary>
+/// BFR-DB-0008 — die leere Instanz, das Bild des falschen Volumes nach dem Upgrade (Vertrag
+/// umbenennung-faolan §3).
+/// </summary>
+public class EmptyInstanceCheckTests
+{
+    private static DiagnosticContext With(DatabaseDiagnosticFacts facts)
+        => DiagnosticWorld.Context() with { Database = new FakeDatabaseProbe(facts) };
+
+    [Fact]
+    public async Task An_instance_without_anything_warns_and_points_at_the_volume()
+    {
+        var facts = new DatabaseDiagnosticFacts(true, null, ["m"], [], Content: new InstanceContentFacts(0, 0, 0));
+
+        var result = await new EmptyInstanceCheck().RunAsync(With(facts), TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(CheckStatus.Warning);
+        result.Remediation.Should().Contain("FAOLAN_DATA_VOLUME").And.Contain("FAOLAN_PGDATA_VOLUME")
+            .And.Contain("docs/upgrade-faolan.md");
+    }
+
+    [Theory]
+    [InlineData(1, 0, 0)]
+    [InlineData(0, 1, 0)]
+    [InlineData(0, 0, 1)]
+    public async Task Any_content_passes(int upstreams, int roles, int keys)
+    {
+        var facts = new DatabaseDiagnosticFacts(true, null, ["m"], [], Content: new InstanceContentFacts(upstreams, roles, keys));
+
+        var result = await new EmptyInstanceCheck().RunAsync(With(facts), TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(CheckStatus.Pass);
+        result.SafeDetails!["upstreams"].Should().Be(upstreams.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task Uncounted_content_is_skipped_not_reported_as_empty()
+    {
+        var facts = new DatabaseDiagnosticFacts(true, null, ["m"], ["offen"]);
+
+        var result = await new EmptyInstanceCheck().RunAsync(With(facts), TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(CheckStatus.Skipped);
+    }
+
+    [Fact]
+    public async Task An_unreachable_database_skips_the_check()
+    {
+        var result = await new EmptyInstanceCheck()
+            .RunAsync(With(new DatabaseDiagnosticFacts(false, "weg")), TestContext.Current.CancellationToken);
 
         result.Status.Should().Be(CheckStatus.Skipped);
     }

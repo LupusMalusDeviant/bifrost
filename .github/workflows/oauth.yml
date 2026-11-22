@@ -80,7 +80,7 @@ jobs:
       - name: Smoke gegen den externen Anbieter
         if: steps.check.outputs.configured == 'true'
         env:
-          BIFROST_OAUTH_SMOKE_ISSUER: ${{ secrets.OAUTH_SMOKE_ISSUER }}
-          BIFROST_OAUTH_SMOKE_CLIENT_ID: ${{ secrets.OAUTH_SMOKE_CLIENT_ID }}
-          BIFROST_OAUTH_SMOKE_CLIENT_SECRET: ${{ secrets.OAUTH_SMOKE_CLIENT_SECRET }}
+          FAOLAN_OAUTH_SMOKE_ISSUER: ${{ secrets.OAUTH_SMOKE_ISSUER }}
+          FAOLAN_OAUTH_SMOKE_CLIENT_ID: ${{ secrets.OAUTH_SMOKE_CLIENT_ID }}
+          FAOLAN_OAUTH_SMOKE_CLIENT_SECRET: ${{ secrets.OAUTH_SMOKE_CLIENT_SECRET }}
         run: dotnet test tests/Faolan.Integration.Tests --configuration Release --filter "FullyQualifiedName~OAuthSaasSmoke" --logger "console;verbosity=detailed"

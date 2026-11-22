@@ -70,12 +70,12 @@ verify_dotnet() {
 
 verify_container() {
   have docker 'Container-Gate laeuft dann nur in der CI.' || return 0
-  step 'docker build' docker build -t bifrost:verify "$REPO"
+  step 'docker build' docker build -t faolan:verify "$REPO"
   step 'compose-Beispiele sind gueltig' bash -c \
     "docker compose -f '$REPO/docker-compose.yml' config --quiet && \
      docker compose -f '$REPO/docker-compose.yml' -f '$REPO/docker-compose.postgres.yml' config --quiet"
   step 'non-root im Image' bash -c \
-    '[ "$(docker run --rm --entrypoint sh bifrost:verify -c "id -u")" != "0" ] || { echo "Image laeuft als root."; exit 1; }'
+    '[ "$(docker run --rm --entrypoint sh faolan:verify -c "id -u")" != "0" ] || { echo "Image laeuft als root."; exit 1; }'
 }
 
 case "$MODE" in

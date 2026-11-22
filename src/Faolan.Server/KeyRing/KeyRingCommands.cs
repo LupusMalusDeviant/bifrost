@@ -9,7 +9,7 @@ namespace Faolan.Server.KeyRing;
 /// Die Kommandozeilenwege rund um den Key-Ring: einrichten, prüfen, einen Zertifikatswechsel
 /// <b>vorher</b> durchspielen (WP3.3, Aufträge 3 und 4).
 /// <para>
-/// <b>Warum im Serverprozess und nicht in der CLI:</b> <c>bifrost</c> ist ein HTTP-Client — er
+/// <b>Warum im Serverprozess und nicht in der CLI:</b> <c>faolan</c> ist ein HTTP-Client — er
 /// spricht mit einem <i>laufenden</i> Gateway. Genau der läuft hier aber nicht: Beim Einrichten gibt
 /// es ihn noch nicht, und wenn der Key-Ring das Problem ist, kommt er nicht hoch. Außerdem entsteht
 /// hier ein privater Schlüssel; ihn durch eine HTTP-Fassade zu schicken hieße, ihn durch jeden
@@ -23,7 +23,7 @@ public static class KeyRingCommands
     public const string Check = "--keyring-check";
     public const string Rotate = "--keyring-rotate";
 
-    // Dieselbe Bedeutung wie bei 'bifrost doctor' (M2-Vertrag §4): 0 ok, 2 Bedienfehler,
+    // Dieselbe Bedeutung wie bei 'faolan doctor' (M2-Vertrag §4): 0 ok, 2 Bedienfehler,
     // 3 Warnung, 4 Befund. Ein Runbook muss nicht zwei Tabellen kennen.
     private const int Ok = 0;
     private const int Failed = 1;

@@ -53,7 +53,7 @@ public static class KeyRingCertificates
     public static TimeSpan DefaultLifetime { get; } = TimeSpan.FromDays(3650);
 
     /// <summary>Der Vorgabe-Antragstellername.</summary>
-    public const string DefaultSubject = "CN=bifrost-keyring";
+    public const string DefaultSubject = "CN=faolan-keyring";
 
     /// <summary>
     /// Erzeugt ein selbstsigniertes PFX <b>und</b> die zugehörige Passwortdatei, beide mit

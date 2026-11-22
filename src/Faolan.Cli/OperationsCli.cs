@@ -85,28 +85,28 @@ public sealed class OperationsCli
         Betrieb (Exit-Codes: 0 ok · 1 Fehler · 2 Bedienfehler · 3 Warnung · 4 Diagnosefehler
                               · 5 Archiv ungültig · 6 Ziel nicht leer / nicht bestätigt):
 
-          bifrost backup create --out <pfad> [--sections database,keyring,packages,config]
+          faolan backup create --out <pfad> [--sections database,keyring,packages,config]
                                              [--passphrase-env <VAR> | --passphrase-prompt]
-          bifrost backup verify <archiv> [--passphrase-env <VAR> | --passphrase-prompt]
-          bifrost restore <archiv> [--replace] [--yes] [--passphrase-env <VAR> | --passphrase-prompt]
-          bifrost doctor [--scope configuration,database,keyring,network,runtime,upstreams]
-          bifrost config export [--include-secrets] [--out <pfad>] [--passphrase-env <VAR>]
-          bifrost config import <datei> [--dry-run] [--passphrase-env <VAR>]
-          bifrost audit export [--format jsonl|csv] [--out <pfad>] [--after <n>] [--limit <n>]
+          faolan backup verify <archiv> [--passphrase-env <VAR> | --passphrase-prompt]
+          faolan restore <archiv> [--replace] [--yes] [--passphrase-env <VAR> | --passphrase-prompt]
+          faolan doctor [--scope configuration,database,keyring,network,runtime,upstreams]
+          faolan config export [--include-secrets] [--out <pfad>] [--passphrase-env <VAR>]
+          faolan config import <datei> [--dry-run] [--passphrase-env <VAR>]
+          faolan audit export [--format jsonl|csv] [--out <pfad>] [--after <n>] [--limit <n>]
                                [--from <zeit>] [--to <zeit>] [--tool <praefix>] [--kind <art>]
                                [--status <status>] [--origin <herkunft>] [--caller <id>]
                                [--server <id>]
-          bifrost audit verify [--after <n>] [--limit <n>]
-          bifrost policy plan <pack-datei>
-          bifrost policy apply <pack-datei> [--yes] [--undo-out <pfad>]
-          bifrost policy revert <rueckweg-datei>
-          bifrost db unblock
-          bifrost support-bundle [--out <pfad>] [--categories version,configuration,diagnostics,
+          faolan audit verify [--after <n>] [--limit <n>]
+          faolan policy plan <pack-datei>
+          faolan policy apply <pack-datei> [--yes] [--undo-out <pfad>]
+          faolan policy revert <rueckweg-datei>
+          faolan db unblock
+          faolan support-bundle [--out <pfad>] [--categories version,configuration,diagnostics,
                                  health,logs,migrations,runtime] [--log-lines <n>] [--preview]
 
         Pfade von backup/restore gelten auf dem Rechner, auf dem der Gateway laeuft, und nur im
         Sicherungsverzeichnis (FAOLAN_BACKUP_DIR, Vorgabe <Datenverzeichnis>/backups). Ein blosser
-        Name wie 'bifrost-2026-10-24.zip' liegt dort; ein Pfad ausserhalb wird abgewiesen.
+        Name wie 'faolan-2026-10-24.zip' liegt dort; ein Pfad ausserhalb wird abgewiesen.
         Eine Passphrase wird NIE als Argument entgegengenommen — sie stuende in der Prozessliste
         und in der Shell-Historie. Nur Umgebungsvariable oder Eingabe ohne Echo.
         Ein Vollbackup enthaelt den Key-Ring und ist so schuetzenswert wie die Instanz selbst.
@@ -163,8 +163,9 @@ public sealed class OperationsCli
                 $"Gateway nicht erreichbar: {exception.Message}");
             await _error.WriteLineAsync(
                 "Hinweis: Steht der Start wegen BFR-DB-0101 (offener Migrationseintrag), laeuft kein "
-                + "Gateway, den man fragen koennte. Dann im Serverprozess 'bifrost-server --db-unblock' "
-                + "verwenden — siehe docs/operations.md.");
+                + "Gateway, den man fragen koennte. Dann den Server selbst aufrufen: 'dotnet Faolan.Server.dll --db-unblock' "
+                + "(im Container: 'docker compose run --rm faolan dotnet Faolan.Server.dll --db-unblock') "
+                + "— siehe docs/operations.md.");
             return UnexpectedError;
         }
         catch (Exception exception) when (exception is IOException or JsonException)
@@ -401,7 +402,7 @@ public sealed class OperationsCli
               + Environment.NewLine
               + "Er nimmt ab sofort keine Anfragen mehr an (503) — bis er neu gestartet ist."
               + Environment.NewLine
-              + "  Im Container:  docker compose restart bifrost"
+              + "  Im Container:  docker compose restart faolan"
             : string.Empty;
 
     private async Task<bool> ConfirmReplaceAsync(CancellationToken ct)
@@ -743,7 +744,7 @@ public sealed class OperationsCli
             + (undoOut is null
                 ? "WARNUNG: Ohne --undo-out ist der Rueckweg dieses Vorgangs nicht mehr verfuegbar."
                 : $"Rueckweg nach '{Path.GetFullPath(undoOut)}' geschrieben — "
-                    + "'bifrost policy revert <datei>' nimmt die Uebernahme zurueck."));
+                    + "'faolan policy revert <datei>' nimmt die Uebernahme zurueck."));
         return Success;
     }
 

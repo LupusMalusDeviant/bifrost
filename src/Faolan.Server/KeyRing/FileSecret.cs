@@ -31,7 +31,7 @@ public sealed record SecretValue(string? Value, SecretSource Source)
 /// Verzeichnis als Konfigurationsquelle ein — jede Datei darin wird zu einer Einstellung, mit
 /// eigener Namensübersetzung (<c>__</c> → <c>:</c>) und eigener Rangfolge gegenüber Umgebung und
 /// <c>appsettings</c>. Das ist eine <i>zweite</i>, anders geformte Konfigurationsoberfläche neben
-/// dem dokumentierten <c>BIFROST_*</c>-Vertrag, und sie liest alles, was jemand in das Verzeichnis
+/// dem dokumentierten <c>FAOLAN_*</c>-Vertrag, und sie liest alles, was jemand in das Verzeichnis
 /// legt. <c>_FILE</c> gilt dagegen je Einstellung, ist ausdrücklich, ändert an der bestehenden
 /// Rangfolge nichts und ist die Konvention, die die Container-Welt ohnehin spricht
 /// (<c>POSTGRES_PASSWORD_FILE</c> und Verwandte). Ein Betreiber, der ein Compose-Secret einhängt,

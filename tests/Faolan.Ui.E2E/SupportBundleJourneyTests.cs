@@ -30,7 +30,7 @@ public sealed class SupportBundleJourneyTests
         await using var session = await UiSession.StartAsync(
             nameof(An_admin_previews_and_creates_a_shareable_support_bundle), ct);
 
-        var target = Path.Combine(Path.GetTempPath(), $"bifrost-ui-bundle-{Guid.NewGuid():N}.zip");
+        var target = Path.Combine(Path.GetTempPath(), $"faolan-ui-bundle-{Guid.NewGuid():N}.zip");
 
         try
         {

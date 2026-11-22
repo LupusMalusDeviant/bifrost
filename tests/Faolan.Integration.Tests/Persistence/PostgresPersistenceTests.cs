@@ -48,7 +48,7 @@ public sealed class PostgresPersistenceTests : PersistenceTestsBase
     /// </summary>
     protected override async Task<DbContextOptions<FaolanDbContext>> CreateFreshOptionsAsync(string name)
     {
-        var dbName = $"bifrost_{name}_{Guid.NewGuid():N}"[..40].ToLowerInvariant();
+        var dbName = $"faolan_{name}_{Guid.NewGuid():N}"[..40].ToLowerInvariant();
 
         await using (var admin = new NpgsqlConnection(_container!.GetConnectionString()))
         {

@@ -473,6 +473,70 @@ public sealed class AuditCompletenessCheck : IDiagnosticCheck
     }
 }
 
+/// <summary>
+/// BFR-DB-0008 — eine Instanz ohne Upstream, ohne Rolle und ohne Schlüssel.
+/// <para>
+/// BFR-DB-0005 sieht nur die SQLite-Datei. Dieser Befund sieht den Inhalt und gilt deshalb auch für
+/// PostgreSQL: Nach dem Upgrade von 0.12.0 hängt Compose ohne <c>FAOLAN_DATA_VOLUME</c> bzw.
+/// <c>FAOLAN_PGDATA_VOLUME</c> ein neues, leeres Volume ein. Die Instanz ist dann leer und meldet
+/// sich trotzdem als bereit (Vertrag umbenennung-faolan §3).
+/// </para>
+/// <para>
+/// Eine Warnung, kein Fehler: Eine frische Installation sieht genauso aus. Der Befund sagt, was die
+/// Instanz <b>ist</b>, und wohin man schaut, wenn sie das nicht sein soll.
+/// </para>
+/// </summary>
+public sealed class EmptyInstanceCheck : IDiagnosticCheck
+{
+    public string Code => DiagnosticCodes.EmptyInstance;
+
+    public DiagnosticScope Scope => DiagnosticScope.Database;
+
+    public TimeSpan Timeout => TimeSpan.FromSeconds(15);
+
+    public async Task<DiagnosticCheck> RunAsync(DiagnosticContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.Database is null)
+        {
+            return DatabaseCheckSupport.NoProbe(Code);
+        }
+
+        var facts = await context.Database.DescribeAsync(ct).ConfigureAwait(false);
+        if (!facts.CanConnect)
+        {
+            return DatabaseCheckSupport.Unreachable(Code);
+        }
+
+        if (facts.Content is not { } content)
+        {
+            return CheckOutcome.Skipped(
+                Code,
+                "Der Bestand wurde nicht gezählt (Schema unvollständig, siehe "
+                + $"{DiagnosticCodes.DatabasePendingMigrations}).");
+        }
+
+        var details = CheckOutcome.Details(
+            ("upstreams", DetailFormat.Count(content.Upstreams)),
+            ("rollen", DetailFormat.Count(content.Roles)),
+            ("schluessel", DetailFormat.Count(content.ApiKeys)));
+
+        if (content.Upstreams > 0 || content.Roles > 0 || content.ApiKeys > 0)
+        {
+            return CheckOutcome.Pass(Code, "Die Instanz hat einen Bestand.", details);
+        }
+
+        return CheckOutcome.Warning(
+            Code,
+            "Die Instanz ist leer: kein Upstream, keine Rolle, kein API-Schlüssel.",
+            "Bei einer Neuinstallation ist das erwartbar. Nach einem Upgrade von 0.12.0 heisst es "
+            + "fast immer: das falsche Volume. Compose hat ein neues, leeres angelegt. Den alten Namen "
+            + "ablesen (docker volume ls --filter name=bifrost-data) und als FAOLAN_DATA_VOLUME "
+            + "(PostgreSQL: FAOLAN_PGDATA_VOLUME) in .env eintragen — siehe docs/upgrade-faolan.md.",
+            details);
+    }
+}
+
 internal static class DatabaseCheckSupport
 {
     public static DiagnosticCheck NoProbe(string code) => CheckOutcome.Skipped(

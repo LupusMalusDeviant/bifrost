@@ -213,7 +213,7 @@ internal static class HostExecutionArchitecture
             return true;
         }
 
-        return type.Namespace?.StartsWith("Bifrost.", StringComparison.Ordinal) == true
+        return type.Namespace?.StartsWith("Faolan.", StringComparison.Ordinal) == true
             && type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Any(property => property.PropertyType == typeof(UpstreamServerConfig));
     }

@@ -48,9 +48,9 @@ public sealed class PostgresPreMigrationBackupWiringTests
     public void Postgres_demands_a_pre_migration_backup_exactly_when_the_tools_are_there()
     {
         var services = new ServiceCollection().AddFaolanOperations(
-            Path.Combine(Path.GetTempPath(), $"bifrost-e7-{Guid.NewGuid():N}"),
+            Path.Combine(Path.GetTempPath(), $"faolan-e7-{Guid.NewGuid():N}"),
             FaolanDbOptions.Postgres,
-            "Host=127.0.0.1;Port=5432;Database=bifrost;Username=u;Password=p");
+            "Host=127.0.0.1;Port=5432;Database=faolan;Username=u;Password=p");
 
         var options = services.BuildServiceProvider().GetRequiredService<MigrationSafetyOptions>();
 
@@ -70,9 +70,9 @@ public sealed class PostgresPreMigrationBackupWiringTests
     [Fact]
     public void Sqlite_with_a_file_behind_it_always_demands_a_pre_migration_backup()
     {
-        var directory = Path.Combine(Path.GetTempPath(), $"bifrost-e7-sqlite-{Guid.NewGuid():N}");
+        var directory = Path.Combine(Path.GetTempPath(), $"faolan-e7-sqlite-{Guid.NewGuid():N}");
         var services = new ServiceCollection().AddFaolanOperations(
-            directory, FaolanDbOptions.Sqlite, $"Data Source={Path.Combine(directory, "bifrost.db")}");
+            directory, FaolanDbOptions.Sqlite, $"Data Source={Path.Combine(directory, "faolan.db")}");
 
         services.BuildServiceProvider().GetRequiredService<MigrationSafetyOptions>()
             .PreMigrationBackup.Should().Be(PreMigrationBackupRequirement.Always);
@@ -95,7 +95,7 @@ public sealed class PostgresPreMigrationBackupTests : IAsyncLifetime
     private PostgreSqlContainer? _container;
     private string? _unavailableReason;
     private readonly string _root = Path.Combine(
-        Path.GetTempPath(), $"bifrost-e7-pg-{Guid.NewGuid():N}");
+        Path.GetTempPath(), $"faolan-e7-pg-{Guid.NewGuid():N}");
 
     public async ValueTask InitializeAsync()
     {
@@ -229,7 +229,7 @@ public sealed class PostgresPreMigrationBackupTests : IAsyncLifetime
         {
             DataDirectory = dataDirectory,
             Provider = DatabaseProvider.Postgres,
-            PostgresConnectionString = "Host=127.0.0.1;Port=1;Database=bifrost;Username=u;Password=p",
+            PostgresConnectionString = "Host=127.0.0.1;Port=1;Database=faolan;Username=u;Password=p",
             PostgresToolDirectory = emptyToolDirectory,
         };
 
@@ -253,7 +253,7 @@ public sealed class PostgresPreMigrationBackupTests : IAsyncLifetime
 
     private async Task<string> NewDatabaseAsync()
     {
-        var dbName = $"bifrost_e7_{Guid.NewGuid():N}"[..40].ToLowerInvariant();
+        var dbName = $"faolan_e7_{Guid.NewGuid():N}"[..40].ToLowerInvariant();
 
         await using (var admin = new NpgsqlConnection(_container!.GetConnectionString()))
         {

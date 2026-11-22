@@ -69,6 +69,16 @@ public static class DiagnosticCodes
     /// </summary>
     public const string AuditCompleteness = "BFR-DB-0007";
 
+    /// <summary>
+    /// Ist die Instanz leer — kein Upstream, keine Rolle, kein Schlüssel? (Vertrag umbenennung-faolan §3)
+    /// <para>
+    /// Nach dem Upgrade auf Faolan ist das das Bild eines falsch eingehängten Volumes: Compose legt
+    /// ohne FAOLAN_DATA_VOLUME ein neues, leeres an, und der Gateway meldet sich darauf fehlerfrei als
+    /// bereit. Bei einer Neuinstallation ist derselbe Befund erwartbar und harmlos.
+    /// </para>
+    /// </summary>
+    public const string EmptyInstance = "BFR-DB-0008";
+
     // ── BFR-KEY: DataProtection-Key-Ring ────────────────────────────────────────────────────────
 
     /// <summary>Key-Ring-Verzeichnis vorhanden und nicht leer.</summary>
@@ -171,6 +181,7 @@ public static class DiagnosticCodes
         SqliteDatabaseFile,
         PostgresBackupToolVersion,
         AuditCompleteness,
+        EmptyInstance,
         KeyRingPresent,
         KeyRingUnprotected,
         KeyRingCertificate,

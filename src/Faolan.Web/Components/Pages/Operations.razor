@@ -71,7 +71,7 @@
         <div>
             <label>Dateiname</label>
             <input data-testid="backup-path" @bind="_target" @bind:event="oninput"
-                   placeholder="bifrost-2026-07-31.zip" />
+                   placeholder="faolan-2026-07-31.zip" />
             <div class="muted">im Sicherungsverzeichnis <code>@BackupLocation.Directory</code></div>
         </div>
         <div>
@@ -184,7 +184,7 @@
     <p class="muted" style="margin-top:0">
         Bewusst nicht hier. Ein Restore tauscht Datenbank und Key-Ring <em>unter</em> dem laufenden
         Gateway aus — er braucht einen Wartungsmoment (ADR-0024 E5) und läuft deshalb über
-        <span class="mono">bifrost restore &lt;archiv&gt;</span>. Der Befehl zeigt zuerst den Plan
+        <span class="mono">faolan restore &lt;archiv&gt;</span>. Der Befehl zeigt zuerst den Plan
         und wendet erst danach an; ein Überschreiben verlangt zusätzlich
         <span class="mono">--replace</span> und eine Bestätigung.
     </p>

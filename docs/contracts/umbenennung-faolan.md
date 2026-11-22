@@ -1,6 +1,6 @@
 # Vertrag: Umbenennung auf Faolan
 
-**Stand:** 2026-11-22 · **Status:** Abgenommen vom Nutzer am 2026-11-16, Nachtrag (Container-Etiketten bleiben, UI-Cookies mit Bruch, Postgres-Volume über Variable, Volume-Messung) abgenommen am 2026-11-22 · **Gilt für:** Plan 0004, R1 – R7
+**Stand:** 2026-11-22 · **Status:** Abgenommen vom Nutzer am 2026-11-16, Nachtrag (Container-Etiketten bleiben, UI-Cookies mit Bruch, Postgres-Volume über Variable, Volume-Messung) abgenommen am 2026-11-22; zweiter Nachtrag (Cache-Kennung und Sperrschlüssel bleiben) abgenommen am 2026-11-22 · **Gilt für:** Plan 0004, R1 – R7
 **Grundlage:** [ADR-0026](../adr/0026-umbenennung-auf-faolan.md),
 [Plan 0004](../plans/0004-umbenennung-und-rueckkanal-projektion.md) Abschnitt 1.2
 
@@ -82,6 +82,8 @@ verschiedenen Werten, wird ausschließlich das neue geprüft — nie „eines vo
 | WIT-Paket `mcpmcp` | Connector-ABI, vier `.wasm`-Fixtures | in ausgelieferte Komponenten einkompiliert |
 | Subjekt `CN=bifrost-keyring` in **bestehenden** Zertifikaten | Datenträger des Betreibers | wird nirgends abgeglichen; neu erzeugte bekommen `CN=faolan-keyring` |
 | Container-Etiketten `de.bifrost.owner` = `bifrost-gateway`, `de.bifrost.instance`, `de.bifrost.upstream`, Namenspräfix `bifrost-` | `ContainerIdentity.cs` | danach räumt der Gateway verwaiste Upstream-Container auf; mit neuem Namen fände er die aus 0.12.0 nicht mehr (Nachtrag 2026-11-22) |
+| Kennung `BIFROSTC` am Anfang jeder Cache-Datei | `spikes/wasi-component-runtime/src/disk_cache.rs` (`MAGIC`) | Dateiformat des Kompilat-Caches; ein neuer Wert machte jeden vorhandenen Cache unlesbar (Nachtrag 2026-11-22, zweiter Teil) |
+| Schlüssel `0x424946524F535401` der PostgreSQL-Migrationssperre (ASCII „BIFROST“ + 1) | `MigrationLock.cs` | zwei Fassungen während eines Upgrades müssen dieselbe Sperre nehmen; ein neuer Schlüssel liesse beide gleichzeitig migrieren (Nachtrag 2026-11-22, zweiter Teil) |
 | Marke `_bifrost_truncated` | `Invocation.cs:75` | bleibt in Teil R unangetastet und entfällt erst mit dem [Projektionsvertrag](rueckkanal-projektion.md) — ein Bruch statt zwei |
 | CHANGELOG bis 0.12.0, ADR-0001 bis 0025, `docs/acceptance/*`, `docs/produktreife/BIFROST_*`, ältere Pläne, `gitleaks-baseline.json` | — | Geschichte; der Name war damals richtig |
 

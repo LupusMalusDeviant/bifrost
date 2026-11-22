@@ -36,7 +36,7 @@ public class UpstreamConfigRedactorTests
             [new CliToolSpec("run")],
             EnvironmentVariables: new Dictionary<string, string> { ["PASSWORD"] = Corpus[3] }),
         Wasi: new WasiTransportOptions(
-            "bifrost-wasi-host", "component.wasm", "component.sig", ["cHVibGlzaGVy"],
+            "faolan-wasi-host", "component.wasm", "component.sig", ["cHVibGlzaGVy"],
             Secrets: new Dictionary<string, string> { ["API_KEY"] = Corpus[4] }),
         OpenRpc: new OpenRpcTransportOptions(
             new Uri("https://example.invalid/rpc"),

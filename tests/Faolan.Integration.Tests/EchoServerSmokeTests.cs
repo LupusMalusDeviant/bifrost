@@ -34,10 +34,10 @@ public class EchoServerSmokeTests
 
         var result = await client.CallToolAsync(
             "echo",
-            new Dictionary<string, object?> { ["message"] = "Hallo B.I.F.R.O.S.T" });
+            new Dictionary<string, object?> { ["message"] = "Hallo Faolan" });
 
         result.IsError.Should().NotBe(true);
         result.Content.OfType<TextContentBlock>().Should().ContainSingle()
-            .Which.Text.Should().Be("Echo: Hallo B.I.F.R.O.S.T");
+            .Which.Text.Should().Be("Echo: Hallo Faolan");
     }
 }

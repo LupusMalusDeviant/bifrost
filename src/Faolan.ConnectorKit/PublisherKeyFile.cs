@@ -57,7 +57,7 @@ internal sealed class PublisherKeyFile
         if (!File.Exists(path))
         {
             throw new ConnectorKitException(
-                $"Kein Herausgeberschlüssel unter '{path}'. Einen neuen legt 'bifrost-connector init' "
+                $"Kein Herausgeberschlüssel unter '{path}'. Einen neuen legt 'faolan-connector init' "
                 + "an; ein vorhandener wird mit --key übergeben.",
                 ConnectorKitExit.UsageError);
         }

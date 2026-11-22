@@ -55,7 +55,7 @@ public static class MigrationDiagnosticCodes
 public sealed class DatabaseInitializationException : Exception
 {
     private const string GenericRemediation =
-        "Zustand der Datenbank prüfen (bifrost doctor) und im Zweifel aus der letzten Sicherung wiederherstellen.";
+        "Zustand der Datenbank prüfen (faolan doctor) und im Zweifel aus der letzten Sicherung wiederherstellen.";
 
     public DatabaseInitializationException()
         : this(MigrationDiagnosticCodes.MigrationFailed, "Die Datenbank konnte nicht initialisiert werden.", GenericRemediation)

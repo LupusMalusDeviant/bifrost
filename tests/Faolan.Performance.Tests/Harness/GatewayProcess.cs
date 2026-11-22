@@ -134,7 +134,7 @@ internal sealed class GatewayProcess : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        var dataDir = Path.Combine(Path.GetTempPath(), $"bifrost-perf-{Guid.NewGuid():N}");
+        var dataDir = Path.Combine(Path.GetTempPath(), $"faolan-perf-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dataDir);
 
         var environment = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -423,7 +423,7 @@ internal sealed class GatewayProcess : IAsyncDisposable
     {
         using var rsa = RSA.Create(2048);
         var request = new CertificateRequest(
-            "CN=bifrost-perf", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            "CN=faolan-perf", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 
         var sanBuilder = new SubjectAlternativeNameBuilder();
         sanBuilder.AddIpAddress(IPAddress.Loopback);

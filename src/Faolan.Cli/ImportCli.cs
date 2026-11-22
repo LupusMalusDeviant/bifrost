@@ -58,8 +58,8 @@ public sealed class ImportCli
 
     public const string UsageText =
         """
-          bifrost import preview <datei|-> [--origin <pfad>]
-          bifrost import apply   <datei|-> [--only <name,name>] [--isolation host|container]
+          faolan import preview <datei|-> [--origin <pfad>]
+          faolan import apply   <datei|-> [--only <name,name>] [--isolation host|container]
                                            [--image <image>] [--confirm-risks] [--probe]
                                            [--dry-run] [--origin <pfad>]
 

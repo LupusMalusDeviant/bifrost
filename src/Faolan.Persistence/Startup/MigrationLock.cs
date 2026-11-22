@@ -48,7 +48,7 @@ public static class MigrationLock
 {
     /// <summary>
     /// Schlüssel des PostgreSQL-Advisory-Locks. Fest und dokumentiert, damit ein Betreiber ihn in
-    /// <c>pg_locks</c> wiederfindet: die ASCII-Bytes <c>BIFROST</c> gefolgt von <c>0x01</c>.
+    /// <c>pg_locks</c> wiederfindet: die ASCII-Bytes <c>BIFROST</c> gefolgt von <c>0x01</c>. Er bleibt über die Umbenennung (Vertrag umbenennung-faolan §2.4): Alter und neuer Prozess müssen sich an derselben Datenbank gegenseitig ausschließen.
     /// </summary>
     public const long PostgresAdvisoryKey = 0x424946524F535401L;
 

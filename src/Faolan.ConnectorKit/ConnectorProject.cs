@@ -37,7 +37,7 @@ internal sealed record ConnectorProject(ConnectorManifest Manifest, IReadOnlyDic
         if (!File.Exists(manifestPath))
         {
             throw new ConnectorKitException(
-                $"In '{directory}' liegt keine {FileName}. 'bifrost-connector init' legt sie an.",
+                $"In '{directory}' liegt keine {FileName}. 'faolan-connector init' legt sie an.",
                 ConnectorKitExit.UsageError);
         }
 

@@ -9,6 +9,6 @@ public sealed class PostgresDesignTimeFactory : IDesignTimeDbContextFactory<Faol
 {
     public FaolanDbContext CreateDbContext(string[] args)
         => new(new DbContextOptionsBuilder<FaolanDbContext>()
-            .UseFaolanDatabase(FaolanDbOptions.Postgres, "Host=localhost;Database=bifrost;Username=designtime;Password=designtime")
+            .UseFaolanDatabase(FaolanDbOptions.Postgres, "Host=localhost;Database=faolan;Username=designtime;Password=designtime")
             .Options);
 }

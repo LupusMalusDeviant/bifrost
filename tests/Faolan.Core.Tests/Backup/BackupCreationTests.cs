@@ -208,7 +208,7 @@ public sealed class BackupCreationTests
         {
             DataDirectory = instance.Root,
             Provider = DatabaseProvider.Postgres,
-            PostgresConnectionString = "Host=127.0.0.1;Port=1;Database=bifrost;Username=u;Password=p",
+            PostgresConnectionString = "Host=127.0.0.1;Port=1;Database=faolan;Username=u;Password=p",
             PostgresToolDirectory = leeresWerkzeugverzeichnis,
         };
 

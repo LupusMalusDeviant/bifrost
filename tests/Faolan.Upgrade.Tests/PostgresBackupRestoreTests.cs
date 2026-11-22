@@ -122,7 +122,7 @@ public sealed class PostgresBackupRestoreTests : IClassFixture<PostgresBackupFix
     private readonly PostgresBackupFixture _fixture;
 
     private readonly string _root = Path.Combine(
-        Path.GetTempPath(), $"bifrost-pg-backup-{Guid.NewGuid():N}");
+        Path.GetTempPath(), $"faolan-pg-backup-{Guid.NewGuid():N}");
 
     public PostgresBackupRestoreTests(PostgresBackupFixture fixture) => _fixture = fixture;
 
@@ -587,7 +587,7 @@ public sealed class PostgresBackupRestoreTests : IClassFixture<PostgresBackupFix
     private async Task<string> NewDatabaseAsync(string name)
     {
         var sanitised = new string([.. name.ToLowerInvariant().Where(char.IsLetterOrDigit)]);
-        var dbName = $"bifrost_bk_{sanitised}_{Guid.NewGuid():N}";
+        var dbName = $"faolan_bk_{sanitised}_{Guid.NewGuid():N}";
         dbName = dbName[..Math.Min(dbName.Length, 60)];
 
         await using (var admin = new NpgsqlConnection(_fixture.Container!.GetConnectionString()))

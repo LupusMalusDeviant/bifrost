@@ -169,7 +169,7 @@ internal sealed class ArchiveDirectory : IDisposable
 {
     public ArchiveDirectory()
     {
-        Root = Path.Combine(Path.GetTempPath(), $"bifrost-archive-{Guid.NewGuid():N}");
+        Root = Path.Combine(Path.GetTempPath(), $"faolan-archive-{Guid.NewGuid():N}");
         Directory.CreateDirectory(Root);
     }
 

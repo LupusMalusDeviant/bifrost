@@ -84,7 +84,7 @@ public sealed class ProcessLifecycleTests
     /// <para>
     /// Die Namenszählung bleibt — aber nur dort, wo sie hingehört: als <b>Aufräumprobe</b> am Ende.
     /// Findet sie nichts, schlägt sie nicht fehl; sie kann nur zu viel finden, und genau das soll
-    /// sie melden. Bewusst gegen den Prozessnamen und nicht gegen ein Muster wie „alles mit bifrost
+    /// sie melden. Bewusst gegen den Prozessnamen und nicht gegen ein Muster wie „alles mit faolan
     /// im Namen": Ein Test, der fremde Prozesse abräumt, ist gefährlicher als der Zustand, den er
     /// beheben soll.
     /// </para>

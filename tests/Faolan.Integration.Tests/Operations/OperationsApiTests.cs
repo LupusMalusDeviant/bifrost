@@ -173,6 +173,7 @@ public class OperationsApiTests : IClassFixture<GatewayFixture>
         checks["BFR-DB-0003"].Should().NotBe("Skipped", "die Migrationshistorie ist lesbar");
         checks["BFR-DB-0004"].Should().Be("Pass", "das Schema ist auf dem Stand dieses Builds");
         checks["BFR-UP-0001"].Should().Be("Pass", "der EchoServer ist bereit");
+        checks["BFR-DB-0008"].Should().Be("Pass", "die Instanz hat einen Upstream und einen Schlüssel — gezählt in der echten Datenbank");
 
         // Und die Befunde der Startkoordination hängen mit im selben Bericht — sonst stünde
         // BFR-DB-0101 in keiner Diagnose, obwohl genau der den Start verhindert.

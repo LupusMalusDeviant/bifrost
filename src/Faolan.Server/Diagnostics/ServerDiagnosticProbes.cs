@@ -50,7 +50,8 @@ public sealed class EfDatabaseDiagnosticProbe : IDatabaseDiagnosticProbe
             var applied = (await db.Database.GetAppliedMigrationsAsync(ct).ConfigureAwait(false)).ToList();
             var pending = (await db.Database.GetPendingMigrationsAsync(ct).ConfigureAwait(false)).ToList();
             var (version, major) = await ReadServerVersionAsync(db, ct).ConfigureAwait(false);
-            return new DatabaseDiagnosticFacts(true, null, applied, pending, version, major);
+            var content = pending.Count == 0 ? await CountContentAsync(db, ct).ConfigureAwait(false) : null;
+            return new DatabaseDiagnosticFacts(true, null, applied, pending, version, major, content);
         }
         catch (OperationCanceledException)
         {
@@ -76,6 +77,32 @@ public sealed class EfDatabaseDiagnosticProbe : IDatabaseDiagnosticProbe
     /// ermittelt", und der Check sagt das, statt eine Verträglichkeit zu behaupten.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Der Bestand für BFR-DB-0008 — gezählt, ohne eine Zeile zu entschlüsseln. Upstreams stehen als
+    /// Versionsreihen in <c>ConfigVersions</c>; jede eigene ServerId ist ein Upstream.
+    /// <c>null</c>, wenn das Zählen scheitert: „nicht gezählt" ist ehrlicher als „leer".
+    /// </summary>
+    private static async Task<InstanceContentFacts?> CountContentAsync(FaolanDbContext db, CancellationToken ct)
+    {
+        try
+        {
+            var upstreams = await db.ConfigVersions.Select(r => r.ServerId).Distinct().CountAsync(ct).ConfigureAwait(false);
+            var roles = await db.Roles.CountAsync(ct).ConfigureAwait(false);
+            var keys = await db.ApiKeys.CountAsync(ct).ConfigureAwait(false);
+            return new InstanceContentFacts(upstreams, roles, keys);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+#pragma warning disable CA1031 // Ein Zählfehler darf den Bericht nicht kippen; der Check meldet „nicht gezählt".
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            return null;
+        }
+    }
+
     private static async Task<(string? Version, int? Major)> ReadServerVersionAsync(
         FaolanDbContext db, CancellationToken ct)
     {

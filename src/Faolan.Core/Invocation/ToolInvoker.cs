@@ -22,7 +22,7 @@ namespace Faolan.Core.Invocation;
 public sealed partial class ToolInvoker : IToolInvoker, IDisposable
 {
     /// <summary>Meter-Name für den Metriken-Export (FR-26) — vom Host bei OpenTelemetry registriert.</summary>
-    public const string MeterName = "Bifrost.Gateway";
+    public const string MeterName = "Faolan.Gateway";
 
     /// <summary>
     /// Quelle der Traces. Gleicher Name wie der Meter: Es ist dieselbe Komponente, und ein zweiter
@@ -33,7 +33,7 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// zu umgehen, und zwar an eine Stelle, die oft weniger geschützt ist als die Datenbank.
     /// </para>
     /// </summary>
-    public const string ActivitySourceName = "Bifrost.Gateway";
+    public const string ActivitySourceName = "Faolan.Gateway";
 
     private static readonly Meter Meter = new(MeterName);
 
@@ -93,8 +93,8 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         _guardOptions = guardOptions ?? new GuardOptions();
         _approvalPolicy = approvalPolicy;
         _approvalStore = approvalStore;
-        _calls = Meter.CreateCounter<long>("bifrost.tool_calls", description: "Tool-Calls durch den Gateway");
-        _duration = Meter.CreateHistogram<double>("bifrost.tool_call_duration", unit: "ms");
+        _calls = Meter.CreateCounter<long>("faolan.tool_calls", description: "Tool-Calls durch den Gateway");
+        _duration = Meter.CreateHistogram<double>("faolan.tool_call_duration", unit: "ms");
     }
 
     public async Task<ToolInvocationResult> InvokeAsync(ToolInvocationRequest request, CancellationToken ct)
@@ -107,10 +107,10 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         // Ein Span je Aufruf. Er umfasst die ganze Pipeline; der Upstream-Aufruf bekommt darin einen
         // eigenen Kind-Span, sodass sich Gateway-Anteil und Fremdanteil trennen lassen — genau die
         // Frage, die NFR-01 stellt.
-        using var activity = Activity.StartActivity("bifrost.tool_call", ActivityKind.Internal);
-        activity?.SetTag("bifrost.tool", request.Tool.Value);
-        activity?.SetTag("bifrost.origin", request.Origin.ToString());
-        activity?.SetTag("bifrost.caller", request.Caller.Value.ToString());
+        using var activity = Activity.StartActivity("faolan.tool_call", ActivityKind.Internal);
+        activity?.SetTag("faolan.tool", request.Tool.Value);
+        activity?.SetTag("faolan.origin", request.Origin.ToString());
+        activity?.SetTag("faolan.caller", request.Caller.Value.ToString());
 
         try
         {
@@ -155,8 +155,8 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
 
         if (activity is not null)
         {
-            activity.SetTag("bifrost.server", server);
-            activity.SetTag("bifrost.status", result.Status.ToString());
+            activity.SetTag("faolan.server", server);
+            activity.SetTag("faolan.status", result.Status.ToString());
             // Nur Erfolg ist Ok. Ein Deny oder ein Guard-Treffer ist kein Serverfehler, aber auch
             // kein gelungener Aufruf — als Error markiert taucht er in jeder Fehlersuche auf, und
             // genau dort will man ihn haben. Die Beschreibung ist die Fehlermeldung des Invokers,
@@ -233,9 +233,9 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
             // Eigener Span nur um den Fremdanteil. Die Differenz zum Elternspan ist der
             // Gateway-Overhead — ohne diese Trennung sieht man in einer langsamen Antwort nicht,
             // wer sie verursacht hat.
-            using var upstreamActivity = Activity.StartActivity("bifrost.upstream_call", ActivityKind.Client);
-            upstreamActivity?.SetTag("bifrost.server", entry.Server.Value.ToString());
-            upstreamActivity?.SetTag("bifrost.upstream_tool", upstreamToolName);
+            using var upstreamActivity = Activity.StartActivity("faolan.upstream_call", ActivityKind.Client);
+            upstreamActivity?.SetTag("faolan.server", entry.Server.Value.ToString());
+            upstreamActivity?.SetTag("faolan.upstream_tool", upstreamToolName);
 
             // Wo die Identität zählt, geht sie mit (Plan 0003, Resources): Ein WASI-Upstream mit
             // persistenter Instanz schreibt seine Handles auf diesen Namen. Alle anderen

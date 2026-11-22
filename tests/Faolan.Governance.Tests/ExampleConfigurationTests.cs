@@ -17,7 +17,7 @@ namespace Faolan.Governance.Tests;
 /// <b>Warum es diese Tests gibt</b> (BFR-F-0050, BFR-F-0051, Pilot 1): Die Datei behauptete, der
 /// Gateway könne das Passwort des Key-Rings „heute NICHT aus einer Datei lesen" — dabei liest er
 /// jede <c>FAOLAN_*</c>-Einstellung auch aus <c>&lt;NAME&gt;_FILE</c> (FR-P048), die Compose-Datei
-/// zeigt es im Secret-Block, und <c>bifrost doctor</c> empfiehlt es wörtlich. Die falsche Zeile
+/// zeigt es im Secret-Block, und <c>faolan doctor</c> empfiehlt es wörtlich. Die falsche Zeile
 /// drängte damit zum Klartextpasswort in <c>.env</c> — also genau dorthin, wo es in
 /// <c>docker inspect</c> auftaucht. Und die eine Entscheidung, die das Produkt ausdrücklich
 /// verlangt, fehlte ganz.
@@ -31,7 +31,7 @@ public sealed class ExampleConfigurationTests
     private const string ExampleFile = ".env.example";
 
     /// <summary>
-    /// Die Einstellung, deren Fehlen der Start anmahnt und <c>bifrost doctor</c> als
+    /// Die Einstellung, deren Fehlen der Start anmahnt und <c>faolan doctor</c> als
     /// <c>BFR-KEY-0002</c> meldet. Als Zeichenkette und nicht als Verweis auf
     /// <c>KeyRingChecks.ProtectionSetting</c>: Dieses Projekt hält bewusst keine Referenz auf die
     /// Serverwelt — es prüft sie von außen, so wie ein Betreiber sie sieht.
@@ -90,7 +90,7 @@ public sealed class ExampleConfigurationTests
 
         Settings(text).Should().Contain(
             ProtectionSetting,
-            "ohne diese Angabe warnt der Start und 'bifrost doctor' meldet BFR-KEY-0002 — die "
+            "ohne diese Angabe warnt der Start und 'faolan doctor' meldet BFR-KEY-0002 — die "
             + "Beispielkonfiguration darf die verlangte Wahl nicht verschweigen");
 
         // Die drei zulaessigen Werte gehoeren dazu. Eine Variable ohne ihre Werte ist eine Frage

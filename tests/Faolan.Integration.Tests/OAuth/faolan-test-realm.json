@@ -1,5 +1,5 @@
 {
-  "realm": "bifrost-test",
+  "realm": "faolan-test",
   "enabled": true,
   "sslRequired": "none",
   "accessTokenLifespan": 300,
@@ -8,8 +8,8 @@
   "registrationAllowed": false,
   "clients": [
     {
-      "clientId": "bifrost-gateway",
-      "name": "B.I.F.R.O.S.T Gateway (Test)",
+      "clientId": "faolan-gateway",
+      "name": "Faolan Gateway (Test)",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -52,7 +52,7 @@
           "temporary": false
         }
       ],
-      "realmRoles": ["default-roles-bifrost-test"]
+      "realmRoles": ["default-roles-faolan-test"]
     }
   ]
 }

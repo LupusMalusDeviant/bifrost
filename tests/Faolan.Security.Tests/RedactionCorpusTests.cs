@@ -40,7 +40,7 @@ public class RedactionCorpusTests
             "tool", [new CliToolSpec("run")],
             EnvironmentVariables: new Dictionary<string, string> { ["PASSWORD"] = SecretCorpus.CliEnv }),
         Wasi: new WasiTransportOptions(
-            "bifrost-wasi-host", "component.wasm", "component.sig", ["cHVibGlzaGVy"],
+            "faolan-wasi-host", "component.wasm", "component.sig", ["cHVibGlzaGVy"],
             Secrets: new Dictionary<string, string> { ["API_KEY"] = SecretCorpus.WasiSecret }),
         OpenRpc: new OpenRpcTransportOptions(
             new Uri("https://example.invalid/rpc"),
@@ -215,7 +215,7 @@ public class RedactionCorpusTests
     [Theory]
     [InlineData("Verbindung fehlgeschlagen: Password={0}")]
     [InlineData("FAOLAN_KEYRING_CERT_PASSWORD={0}")]
-    [InlineData("Host=db;Username=bifrost;Password={0};Database=bifrost")]
+    [InlineData("Host=db;Username=faolan;Password={0};Database=faolan")]
     [InlineData("Authorization: Bearer {0}")]
     [InlineData("https://benutzer:{0}@interner-host/pfad")]
     [InlineData("client_secret = \"{0}\"")]
@@ -336,7 +336,7 @@ public class RedactionCorpusTests
         var redactor = new SupportBundleRedactor();
 
         var masked = redactor.RedactText(
-            $"Host=db;Username=bifrost;Password={SecretCorpus.ConnectionString}" + Environment.NewLine
+            $"Host=db;Username=faolan;Password={SecretCorpus.ConnectionString}" + Environment.NewLine
             + $"Authorization: Bearer {SecretCorpus.OAuthToken}" + Environment.NewLine
             + $"upstream: https://agent:{SecretCorpus.HttpHeader}@example.invalid/mcp");
 

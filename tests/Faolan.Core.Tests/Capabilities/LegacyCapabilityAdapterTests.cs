@@ -173,7 +173,7 @@ public sealed class LegacyCapabilityAdapterTests
         CapabilityResultV1.Accepted(taskId).Kind.Should().Be(CapabilityResultKind.Task);
         CapabilityResultV1.Accepted(taskId).TaskId.Should().Be(taskId);
         CapabilityResultV1.FromText("hallo").Kind.Should().Be(CapabilityResultKind.Text);
-        CapabilityResultV1.ArtifactRef(new Uri("bifrost://artifact/1")).Kind
+        CapabilityResultV1.ArtifactRef(new Uri("faolan://artifact/1")).Kind
             .Should().Be(CapabilityResultKind.Artifact);
 
         var failed = CapabilityResultV1.Failed(

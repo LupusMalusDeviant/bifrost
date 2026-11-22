@@ -25,7 +25,7 @@ namespace Faolan.Security.Tests.KeyRing;
 public class KeyRingDiagnosticsDisclosureTests
 {
     private const string Password = "streng-geheim-4711";
-    private const string SecretsDirectory = "/run/secrets/bifrost-intern";
+    private const string SecretsDirectory = "/run/secrets/faolan-intern";
     private const string CertificatePath = SecretsDirectory + "/keyring.pfx";
     private const string PasswordFilePath = SecretsDirectory + "/keyring.password";
 

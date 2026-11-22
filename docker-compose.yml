@@ -1,6 +1,6 @@
-# B.I.F.R.O.S.T Gateway — Standardweg: fertiges Image aus der Registry, SQLite, ein Volume.
+# Faolan Gateway — Standardweg: fertiges Image aus der Registry, SQLite, ein Volume.
 #
-#   cp .env.example .env      # darin BIFROST_VERSION auf ein veroeffentlichtes Release setzen
+#   cp .env.example .env      # darin FAOLAN_VERSION auf ein veroeffentlichtes Release setzen
 #   docker compose up -d
 #   curl -fsS http://localhost:8080/healthz
 #
@@ -16,17 +16,17 @@
 # laesst den Default-Pfad je nach Compose-Version scheitern.
 
 services:
-  bifrost:
+  faolan:
     # KEIN 'latest' — das Tag wird bewusst nicht gesetzt
     # (docs/plans/m1-distribution-contract.md). Welche Version laeuft, steht in .env und
     # nicht in dieser Datei; so aendert ein Upgrade eine Zeile in .env, keine versionierte
-    # Datei. BIFROST_IMAGE ueberschreibt die ganze Referenz und nimmt auch die Digest-Form
-    # 'ghcr.io/lupusmalusdeviant/bifrost@sha256:...' — der Weg fuer den Produktivbetrieb.
-    image: ${BIFROST_IMAGE:-ghcr.io/lupusmalusdeviant/bifrost:${BIFROST_VERSION:-0.12.0}}
+    # Datei. FAOLAN_IMAGE ueberschreibt die ganze Referenz und nimmt auch die Digest-Form
+    # 'ghcr.io/lupusmalusdeviant/faolan@sha256:...' — der Weg fuer den Produktivbetrieb.
+    image: ${FAOLAN_IMAGE:-ghcr.io/lupusmalusdeviant/faolan:${FAOLAN_VERSION:-0.12.0}}
     ports:
-      - "${BIFROST_HTTP_PORT:-8080}:8080"
+      - "${FAOLAN_HTTP_PORT:-8080}:8080"
     volumes:
-      - bifrost-data:/data
+      - faolan-data:/data
     # Die gesamte Konfiguration des Gateways sind Umgebungsvariablen (siehe docs/operations.md).
     # Sie kommen aus .env — dort stehen auch die geheimen Werte, statt im Klartext in dieser
     # versionierten Datei. .env ist in .gitignore und gehoert auf 0600.
@@ -36,7 +36,7 @@ services:
         required: false
     environment:
       # Nicht ueber .env aenderbar (environment schlaegt env_file): der Container lauscht
-      # immer auf 8080, nach aussen verschiebt man den Port ueber BIFROST_HTTP_PORT.
+      # immer auf 8080, nach aussen verschiebt man den Port ueber FAOLAN_HTTP_PORT.
       ASPNETCORE_URLS: http://+:8080
     restart: unless-stopped
     healthcheck:
@@ -50,40 +50,43 @@ services:
     # PFX UND Passwort gehen als Secret. Das Passwort ueber die Umgebungsvariable zu setzen
     # waere die halbe Miete: Es stuende dann in .env, in 'docker inspect' und in
     # /proc/<pid>/environ — also genau dort, wo ein Secret nicht hingehoert. Deshalb liest
-    # der Server jede BIFROST_*-Einstellung auch aus <NAME>_FILE.
+    # der Server jede FAOLAN_*-Einstellung auch aus <NAME>_FILE.
     #
     # Beide Bloecke zusammen einkommentieren und die Dateien vorher anlegen — ein
     # deklariertes, aber fehlendes Secret bricht 'up' ab.
     # In .env dann:
-    #   BIFROST_KEYRING_PROTECTION=file-secret
-    #   BIFROST_KEYRING_CERT_PATH=/run/secrets/bifrost-keyring-pfx
-    #   BIFROST_KEYRING_CERT_PASSWORD_FILE=/run/secrets/bifrost-keyring-password
+    #   FAOLAN_KEYRING_PROTECTION=file-secret
+    #   FAOLAN_KEYRING_CERT_PATH=/run/secrets/faolan-keyring-pfx
+    #   FAOLAN_KEYRING_CERT_PASSWORD_FILE=/run/secrets/faolan-keyring-password
     #
-    # NICHT beides setzen: Sind BIFROST_KEYRING_CERT_PASSWORD und ..._FILE gleichzeitig
+    # NICHT beides setzen: Sind FAOLAN_KEYRING_CERT_PASSWORD und ..._FILE gleichzeitig
     # gesetzt, bricht der Start ab. Eine Rangfolge zwischen zwei Quellen desselben Secrets
     # waere eine Regel, die man im Zweifel falsch erinnert.
     # secrets:
-    #   - bifrost-keyring-pfx
-    #   - bifrost-keyring-password
+    #   - faolan-keyring-pfx
+    #   - faolan-keyring-password
 
 # secrets:
-#   bifrost-keyring-pfx:
+#   faolan-keyring-pfx:
 #     file: ./secrets/keyring.pfx
-#   bifrost-keyring-password:
+#   faolan-keyring-password:
 #     file: ./secrets/keyring-password.txt
 
 volumes:
-  # ── VOLUME-NAME NICHT AENDERN ────────────────────────────────────────────────────────────
-  # Der wirksame Name traegt den Projektnamen als Praefix: <projekt>_bifrost-data. Der
-  # Projektname ist standardmaessig der Name des Verzeichnisses, in dem die Compose-Datei
-  # liegt (kleingeschrieben), oder COMPOSE_PROJECT_NAME aus .env.
+  # ── DER VOLUME-NAME KOMMT AUS FAOLAN_DATA_VOLUME ──────────────────────────────────────────
+  # Neuinstallation: nichts setzen, das Volume heisst 'faolan-data'.
   #
-  # Wer diesen Schluessel umbenennt — oder das Verzeichnis umbenennt, oder in ein anderes
-  # kopiert — bekommt ein NEUES, LEERES Volume. Der Gateway legt darin eine frische Datenbank
-  # an und meldet sich fehlerfrei als bereit: ohne Server, ohne Rollen, ohne Schluessel. Der
-  # Ausfall sieht wie ein gelungener Start aus.
+  # BESTANDSINSTALLATION (bis 0.12.0, Dienst 'bifrost'): Ihr Volume heisst
+  # '<projekt>_bifrost-data'. Genau diesen Namen in .env setzen, sonst haengt Compose ein
+  # NEUES, LEERES Volume ein. Der Gateway legt darin eine frische Datenbank an und meldet sich
+  # fehlerfrei als bereit: ohne Server, ohne Rollen, ohne Schluessel. Der Ausfall sieht wie ein
+  # gelungener Start aus.
   #
-  # 'docker compose config' nennt den vollstaendigen Namen; im Zweifel vor jedem Umzug
-  # vergleichen. Der Umstieg von einer MCP-MCP-Installation steht in docs/operations.md
-  # unter "Umstieg einer MCP-MCP-Installation".
-  bifrost-data:
+  #   docker volume ls --filter name=bifrost-data     # den vollstaendigen Namen ablesen
+  #   FAOLAN_DATA_VOLUME=meinprojekt_bifrost-data      # in .env
+  #
+  # Gemessen (Compose v5.7): Mit gesetztem Namen haengt Compose das bestehende Volume ein, auch
+  # wenn es ein anderes Compose-Projekt angelegt hat (dann nur mit einer Warnung). 'external:
+  # true' ist dafuer nicht noetig. Mehr in docs/upgrade-faolan.md.
+  faolan-data:
+    name: ${FAOLAN_DATA_VOLUME:-faolan-data}

@@ -76,7 +76,7 @@ public class LogOutputLeakTests : IClassFixture<SecurityGatewayFixture>, IDispos
                 "werkzeug", [new CliToolSpec("run")],
                 EnvironmentVariables: new Dictionary<string, string> { ["PASSWORD"] = SecretCorpus.CliEnv }),
             Wasi: new WasiTransportOptions(
-                "bifrost-wasi-host", "component.wasm", "component.sig", ["cHVibGlzaGVy"],
+                "faolan-wasi-host", "component.wasm", "component.sig", ["cHVibGlzaGVy"],
                 Secrets: new Dictionary<string, string> { ["API_KEY"] = SecretCorpus.WasiSecret }));
 
         using var rejected = await client.PostAsJsonAsync("/api/v1/servers", config, ct);

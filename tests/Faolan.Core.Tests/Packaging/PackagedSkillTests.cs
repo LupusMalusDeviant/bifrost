@@ -24,7 +24,7 @@ public sealed class PackagedSkillTests : IDisposable
     private const string SkillText = "## Benutzung\nZuerst search_tools, dann invoke_tool.";
 
     private readonly string _root =
-        Path.Combine(Path.GetTempPath(), $"bifrost-skillpkg-{Guid.NewGuid():N}");
+        Path.Combine(Path.GetTempPath(), $"faolan-skillpkg-{Guid.NewGuid():N}");
 
     private readonly TestPublisher _publisher = new();
     private readonly InMemoryPackageStore _store = new();

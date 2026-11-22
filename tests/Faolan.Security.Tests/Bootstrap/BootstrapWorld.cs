@@ -46,11 +46,11 @@ internal sealed class BootstrapWorld : IDisposable
 
     public BootstrapWorld()
     {
-        DataDirectory = Path.Combine(Path.GetTempPath(), $"bifrost-bootstrap-{Guid.NewGuid():N}");
+        DataDirectory = Path.Combine(Path.GetTempPath(), $"faolan-bootstrap-{Guid.NewGuid():N}");
         Directory.CreateDirectory(DataDirectory);
 
         var options = new DbContextOptionsBuilder<FaolanDbContext>()
-            .UseFaolanDatabase("sqlite", $"Data Source={Path.Combine(DataDirectory, "bifrost.db")}")
+            .UseFaolanDatabase("sqlite", $"Data Source={Path.Combine(DataDirectory, "faolan.db")}")
             .Options;
         _factory = new TestDbFactory(options);
 

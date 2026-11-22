@@ -12,5 +12,5 @@ public static class UiPolicies
     /// <summary>Alle angemeldeten UI-Rollen (inkl. Auditor): lesen.</summary>
     public const string Authenticated = "ui-authenticated";
 
-    public const string RoleClaim = "bifrost-ui-role";
+    public const string RoleClaim = "faolan-ui-role";
 }

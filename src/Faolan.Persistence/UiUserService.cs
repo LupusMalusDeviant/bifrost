@@ -18,7 +18,7 @@ public sealed class UiUserService : IUiUserService
 
     // Konstanter Dummy-Hash für den "User nicht gefunden"-Pfad, damit die Antwortzeit nicht verrät,
     // ob ein Benutzername existiert (Security-Audit WP7.2: Timing-basierte Username-Enumeration).
-    private static readonly string DummyHash = Pbkdf2Hasher.Hash("bifrost-dummy-hash-anchor");
+    private static readonly string DummyHash = Pbkdf2Hasher.Hash("faolan-dummy-hash-anchor");
 
     public async Task<UiUserInfo?> ValidateCredentialsAsync(string username, string password, CancellationToken ct)
     {

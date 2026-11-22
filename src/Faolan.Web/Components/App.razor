@@ -4,18 +4,18 @@
    und die Oberflaeche sah danach benutzbar aus, ohne es zu sein. Was hier inline steht, kann nicht
    fehlen. *@
 <!DOCTYPE html>
-<html lang="de" data-theme="bifrost">
+<html lang="de" data-theme="faolan">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
     <base href="/" />
-    <title>B.I.F.R.O.S.T</title>
+    <title>Faolan</title>
     @* Die Bruecke als Marke: ein Bogen ueber dem Horizont. Kein Emoji — ein Emoji-Favicon sieht auf
        jedem System anders aus und ist bei 16 px nicht lesbar. *@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a1522'/%3E%3Cpath d='M4 25C7.5 9 24.5 9 28 25' fill='none' stroke='%236fd3ff' stroke-width='3.2' stroke-linecap='round'/%3E%3Cpath d='M4 25C7.5 9 24.5 9 28 25' fill='none' stroke='%23d8f2ff' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M5 27h22' stroke='%23204a6b' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
     <style>
-        /* ══ B.I.F.R.O.S.T ═══════════════════════════════════════════════════════════════════
+        /* ══ Faolan ═══════════════════════════════════════════════════════════════════
            Die Bruecke zwischen den Welten — Gletschernacht, nicht Neon.
 
            Drei Regeln, an denen sich hier alles messen lassen muss:
@@ -64,7 +64,7 @@
             --degraded: #f09a52;
 
             /* Das Farbband der Bruecke. Entsaettigt: Polarlicht, keine Fahne. */
-            --bifrost: linear-gradient(90deg,
+            --faolan: linear-gradient(90deg,
                 #8b7cf0 0%, #4f8ff5 18%, #4fd0f0 38%, #56e0bd 56%, #d9c86a 74%, #ef8f8f 90%, #b07ce0 100%);
 
             --radius: 10px;
@@ -166,7 +166,7 @@
            geschrieben wurde. Als 72-px-Strich unter dem Schriftzug ist es eine Signatur. */
         .brand-rule {
             height: 2px; width: 72px; margin: 0 .55rem 1rem; border-radius: 2px;
-            background: var(--bifrost); opacity: .6;
+            background: var(--faolan); opacity: .6;
         }
 
         /* ── Navigation ──────────────────────────────────────────────────────────────────── */
@@ -192,7 +192,7 @@
         /* Zweite Stelle fuers Farbband: die Kante des aktiven Eintrags. */
         .nav a.active::before {
             content: ''; position: absolute; left: 0; top: 22%; bottom: 22%; width: 2px;
-            border-radius: 2px; background: var(--bifrost);
+            border-radius: 2px; background: var(--faolan);
         }
         .nav-label {
             font-family: var(--mono); font-size: .6rem; letter-spacing: .17em; text-transform: uppercase;
@@ -553,7 +553,7 @@
 
         /* Der Fortschrittsbalken ist die einzige Stelle im Wizard, an der das Farbband auftaucht —
            und er ist zwei Pixel hoch. Regel 2 des Designsystems gilt auch hier. */
-        .wizard-rule { height: 2px; border-radius: 2px; background: var(--bifrost); opacity: .55; }
+        .wizard-rule { height: 2px; border-radius: 2px; background: var(--faolan); opacity: .55; }
 
         /* Eine Zeile je Eintrag der eingelesenen Datei. Der gesperrte Eintrag bleibt stehen und
            wird nicht ausgeblendet: Eine Vorschau, die einen Eintrag weglaesst, luegt. */
@@ -608,9 +608,9 @@
        Und nicht auf dem Server: Dort waere aus einer Anzeigevorliebe ein Datum geworden, das in
        einer Autorisierungsentscheidung landen KANN — und irgendwann landet. *@
     <script>
-        window.bifrostUiMode = {
+        window.faolanUiMode = {
             read: function () {
-                var m = document.cookie.match(/(?:^|;\s*)bifrost-ui-mode=([^;]*)/);
+                var m = document.cookie.match(/(?:^|;\s*)faolan-ui-mode=([^;]*)/);
                 return m && m[1] === 'advanced' ? 'advanced' : 'basic';
             },
             write: function (mode) {
@@ -618,11 +618,11 @@
                 // Ein Jahr, pfadweit, SameSite=Lax: dieselbe Lebensdauer wie die Gewohnheit, die
                 // dahintersteht. 'Secure' fehlt absichtlich — sonst ginge die Vorliebe in der
                 // HTTP-Entwicklungsumgebung verloren, und geschuetzt werden muss hier nichts.
-                document.cookie = 'bifrost-ui-mode=' + value + ';path=/;max-age=31536000;samesite=lax';
+                document.cookie = 'faolan-ui-mode=' + value + ';path=/;max-age=31536000;samesite=lax';
                 document.documentElement.dataset.uiMode = value;
             }
         };
-        document.documentElement.dataset.uiMode = window.bifrostUiMode.read();
+        document.documentElement.dataset.uiMode = window.faolanUiMode.read();
 
         // Der gefuehrte Erstaufbau (WP4.4). Im Browser liegt AUSSCHLIESSLICH die Kennung des
         // Vorgangs; der Zustand selbst bleibt im Serverprozess. Deshalb ein Cookie und nicht die
@@ -633,16 +633,16 @@
         // und wiederkommt, steht dort, wo er war. sessionStorage ueberlebt das Schliessen nicht.
         // Ohne 'Secure' — aus demselben Grund wie oben: Die Einrichtung laeuft haeufig ueber
         // http://localhost, und die Kennung traegt kein Geheimnis.
-        window.bifrostSetup = {
+        window.faolanSetup = {
             read: function () {
-                var m = document.cookie.match(/(?:^|;\s*)bifrost-setup=([^;]*)/);
+                var m = document.cookie.match(/(?:^|;\s*)faolan-setup=([^;]*)/);
                 return m ? m[1] : null;
             },
             write: function (handle) {
-                document.cookie = 'bifrost-setup=' + handle + ';path=/;max-age=43200;samesite=lax';
+                document.cookie = 'faolan-setup=' + handle + ';path=/;max-age=43200;samesite=lax';
             },
             clear: function () {
-                document.cookie = 'bifrost-setup=;path=/;max-age=0;samesite=lax';
+                document.cookie = 'faolan-setup=;path=/;max-age=0;samesite=lax';
             }
         };
     </script>
@@ -652,7 +652,7 @@
     <Routes @rendermode="PageRenderMode" />
     <script src="_framework/blazor.web.js"></script>
     <script>
-        window.bifrostDownload = (filename, mime, base64) => {
+        window.faolanDownload = (filename, mime, base64) => {
             const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
             const blob = new Blob([bytes], { type: mime });
             const url = URL.createObjectURL(blob);

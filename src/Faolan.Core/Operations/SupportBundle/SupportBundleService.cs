@@ -221,8 +221,8 @@ public sealed class SupportBundleService : ISupportBundleService
         Das Gateway schreibt sein Anwendungslog auf die Standardausgabe. Wer es beilegen will,
         holt es dort, wo der Prozess läuft:
 
-          docker compose logs --no-color --tail 500 bifrost > bifrost.log
-          journalctl -u bifrost --no-pager -n 500 > bifrost.log
+          docker compose logs --no-color --tail 500 faolan > faolan.log
+          journalctl -u faolan --no-pager -n 500 > faolan.log
 
         Bitte VOR dem Weitergeben durchsehen: Diese Ausgabe geht nicht durch den Maskierungslauf
         dieses Bundles.
@@ -231,7 +231,7 @@ public sealed class SupportBundleService : ISupportBundleService
     private string DefaultPath(DateTimeOffset createdAt) => Path.Combine(
         _environment.DataDirectory,
         "support",
-        $"bifrost-support-{createdAt.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)}.zip");
+        $"faolan-support-{createdAt.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)}.zip");
 
     private static async Task WriteEntryAsync(ZipArchive zip, string path, string content, CancellationToken ct)
     {

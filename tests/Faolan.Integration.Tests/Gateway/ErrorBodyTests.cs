@@ -42,7 +42,7 @@ public class ErrorBodyTests : IClassFixture<GatewayFixture>
         response.Content.Headers.ContentType?.MediaType.Should().Be("text/html");
         body.Should().Contain("404");
         body.Should().Contain(
-            "B.I.F.R.O.S.T", "ohne Kennzeichen weiss der Besucher nicht einmal, wo er gelandet ist");
+            "Faolan", "ohne Kennzeichen weiss der Besucher nicht einmal, wo er gelandet ist");
         body.Should().Contain(
             "href=\"/\"",
             "eine Fehlerseite ohne Rueckweg laesst den Besucher da stehen, wo er nicht sein wollte");

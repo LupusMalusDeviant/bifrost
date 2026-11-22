@@ -153,7 +153,7 @@ public class UpstreamConfigMergeTests
         var previous = new UpstreamServerConfig(
             "wasm", "WASM", UpstreamTransportKind.Wasi, true,
             Wasi: new WasiTransportOptions(
-                "bifrost-wasi-host", "component.wasm", "component.sig", ["cHVibGlzaGVy"],
+                "faolan-wasi-host", "component.wasm", "component.sig", ["cHVibGlzaGVy"],
                 Secrets: new Dictionary<string, string> { ["API_KEY"] = "echter-schluessel" }));
         var edited = previous with
         {

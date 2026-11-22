@@ -123,7 +123,7 @@ var instanceId = InstanceIdentityFile.EnsureCreated(dataDir);
 var keyRing = builder.Services.AddDataProtection()
     // ── NICHT UMBENENNEN ─────────────────────────────────────────────────────────────────────
     // Der Anwendungsname geht in die Schluesselableitung ein. Er heisst weiterhin "MCPMCP",
-    // obwohl das Produkt seit dem 2026-07-31 B.I.F.R.O.S.T heisst — ein neuer Name hier wuerde
+    // obwohl das Produkt seit dem 2026-07-31 erst B.I.F.R.O.S.T und seit der Umbenennung Faolan heisst — ein neuer Name hier wuerde
     // JEDEN gespeicherten Geheimtext unlesbar machen: Upstream-Zugangsdaten, OAuth-Token,
     // Webhook-Secrets. Eine Umbenennung waere kein Schoenheitsfehler, sondern Datenverlust auf
     // jeder bestehenden Installation.
@@ -418,13 +418,13 @@ builder.Services.AddMcpServer(options =>
     {
         options.ServerInfo = new Implementation
         {
-            Name = "bifrost",
+            Name = "faolan",
             Version = FaolanProductInfo.Version,
         };
         // Der einzige Text, den jeder angeschlossene Agent einmal je Sitzung sieht. Kurz halten:
         // Er kostet Kontext in JEDER Sitzung, und lang macht ihn nicht wirksamer.
         options.ServerInstructions =
-            "B.I.F.R.O.S.T gateway: aggregated tools from multiple upstream servers. " +
+            "Faolan gateway: aggregated tools from multiple upstream servers. " +
             "Use search_tools to discover capabilities, describe_tool for schemas, invoke_tool to call. " +
             "This gateway also publishes shared skills — instructions, playbooks and conventions " +
             "maintained centrally for all agents. Call list_skills when a task might have an " +
@@ -476,7 +476,7 @@ if (!string.IsNullOrWhiteSpace(otlpEndpoint))
 {
     builder.Services.AddOpenTelemetry()
         .ConfigureResource(r => r.AddService(
-            "bifrost", serviceVersion: FaolanProductInfo.Version))
+            "faolan", serviceVersion: FaolanProductInfo.Version))
         .WithMetrics(metrics => metrics
             .AddMeter(ToolInvoker.MeterName)
             .AddAspNetCoreInstrumentation()
@@ -510,7 +510,7 @@ builder.Services
         options.AccessDeniedPath = "/login";
         options.ExpireTimeSpan = TimeSpan.FromHours(8);
         options.SlidingExpiration = true;
-        options.Cookie.Name = "bifrost-ui";
+        options.Cookie.Name = "faolan-ui";
         options.Cookie.HttpOnly = true;
         options.Cookie.SameSite = SameSiteMode.Strict;
         // Produktion (hinter TLS-Proxy, NFR-04): Cookie nur über HTTPS. Dev/Tests laufen über HTTP.

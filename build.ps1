@@ -94,7 +94,7 @@ function Invoke-VerifyDotnet {
 
 function Invoke-VerifyContainer {
     if (-not (Test-Tool 'docker' 'Container-Gate laeuft dann nur in der CI.')) { return }
-    Invoke-Step 'docker build' { docker build -t bifrost:verify $repo }
+    Invoke-Step 'docker build' { docker build -t faolan:verify $repo }
     Invoke-Step 'compose-Beispiele sind gueltig' {
         docker compose -f $repo/docker-compose.yml config --quiet
         if ($LASTEXITCODE -eq 0) {
@@ -102,7 +102,7 @@ function Invoke-VerifyContainer {
         }
     }
     Invoke-Step 'non-root im Image' {
-        $uid = docker run --rm --entrypoint sh bifrost:verify -c 'id -u'
+        $uid = docker run --rm --entrypoint sh faolan:verify -c 'id -u'
         if ($uid.Trim() -eq '0') { Write-Host 'Image laeuft als root.' -ForegroundColor Red; exit 1 }
         Write-Host "UID im Container: $uid"
     }

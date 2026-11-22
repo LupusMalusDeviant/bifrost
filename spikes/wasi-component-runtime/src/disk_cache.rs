@@ -348,7 +348,7 @@ mod tests {
 
     fn scratch(name: &str) -> PathBuf {
         let path =
-            std::env::temp_dir().join(format!("bifrost-diskcache-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("faolan-diskcache-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         path
     }

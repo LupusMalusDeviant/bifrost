@@ -32,13 +32,13 @@ internal sealed class ConnectorKitCli(TextWriter output, TextWriter error)
 {
     public const string UsageText =
         """
-        bifrost-connector — Pakete für B.I.F.R.O.S.T bauen, signieren und prüfen.
+        faolan-connector — Pakete für Faolan bauen, signieren und prüfen.
 
-          bifrost-connector init <verzeichnis> [--id <name>] [--key <datei>] [--label <text>]
-          bifrost-connector build <verzeichnis> --key <datei> [--out <paket.mcpkg>]
-          bifrost-connector sign <paket.mcpkg> --key <datei> --out <paket.mcpkg>
-          bifrost-connector verify <paket.mcpkg> --publisher <schluessel.json | keyid:base64>
-          bifrost-connector test <paket.mcpkg> --publisher <...>
+          faolan-connector init <verzeichnis> [--id <name>] [--key <datei>] [--label <text>]
+          faolan-connector build <verzeichnis> --key <datei> [--out <paket.mcpkg>]
+          faolan-connector sign <paket.mcpkg> --key <datei> --out <paket.mcpkg>
+          faolan-connector verify <paket.mcpkg> --publisher <schluessel.json | keyid:base64>
+          faolan-connector test <paket.mcpkg> --publisher <...>
 
         Exitcodes: 0 ok · 1 Fehler · 2 Bedienfehler · 5 Paket ungueltig.
 
@@ -111,7 +111,7 @@ internal sealed class ConnectorKitCli(TextWriter output, TextWriter error)
         await output.WriteLineAsync($"Herausgeber:  {key.KeyId}");
         await output.WriteLineAsync($"Schlüssel:    {Path.GetFullPath(keyPath)} (bleibt hier)");
         await output.WriteLineAsync(
-            $"Nächster Schritt: '{entryPoint}' ablegen, dann 'bifrost-connector build {directory} --key {keyPath}'.");
+            $"Nächster Schritt: '{entryPoint}' ablegen, dann 'faolan-connector build {directory} --key {keyPath}'.");
         return ConnectorKitExit.Success;
     }
 
@@ -160,7 +160,7 @@ internal sealed class ConnectorKitCli(TextWriter output, TextWriter error)
         await output.WriteLineAsync($"Herausgeber:  {key.KeyId}");
         await output.WriteLineAsync($"Dateien:      {files.Count}");
         await output.WriteLineAsync(
-            "Selbst geprüft: 'bifrost-connector test <paket> --publisher <schlüssel>'.");
+            "Selbst geprüft: 'faolan-connector test <paket> --publisher <schlüssel>'.");
         return ConnectorKitExit.Success;
     }
 
@@ -315,15 +315,15 @@ internal sealed class ConnectorKitCli(TextWriter output, TextWriter error)
         $"""
         # {id}
 
-        Ein Connector für B.I.F.R.O.S.T.
+        Ein Connector für Faolan.
 
         1. Die Component nach `{entryPoint}` legen.
         2. `connector.json` ausfüllen: Anzeigename, Beschreibung, benötigte Grants.
         3. Bauen und selbst prüfen:
 
            ```
-           bifrost-connector build . --key publisher.key.json
-           bifrost-connector test out/{id}-0.1.0.mcpkg --publisher publisher.key.json
+           faolan-connector build . --key publisher.key.json
+           faolan-connector test out/{id}-0.1.0.mcpkg --publisher publisher.key.json
            ```
 
         Der private Schlüssel gehört nicht ins Versionsverwaltungssystem.

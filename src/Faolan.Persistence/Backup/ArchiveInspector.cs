@@ -151,7 +151,7 @@ internal static class ArchiveInspector
     /// </summary>
     private static bool ValidateEntryShape(ZipArchive archive, InspectedArchive result, CancellationToken ct)
     {
-        var virtualRoot = Path.Combine(Path.GetTempPath(), "bifrost-restore-anchor");
+        var virtualRoot = Path.Combine(Path.GetTempPath(), "faolan-restore-anchor");
         long total = 0;
 
         foreach (var entry in archive.Entries)

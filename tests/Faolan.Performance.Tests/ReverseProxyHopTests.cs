@@ -150,11 +150,11 @@ public sealed class ReverseProxyHopTests
             events {}
             http {
               access_log off;
-              upstream bifrost { server {{HostAlias}}:{{gatewayPort}}; keepalive 32; }
+              upstream faolan { server {{HostAlias}}:{{gatewayPort}}; keepalive 32; }
               server {
                 listen 80;
                 location / {
-                  proxy_pass http://bifrost;
+                  proxy_pass http://faolan;
                   proxy_http_version 1.1;
                   proxy_set_header Host $http_host;
                   proxy_set_header Connection "";
@@ -170,7 +170,7 @@ public sealed class ReverseProxyHopTests
         // Die Datei muss im Container 'nginx.conf' heissen — das Ziel der Zuordnung ist ein
         // Verzeichnis, nicht ein Dateiname. Deshalb ein eigenes Verzeichnis mit dem richtigen Namen
         // darin, statt einen Zufallsnamen an eine Stelle zu legen, an der nginx nicht sucht.
-        var directory = Path.Combine(Path.GetTempPath(), $"bifrost-nginx-{Guid.NewGuid():N}");
+        var directory = Path.Combine(Path.GetTempPath(), $"faolan-nginx-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         var file = Path.Combine(directory, "nginx.conf");
         await File.WriteAllTextAsync(file, configuration, ct);

@@ -35,7 +35,7 @@ public sealed class BackupJourneyTests
 
         // Die Oberfläche nimmt einen Namen; die Sicherung entsteht im Sicherungsverzeichnis der
         // Instanz (Vorgabe <Datenverzeichnis>/backups) und nirgends sonst.
-        var name = $"bifrost-ui-backup-{Guid.NewGuid():N}.zip";
+        var name = $"faolan-ui-backup-{Guid.NewGuid():N}.zip";
         var target = Path.Combine(session.Gateway.DataDirectory, "backups", name);
 
         try
@@ -111,7 +111,7 @@ public sealed class BackupJourneyTests
         await session.WaitForInteractivityAsync("[data-testid=backup-path]");
 
         var body = await session.Page.TextContentAsync("body");
-        body.Should().Contain("Wiederherstellung").And.Contain("bifrost restore");
+        body.Should().Contain("Wiederherstellung").And.Contain("faolan restore");
 
         // Kein Knopf, der eine Wiederherstellung auslöst — geprüft über alle Schaltflächen der
         // Seite, nicht über eine einzelne Vermutung, wie er heißen würde.

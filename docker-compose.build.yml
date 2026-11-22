@@ -17,13 +17,13 @@
 # wie das Release-Image.
 
 services:
-  bifrost:
+  faolan:
     build:
       context: .
       dockerfile: Dockerfile
-    # Eigener lokaler Name — nie ein Tag unter ghcr.io/lupusmalusdeviant/bifrost. Sonst
+    # Eigener lokaler Name — nie ein Tag unter ghcr.io/lupusmalusdeviant/faolan. Sonst
     # steht ein selbstgebautes Image unter demselben Namen wie ein veroeffentlichtes, und
     # niemand kann spaeter sagen, welches der beiden gerade laeuft.
-    image: bifrost-local:dev
+    image: faolan-local:dev
     # Ohne das zieht Compose bei vorhandenem Tag ggf. nur und baut nicht neu.
     pull_policy: build

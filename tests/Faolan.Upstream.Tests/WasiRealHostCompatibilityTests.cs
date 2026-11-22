@@ -229,7 +229,7 @@ public sealed class WasiRealHostCompatibilityTests
 
         hello.GetProperty("type").GetString().Should().Be("hello");
         hello.GetProperty("protocolVersion").GetString().Should().Be(WasiRuntimeConnector.ProtocolVersion);
-        hello.GetProperty("host").GetString().Should().StartWith("bifrost-wasi-host/");
+        hello.GetProperty("host").GetString().Should().StartWith("faolan-wasi-host/");
         hello.GetProperty("runtime").GetString().Should().Contain("wasmtime");
     }
 
@@ -329,7 +329,7 @@ public sealed class WasiRealHostCompatibilityTests
     {
         var host = RequireHost();
         var ct = TestContext.Current.CancellationToken;
-        var cacheDirectory = Path.Combine(Path.GetTempPath(), $"bifrost-wasi-cache-{Guid.NewGuid():N}");
+        var cacheDirectory = Path.Combine(Path.GetTempPath(), $"faolan-wasi-cache-{Guid.NewGuid():N}");
         var publisher = await PinnedPublisherAsync(ct);
 
         try

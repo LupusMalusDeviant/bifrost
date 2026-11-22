@@ -141,7 +141,7 @@ public sealed class SetupWizardLeakTests : IClassFixture<SecurityGatewayFixture>
         // Leser, nicht der Wert.
         page.Headers.TryGetValues("Set-Cookie", out var cookies);
         (cookies ?? []).Should().NotContain(value =>
-            value.Contains("bifrost-setup", StringComparison.Ordinal));
+            value.Contains("faolan-setup", StringComparison.Ordinal));
     }
 
     /// <summary>

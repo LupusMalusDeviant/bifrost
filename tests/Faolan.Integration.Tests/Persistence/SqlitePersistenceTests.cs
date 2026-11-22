@@ -11,7 +11,7 @@ namespace Faolan.Integration.Tests.Persistence;
 public sealed class SqlitePersistenceTests : PersistenceTestsBase
 {
     private readonly string _dbPath = Path.Combine(
-        Path.GetTempPath(), $"bifrost-test-{Guid.NewGuid():N}.db");
+        Path.GetTempPath(), $"faolan-test-{Guid.NewGuid():N}.db");
 
     private readonly List<string> _extraDbPaths = [];
 
@@ -23,7 +23,7 @@ public sealed class SqlitePersistenceTests : PersistenceTestsBase
 
     protected override Task<DbContextOptions<FaolanDbContext>> CreateFreshOptionsAsync(string name)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"bifrost-{name}-{Guid.NewGuid():N}.db");
+        var path = Path.Combine(Path.GetTempPath(), $"faolan-{name}-{Guid.NewGuid():N}.db");
         _extraDbPaths.Add(path);
         return Task.FromResult(new DbContextOptionsBuilder<FaolanDbContext>()
             .UseFaolanDatabase(FaolanDbOptions.Sqlite, $"Data Source={path}")

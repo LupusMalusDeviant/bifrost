@@ -386,7 +386,7 @@ impl Session {
                     Response::Hello {
                         protocol_version: PROTOCOL_VERSION.to_owned(),
                         runtime: RUNTIME_VERSION.to_owned(),
-                        host: format!("bifrost-wasi-host/{}", env!("CARGO_PKG_VERSION")),
+                        host: format!("faolan-wasi-host/{}", env!("CARGO_PKG_VERSION")),
                         features: HostFeatures::current(),
                     },
                     Control::Continue,
@@ -1130,7 +1130,7 @@ mod tests {
             } => {
                 assert_eq!(protocol_version, PROTOCOL_VERSION);
                 assert!(runtime.contains("wasmtime"));
-                assert!(host.starts_with("bifrost-wasi-host/"));
+                assert!(host.starts_with("faolan-wasi-host/"));
                 // Der Handshake nennt die Fähigkeiten (ADR-0016) — auch die fehlenden.
                 assert_eq!(features, HostFeatures::current());
                 assert!(features.cancellation && features.drain && features.readiness);

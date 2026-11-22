@@ -309,7 +309,7 @@ public sealed class KeyRingCertificateCheck : IDiagnosticCheck
 /// </para>
 /// <para>
 /// Der Serverprozess bricht in dieser Lage den Start ab. Dieser Check ist der Weg, dasselbe von
-/// außen zu sehen — <c>bifrost doctor</c> läuft auch dann, wenn der Gateway steht.
+/// außen zu sehen — <c>faolan doctor</c> läuft auch dann, wenn der Gateway steht.
 /// </para>
 /// </summary>
 public sealed class KeyRingLossCheck : IDiagnosticCheck

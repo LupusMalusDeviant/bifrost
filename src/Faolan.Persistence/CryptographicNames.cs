@@ -11,7 +11,7 @@ namespace Faolan.Persistence;
 /// </para>
 /// <para>
 /// Sie tragen weiterhin <c>McpMcp</c> bzw. <c>MCPMCP</c> im Namen, obwohl das Produkt
-/// B.I.F.R.O.S.T heißt. Das ist kein Versehen: Ein kryptografischer Bezeichner ist kein
+/// inzwischen Faolan heißt (davor B.I.F.R.O.S.T). Das ist kein Versehen: Ein kryptografischer Bezeichner ist kein
 /// Markenname. Wer ihn ändern will, braucht einen Migrationslauf, der alles entschlüsselt und neu
 /// verschlüsselt — keine Textersetzung.
 /// </para>

@@ -70,14 +70,14 @@ public class MetricsTests
                 InvokerTestWorld.Request(admin, w.Echo, new { message = "hi" }), TestContext.Current.CancellationToken),
             out var world);
 
-        var call = measurements.Should().ContainSingle(m => m.Instrument == "bifrost.tool_calls").Subject;
+        var call = measurements.Should().ContainSingle(m => m.Instrument == "faolan.tool_calls").Subject;
         call.Value.Should().Be(1);
         call.Tags["server"].Should().Be(world.Slug, "FR-26 verlangt Auswertung pro Server");
         call.Tags["tool"].Should().Be(world.Echo.Value);
         call.Tags["status"].Should().Be(nameof(InvocationStatus.Success));
         call.Tags["origin"].Should().Be(nameof(CallOrigin.Mcp));
 
-        var duration = measurements.Should().ContainSingle(m => m.Instrument == "bifrost.tool_call_duration").Subject;
+        var duration = measurements.Should().ContainSingle(m => m.Instrument == "faolan.tool_call_duration").Subject;
         duration.Tags["server"].Should().Be(world.Slug);
         duration.Value.Should().BeGreaterThanOrEqualTo(0);
     }
@@ -92,7 +92,7 @@ public class MetricsTests
                 InvokerTestWorld.Request(restricted, w.Echo, new { message = "hi" }), TestContext.Current.CancellationToken),
             out _);
 
-        measurements.Should().ContainSingle(m => m.Instrument == "bifrost.tool_calls")
+        measurements.Should().ContainSingle(m => m.Instrument == "faolan.tool_calls")
             .Which.Tags["status"].Should().Be(nameof(InvocationStatus.Denied),
                 "ohne Status-Dimension ließe sich keine Fehlerquote bilden");
     }

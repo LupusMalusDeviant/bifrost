@@ -17,7 +17,7 @@ public sealed class OAuthDiscoveryClassificationTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>Ein reservierter, nie auflösbarer Name (RFC 2606) — je Lauf ein anderer.</summary>
-    private static Uri UnresolvableIssuer() => new($"https://bifrost-{Guid.NewGuid():N}.invalid");
+    private static Uri UnresolvableIssuer() => new($"https://faolan-{Guid.NewGuid():N}.invalid");
 
     /// <summary>
     /// G3a: Mit aktiver Prüfung privater Ziele (Standard) scheiterte die Auflösung des Issuers an

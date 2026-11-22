@@ -42,7 +42,7 @@ public static class CliVersion
     public static string RuntimeIdentifier => RuntimeInformation.RuntimeIdentifier;
 
     /// <summary>
-    /// Die Ausgabe von <c>bifrost --version</c>. Ohne <paramref name="jsonOutput"/> drei Zeilen
+    /// Die Ausgabe von <c>faolan --version</c>. Ohne <paramref name="jsonOutput"/> drei Zeilen
     /// fuer Menschen, mit <paramref name="jsonOutput"/> ein einzeiliges Objekt fuer Skripte.
     /// </summary>
     public static string Describe(bool jsonOutput)
@@ -57,7 +57,7 @@ public static class CliVersion
             : string.Format(
                 CultureInfo.InvariantCulture,
                 """
-                bifrost {0}
+                faolan {0}
                 Commit:   {1}
                 Laufzeit: {2}, {3}
                 """,

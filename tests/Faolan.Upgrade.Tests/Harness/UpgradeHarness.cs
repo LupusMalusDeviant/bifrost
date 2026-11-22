@@ -53,7 +53,7 @@ internal static class UpgradeHarness
     public static IReadOnlyList<string> PublishedMigrations(string provider)
     {
         var connectionString = FaolanDbOptions.IsPostgres(provider)
-            ? "Host=127.0.0.1;Port=1;Database=bifrost_katalog;Username=katalog;Password=katalog"
+            ? "Host=127.0.0.1;Port=1;Database=faolan_katalog;Username=katalog;Password=katalog"
             : "Data Source=:memory:";
 
         var options = new DbContextOptionsBuilder<FaolanDbContext>()
@@ -108,7 +108,7 @@ internal static class UpgradeHarness
             // Fest gesetzt, weil der Anwendungsname in die Schluesselableitung eingeht: Quelle und
             // Ziel eines Restores muessen denselben tragen, sonst scheitert die Entschluesselung aus
             // einem Grund, der mit dem Upgrade nichts zu tun hat.
-            .SetApplicationName("bifrost-upgrade-tests");
+            .SetApplicationName("faolan-upgrade-tests");
 
         return services.BuildServiceProvider().GetRequiredService<IDataProtectionProvider>();
     }

@@ -16,8 +16,9 @@ public sealed class BackupOptions
     public DatabaseProvider Provider { get; init; } = DatabaseProvider.Sqlite;
 
     /// <summary>
-    /// Die SQLite-Datei. Fehlt sie, gilt <c>bifrost.db</c> im Datenverzeichnis — und ersatzweise die
-    /// v1.0-Datei <c>mcpmcp.db</c>, falls nur die existiert (dieselbe Regel wie im Server-Start).
+    /// Die SQLite-Datei. Fehlt sie, gilt die Datei im Datenverzeichnis nach derselben Regel wie im
+    /// Server-Start: <c>faolan.db</c>, sonst die alten Namen <c>bifrost.db</c> und <c>mcpmcp.db</c>
+    /// (<see cref="Faolan.Abstractions.SqliteDatabaseFile"/>).
     /// </summary>
     public string? SqliteFilePath { get; init; }
 

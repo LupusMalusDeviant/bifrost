@@ -72,7 +72,7 @@ public static class KeyRingProbe
             return new KeyRingReadReport(0, 0, [], false, null);
         }
 
-        var work = Directory.CreateTempSubdirectory("bifrost-keyring-probe-");
+        var work = Directory.CreateTempSubdirectory("faolan-keyring-probe-");
         try
         {
             foreach (var key in existing)

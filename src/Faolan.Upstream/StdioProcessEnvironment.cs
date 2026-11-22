@@ -19,7 +19,7 @@ public static class StdioProcessEnvironment
 {
     /// <summary>
     /// Variablen, die durchgereicht werden, wenn sie gesetzt sind. Bewusst kurz und
-    /// namentlich — eine Präfix-Regel („alles außer BIFROST_*") ließe jede neue Variable
+    /// namentlich — eine Präfix-Regel („alles außer FAOLAN_*") ließe jede neue Variable
     /// stillschweigend durch.
     /// </summary>
     private static readonly string[] Inherited =

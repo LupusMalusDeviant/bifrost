@@ -170,7 +170,7 @@ public sealed partial class KeyRingStartup
                         + "letzten Start? Bei einem Zertifikatswechsel muss das alte über "
                         + KeyRingSwitch.PreviousCertificatePath + " weiterhin angegeben sein — es "
                         + "verschlüsselt nichts mehr, aber ohne es bleibt das Altmaterial zu. "
-                        + "Vor jedem Wechsel 'bifrost-server --keyring-rotate' laufen lassen."
+                        + "Vor jedem Wechsel 'dotnet Faolan.Server.dll --keyring-rotate --new-cert <pfad>' laufen lassen."
                     : "Die Schlüsseldateien sind verschlüsselt, es ist aber kein Zertifikat "
                         + "konfiguriert. Wurde " + KeyRingSwitch.CertificatePath + " entfernt? "
                         + "Ohne das Zertifikat ist der Ring nicht zu öffnen.");
