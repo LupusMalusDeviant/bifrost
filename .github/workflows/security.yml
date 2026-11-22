@@ -164,7 +164,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p security-reports
-          dotnet list Bifrost.slnx package --vulnerable --include-transitive --format json \
+          dotnet list Faolan.slnx package --vulnerable --include-transitive --format json \
             > security-reports/dotnet-vulnerable.json
           cat security-reports/dotnet-vulnerable.json
 

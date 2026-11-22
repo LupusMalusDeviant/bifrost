@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- xUnit v3: Testprojekte sind eigenstaendige Executables, der Runner laeuft im selben Prozess. -->
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Faolan.Server\Faolan.Server.csproj" />
+    <ProjectReference Include="..\..\src\Faolan.Persistence.Migrations.Sqlite\Faolan.Persistence.Migrations.Sqlite.csproj" />
+    <ProjectReference Include="..\..\src\Faolan.Persistence.Migrations.Postgres\Faolan.Persistence.Migrations.Postgres.csproj" />
+    <!-- Nur Build-Reihenfolge: TestServer werden als externe Prozesse gestartet, nicht referenziert. -->
+    <ProjectReference Include="..\Faolan.TestServers\EchoServer\Faolan.TestServers.EchoServer.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Faolan.TestServers\CrashServer\Faolan.TestServers.CrashServer.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Faolan.TestServers\SlowServer\Faolan.TestServers.SlowServer.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Faolan.TestServers\HttpServer\Faolan.TestServers.HttpServer.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Faolan.TestServers\BulkServer\Faolan.TestServers.BulkServer.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Faolan.TestServers\WasiHostStub\Faolan.TestServers.WasiHostStub.csproj" ReferenceOutputAssembly="false" />
+    <!-- Dieselbe Prozesssuche wie im OrphanHost. Getrennte Fassungen waeren zwei Wahrheiten
+         darueber, was "der Upstream laeuft" heisst — und der Unterschied faellt erst auf einer
+         anderen Plattform auf. -->
+    <Compile Include="..\Faolan.TestServers\Common\UpstreamProcessLookup.cs"
+             Link="Common\UpstreamProcessLookup.cs" />
+    <!-- Der Negativkorpus, verlinkt statt kopiert (WP4.3). Er ist die Liste der Werte, die in
+         KEINER Ausgabe dieses Dienstes auftauchen duerfen; eine zweite Fassung waere eine zweite
+         Liste, und die eine bekaeme irgendwann einen Eintrag, den die andere nicht kennt. Dieselbe
+         Begruendung wie oben bei UpstreamProcessLookup. -->
+    <Compile Include="..\Faolan.Security.Tests\Infrastructure\SecretCorpus.cs"
+             Link="Importing\SecretCorpus.cs" />
+    <!-- FR-P056: Haengt ein Lauf, entsteht ein Bericht mit Sequenz und aktiven
+         Kindprozessen. Verlinkt statt nachgebaut — vier Projekte starten echte Prozesse,
+         und vier Fassungen davon waeren vier Wahrheiten. -->
+    <Compile Include="..\Faolan.TestServers\Common\HangReport.cs" Link="Harness\HangReport.cs" />
+    <Compile Include="..\Faolan.TestServers\Common\HangWatchdog.cs" Link="Harness\HangWatchdog.cs" />
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <!-- WP5.2: Der Realm wird in den Keycloak-Container gereicht und muss dafuer neben der
+         Testassembly liegen. -->
+    <None Update="OAuth\faolan-test-realm.json" CopyToOutputDirectory="PreserveNewest" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+  </ItemGroup>
+
+</Project>

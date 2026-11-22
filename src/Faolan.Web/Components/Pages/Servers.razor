@@ -1,0 +1,1055 @@
+@page "/servers"
+@implements IDisposable
+@attribute [Authorize(Policy = UiPolicies.Operator)]
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@inject IUpstreamSupervisor Supervisor
+@inject Faolan.Core.Upstreams.UpstreamSupervisor ConcreteSupervisor
+@inject IToolDefinitionPinStore ToolPins
+@inject IUpstreamConfigStore ConfigStore
+@inject Faolan.Core.Diagnostics.Upstreams.IUpstreamConnectionDiagnostics ConnectionDiagnostics
+@inject IAuditSink Audit
+@inject TimeProvider Time
+@inject AuthenticationStateProvider AuthState
+
+<h1>Server-Verwaltung</h1>
+<p class="muted">MCP-, OpenAPI- und gehärtete CLI-Quellen zur Laufzeit hinzufügen, ohne Neustart (FR-06/34).</p>
+
+<div class="card">
+    <h3 style="margin-top:0">Angeschlossene Server</h3>
+    @if (_statuses.Count == 0)
+    {
+        <p class="muted">Noch nichts angeschlossen.</p>
+    }
+    else
+    {
+        @* Ergebnis von „Neue Fassung annehmen" — direkt über der Tabelle, wo der Knopf steht, und
+           nicht unten am Formular (Plan 0005 G6: ein Konflikt wurde vorher gar nicht gemeldet). *@
+        @if (_pinMessage is not null)
+        {
+            <p data-testid="pin-message" role="status" class="@(_pinOk ? "msg-ok" : "msg-err")">@_pinMessage</p>
+        }
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Slug</th><th>Status</th><th>Tools</th><th>Letzter Fehler</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var s in _statuses)
+                    {
+                        @* Die Zeile traegt Slug und Zustand als Daten, damit ein Browsertest den
+                           Zustand EINES Servers pruefen kann statt Text auf der ganzen Seite. *@
+                        <tr data-testid="server-row" data-slug="@s.Slug" data-state="@s.State"
+                            data-failure-kind="@(s.Reconnect?.Kind.ToString())"
+                            data-reconnect-attempt="@(s.Reconnect?.Attempt)"
+                            data-next-attempt-at="@(s.Reconnect?.NextAttemptAt?.ToString("O"))">
+                            <td class="mono">@s.Slug</td>
+                            <td>
+                                <StateBadge State="s.State" />
+                                @if (s.Reconnect is { } reconnect)
+                                {
+                                    @* Ein Upstream auf Failed ist kein Endzustand mehr: Hier steht,
+                                       wann es weitergeht. Ohne diese Zeile sähe ein Upstream, der
+                                       gleich wieder verbindet, genauso aus wie einer, der liegt. *@
+                                    <div class="muted" data-testid="server-reconnect"
+                                         style="font-size:.85em;margin-top:.25rem;white-space:nowrap">
+                                        @ReconnectText(reconnect)
+                                    </div>
+                                }
+                            </td>
+                            <td>@s.ToolCount</td>
+                            <td class="muted" style="max-width:260px">@(s.LastError ?? "—")</td>
+                            <td style="white-space:nowrap">
+                                @if (s.State == UpstreamState.Failed)
+                                {
+                                    <button class="btn-sm" data-testid="server-connect-now"
+                                            @onclick="() => ConnectNow(s.Id)">Jetzt verbinden</button>
+                                }
+                                @if (s.State == UpstreamState.Stopped)
+                                {
+                                    <button class="btn-sm btn-ghost" @onclick="() => SetEnabled(s.Id, true)">Aktivieren</button>
+                                }
+                                else
+                                {
+                                    <button class="btn-sm btn-ghost" @onclick="() => SetEnabled(s.Id, false)">Deaktivieren</button>
+                                }
+                                @if (EditableKind(s.Id) is not { } nichtEditierbar)
+                                {
+                                    <button class="btn-sm btn-ghost" @onclick="() => StartEdit(s.Id)">Bearbeiten</button>
+                                }
+                                else
+                                {
+                                    @* Kein toter Knopf: Das Formular hat fuer diese Art keine Felder,
+                                       und der Auffangzweig haette daraus etwas anderes gebaut. *@
+                                    <span class="muted" title="@ServerFormKinds.ReasonNotEditable(nichtEditierbar)">
+                                        nicht im Formular
+                                    </span>
+                                }
+                                <button class="btn-sm btn-ghost" @onclick="() => ShowHistory(s.Id, s.Slug)">Versionen</button>
+                                @if (_oauthServers.Contains(s.Id))
+                                {
+                                    @* Echte Navigation statt Blazor-Klick: Der Autorisierungsvorgang
+                                       endet in einer Weiterleitung aus dem Browser zurück, und ein
+                                       Circuit kann das nicht. *@
+                                    @* „Autorisieren", nicht „Verbinden": Daneben steht bei einem
+                                       ausgefallenen Upstream „Jetzt verbinden", und das ist etwas
+                                       anderes — hier beginnt die OAuth-Zustimmung im Browser. *@
+                                    <a class="btn-sm btn-ghost" href="@($"/oauth/upstream/{s.Id.Value}/connect")">Autorisieren</a>
+                                }
+                                <ConfirmButton Label="Entfernen" What="@($"Upstream {s.Slug}")" OnConfirmed="() => Remove(s.Id, s.Slug)" />
+                            </td>
+                        </tr>
+                        @if (s.QuarantinedTools is { Count: > 0 } held)
+                        {
+                            @* Ein zurückgehaltenes Tool muss sichtbar sein. Sonst sucht jemand ein
+                               Tool, das ohne Erklärung verschwunden ist — und schaltet am Ende den
+                               Schutz ab, statt die Änderung anzusehen. *@
+                            <tr>
+                                <td colspan="5" class="muted">
+                                    <strong>Definition geändert:</strong>
+                                    Diese Tools werden zurückgehalten, bis die neue Fassung
+                                    angenommen ist — sie sind weder sichtbar noch aufrufbar.
+                                    @foreach (var tool in held)
+                                    {
+                                        var pending = ToolPins.All
+                                            .FirstOrDefault(p => p.Server == s.Id && p.Tool == tool)?.PendingHash;
+                                        <span class="mono" style="margin-left:.5rem">@tool</span>
+                                        <button class="btn-sm" style="margin-left:.3rem"
+                                                @onclick="() => AcceptDefinition(s.Id, s.Slug, tool, pending)"
+                                                disabled="@_busy">Neue Fassung annehmen</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@* Sprungziel der Feinsteuerung „Tool-Pins & OAuth" (WP4.5). Beides sind Eigenschaften eines
+   Upstreams und keine eigenen Seiten — deshalb steht hier eine Uebersicht und kein weiterer
+   Bildschirm. Bewusst LESEND: Die Aktion „neue Fassung annehmen" bleibt oben in der Serverzeile,
+   wo der Alarm steht. Dieselbe Schaltflaeche an zwei Stellen waeren zwei Wege zu einer
+   Entscheidung, die man genau einmal treffen soll. *@
+<div class="card" id="erweitert">
+    <h3 style="margin-top:0">Tool-Pins &amp; OAuth-Anbindung</h3>
+    <p class="muted">
+        Ein <strong>Tool-Pin</strong> hält die Definition fest, die zuletzt angesehen wurde. Ändert
+        ein Upstream Beschreibung oder Schema eines Tools, wird die neue Fassung zurückgehalten,
+        bis jemand sie annimmt — bis dahin ist das Tool weder sichtbar noch aufrufbar (FR-33).
+        <strong>OAuth</strong> steht in der Konfiguration des Upstreams; hier ist nur zu sehen,
+        wer eine Anbindung hat und ob sie verbunden werden kann.
+    </p>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Slug</th><th>Zurückgehaltene Definitionen</th><th>OAuth</th><th>Endpunkt</th></tr></thead>
+            <tbody>
+                @foreach (var s in _statuses)
+                {
+                    <tr>
+                        <td class="mono">@s.Slug</td>
+                        <td>
+                            @if (s.QuarantinedTools is { Count: > 0 } held)
+                            {
+                                <div class="pill-list">
+                                    @foreach (var tool in held)
+                                    {
+                                        <span class="pill">@tool</span>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <span class="muted">— keine</span>
+                            }
+                        </td>
+                        <td>
+                            @if (_oauthServers.Contains(s.Id))
+                            {
+                                <a href="@($"/oauth/upstream/{s.Id.Value}/connect")">verbinden</a>
+                            }
+                            else
+                            {
+                                <span class="muted">—</span>
+                            }
+                        </td>
+                        <td class="mono muted">@(_endpoints.TryGetValue(s.Id, out var url) ? url : "—")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    @if (_statuses.Count == 0)
+    {
+        <p class="empty" style="margin-bottom:0">Noch kein Upstream angeschlossen — hier steht dann je Server, was zurückgehalten wird.</p>
+    }
+</div>
+
+@if (_historyServer is not null)
+{
+    <div class="card">
+        <h3 style="margin-top:0">Konfigurations-Historie: <span class="mono">@_historySlug</span></h3>
+        <p class="muted">
+            Jede Änderung erzeugt eine neue Version (append-only). Ein Rollback stellt eine frühere
+            Konfiguration wieder her und wird selbst als neue Version geführt (FR-10).
+        </p>
+        @if (_history.Count == 0)
+        {
+            <p class="muted">Keine Versionen gefunden.</p>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Version</th><th>Gespeichert (UTC)</th><th>Slug</th><th>Transport</th><th>Aktiv</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var v in _history.OrderByDescending(v => v.Version.Value))
+                        {
+                            <tr>
+                                <td>v@(v.Version.Value)</td>
+                                <td class="mono muted">@v.SavedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)</td>
+                                <td class="mono">@v.Config.Slug</td>
+                                <td>@v.Config.Kind</td>
+                                <td>@(v.Config.Enabled ? "ja" : "nein")</td>
+                                <td>
+                                    @if (v.Version.Value != _history.Max(x => x.Version.Value))
+                                    {
+                                        <button class="btn-sm btn-ghost" @onclick="() => Rollback(v.Version)">Zurücksetzen</button>
+                                    }
+                                    else
+                                    {
+                                        <span class="muted">aktuell</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <p class="muted" style="margin-bottom:0">
+                Credentials (Env-Variablen, Header, OpenAPI-Secrets) werden hier bewusst nicht angezeigt.
+            </p>
+        }
+        <div class="toolbar" style="margin-top:.75rem">
+            <button class="btn-ghost" @onclick="() => _historyServer = null">Schließen</button>
+            @if (_historyMessage is not null)
+            {
+                <span class="@(_historyOk ? "msg-ok" : "msg-err")">@_historyMessage</span>
+            }
+        </div>
+    </div>
+}
+
+<div class="card">
+    @if (_editServer is null)
+    {
+        <h3 style="margin-top:0">Neuen Server anschließen</h3>
+    }
+    else
+    {
+        <h3 style="margin-top:0">Server bearbeiten: <span class="mono">@_editSlug</span></h3>
+        <p class="muted">
+            Speichern erzeugt eine neue Konfigurations-Version und startet den Server damit neu (FR-10/34).
+            Secret-Felder sind leer: <strong>leer lassen heißt unverändert</strong> — bestehende Werte
+            werden nicht angezeigt und nicht überschrieben.
+        </p>
+    }
+    <div class="row">
+        <div>
+            <label>Transport</label>
+            @* Aus ServerFormKinds, damit Auswahlliste und Bau-Zweig nicht auseinanderlaufen. *@
+            <select @bind="_kind">
+                @foreach (var kind in ServerFormKinds.Supported)
+                {
+                    <option value="@kind">@KindLabel(kind)</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label>Slug (Namespace)</label>
+            @* data-testid nur dort, wo es keinen stabilen semantischen Anker gibt (WP5.5): Diese
+               Felder tragen weder id noch Beschriftungsbezug, und der Platzhalter ist Text, den
+               jemand jederzeit umformuliert. *@
+            <input data-testid="server-slug" @bind="_slug" placeholder="z.B. github" />
+        </div>
+        <div>
+            <label>Anzeigename</label>
+            <input data-testid="server-name" @bind="_displayName" placeholder="GitHub" />
+        </div>
+    </div>
+
+    @if (_kind == UpstreamTransportKind.Stdio)
+    {
+        <div class="row">
+            <div style="flex:2"><label>Kommando</label><input data-testid="server-command" @bind="_command" placeholder="npx" /></div>
+            <div style="flex:3"><label>Argumente (durch Leerzeichen)</label><input data-testid="server-args" @bind="_args" placeholder="-y @@modelcontextprotocol/server-github" /></div>
+        </div>
+        <label>Environment (KEY=VALUE pro Zeile)</label>
+        <textarea class="mono" rows="3" @bind="_env" placeholder="GITHUB_TOKEN=ghp_..."></textarea>
+        @IsolationFields
+    }
+    else if (_kind == UpstreamTransportKind.Cli)
+    {
+        <div class="row">
+            <div style="flex:2"><label>Executable (absolut)</label><input @bind="_cliExecutable" placeholder="/usr/bin/git" /></div>
+            <div style="flex:2"><label>Working Directory (optional, absolut)</label><input @bind="_cliWorkingDirectory" /></div>
+        </div>
+        <div class="row">
+            <div><label>Timeout (Sekunden)</label><input type="number" min="1" max="3600" @bind="_cliTimeoutSeconds" /></div>
+            <div><label>Output-Cap pro Stream (Bytes)</label><input type="number" min="1" @bind="_cliMaxOutputBytes" /></div>
+            <div><label>Max. Parallelität</label><input type="number" min="1" max="64" @bind="_cliMaxConcurrency" /></div>
+        </div>
+        <label title="Nur für lokale Entwicklung; Produktion verlangt absolute Executables.">
+            <input type="checkbox" @bind="_cliAllowPathLookup" />
+            Unsichere PATH-Auflösung erlauben (Development)
+        </label>
+        <RiskHint Title="Was die PATH-Auflösung riskiert"
+                  WhenOn="@("Welches Programm startet, entscheidet die PATH-Variable des Gateway-Prozesses. Wer eine gleichnamige Datei in ein früher durchsuchtes Verzeichnis legt, tauscht damit den Upstream aus, ohne diese Konfiguration anzufassen.")"
+                  WhenOff="@("Es startet genau die Datei, die hier absolut angegeben ist. Das ist die Vorgabe und in Produktion die einzige zulässige Einstellung.")"
+                  Noticed="@("Niemand. Der Austausch hinterlässt keine Konfigurationsversion und keinen Audit-Eintrag — im Log steht derselbe Slug wie vorher.")" />
+        <label>Tools (JSON-Array aus CliToolSpec)</label>
+        <textarea class="mono" rows="12" @bind="_cliToolsJson"
+                  placeholder='[{"name":"status","fixedArguments":["status"],"risk":"Read"}]'></textarea>
+        <div class="row">
+            <div>
+                <label>Executable-Wurzeln (eine pro Zeile)</label>
+                <textarea class="mono" rows="3" @bind="_cliExecutableRoots"></textarea>
+            </div>
+            <div>
+                <label>Working-Directory-Wurzeln (eine pro Zeile)</label>
+                <textarea class="mono" rows="3" @bind="_cliWorkingRoots"></textarea>
+            </div>
+            <div>
+                <label>Lese-Wurzeln für Path-Parameter (eine pro Zeile)</label>
+                <textarea class="mono" rows="3" @bind="_cliReadRoots"></textarea>
+            </div>
+            <div>
+                <label>Schreib-Wurzeln für Path-Parameter (eine pro Zeile)</label>
+                <textarea class="mono" rows="3" @bind="_cliWriteRoots"></textarea>
+            </div>
+        </div>
+        <label>Environment (KEY=VALUE pro Zeile; bestehende Werte bleiben verborgen)</label>
+        <textarea class="mono" rows="3" @bind="_cliEnvironment"></textarea>
+        <label>
+            <input type="checkbox" @bind="_clearCliEnvironment" />
+            Alle bestehenden CLI-Environment-Secrets explizit löschen
+        </label>
+        @IsolationFields
+    }
+    else if (_kind == UpstreamTransportKind.StreamableHttp)
+    {
+        <label>Endpoint-URL</label>
+        <input @bind="_httpUrl" placeholder="https://host/mcp" />
+        <label>Header (KEY=VALUE pro Zeile)</label>
+        <textarea class="mono" rows="2" @bind="_headers" placeholder="Authorization=Bearer ..."></textarea>
+        <label title="HTTP+SSE ist im MCP-Standard durch Streamable HTTP abgelöst und wird künftig entfernt.">
+            <input type="checkbox" @bind="_allowLegacySse" />
+            Rückfall auf HTTP+SSE erlauben, wenn der Server kein Streamable HTTP spricht (FR-02)
+        </label>
+        <RiskHint Title="Was der Rückfall auf HTTP+SSE bedeutet"
+                  WhenOn="@("Antwortet der Endpunkt nicht wie erwartet, wird still auf das abgelöste Protokoll gewechselt. Ein Upstream, der gar nicht der gemeinte ist, wirkt dadurch trotzdem erreichbar.")"
+                  WhenOff="@("Ein Endpunkt, der kein Streamable HTTP spricht, gilt als kaputt und der Upstream bleibt unten. Das ist laut, aber eindeutig.")"
+                  Noticed="@("An der Tool-Zahl in der Serverliste — wenn überhaupt. Das abgelöste Protokoll wird im MCP-Standard entfernt; dann fällt der Upstream ohne Vorwarnung aus.")" />
+        @* Ohne diesen Schalter ginge die Adresse ungeprueft in den Transport; das Formular
+           entscheidet die Frage jetzt ausdruecklich, statt sie offenzulassen. *@
+        <label title="Ohne diese Freigabe wird ein Endpunkt im internen Netz abgewiesen (SSRF).">
+            <input type="checkbox" @bind="_allowPrivateTargets" />
+            Ziele im internen Netz erlauben (Loopback, privates Netz, Link-Local)
+        </label>
+        @PrivateTargetRisk
+        @if (_httpPrivateTargetsWasUndecided)
+        {
+            <p class="msg-err">
+                Diese Konfiguration hat die Frage bisher nie beantwortet — und „nicht entschieden"
+                heißt heute „erlaubt". Das Häkchen zeigt deshalb den geltenden Zustand. Beim
+                Speichern wird daraus ein sichtbarer Wert, den Sie hier auch abwählen können.
+            </p>
+        }
+    }
+    else
+    {
+        <div class="row">
+            <div style="flex:2"><label>Spec-URL oder file://-Pfad</label><input @bind="_specUrl" placeholder="https://api.example.com/openapi.json" /></div>
+            <div><label>Base-URL (optional)</label><input @bind="_baseUrl" placeholder="https://api.example.com" /></div>
+        </div>
+        <div class="row">
+            <div>
+                <label>Auth</label>
+                <select @bind="_openApiAuth">
+                    <option value="@OpenApiAuthKind.None">Keine</option>
+                    <option value="@OpenApiAuthKind.Bearer">Bearer</option>
+                    <option value="@OpenApiAuthKind.Basic">Basic (user:pass)</option>
+                    <option value="@OpenApiAuthKind.ApiKeyHeader">API-Key-Header</option>
+                </select>
+            </div>
+            <div><label>Credential</label><input @bind="_credential" type="password" /></div>
+            @if (_openApiAuth == OpenApiAuthKind.ApiKeyHeader)
+            {
+                <div><label>Header-Name</label><input @bind="_apiKeyHeader" placeholder="X-Api-Key" /></div>
+            }
+        </div>
+        <label title="Ohne diese Freigabe werden Spec-Quelle und Ziel-API im internen Netz abgewiesen.">
+            <input type="checkbox" @bind="_allowPrivateTargets" />
+            Ziele im internen Netz erlauben (Loopback, privates Netz, Link-Local)
+        </label>
+        @PrivateTargetRisk
+    }
+
+    <div class="toolbar" style="margin-top:1rem">
+        <button class="btn-ghost" @onclick="Test" disabled="@_busy">Verbindung testen</button>
+        @if (_editServer is null)
+        {
+            <button @onclick="Add" disabled="@_busy">Anschließen</button>
+        }
+        else
+        {
+            <button @onclick="SaveEdit" disabled="@_busy">Änderungen speichern</button>
+            <button class="btn-ghost" @onclick="CancelEdit" disabled="@_busy">Abbrechen</button>
+        }
+        @if (_message is not null)
+        {
+            <span data-testid="server-message" class="@(_ok ? "msg-ok" : "msg-err")">@_message</span>
+        }
+    </div>
+
+    @* Die Stufen des letzten Verbindungstests. Sie ersetzen die eine Zeile "Fehlgeschlagen: …". *@
+    <UpstreamDiagnosticsView Report="_diagnosis" />
+</div>
+
+@code {
+    private IReadOnlyList<UpstreamStatus> _statuses = [];
+
+    /// <summary>Upstreams, für die eine OAuth-Anbindung konfiguriert ist — nur die zeigen den Knopf.</summary>
+    private HashSet<ServerId> _oauthServers = [];
+
+    /// <summary>
+    /// Die Zieladresse je Upstream, soweit es eine gibt (HTTP/OpenAPI). Nur zur Anzeige in der
+    /// Feinsteuerung — ein lokaler Prozess hat keine.
+    /// </summary>
+    private Dictionary<ServerId, string> _endpoints = [];
+    private UpstreamTransportKind _kind = UpstreamTransportKind.Stdio;
+    private string _slug = "", _displayName = "", _command = "", _args = "", _env = "";
+    private string _httpUrl = "", _headers = "";
+    private string _cliExecutable = "", _cliWorkingDirectory = "", _cliToolsJson = "[]";
+    private string _cliExecutableRoots = "", _cliWorkingRoots = "", _cliReadRoots = "", _cliWriteRoots = "";
+    private string _cliEnvironment = "";
+    private int _cliTimeoutSeconds = 30, _cliMaxOutputBytes = 64 * 1024, _cliMaxConcurrency = 4;
+    private bool _cliAllowPathLookup, _clearCliEnvironment;
+    private bool _allowLegacySse = true;
+    private string _specUrl = "", _baseUrl = "", _credential = "", _apiKeyHeader = "X-Api-Key";
+    private OpenApiAuthKind _openApiAuth = OpenApiAuthKind.None;
+    // Vorgabe fail-closed wie im Konnektor: Wer ein internes Ziel einbindet, hakt es bewusst an.
+    private bool _allowPrivateTargets;
+
+    // Isolation (ADR-0018, ADR-0025 E5). Die Vorgabe ist der Container — deshalb steht sie hier
+    // auf true. Ein neu angelegter nativer Upstream startet nicht mehr ungeschuetzt, nur weil
+    // niemand an das Haekchen gedacht hat.
+    private bool _isolationContainer = true;
+    private string _isolationImage = "", _isolationRuntime = "docker";
+    private bool _requireImageDigest;
+
+    /// <summary>
+    /// Hat die geladene Konfiguration die Frage nach privaten Zielen nie beantwortet? Dann wird
+    /// beim Speichern aus der unsichtbaren Vorgabe ein sichtbarer Wert — und das sagt das Formular,
+    /// statt es zu tun.
+    /// </summary>
+    private bool _httpPrivateTargetsWasUndecided;
+
+    private bool _busy, _ok;
+    private string? _message;
+
+    /// <summary>Ergebnis der letzten Annahme einer geänderten Tool-Definition (G6).</summary>
+    private string? _pinMessage;
+    private bool _pinOk;
+
+    /// <summary>Der letzte Verbindungstest als Zeitlinie (WP4.6); null = es lief noch keiner.</summary>
+    private Faolan.Core.Diagnostics.Upstreams.UpstreamDiagnosticReport? _diagnosis;
+    private static readonly JsonSerializerOptions CliManifestJson = CreateCliManifestJson();
+
+    private ServerId? _editServer;
+    private string _editSlug = "";
+    private UpstreamServerConfig? _editBase;
+
+    /// <summary>Art je Server — fuer die Frage, ob das Formular ihn abbilden kann.</summary>
+    private Dictionary<ServerId, UpstreamTransportKind> _kinds = [];
+
+    private ServerId? _historyServer;
+    private string _historySlug = "";
+    private IReadOnlyList<UpstreamConfigVersion> _history = [];
+    private string? _historyMessage;
+    private bool _historyOk;
+
+    /// <summary>
+    /// Die Risikohilfe zur Freigabe interner Ziele — einmal formuliert, an beiden Stellen
+    /// dieselbe. Zwei Fassungen derselben Warnung wären zwei Wahrheiten, von denen eine veraltet.
+    /// </summary>
+    private static readonly RenderFragment PrivateTargetRisk = @<RiskHint
+        Title="Was die Freigabe interner Ziele öffnet"
+        WhenOn="@("Das Gateway darf für diesen Upstream Adressen im eigenen Netz aufrufen — Loopback, privates Netz, Link-Local. Damit wird es zum Sprungbrett: Wer die Zieladresse setzen darf, erreicht darüber Dienste, die von außen nicht erreichbar sind (SSRF). Auf einer Cloud-Instanz gehört der Metadaten-Endpunkt dazu, und der gibt Zugangsdaten heraus.")"
+        WhenOff="@("Ein Ziel im internen Netz wird abgewiesen, bevor eine Verbindung entsteht. Das ist die Vorgabe für Neuanlagen.")"
+        Noticed="@("Der Aufruf sieht im Audit-Log aus wie jeder andere Upstream-Aufruf — er trägt den Slug, nicht das Ziel. Ein Missbrauch fällt hier nicht auf.")" />;
+
+    /// <summary>
+    /// Der Isolationsabschnitt — derselbe für stdio und CLI, weil es dasselbe Modell ist
+    /// (ADR-0025 E5). Zwei Formularblöcke für dieselbe Frage wären zwei Wahrheiten, von denen eine
+    /// veraltet.
+    /// </summary>
+    private RenderFragment IsolationFields => @<div>
+        <label title="Ohne Container läuft das Programm mit den Rechten des Gateways — und das Gateway hält den Schlüsselring.">
+            <input type="checkbox" @bind="_isolationContainer" />
+            In einem Container ausführen (Vorgabe; ADR-0018)
+        </label>
+        <RiskHint Title="Was ohne Container offensteht"
+                  WhenOn="@("Das Programm läuft eingesperrt. Ein übernommener Upstream kommt an das, was der Container ihm gibt — nicht an den Rest der Maschine.")"
+                  WhenOff="@("Das Programm läuft mit den Rechten des Gateways. Es kann alles lesen, was diesem Benutzer offensteht, einschließlich des Schlüsselrings — also der API-Keys aller Agenten und der Secrets aller anderen Upstreams.")"
+                  Noticed="@("Beim Start steht die Betriebsart in der Konfigurationsversion; danach nichts mehr. Ein Zugriff des Programms auf Dateien der Maschine erscheint in keinem Log dieses Gateways.")" />
+        @if (_isolationContainer)
+        {
+            <div class="row">
+                <div style="flex:3">
+                    <label>Image (empfohlen mit Digest: repo@@sha256:…)</label>
+                    <input @bind="_isolationImage" placeholder="ghcr.io/beispiel/server:1.2" />
+                </div>
+                <div><label>Runtime</label><input @bind="_isolationRuntime" placeholder="docker" /></div>
+            </div>
+            <label title="Ein Tag ist ein Zeiger und kann umgehängt werden; nur ein Digest legt fest, was läuft.">
+                <input type="checkbox" @bind="_requireImageDigest" />
+                Digest erzwingen (Start verweigern, wenn nur ein Tag dasteht)
+            </label>
+            <RiskHint Title="Warum ein Tag nicht festlegt, was läuft"
+                      WhenOn="@("Der Start wird verweigert, solange kein Digest dasteht. Was einmal geprüft wurde, läuft danach unverändert weiter.")"
+                      WhenOff="@("Ein Tag ist ein Zeiger und kann umgehängt werden. Nach dem nächsten Neustart kann hinter demselben Namen anderer Code stehen, ohne dass jemand hier etwas geändert hat.")"
+                      Noticed="@("Niemand. Die Konfiguration ist unverändert, der Slug ist derselbe, und im Audit-Log steht kein Wechsel.")" />
+            @if (ImageWarning() is { } warning)
+            {
+                <p class="msg-err">@warning</p>
+            }
+        }
+        else
+        {
+            <p class="msg-err">
+                Ohne Container läuft dieses Programm mit den Rechten des Gateways — es kann alles
+                lesen, was diesem Benutzer offensteht, einschließlich des Schlüsselrings. Ob diese
+                Instanz das überhaupt zulässt, entscheidet die Ausführungs-Policy (ADR-0025).
+            </p>
+        }
+    </div>;
+
+    /// <summary>
+    /// Der sichtbare Hinweis zu einem beweglichen Image-Bezeichner. Bewusst ein Hinweis und keine
+    /// Sperre: Einen Tag zu verbieten hieße, den üblichen Weg zu verbieten.
+    /// </summary>
+    private string? ImageWarning()
+        => string.IsNullOrWhiteSpace(_isolationImage)
+            ? null
+            : ImageReference.DescribeRisk(_isolationImage.Trim());
+
+    /// <summary>Der Isolationsabschnitt, wie er in die Konfiguration geht.</summary>
+    private IsolationOptions BuildIsolation() => _isolationContainer
+        ? new IsolationOptions(
+            IsolationMode.Container,
+            Image: string.IsNullOrWhiteSpace(_isolationImage) ? null : _isolationImage.Trim(),
+            Runtime: string.IsNullOrWhiteSpace(_isolationRuntime) ? "docker" : _isolationRuntime.Trim(),
+            RequireImageDigest: _requireImageDigest)
+        : new IsolationOptions(IsolationMode.Host);
+
+    private Timer? _statusTimer;
+
+    protected override void OnInitialized()
+    {
+        Reload();
+
+        // Die Frist bis zum nächsten Verbindungsversuch zählt sichtbar herunter, und ein Upstream,
+        // der von selbst zurückkommt, soll ohne Neuladen der Seite grün werden. Gelesen wird nur
+        // der Status aus dem Speicher — nicht die Konfiguration aus der Datenbank wie in Reload().
+        _statusTimer = new Timer(_ => _ = InvokeAsync(RefreshStatuses), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+    }
+
+    public void Dispose() => _statusTimer?.Dispose();
+
+    private void RefreshStatuses()
+    {
+        var fresh = Supervisor.Statuses.OrderBy(s => s.Slug).ToList();
+
+        // Neu zeichnen nur, wenn es etwas zu sehen gibt: eine laufende Frist oder ein geänderter
+        // Stand. Eine Seite, auf der alles gesund ist, bleibt still.
+        if (fresh.Any(s => s.Reconnect is not null) || !fresh.SequenceEqual(_statuses))
+        {
+            _statuses = fresh;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Der Stand der Wiederverbindung in einer Zeile (Vertrag „Selbsttätige Wiederverbindung", 5.4).
+    /// </summary>
+    private string ReconnectText(UpstreamReconnectInfo reconnect)
+    {
+        if (reconnect.Exhausted)
+        {
+            return $"Wiederverbindung nach {reconnect.Attempt} Versuchen eingestellt (so konfiguriert)";
+        }
+
+        var lead = reconnect.Kind == UpstreamFailureKind.Authentication
+            ? "Authentifizierung abgelehnt"
+            : $"Versuch {reconnect.Attempt}";
+        if (reconnect.NextAttemptAt is not { } next)
+        {
+            return $"{lead} · verbindet …";
+        }
+
+        var remaining = next - Time.GetUtcNow();
+        if (remaining < TimeSpan.Zero)
+        {
+            remaining = TimeSpan.Zero;
+        }
+
+        // Ab anderthalb Minuten in Minuten: „in 847 s" liest niemand.
+        var wait = remaining.TotalSeconds < 90
+            ? $"{(int)Math.Ceiling(remaining.TotalSeconds)} s"
+            : $"{(int)Math.Round(remaining.TotalMinutes)} min";
+        return $"{lead} · nächster Versuch in {wait}";
+    }
+
+    private async Task ConnectNow(ServerId id)
+    {
+        try
+        {
+            await Supervisor.ConnectNowAsync(id, CancellationToken.None);
+            UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged, "server-connect-requested", id);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _ok = false;
+            _message = ex.Message;
+        }
+        catch (KeyNotFoundException)
+        {
+            // Inzwischen entfernt — die Liste unten zeigt es.
+        }
+
+        RefreshStatuses();
+    }
+
+    private void Reload()
+    {
+        _statuses = Supervisor.Statuses.OrderBy(s => s.Slug).ToList();
+
+        // Ob ein Upstream OAuth braucht und welcher Art er ist, steht in seiner Konfiguration,
+        // nicht im Status.
+        var latest = ConfigStore.GetAllLatestAsync(CancellationToken.None).GetAwaiter().GetResult();
+        _oauthServers = [.. latest.Where(kv => kv.Value.Config.Http?.OAuth is not null).Select(kv => kv.Key)];
+        _kinds = latest.ToDictionary(kv => kv.Key, kv => kv.Value.Config.Kind);
+        _endpoints = latest
+            .Select(kv => (kv.Key, Url: kv.Value.Config.Http?.Endpoint?.ToString()
+                ?? kv.Value.Config.OpenApi?.BaseAddress?.ToString()
+                ?? kv.Value.Config.OpenApi?.SpecLocation.ToString()))
+            .Where(x => x.Url is not null)
+            .ToDictionary(x => x.Key, x => x.Url!);
+    }
+
+    private async Task<string> UserAsync()
+        => (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "?";
+
+    private UpstreamServerConfig? BuildConfig(out string? error)
+    {
+        error = null;
+        try
+        {
+            return _kind switch
+            {
+                UpstreamTransportKind.Stdio => new UpstreamServerConfig(
+                    _slug.Trim(), Display(), _kind, true,
+                    Stdio: new StdioTransportOptions(
+                        _command.Trim(),
+                        _args.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                        ParseKeyValues(_env),
+                        WorkingDirectory: null,
+                        Isolation: BuildIsolation())),
+                UpstreamTransportKind.StreamableHttp => new UpstreamServerConfig(
+                    _slug.Trim(), Display(), _kind, true,
+                    Http: new HttpTransportOptions(
+                        new Uri(_httpUrl.Trim()),
+                        ParseKeyValues(_headers),
+                        _allowLegacySse,
+                        // Ausdruecklich gesetzt, nicht offengelassen: `null` hiesse "nicht
+                        // entschieden" und damit erlaubt — richtig fuer Bestand, falsch fuer eine
+                        // Neuanlage (ADR-0025 E3, WP3.2).
+                        AllowPrivateTargets: _allowPrivateTargets)),
+                UpstreamTransportKind.Cli => new UpstreamServerConfig(
+                    _slug.Trim(), Display(), _kind, true,
+                    Cli: new CliTransportOptions(
+                        _cliExecutable.Trim(),
+                        JsonSerializer.Deserialize<List<CliToolSpec>>(
+                            _cliToolsJson, CliManifestJson)
+                            ?? throw new JsonException("CLI-Tools fehlen."),
+                        string.IsNullOrWhiteSpace(_cliWorkingDirectory)
+                            ? null
+                            : _cliWorkingDirectory.Trim(),
+                        _clearCliEnvironment
+                            ? new Dictionary<string, string>()
+                            : ParseKeyValues(_cliEnvironment),
+                        _cliTimeoutSeconds,
+                        _cliMaxOutputBytes,
+                        _cliAllowPathLookup,
+                        ParseLines(_cliExecutableRoots),
+                        ParseLines(_cliWorkingRoots),
+                        ParseLines(_cliReadRoots),
+                        ParseLines(_cliWriteRoots),
+                        _cliMaxConcurrency,
+                        Isolation: BuildIsolation())),
+                UpstreamTransportKind.OpenApi => new UpstreamServerConfig(
+                    _slug.Trim(), Display(), _kind, true,
+                    OpenApi: new OpenApiTransportOptions(
+                        new Uri(_specUrl.Trim()),
+                        string.IsNullOrWhiteSpace(_baseUrl) ? null : new Uri(_baseUrl.Trim()),
+                        _openApiAuth,
+                        string.IsNullOrWhiteSpace(_credential) ? null : _credential,
+                        _openApiAuth == OpenApiAuthKind.ApiKeyHeader ? _apiKeyHeader.Trim() : null,
+                        _allowPrivateTargets)),
+
+                // Kein Auffangzweig mehr: Vorher wurde JEDE unbekannte Art zu einer
+                // OpenAPI-Konfiguration. Eine neue Art soll hier auffallen, nicht durchrutschen.
+                _ => throw new NotSupportedException(ServerFormKinds.ReasonNotEditable(_kind)),
+            };
+        }
+        catch (Exception ex)
+        {
+            error = $"Konfiguration ungültig: {ex.Message}";
+            return null;
+        }
+    }
+
+    private string Display() => string.IsNullOrWhiteSpace(_displayName) ? _slug.Trim() : _displayName.Trim();
+
+    /// <summary>Die Art des Servers, wenn das Formular sie NICHT abbilden kann; sonst null.</summary>
+    private UpstreamTransportKind? EditableKind(ServerId id)
+        => _kinds.TryGetValue(id, out var kind) && !ServerFormKinds.CanEdit(kind) ? kind : null;
+
+    private static string KindLabel(UpstreamTransportKind kind) => kind switch
+    {
+        UpstreamTransportKind.Stdio => "stdio (lokaler Prozess)",
+        UpstreamTransportKind.StreamableHttp => "Streamable HTTP",
+        UpstreamTransportKind.OpenApi => "OpenAPI-Import",
+        UpstreamTransportKind.Cli => "CLI-Manifest (lokaler Prozess)",
+        _ => kind.ToString(),
+    };
+
+    private static IReadOnlyDictionary<string, string>? ParseKeyValues(string text)
+    {
+        var dict = new Dictionary<string, string>();
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var idx = line.IndexOf('=');
+            if (idx > 0)
+            {
+                dict[line[..idx].Trim()] = line[(idx + 1)..].Trim();
+            }
+        }
+        return dict.Count > 0 ? dict : null;
+    }
+
+    private static IReadOnlyList<string>? ParseLines(string text)
+    {
+        var values = text.Split(
+            '\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return values.Length > 0 ? values : null;
+    }
+
+    private async Task Test()
+    {
+        _busy = true; _message = null; _diagnosis = null;
+        var config = BuildConfig(out var err);
+        if (config is null) { _ok = false; _message = err; _busy = false; return; }
+
+        // Derselbe Weg wie beim Anschliessen: Die Diagnose ruft Validator, Torposten und den
+        // vorhandenen Verbindungstest — sie baut nichts nach. Zwei Wege waeren zwei Wahrheiten
+        // darueber, ob eine Konfiguration funktioniert, und der Test waere irgendwann gruen, wo
+        // 'Anschliessen' scheitert.
+        _diagnosis = await ConnectionDiagnostics.DiagnoseAsync(config, CancellationToken.None);
+        _ok = _diagnosis.Succeeded;
+        _message = _diagnosis.Succeeded
+            ? $"Verbindung ok — {_diagnosis.Negotiation?.ToolCount ?? 0} Tool(s) entdeckt."
+            : $"{_diagnosis.FirstFailure!.Code}: {_diagnosis.FirstFailure.Check.Summary}";
+        _busy = false;
+    }
+
+    private async Task Add()
+    {
+        _busy = true; _message = null;
+        var config = BuildConfig(out var err);
+        if (config is null) { _ok = false; _message = err; _busy = false; return; }
+
+        try
+        {
+            // Derselbe Schritt wie im API-Schreibpfad: Die sicheren Vorgaben gelten fuer NEU
+            // angelegte Konfigurationen. Sie hier zu wiederholen ist kein zweiter Weg, sondern
+            // derselbe Aufruf — die Regel steht in SecureUpstreamDefaults und nur dort.
+            config = Faolan.Core.Upstreams.SecureUpstreamDefaults.ForNewUpstream(config);
+            var id = await Supervisor.AddAsync(config, CancellationToken.None);
+            UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged, $"server-added:{config.Slug}", id);
+            _ok = true; _message = $"'{config.Slug}' angeschlossen.";
+            ClearForm();
+            Reload();
+        }
+        catch (Exception ex)
+        {
+            _ok = false; _message = ex.Message;
+        }
+        _busy = false;
+    }
+
+    private async Task StartEdit(ServerId id)
+    {
+        _message = null; _historyServer = null;
+        var history = await ConfigStore.GetHistoryAsync(id, CancellationToken.None);
+        var current = history.OrderByDescending(v => v.Version.Value).FirstOrDefault()?.Config;
+        if (current is null)
+        {
+            _ok = false; _message = "Keine gespeicherte Konfiguration gefunden.";
+            return;
+        }
+
+        _editServer = id; _editSlug = current.Slug; _editBase = current;
+        _kind = current.Kind;
+        _slug = current.Slug;
+        _displayName = current.DisplayName;
+
+        // Secrets (stdio-/CLI-Env, Header, Credential) werden bewusst NICHT vorbefüllt — sie stünden sonst
+        // im Klartext im DOM. Leer gelassen übernimmt SaveEdit die bestehenden Werte.
+        _command = current.Stdio?.Command ?? "";
+        _args = current.Stdio?.Arguments is { } a ? string.Join(' ', a) : "";
+        _env = "";
+        _cliExecutable = current.Cli?.Executable ?? "";
+        _cliWorkingDirectory = current.Cli?.WorkingDirectory ?? "";
+        _cliToolsJson = current.Cli?.Tools is { } tools
+            ? JsonSerializer.Serialize(tools, CliManifestJson)
+            : "[]";
+        _cliExecutableRoots = JoinLines(current.Cli?.AllowedExecutableRoots);
+        _cliWorkingRoots = JoinLines(current.Cli?.AllowedWorkingDirectoryRoots);
+        _cliReadRoots = JoinLines(current.Cli?.AllowedReadRoots);
+        _cliWriteRoots = JoinLines(current.Cli?.AllowedWriteRoots);
+        _cliEnvironment = "";
+        _cliTimeoutSeconds = current.Cli?.TimeoutSeconds ?? 30;
+        _cliMaxOutputBytes = current.Cli?.MaxOutputBytes ?? 64 * 1024;
+        _cliMaxConcurrency = current.Cli?.MaxConcurrency ?? 4;
+        _cliAllowPathLookup = current.Cli?.AllowPathLookup ?? false;
+        _clearCliEnvironment = false;
+        _httpUrl = current.Http?.Endpoint.ToString() ?? "";
+        _headers = "";
+        _allowLegacySse = current.Http?.AllowLegacySse ?? true;
+        _specUrl = current.OpenApi?.SpecLocation.ToString() ?? "";
+        _baseUrl = current.OpenApi?.BaseAddress?.ToString() ?? "";
+        _openApiAuth = current.OpenApi?.AuthKind ?? OpenApiAuthKind.None;
+        _apiKeyHeader = current.OpenApi?.ApiKeyHeaderName ?? "X-Api-Key";
+
+        // Ein bestehender HTTP-Upstream mit `null` hat "nicht entschieden" gespeichert — und das
+        // heisst heute ERLAUBT. Das Haekchen zeigt deshalb den geltenden Zustand und nicht die
+        // Vorgabe fuer Neuanlagen: Sonst machte ein Speichern aus einem laufenden Upstream einen
+        // abgeklemmten, ohne dass jemand etwas geaendert haette (ADR-0025 E3).
+        _httpPrivateTargetsWasUndecided = current.Http is { AllowPrivateTargets: null };
+        _allowPrivateTargets = current.Kind is UpstreamTransportKind.StreamableHttp
+            ? current.Http?.AllowPrivateTargets ?? true
+            : current.OpenApi?.AllowPrivateTargets ?? false;
+
+        // Dasselbe fuer die Isolation: uebernommen wird, was dasteht. Eine bestehende Konfiguration
+        // ohne Abschnitt laeuft im Host-Modus — das Formular zeigt genau das an, statt sie beim
+        // naechsten Speichern still in einen Container zu heben.
+        var storedIsolation = current.Stdio?.Isolation ?? current.Cli?.Isolation;
+        _isolationContainer = storedIsolation is { Mode: IsolationMode.Container };
+        _isolationImage = storedIsolation?.Image ?? "";
+        _isolationRuntime = storedIsolation?.Runtime ?? "docker";
+        _requireImageDigest = storedIsolation?.RequireImageDigest ?? false;
+        _credential = "";
+    }
+
+    private void CancelEdit()
+    {
+        _editServer = null; _editBase = null; _message = null;
+        ClearForm();
+    }
+
+    private async Task SaveEdit()
+    {
+        if (_editServer is not { } id || _editBase is not { } previous) { return; }
+
+        _busy = true; _message = null;
+        var config = BuildConfig(out var err);
+        if (config is null) { _ok = false; _message = err; _busy = false; return; }
+
+        config = Faolan.Core.Upstreams.UpstreamConfigMerge.CarryOverSecrets(config, previous);
+
+        try
+        {
+            var version = await Supervisor.ReconfigureAsync(id, config, CancellationToken.None);
+            UiAudit.Record(
+                Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged,
+                $"server-reconfigured:{config.Slug}:v{version.Value}", id);
+            _ok = true; _message = $"'{config.Slug}' gespeichert als v{version.Value}.";
+            _editServer = null; _editBase = null;
+            ClearForm();
+            Reload();
+        }
+        catch (Exception ex)
+        {
+            _ok = false; _message = ex.Message;
+        }
+        _busy = false;
+    }
+
+    private void ClearForm()
+    {
+        _slug = _displayName = _command = _args = _env = _httpUrl = _headers = _specUrl =
+            _baseUrl = _credential = _cliExecutable = _cliWorkingDirectory = _cliEnvironment =
+            _cliExecutableRoots = _cliWorkingRoots = _cliReadRoots = _cliWriteRoots = "";
+        _cliToolsJson = "[]";
+        _clearCliEnvironment = false;
+        _allowPrivateTargets = false;
+        _httpPrivateTargetsWasUndecided = false;
+
+        // Zurueck auf die sichere Vorgabe, nicht auf den zuletzt eingestellten Wert: Ein Formular,
+        // das den Host-Modus des vorigen Eintrags behaelt, legt den naechsten Upstream ungeschuetzt
+        // an, ohne dass jemand es waehlt.
+        _isolationContainer = true;
+        _isolationImage = "";
+        _isolationRuntime = "docker";
+        _requireImageDigest = false;
+    }
+
+    private static string JoinLines(IReadOnlyList<string>? values)
+        => values is { Count: > 0 } ? string.Join('\n', values) : "";
+
+    private static JsonSerializerOptions CreateCliManifestJson()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            WriteIndented = true,
+        };
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
+    }
+
+    private async Task SetEnabled(ServerId id, bool enabled)
+    {
+        await Supervisor.SetEnabledAsync(id, enabled, CancellationToken.None);
+        UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged, enabled ? "server-enabled" : "server-disabled", id);
+        Reload();
+    }
+
+    /// <summary>
+    /// Nimmt die geänderte Definition an und fragt den Katalog neu ab. Erst danach ist das Tool
+    /// wieder da — mit der neuen Fassung, die jemand angesehen hat.
+    /// </summary>
+    private async Task AcceptDefinition(ServerId id, string slug, string tool, string? pendingHash)
+    {
+        _busy = true;
+        _pinMessage = null;
+        try
+        {
+            // Angenommen wird die Fassung, die beim Anzeigen anstand (E7). Steht inzwischen eine
+            // andere an, zeigt das Neuladen sie — angenommen wird sie erst nach einem neuen Klick.
+            if (pendingHash is null)
+            {
+                return;
+            }
+
+            var expected = pendingHash.ToLowerInvariant();
+            var user = await UserAsync();
+
+            // Erst das Audit, dann die Annahme (Plan 0005 F4): Weist das Audit ab (Compliance-Modus,
+            // voller Kanal), wird nichts vertraut. Die Zeile nennt die Fassung; nimmt der
+            // Vergleich-und-Tausch sie danach nicht an, folgt eine Zeile, die das sagt.
+            try
+            {
+                UiAudit.Record(Audit, Time, user, AuditEventKind.ConfigChanged,
+                    $"tool-definition-accepted:{slug}__{tool}@{expected}", id);
+            }
+            catch (Exception)
+            {
+                _pinOk = false;
+                _pinMessage = $"Das Audit nimmt gerade nicht an; die neue Fassung von '{tool}' wurde nicht angenommen.";
+                return;
+            }
+
+            if (!await ToolPins.AcceptAsync(id, tool, expected, CancellationToken.None))
+            {
+                // Nichts ist vertraut geworden; die Zeile berichtigt nur die vorige. Verwirft das
+                // Audit sie (voller Kanal), zählt sie als Verlust (Plan 0005 G6) — sonst stünde
+                // eine Annahme im Audit, die es nicht gab, ohne sichtbare Lücke.
+                if (!Audit.TryRecord(new AuditEvent(
+                    Time.GetUtcNow(), null, CallOrigin.Ui, AuditEventKind.ConfigChanged, id,
+                    $"ui:{user}:tool-definition-accept-conflict:{slug}__{tool}@{expected}",
+                    null, null, null, null, null)))
+                {
+                    Audit.ReportDiscarded(1);
+                }
+
+                _pinOk = false;
+                _pinMessage = $"Die neue Fassung von '{tool}' wurde nicht angenommen: Inzwischen steht "
+                    + "eine andere geänderte Definition an. Bitte die jetzt angezeigte Fassung prüfen "
+                    + "und erneut annehmen.";
+                return;
+            }
+
+            // Die Neuabfrage nach Annahme und Audit (E5): Die Annahme gilt, auch wenn die
+            // Neuabfrage scheitert.
+            _pinOk = true;
+            _pinMessage = $"Die neue Fassung von '{tool}' ist angenommen.";
+            try
+            {
+                await ConcreteSupervisor.RediscoverAsync(id, CancellationToken.None);
+            }
+            catch (Exception)
+            {
+                // Den Grund zeigt der Status des Upstreams nach dem Neuladen.
+                _pinMessage = $"Die neue Fassung von '{tool}' ist angenommen. Die Neuabfrage des "
+                    + "Katalogs ist gescheitert; den Grund zeigt der Status des Upstreams.";
+            }
+        }
+        finally
+        {
+            _busy = false;
+            Reload();
+        }
+    }
+
+    private async Task ShowHistory(ServerId id, string slug)
+    {
+        _historyServer = id;
+        _historySlug = slug;
+        _historyMessage = null;
+        _history = await ConfigStore.GetHistoryAsync(id, CancellationToken.None);
+    }
+
+    private async Task Rollback(ConfigVersionId version)
+    {
+        if (_historyServer is not { } id)
+        {
+            return;
+        }
+
+        _historyMessage = null;
+        try
+        {
+            await Supervisor.RollbackAsync(id, version, CancellationToken.None);
+            UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged,
+                $"server-rollback:{_historySlug}:v{version.Value}", id);
+            _historyOk = true;
+            _historyMessage = $"Auf v{version.Value} zurückgesetzt.";
+            _history = await ConfigStore.GetHistoryAsync(id, CancellationToken.None);
+            Reload();
+        }
+        catch (Exception ex)
+        {
+            _historyOk = false;
+            _historyMessage = ex.Message;
+        }
+    }
+
+    private async Task Remove(ServerId id, string slug)
+    {
+        await Supervisor.RemoveAsync(id, DrainPolicy.Graceful(TimeSpan.FromSeconds(5)), CancellationToken.None);
+        UiAudit.Record(Audit, Time, await UserAsync(), AuditEventKind.ConfigChanged, $"server-removed:{slug}", id);
+        Reload();
+    }
+}

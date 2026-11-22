@@ -1232,7 +1232,7 @@ mod tests {
     /// zusammenpassen — dieselben drei Dateien fährt der .NET-Kompatibilitätstest (Plan 0003,
     /// WP6.2) über die echte IPC-Leitung. Bricht dieser Test, wurde eine der Dateien ohne die
     /// anderen erneuert; regenerieren mit:
-    /// `bifrost-wasi-component-spike sign fixtures/wasi-p2-guest.component.wasm <seed-hex>`
+    /// `faolan-wasi-component-spike sign fixtures/wasi-p2-guest.component.wasm <seed-hex>`
     /// (Dev-Testvektor-Seed: 0x03 × 32 — kein Geheimnis, nur ein reproduzierbarer Testschlüssel).
     ///
     /// Dasselbe gilt für `tools-interface.component.wasm`; dessen Quelle liegt unter

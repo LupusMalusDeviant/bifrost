@@ -11,19 +11,19 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
 WORKDIR /src
 
 # Restore zuerst (Layer-Cache): nur die Projekt-/Props-Dateien kopieren.
-COPY Directory.Build.props Directory.Packages.props nuget.config Bifrost.slnx ./
-COPY src/Bifrost.Abstractions/Bifrost.Abstractions.csproj src/Bifrost.Abstractions/
-COPY src/Bifrost.Core/Bifrost.Core.csproj src/Bifrost.Core/
-COPY src/Bifrost.Upstream/Bifrost.Upstream.csproj src/Bifrost.Upstream/
-COPY src/Bifrost.Persistence/Bifrost.Persistence.csproj src/Bifrost.Persistence/
-COPY src/Bifrost.Persistence.Migrations.Sqlite/Bifrost.Persistence.Migrations.Sqlite.csproj src/Bifrost.Persistence.Migrations.Sqlite/
-COPY src/Bifrost.Persistence.Migrations.Postgres/Bifrost.Persistence.Migrations.Postgres.csproj src/Bifrost.Persistence.Migrations.Postgres/
-COPY src/Bifrost.Web/Bifrost.Web.csproj src/Bifrost.Web/
-COPY src/Bifrost.Server/Bifrost.Server.csproj src/Bifrost.Server/
-RUN dotnet restore src/Bifrost.Server/Bifrost.Server.csproj
+COPY Directory.Build.props Directory.Packages.props nuget.config Faolan.slnx ./
+COPY src/Faolan.Abstractions/Faolan.Abstractions.csproj src/Faolan.Abstractions/
+COPY src/Faolan.Core/Faolan.Core.csproj src/Faolan.Core/
+COPY src/Faolan.Upstream/Faolan.Upstream.csproj src/Faolan.Upstream/
+COPY src/Faolan.Persistence/Faolan.Persistence.csproj src/Faolan.Persistence/
+COPY src/Faolan.Persistence.Migrations.Sqlite/Faolan.Persistence.Migrations.Sqlite.csproj src/Faolan.Persistence.Migrations.Sqlite/
+COPY src/Faolan.Persistence.Migrations.Postgres/Faolan.Persistence.Migrations.Postgres.csproj src/Faolan.Persistence.Migrations.Postgres/
+COPY src/Faolan.Web/Faolan.Web.csproj src/Faolan.Web/
+COPY src/Faolan.Server/Faolan.Server.csproj src/Faolan.Server/
+RUN dotnet restore src/Faolan.Server/Faolan.Server.csproj
 
 COPY src/ src/
-RUN dotnet publish src/Bifrost.Server/Bifrost.Server.csproj \
+RUN dotnet publish src/Faolan.Server/Faolan.Server.csproj \
     -c Release -o /app --no-restore /p:UseAppHost=false
 
 # ── WASI-Host (Rust, ADR-0020, Plan 0003/WP7.1) ─────────────────────────────
@@ -62,7 +62,7 @@ RUN case "$TARGETARCH" in \
     && CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
        cargo build --locked --release --target "$TARGET" \
-    && cp "target/$TARGET/release/bifrost-wasi-component-spike" /bifrost-wasi-host
+    && cp "target/$TARGET/release/faolan-wasi-component-spike" /bifrost-wasi-host
 
 # ── Runtime (Ubuntu-noble-Basis mit Shell, non-root; ~230 MB < 300 MB) ───────
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
@@ -84,4 +84,4 @@ EXPOSE 8080
 USER app
 VOLUME /data
 
-ENTRYPOINT ["dotnet", "Bifrost.Server.dll"]
+ENTRYPOINT ["dotnet", "Faolan.Server.dll"]

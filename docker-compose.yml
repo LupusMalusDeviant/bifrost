@@ -40,7 +40,7 @@ services:
       ASPNETCORE_URLS: http://+:8080
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "dotnet", "Bifrost.Server.dll", "--healthcheck"]
+      test: ["CMD", "dotnet", "Faolan.Server.dll", "--healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3

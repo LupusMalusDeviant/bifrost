@@ -70,24 +70,24 @@ function Invoke-VerifyRust {
 
 function Invoke-VerifyFast {
     Invoke-Step 'dotnet build (Release, warnings=errors)' {
-        dotnet build $repo/Bifrost.slnx --configuration Release
+        dotnet build $repo/Faolan.slnx --configuration Release
     }
     # Die Integrationssuite startet echte Prozesse und braucht Minuten — sie gehoert in
     # verify-dotnet, nicht in den schnellen Durchgang.
     Invoke-Step 'dotnet test (Core, Upstream, CLI)' {
-        dotnet test $repo/Bifrost.slnx --configuration Release --no-build `
+        dotnet test $repo/Faolan.slnx --configuration Release --no-build `
             --filter 'FullyQualifiedName!~Integration.Tests&FullyQualifiedName!~WasiRealHost'
     }
 }
 
 function Invoke-VerifyDotnet {
     Invoke-Step 'dotnet build (Release, warnings=errors)' {
-        dotnet build $repo/Bifrost.slnx --configuration Release
+        dotnet build $repo/Faolan.slnx --configuration Release
     }
     # WasiRealHost ist ausgenommen wie in der CI: Diese Tests brauchen das gebaute Rust-Binary und
     # laufen im eigenen Job. Ohne das Binary ueberspringen sie sich selbst — siehe WasiHostPaths.
     Invoke-Step 'dotnet test (vollstaendig, ohne WasiRealHost)' {
-        dotnet test $repo/Bifrost.slnx --configuration Release --no-build `
+        dotnet test $repo/Faolan.slnx --configuration Release --no-build `
             --filter 'FullyQualifiedName!~WasiRealHost'
     }
 }

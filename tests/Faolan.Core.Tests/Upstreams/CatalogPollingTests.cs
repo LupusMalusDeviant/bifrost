@@ -1,0 +1,190 @@
+﻿using AwesomeAssertions;
+using Faolan.Abstractions;
+using Faolan.Core.Execution;
+using Faolan.Core.Upstreams;
+using Microsoft.Extensions.Time.Testing;
+using Xunit;
+
+namespace Faolan.Core.Tests.Upstreams;
+
+/// <summary>
+/// Katalogpflege bei Upstreams, die sich <b>nicht mehr von selbst melden</b>.
+/// <para>
+/// Bis zur Spec-Revision <c>2025-11-25</c> war der Weg klar: Ein Upstream schickte
+/// <c>tools/list_changed</c>, der Gateway hörte zu. Die Revision <c>2026-07-28</c> hat
+/// unaufgeforderte Server-zu-Client-Nachrichten gestrichen — <b>ohne Ersatz wäre ein dort neu
+/// hinzugekommenes Werkzeug für immer unsichtbar</b>, bis jemand in der Oberfläche „Neu einlesen"
+/// drückt. Das ist ein Ausfall, den niemand bemerkt, weil nichts kaputt aussieht.
+/// </para>
+/// </summary>
+public sealed class CatalogPollingTests : IAsyncDisposable
+{
+    private readonly FakeTimeProvider _time = new();
+    private readonly FakeUpstreamConnector _connector = new();
+    private readonly InMemoryUpstreamConfigStore _store;
+    private readonly UpstreamSupervisor _supervisor;
+    private readonly List<UpstreamChangedEventArgs> _events = [];
+
+    public CatalogPollingTests()
+    {
+        _store = new InMemoryUpstreamConfigStore(_time);
+        _supervisor = new UpstreamSupervisor(
+            [_connector],
+            _store,
+            new SupervisorOptions
+            {
+                HealthCheckInterval = TimeSpan.FromSeconds(1),
+                CatalogPollInterval = TimeSpan.FromSeconds(3),
+            },
+            _time,
+            logger: null,
+            hostExecution: HostExecutionPolicy.AllowedByOperator());
+        _supervisor.Changed += (_, e) =>
+        {
+            lock (_events)
+            {
+                _events.Add(e);
+            }
+        };
+    }
+
+    public async ValueTask DisposeAsync() => await _supervisor.DisposeAsync();
+
+    private int InventoryEvents
+    {
+        get
+        {
+            lock (_events)
+            {
+                return _events.Count(e => e.Kind == UpstreamChangeKind.InventoryChanged);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task An_upstream_that_does_not_push_is_asked_again()
+    {
+        FakeUpstreamConnection? connection = null;
+        _connector.DefaultBehavior = (id, _) =>
+            connection = new FakeUpstreamConnection { Id = id, PushesCatalogChanges = false };
+
+        var id = await _supervisor.AddAsync(TestData.StdioConfig("poll"), TestContext.Current.CancellationToken);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(id)?.State == UpstreamState.Healthy);
+
+        // Ein Werkzeug kommt beim Upstream dazu — ohne dass er es meldet.
+        connection!.Inventory = TestData.InventoryWithTools("echo", "neu");
+
+        await TestData.WaitUntilAdvancingAsync(
+            _time,
+            () => _supervisor.GetInventory(id)?.Tools.Count == 2,
+            because: "ein Upstream ohne Benachrichtigungen muss turnusmaessig gefragt werden");
+
+        _supervisor.GetInventory(id)!.Tools.Should().Contain(t => t.Name == "neu");
+    }
+
+    /// <summary>
+    /// <b>Die andere Hälfte der Aussage:</b> Eine Abfrage, die nichts Neues findet, darf kein
+    /// Katalog-Ereignis auslösen. Sonst liefe jede Minute ein „der Katalog hat sich geändert" durch
+    /// das ganze System — samt <c>tools/list_changed</c> an jede Sitzung und einem neu gebauten
+    /// Katalog für jede Identität. Aus einer Reparatur würde eine Dauerlast.
+    /// </summary>
+    [Fact]
+    public async Task Polling_an_unchanged_catalog_stays_quiet()
+    {
+        FakeUpstreamConnection? connection = null;
+        _connector.DefaultBehavior = (id, _) =>
+            connection = new FakeUpstreamConnection { Id = id, PushesCatalogChanges = false };
+
+        var id = await _supervisor.AddAsync(TestData.StdioConfig("quiet"), TestContext.Current.CancellationToken);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(id)?.State == UpstreamState.Healthy);
+
+        var afterStartup = InventoryEvents;
+        var discoveriesAtStart = connection!.DiscoverCalls;
+
+        await TestData.WaitUntilAdvancingAsync(
+            _time,
+            () => connection.DiscoverCalls >= discoveriesAtStart + 2,
+            because: "zwei Abfragerunden muessen wirklich gelaufen sein");
+
+        InventoryEvents.Should().Be(afterStartup,
+            "ein unveraenderter Katalog ist keine Aenderung");
+    }
+
+    /// <summary>
+    /// Ein Upstream, der weiterhin von selbst meldet (alter Stand), wird <b>nicht</b> gefragt — die
+    /// Abfrage ist ein Ersatz für eine fehlende Fähigkeit, kein Zusatz.
+    /// </summary>
+    [Fact]
+    public async Task An_upstream_that_pushes_is_left_alone()
+    {
+        FakeUpstreamConnection? connection = null;
+        _connector.DefaultBehavior = (id, _) =>
+            connection = new FakeUpstreamConnection { Id = id, PushesCatalogChanges = true };
+
+        var id = await _supervisor.AddAsync(TestData.StdioConfig("push"), TestContext.Current.CancellationToken);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(id)?.State == UpstreamState.Healthy);
+
+        var discoveries = connection!.DiscoverCalls;
+        for (var i = 0; i < 20; i++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(1));
+            await Task.Delay(10);
+        }
+
+        connection.DiscoverCalls.Should().Be(discoveries,
+            "wer seine Aenderungen meldet, muss nicht gefragt werden");
+    }
+
+    /// <summary>
+    /// Plan 0005 E5: Auch eine ausgelöste Neuabfrage, die mit 401/403 abgewiesen wird, beendet die
+    /// Verbindung als abgelehnte Anmeldung — der Aufrufer erfährt den Fehler trotzdem.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_manual_rediscovery_does_not_stay_healthy()
+    {
+        FakeUpstreamConnection? connection = null;
+        _connector.DefaultBehavior = (id, _) => connection = new FakeUpstreamConnection { Id = id };
+
+        var id = await _supervisor.AddAsync(TestData.StdioConfig("manuell"), TestContext.Current.CancellationToken);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(id)?.State == UpstreamState.Healthy);
+
+        _connector.DefaultBehavior = (_, _) => throw new System.Net.Http.HttpRequestException(
+            "403 (Test)", null, System.Net.HttpStatusCode.Forbidden);
+        connection!.DiscoverException = new System.Net.Http.HttpRequestException(
+            "403 (Test)", null, System.Net.HttpStatusCode.Forbidden);
+
+        var rediscover = () => _supervisor.RediscoverAsync(id, TestContext.Current.CancellationToken);
+        await rediscover.Should().ThrowAsync<System.Net.Http.HttpRequestException>();
+
+        await TestData.WaitUntilAdvancingAsync(
+            _time,
+            () => _supervisor.GetStatus(id) is { State: UpstreamState.Failed, Reconnect.Kind: UpstreamFailureKind.Authentication },
+            because: "die abgewiesene Neuabfrage beendet die Verbindung");
+    }
+
+    /// <summary>
+    /// Plan 0005 D10: Weist der Upstream die Katalogabfrage ab (401/403), steht er nicht weiter als
+    /// gesund da — die Verbindung gilt als verloren, und der nächste Aufbau zeigt die Fehlerart.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_catalog_poll_does_not_stay_healthy()
+    {
+        FakeUpstreamConnection? connection = null;
+        _connector.DefaultBehavior = (id, _) =>
+            connection = new FakeUpstreamConnection { Id = id, PushesCatalogChanges = false };
+
+        var id = await _supervisor.AddAsync(TestData.StdioConfig("abgewiesen"), TestContext.Current.CancellationToken);
+        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(id)?.State == UpstreamState.Healthy);
+
+        _connector.DefaultBehavior = (_, _) => throw new System.Net.Http.HttpRequestException(
+            "403 (Test)", null, System.Net.HttpStatusCode.Forbidden);
+        connection!.DiscoverException = new System.Net.Http.HttpRequestException(
+            "403 (Test)", null, System.Net.HttpStatusCode.Forbidden);
+
+        await TestData.WaitUntilAdvancingAsync(
+            _time,
+            () => _supervisor.GetStatus(id) is { State: UpstreamState.Failed, Reconnect.Kind: UpstreamFailureKind.Authentication },
+            because: "eine abgewiesene Katalogabfrage beendet die Verbindung");
+        connection.DisposeCount.Should().Be(1, "die abgewiesene Verbindung ist geschlossen");
+    }
+}

@@ -138,7 +138,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p security-reports
-          dotnet list Bifrost.slnx package --vulnerable --include-transitive --format json \
+          dotnet list Faolan.slnx package --vulnerable --include-transitive --format json \
             > security-reports/dotnet-vulnerable.json
           python3 .github/scripts/dotnet_vulnerable_gate.py \
             security-reports/dotnet-vulnerable.json \
@@ -220,7 +220,7 @@ jobs:
         run: docker pull alpine:3.20
 
       # Wie in ci.yml: ohne pg_dump/pg_restore ueberspringen sich die PostgreSQL-Backupfelder
-      # (ADR-0024 E2), und BIFROST_REQUIRE_POSTGRES=1 macht daraus einen Fehlschlag.
+      # (ADR-0024 E2), und FAOLAN_REQUIRE_POSTGRES=1 macht daraus einen Fehlschlag.
       - name: PostgreSQL-Clientwerkzeuge bereitstellen (pg_dump/pg_restore)
         run: |
           if ! command -v pg_dump >/dev/null 2>&1; then
@@ -234,8 +234,8 @@ jobs:
         env:
           # Wie in ci.yml: Auf Linux sind Docker und Postgres da — ein Skip waere dort ein stiller
           # Ausfall des Nachweises und darf einen Release-Lauf nicht gruen faerben.
-          BIFROST_REQUIRE_POSTGRES: "1"
-          BIFROST_REQUIRE_CONTAINER: "1"
+          FAOLAN_REQUIRE_POSTGRES: "1"
+          FAOLAN_REQUIRE_CONTAINER: "1"
         # Die WasiRealHost*-Tests brauchen das gebaute Rust-Binary und laufen in ci.yml im Job
         # wasi-component-spike. Hier ausgeschlossen statt uebersprungen (sonst reisst das
         # Skip-Gate unten) — der WASI-Nachweis fuer das Release erfolgt im Job 'image' gegen das
@@ -266,16 +266,16 @@ jobs:
           # while-read statt einer for-Schleife ueber die find-Ausgabe: Pfade mit Leerzeichen
           # wuerden dort auseinanderfallen und die Schwelle still auf 0 setzen.
           while IFS= read -r f; do
-            RATE=$(grep -o '<package name="Bifrost.Core" line-rate="[0-9.]*"' "$f" \
+            RATE=$(grep -o '<package name="Faolan.Core" line-rate="[0-9.]*"' "$f" \
                    | grep -o 'line-rate="[0-9.]*"' | grep -o '[0-9.]*' || true)
             if [ -n "$RATE" ]; then
               PCT=$(awk -v r="$RATE" 'BEGIN { printf "%d", r * 10000 }')
               [ "$PCT" -gt "$BEST" ] && BEST=$PCT
             fi
           done < <(find coverage -name 'coverage.cobertura.xml')
-          echo "Bifrost.Core Zeilenabdeckung: $(awk -v b="$BEST" 'BEGIN { printf "%.2f", b / 100 }') %"
+          echo "Faolan.Core Zeilenabdeckung: $(awk -v b="$BEST" 'BEGIN { printf "%.2f", b / 100 }') %"
           if [ "$BEST" -lt 8000 ]; then
-            echo "::error::Zeilenabdeckung von Bifrost.Core unter der NFR-08-Schwelle von 80 %."
+            echo "::error::Zeilenabdeckung von Faolan.Core unter der NFR-08-Schwelle von 80 %."
             exit 1
           fi
 
@@ -521,7 +521,7 @@ jobs:
   # ── cli (WP1.3) ─────────────────────────────────────────────────────────────
   # Publiziert je RID eine eigenstaendige Einzeldatei, prueft sie auf dem passenden Runner und
   # packt sie mit LICENSE. Eigenstaendigkeit, Einzeldatei und eingebettete Symbole stehen in
-  # src/Bifrost.Cli/Bifrost.Cli.csproj — hier bewusst NICHT wiederholt, damit es eine Quelle gibt.
+  # src/Faolan.Cli/Faolan.Cli.csproj — hier bewusst NICHT wiederholt, damit es eine Quelle gibt.
   cli:
     needs: verify
     permissions:
@@ -548,7 +548,7 @@ jobs:
       - name: Publish ${{ matrix.rid }}
         shell: bash
         run: |
-          dotnet publish src/Bifrost.Cli \
+          dotnet publish src/Faolan.Cli \
             -c Release -r ${{ matrix.rid }} --self-contained true \
             -p:ContinuousIntegrationBuild=true \
             -o out/${{ matrix.rid }}
