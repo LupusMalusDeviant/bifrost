@@ -101,6 +101,83 @@ static class EnvironmentNameChain
     }
 
     /// <summary>
+    /// Die Variable, in der das Image seine eigenen Vorgaben nennt: <c>NAME=Wert;NAME=Wert</c>.
+    /// </summary>
+    public const string ImageDefaultsVariable = "FAOLAN_IMAGE_DEFAULTS";
+
+    /// <summary>
+    /// Alte Einstellungen, die eine Vorgabe des Images still verdecken würde (Vertrag
+    /// umbenennung-faolan §2.2, Nachtrag „Vorgaben des Images").
+    /// <para>
+    /// „Der neueste Name gewinnt" setzt voraus, dass der Betreiber beide Namen gesetzt hat. Setzt das
+    /// Image den neuen Namen selbst (<c>FAOLAN_DATA_DIR=/data</c>), gewänne seine Vorgabe gegen das
+    /// <c>BIFROST_DATA_DIR</c> des Betreibers — bis 0.12.0 war es umgekehrt. Der Gateway startete
+    /// dann auf einem leeren Verzeichnis und meldete sich als bereit. Statt einer der beiden Seiten
+    /// still recht zu geben, ist das ein Konflikt: Der Start bricht ab und nennt beide Variablen.
+    /// </para>
+    /// <para>
+    /// Kein Konflikt ist, wenn der alte Wert der Vorgabe gleicht, und wenn der neue Name einen
+    /// anderen Wert als die Vorgabe trägt — dann hat ihn der Betreiber gesetzt, und die Regel oben
+    /// gilt.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<(string OldName, string OldValue, string NewName, string ImageValue)> FindImageDefaultConflicts(
+        IDictionary environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        var present = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (DictionaryEntry entry in environment)
+        {
+            if (entry.Key is string key && entry.Value is string { Length: > 0 } value)
+            {
+                present[key] = value;
+            }
+        }
+
+        var conflicts = new List<(string OldName, string OldValue, string NewName, string ImageValue)>();
+        if (!present.TryGetValue(ImageDefaultsVariable, out var declared))
+        {
+            return conflicts;
+        }
+
+        foreach (var pair in declared.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separator = pair.IndexOf('=', StringComparison.Ordinal);
+            if (separator <= 0)
+            {
+                continue;
+            }
+
+            var newName = pair[..separator];
+            var imageValue = pair[(separator + 1)..];
+            if (!newName.StartsWith(CurrentPrefix, StringComparison.Ordinal)
+                || !present.TryGetValue(newName, out var current)
+                || !string.Equals(current, imageValue, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var suffix = newName[CurrentPrefix.Length..];
+            for (var generation = LegacyPrefixes.Count - 1; generation >= 0; generation--)
+            {
+                var oldName = LegacyPrefixes[generation] + suffix;
+                if (present.TryGetValue(oldName, out var oldValue))
+                {
+                    if (!string.Equals(oldValue, imageValue, StringComparison.Ordinal))
+                    {
+                        conflicts.Add((oldName, oldValue, newName, imageValue));
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        return conflicts;
+    }
+
+    /// <summary>
     /// Übernimmt alle noch alt benannten Variablen ins Prozessumfeld und liefert die Namen, unter
     /// denen sie gefunden wurden. Läuft vor dem Bau jeder Konfiguration.
     /// </summary>

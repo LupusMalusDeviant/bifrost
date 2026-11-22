@@ -37,6 +37,12 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
   einer Neuinstallation ist es erwartbar.
 - Neu erzeugte Schlüsselring-Zertifikate tragen `CN=faolan-keyring`; bestehende mit
   `CN=bifrost-keyring` bleiben gültig, der Name wird nirgends abgeglichen.
+- WASI-Upstreams, die den Host noch als `bifrost-wasi-host` (Name oder Pfad) nennen, laufen weiter;
+  der alte Name bezeichnet den umbenannten Host derselben Instanz.
+- **Breaking, gewollt: Start bricht ab, wenn eine Image-Vorgabe eine alte Einstellung verdecken
+  würde.** Ist `BIFROST_DATA_DIR` oder `BIFROST_WASI_HOST` auf einen anderen Wert gesetzt als die
+  Vorgabe des Images, endet der Start mit Exit-Code 2 und nennt beide Variablen, statt still auf der
+  Vorgabe (und damit auf einer leeren Instanz) zu laufen. *Upgrade:* den Wert unter `FAOLAN_*` setzen.
 
 ### Sicherheit
 

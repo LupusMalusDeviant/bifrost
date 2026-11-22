@@ -77,8 +77,12 @@ COPY --from=wasi-host /faolan-wasi-host /usr/local/bin/faolan-wasi-host
 # was diese Verzeichnisrechte zuverlässig macht.
 RUN mkdir -p /data && chown app:app /data && chmod 0770 /data
 
+# FAOLAN_IMAGE_DEFAULTS nennt, welche FAOLAN_*-Werte vom Image stammen. Setzt ein Betreiber noch
+# den alten Namen derselben Einstellung mit anderem Wert, bricht der Start ab, statt die Vorgabe still
+# gewinnen zu lassen (Vertrag umbenennung-faolan §2.2). Muss mit den Zeilen darunter übereinstimmen.
 ENV FAOLAN_DATA_DIR=/data \
     FAOLAN_WASI_HOST=/usr/local/bin/faolan-wasi-host \
+    FAOLAN_IMAGE_DEFAULTS="FAOLAN_DATA_DIR=/data;FAOLAN_WASI_HOST=/usr/local/bin/faolan-wasi-host" \
     ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 USER app

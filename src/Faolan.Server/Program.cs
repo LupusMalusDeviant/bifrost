@@ -51,6 +51,22 @@ if (args.Contains("--healthcheck"))
 // Alt benannte Umgebungsvariablen uebernehmen, BEVOR die Konfiguration gebaut wird — sonst
 // startet eine bestehende Installation nach der Umbenennung lautlos auf Vorgabewerten
 // (siehe LegacyEnvironment). Die Meldung dazu kommt weiter unten, sobald es einen Logger gibt.
+// Vorher: Verdeckt eine Vorgabe des Images eine alte Einstellung, wird nicht geraten (§2.2).
+var imageDefaultConflicts = EnvironmentNameChain.FindImageDefaultConflicts(Environment.GetEnvironmentVariables());
+if (imageDefaultConflicts.Count > 0)
+{
+    foreach (var (oldName, oldValue, newName, imageValue) in imageDefaultConflicts)
+    {
+        await Console.Error.WriteLineAsync(
+            $"Start abgebrochen: {oldName}='{oldValue}' ist gesetzt, das Image setzt aber {newName}='{imageValue}'. "
+            + $"Bis 0.12.0 galt der Wert des Betreibers, nach der Umbenennung gälte still die Vorgabe des Images. "
+            + $"{newName}='{oldValue}' setzen (oder {oldName} entfernen, wenn die Vorgabe gemeint ist). "
+            + "Siehe docs/upgrade-faolan.md.");
+    }
+
+    return 2;
+}
+
 var adoptedLegacyVariables = LegacyEnvironment.Adopt();
 
 // Key-Ring einrichten, pruefen, einen Zertifikatswechsel durchspielen (WP3.3). Ohne Gateway-Start:

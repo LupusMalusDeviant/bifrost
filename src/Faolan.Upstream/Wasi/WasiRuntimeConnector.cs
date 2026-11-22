@@ -160,13 +160,48 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
         return _hostExecutable;
     }
 
-    private static bool NamesHost(string configured, string host)
+    /// <summary>Der Name des Hosts bis 0.12.0. Gespeicherte Upstreams tragen ihn (Vertrag umbenennung-faolan §2.3).</summary>
+    internal const string LegacyHostName = "bifrost-wasi-host";
+
+    /// <summary>Der Name des Hosts seit der Umbenennung.</summary>
+    internal const string CurrentHostName = "faolan-wasi-host";
+
+    /// <summary>
+    /// Nennt <paramref name="configured"/> den Host <paramref name="host"/> dieser Instanz?
+    /// <para>
+    /// Brücke: Bis 0.12.0 schrieb die Doku <c>/usr/local/bin/bifrost-wasi-host</c> in jeden
+    /// WASI-Upstream. Dieser alte Name gilt als Verweis auf den umbenannten Host — als Dateiname
+    /// und als Pfad im selben Verzeichnis. Das lenkt nichts um: Gestartet wird ausschließlich der Host
+    /// des Betreibers, und auf einen anders benannten Host passt der alte Name nur, wenn er genau so
+    /// heißt.
+    /// </para>
+    /// </summary>
+    internal static bool NamesHost(string configured, string host)
     {
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         if (string.IsNullOrWhiteSpace(configured))
         {
             return false;
         }
+
+        if (NamesHostExactly(configured, host))
+        {
+            return true;
+        }
+
+        var fileName = Path.GetFileName(configured);
+        var withoutExe = fileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? fileName[..^4] : fileName;
+        if (!withoutExe.Equals(LegacyHostName, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var renamed = configured[..^fileName.Length] + CurrentHostName + fileName[withoutExe.Length..];
+        return NamesHostExactly(renamed, host);
+    }
+
+    private static bool NamesHostExactly(string configured, string host)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
         if (Path.GetFileName(configured) == configured)
         {

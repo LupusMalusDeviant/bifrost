@@ -128,12 +128,19 @@ gelten nicht mehr.
 | Eingehende Webhooks mit `X-Bifrost-Signature` | werden geprüft. Sobald ein Absender eine `X-Faolan-*`-Kopfzeile schickt, gilt nur noch das neue Paar. |
 | Freigabe-Benachrichtigungen | tragen beide Kopfzeilenpaare mit gleichen Werten. |
 | Upstream-Container aus 0.12.0 | werden weiter erkannt und aufgeräumt; ihre Etiketten `de.bifrost.*` bleiben. |
+| WASI-Upstreams mit `bifrost-wasi-host` bzw. `/usr/local/bin/bifrost-wasi-host` in `Wasi.HostExecutable` | laufen weiter: Der alte Name bezeichnet den umbenannten Host `faolan-wasi-host`. Gestartet wird wie bisher nur der Host der Instanz. |
+
+> **Ein Abbruch beim Start, der gewollt ist.** Das Image setzt `FAOLAN_DATA_DIR=/data` und
+> `FAOLAN_WASI_HOST` selbst. Wer bisher `BIFROST_DATA_DIR` oder `BIFROST_WASI_HOST` auf einen
+> **anderen** Wert gesetzt hatte, bekäme sonst still die Vorgabe des Images — beim Datenverzeichnis
+> heißt das: eine leere Instanz. Stattdessen bricht der Start mit Exit-Code 2 ab und nennt beide
+> Variablen. Abhilfe: den Wert unter dem neuen Namen setzen (`FAOLAN_DATA_DIR=/srv/gateway`).
 
 ## Ohne Docker
 
 - Der Serverstart heißt `dotnet Faolan.Server.dll` statt `dotnet Bifrost.Server.dll`.
-- Die CLI heißt `faolan` (dotnet-Tool `Faolan.Cli`), das Connector-Werkzeug `faolan-connector`, der
-  WASI-Host `faolan-wasi-host`. Der alte Pfad in `BIFROST_WASI_HOST` wird gelesen, muss aber auf ein
+- Die CLI heißt `faolan`, das Connector-Werkzeug `faolan-connector`, der WASI-Host
+  `faolan-wasi-host`. Ein selbst gesetzter `BIFROST_WASI_HOST` wird gelesen, muss aber auf ein
   vorhandenes Programm zeigen.
 - Ein systemd-Unit oder Skript mit den alten Namen ist einmal anzupassen.
 

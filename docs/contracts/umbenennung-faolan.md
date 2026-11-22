@@ -1,6 +1,6 @@
 # Vertrag: Umbenennung auf Faolan
 
-**Stand:** 2026-11-22 · **Status:** Abgenommen vom Nutzer am 2026-11-16, Nachtrag (Container-Etiketten bleiben, UI-Cookies mit Bruch, Postgres-Volume über Variable, Volume-Messung) abgenommen am 2026-11-22; zweiter Nachtrag (Cache-Kennung und Sperrschlüssel bleiben) abgenommen am 2026-11-22 · **Gilt für:** Plan 0004, R1 – R7
+**Stand:** 2026-11-22 · **Status:** Abgenommen vom Nutzer am 2026-11-16, Nachtrag (Container-Etiketten bleiben, UI-Cookies mit Bruch, Postgres-Volume über Variable, Volume-Messung) abgenommen am 2026-11-22; zweiter Nachtrag (Cache-Kennung und Sperrschlüssel bleiben) abgenommen am 2026-11-22; dritter Nachtrag (WASI-Hostname als Brücke, Vorgaben des Images) abgenommen am 2026-11-22 · **Gilt für:** Plan 0004, R1 – R7
 **Grundlage:** [ADR-0026](../adr/0026-umbenennung-auf-faolan.md),
 [Plan 0004](../plans/0004-umbenennung-und-rueckkanal-projektion.md) Abschnitt 1.2
 
@@ -53,6 +53,14 @@ bestehenden Datenbank und tragen den Produktnamen nicht. Geändert werden Namens
 einer geordneten Liste von Generationen. Das CLI-Projekt hat keine Projektverweise; es bindet
 dieselbe Quelldatei per `<Compile Include>` ein, statt die Regel ein zweites Mal zu schreiben.
 
+**Vorgaben des Images** (dritter Nachtrag 2026-11-22, Review-Befund H2). Das Image setzt
+`FAOLAN_DATA_DIR` und `FAOLAN_WASI_HOST` selbst. Nach „der neueste Name gewinnt" verdeckte diese
+Vorgabe ein `BIFROST_DATA_DIR` des Betreibers still — bis 0.12.0 war es umgekehrt. Deshalb nennt das
+Image seine Vorgaben in `FAOLAN_IMAGE_DEFAULTS` (`NAME=Wert;…`). Trägt ein dort genannter Name genau
+den Vorgabewert und ist ein alter Name mit **anderem** Wert gesetzt, bricht der Start ab (Exit-Code 2)
+und nennt beide Variablen. Gleicht der alte Wert der Vorgabe, oder trägt der neue Name einen anderen
+Wert, gilt die gewöhnliche Regel. Ein Test hält Dockerfile und Deklaration übereinander.
+
 ### 2.3 Was auf dem Draht oder in Dateien steht — Brücke
 
 | Bezeichner | Lesen | Schreiben |
@@ -64,6 +72,7 @@ dieselbe Quelldatei per `<Compile Include>` ein, statt die Regel ein zweites Mal
 | Benachrichtigung ausgehend: dieselben zwei Header | — | **beide Paare mit gleichem Wert**, bis die Brücke entfällt |
 | `X-Bifrost-Setup-Token` eingehend | beide Namen | — |
 | `X-Bifrost-Instance` | beide Namen bei der Schleifenerkennung | `X-Faolan-Instance` |
+| `Wasi.HostExecutable` gespeicherter Upstreams: `bifrost-wasi-host`, `/usr/local/bin/bifrost-wasi-host` | der alte Name bezeichnet den Host `faolan-wasi-host` derselben Instanz, als Dateiname oder als Pfad im selben Verzeichnis; gestartet wird nur der Host des Betreibers (dritter Nachtrag 2026-11-22, Review-Befund H1) | was der Betreiber einträgt; die Doku nennt `faolan-wasi-host` |
 
 Die ausgehende Benachrichtigung ist der eine Fall, in dem **geschrieben** wird, was ein fremdes
 System liest: Ein Empfänger, der heute `X-Bifrost-Signature` prüft, bekäme sonst über Nacht
@@ -93,7 +102,7 @@ verschiedenen Werten, wird ausschließlich das neue geprüft — nie „eines vo
 |---|---|---|
 | CLI `bifrost`, Paket `Bifrost.Cli` | `faolan`, `Faolan.Cli` | Skripte des Betreibers |
 | `bifrost-connector`, Paket `Bifrost.ConnectorKit` | `faolan-connector`, `Faolan.ConnectorKit` | Build-Skripte von Paketautoren |
-| `bifrost-wasi-host`, `/usr/local/bin/bifrost-wasi-host` | `faolan-wasi-host` | nur bei selbst gesetztem `…_WASI_HOST` |
+| `bifrost-wasi-host`, `/usr/local/bin/bifrost-wasi-host` | `faolan-wasi-host` | nur bei selbst gesetztem `…_WASI_HOST`; gespeicherte Upstreams mit dem alten Namen laufen weiter (§2.3) |
 | Einstieg `Bifrost.Server.dll` | `Faolan.Server.dll` | eigene Healthchecks und Startbefehle |
 | Image `ghcr.io/lupusmalusdeviant/bifrost` | `ghcr.io/lupusmalusdeviant/faolan` | Image-Referenz; alte Tags bleiben abrufbar |
 | Compose-Dienst `bifrost`, Volume `bifrost-data` | Dienst `faolan`, Volume über `FAOLAN_DATA_VOLUME` | **siehe Abschnitt 3** |

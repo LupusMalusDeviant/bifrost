@@ -174,6 +174,104 @@ public sealed class LegacyEnvironmentTests
         }
     }
 
+    private const string ImageDefaults = "FAOLAN_DATA_DIR=/data;FAOLAN_WASI_HOST=/usr/local/bin/faolan-wasi-host";
+
+    /// <summary>
+    /// Der Fall aus dem Review (H2): Das Image setzt <c>FAOLAN_DATA_DIR=/data</c>, der Betreiber hat
+    /// seit 0.12.0 <c>BIFROST_DATA_DIR=/srv/gateway</c>. Nach „der neueste Name gewinnt" liefe der
+    /// Gateway still auf <c>/data</c>. Das ist ein Konflikt, keine Übernahme.
+    /// </summary>
+    [Theory]
+    [InlineData("BIFROST_DATA_DIR")]
+    [InlineData("MCPMCP_DATA_DIR")]
+    public void An_old_setting_hidden_by_an_image_default_is_a_conflict(string oldName)
+    {
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(Environment(
+            (EnvironmentNameChain.ImageDefaultsVariable, ImageDefaults),
+            ("FAOLAN_DATA_DIR", "/data"),
+            ("FAOLAN_WASI_HOST", "/usr/local/bin/faolan-wasi-host"),
+            (oldName, "/srv/gateway")));
+
+        conflicts.Should().ContainSingle()
+            .Which.Should().Be((oldName, "/srv/gateway", "FAOLAN_DATA_DIR", "/data"));
+    }
+
+    [Fact]
+    public void The_younger_old_generation_decides_the_conflict()
+    {
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(Environment(
+            (EnvironmentNameChain.ImageDefaultsVariable, ImageDefaults),
+            ("FAOLAN_DATA_DIR", "/data"),
+            ("MCPMCP_DATA_DIR", "/ganz/alt"),
+            ("BIFROST_DATA_DIR", "/data")));
+
+        conflicts.Should().BeEmpty("der jüngere alte Wert gleicht der Vorgabe");
+    }
+
+    [Fact]
+    public void An_old_setting_equal_to_the_image_default_is_no_conflict()
+    {
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(Environment(
+            (EnvironmentNameChain.ImageDefaultsVariable, ImageDefaults),
+            ("FAOLAN_DATA_DIR", "/data"),
+            ("BIFROST_DATA_DIR", "/data"),
+            ("BIFROST_WASI_HOST", "/usr/local/bin/faolan-wasi-host")));
+
+        conflicts.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Trägt der neue Name einen anderen Wert als die Vorgabe, hat ihn der Betreiber gesetzt — dann
+    /// gilt die gewöhnliche Regel, und der neue Name gewinnt.
+    /// </summary>
+    [Fact]
+    public void A_current_name_set_by_the_operator_is_no_conflict()
+    {
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(Environment(
+            (EnvironmentNameChain.ImageDefaultsVariable, ImageDefaults),
+            ("FAOLAN_DATA_DIR", "/srv/neu"),
+            ("BIFROST_DATA_DIR", "/srv/alt")));
+
+        conflicts.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Without_declared_image_defaults_there_is_no_conflict()
+    {
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(Environment(
+            ("FAOLAN_DATA_DIR", "/data"),
+            ("BIFROST_DATA_DIR", "/srv/gateway")));
+
+        conflicts.Should().BeEmpty("ausserhalb des Images setzt niemand den neuen Namen ungefragt");
+    }
+
+    /// <summary>
+    /// Das Image und seine Deklaration dürfen nicht auseinanderlaufen: Eine Vorgabe ohne Eintrag in
+    /// <c>FAOLAN_IMAGE_DEFAULTS</c> wäre wieder die stille Verdeckung.
+    /// </summary>
+    [Fact]
+    public void The_dockerfile_declares_every_faolan_default_it_sets()
+    {
+        var root = AppContext.BaseDirectory;
+        while (!File.Exists(Path.Combine(root, "Dockerfile")))
+        {
+            root = Path.GetDirectoryName(root) ?? throw new InvalidOperationException("Dockerfile nicht gefunden.");
+        }
+
+        var dockerfile = File.ReadAllText(Path.Combine(root, "Dockerfile"));
+        var declared = System.Text.RegularExpressions.Regex
+            .Match(dockerfile, "FAOLAN_IMAGE_DEFAULTS=\"([^\"]*)\"").Groups[1].Value
+            .Split(';', StringSplitOptions.RemoveEmptyEntries)
+            .ToHashSet(StringComparer.Ordinal);
+        var set = System.Text.RegularExpressions.Regex
+            .Matches(dockerfile, @"^\s*(?:ENV\s+)?(FAOLAN_(?!IMAGE_DEFAULTS)[A-Z0-9_]+=[^\s\\]+)", System.Text.RegularExpressions.RegexOptions.Multiline)
+            .Select(match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        set.Should().NotBeEmpty();
+        declared.Should().BeEquivalentTo(set);
+    }
+
     [Fact]
     public void A_fresh_installation_gets_the_current_name()
     {

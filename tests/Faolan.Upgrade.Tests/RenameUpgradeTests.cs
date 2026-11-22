@@ -86,6 +86,43 @@ public sealed class RenameUpgradeTests
         }
     }
 
+    /// <summary>
+    /// Review-Befund H2 im echten Prozess: Das Image setzt <c>FAOLAN_DATA_DIR</c> selbst, der
+    /// Betreiber hat noch <c>BIFROST_DATA_DIR</c> mit anderem Wert. Der Server darf nicht auf der
+    /// Vorgabe starten, sondern bricht ab und nennt beide Namen.
+    /// </summary>
+    [Fact]
+    public async Task An_image_default_hiding_an_old_setting_stops_the_start()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var imageDir = Directory.CreateTempSubdirectory("faolan-image-default").FullName;
+        var operatorDir = Directory.CreateTempSubdirectory("faolan-operator-dir").FullName;
+        try
+        {
+            var start = ServerProcess.StartInfo(new Dictionary<string, string>
+            {
+                ["FAOLAN_DATA_DIR"] = imageDir,
+                ["FAOLAN_IMAGE_DEFAULTS"] = "FAOLAN_DATA_DIR=" + imageDir,
+                ["BIFROST_DATA_DIR"] = operatorDir,
+            });
+            using var process = Process.Start(start) ?? throw new InvalidOperationException("Server startet nicht.");
+            var stdout = process.StandardOutput.ReadToEndAsync(ct);
+            var stderr = await process.StandardError.ReadToEndAsync(ct);
+            await process.WaitForExitAsync(ct);
+            await stdout;
+
+            process.ExitCode.Should().Be(2);
+            stderr.Should().Contain("BIFROST_DATA_DIR").And.Contain("FAOLAN_DATA_DIR");
+            Directory.EnumerateFileSystemEntries(imageDir).Should().BeEmpty(
+                "auf der Vorgabe des Images darf nichts angelegt worden sein");
+        }
+        finally
+        {
+            TryDelete(imageDir);
+            TryDelete(operatorDir);
+        }
+    }
+
     private static async Task<string> IssueApiKeyAsync(IReadOnlyDictionary<string, string> environment, CancellationToken ct)
     {
         var start = ServerProcess.StartInfo(environment);

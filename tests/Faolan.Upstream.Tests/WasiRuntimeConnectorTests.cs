@@ -361,6 +361,37 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
     /// Der bloße Dateiname reicht als Verweis — so steht der Host im Image
     /// (<c>faolan-wasi-host</c>), und gestartet wird ohnehin der Pfad des Betreibers.
     /// </summary>
+    /// <summary>
+    /// Review-Befund H1: Gespeicherte Upstreams aus 0.12.0 nennen <c>bifrost-wasi-host</c> — so
+    /// stand es in der Doku. Nach der Umbenennung heißt der Host im Image <c>faolan-wasi-host</c>;
+    /// der alte Name muss ihn weiter bezeichnen, sonst fällt jeder WASI-Upstream aus.
+    /// </summary>
+    [Theory]
+    [InlineData("bifrost-wasi-host")]
+    [InlineData("/usr/local/bin/bifrost-wasi-host")]
+    public void The_old_host_name_still_names_the_renamed_host(string configured)
+    {
+        var host = OperatingSystem.IsWindows()
+            ? @"C:\faolan\faolan-wasi-host.exe"
+            : "/usr/local/bin/faolan-wasi-host";
+        if (OperatingSystem.IsWindows() && configured.StartsWith('/'))
+        {
+            configured = @"C:\faolan\bifrost-wasi-host.exe";
+        }
+
+        WasiRuntimeConnector.NamesHost(configured, host).Should().BeTrue();
+    }
+
+    /// <summary>Die Brücke lenkt nichts um: Der alte Name passt nur auf den umbenannten Host.</summary>
+    [Theory]
+    [InlineData("bifrost-wasi-host", "anderes-programm")]
+    [InlineData("/opt/woanders/bifrost-wasi-host", "/usr/local/bin/faolan-wasi-host")]
+    [InlineData("/usr/local/bin/bifrost-wasi-host-x", "/usr/local/bin/faolan-wasi-host")]
+    public void The_old_host_name_does_not_name_another_program(string configured, string host)
+    {
+        WasiRuntimeConnector.NamesHost(configured, host).Should().BeFalse();
+    }
+
     [Fact]
     public async Task The_bare_file_name_of_the_operator_host_is_accepted()
     {

@@ -40,6 +40,7 @@ public sealed class ChangelogMigrationRollbackTests
         "FAOLAN_UPDATE_",
         "FAOLAN_RUN_",
         "FAOLAN_REQUIRE_",
+        "FAOLAN_CLI", // Übersetzungssymbol der CLI (#if FAOLAN_CLI), keine Option
     ];
 
     private readonly ITestOutputHelper _output;
@@ -53,7 +54,7 @@ public sealed class ChangelogMigrationRollbackTests
     [Fact]
     public void Every_environment_option_is_documented_where_an_operator_looks()
     {
-        var pattern = new Regex(@"BIFROST_[A-Z0-9_]+", RegexOptions.Compiled);
+        var pattern = new Regex(@"FAOLAN_[A-Z0-9_]+", RegexOptions.Compiled);
 
         var used = RepoTree.CSharpFiles("src")
             .SelectMany(file => pattern.Matches(file.Content).Select(m => m.Value))
