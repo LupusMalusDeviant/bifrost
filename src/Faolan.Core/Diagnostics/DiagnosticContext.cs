@@ -64,6 +64,13 @@ public sealed record DiagnosticContext
     public IUpstreamDiagnosticProbe? Upstreams { get; init; }
 
     /// <summary>
+    /// Slugs der Upstreams, deren gespeicherte Konfiguration den WASI-Host noch unter dem alten Namen
+    /// nennt (Vertrag umbenennung-faolan §2.3). <c>null</c> = nicht ermittelt; BFR-UP-0002 meldet dann
+    /// Skipped.
+    /// </summary>
+    public IReadOnlyList<string>? UpstreamsWithLegacyHostName { get; init; }
+
+    /// <summary>
     /// Die Verlustauskunft des Audits. <c>null</c> = nicht verdrahtet; BFR-DB-0007 meldet dann
     /// Skipped — und ausdrücklich nicht „lückenlos".
     /// </summary>

@@ -179,3 +179,48 @@ public sealed class UpstreamStatesCheck : IDiagnosticCheck
             details);
     }
 }
+
+/// <summary>
+/// BFR-UP-0002 — Upstreams, die den WASI-Host noch unter seinem alten Namen nennen.
+/// <para>
+/// Sie laufen: Der alte Name <c>bifrost-wasi-host</c> bezeichnet den umbenannten Host derselben
+/// Instanz (Vertrag umbenennung-faolan §2.3). Für jede Brücke gilt aber: Die Übernahme wird gemeldet
+/// (§1). Ohne diesen Befund liefe eine Konfiguration jahrelang auf einem Namen, den keine Doku mehr
+/// nennt — bis die Brücke entfällt und der Upstream ohne Vorwarnung ausfällt.
+/// </para>
+/// </summary>
+public sealed class UpstreamLegacyHostNameCheck : IDiagnosticCheck
+{
+    public string Code => DiagnosticCodes.UpstreamLegacyHostName;
+
+    public DiagnosticScope Scope => DiagnosticScope.Upstreams;
+
+    public TimeSpan Timeout => TimeSpan.FromSeconds(5);
+
+    public Task<DiagnosticCheck> RunAsync(DiagnosticContext context, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.UpstreamsWithLegacyHostName is not { } slugs)
+        {
+            return Task.FromResult(CheckOutcome.Skipped(
+                Code,
+                "Die gespeicherten Upstream-Konfigurationen kennt nur der laufende Gateway."));
+        }
+
+        if (slugs.Count == 0)
+        {
+            return Task.FromResult(CheckOutcome.Pass(Code, "Kein Upstream nennt den WASI-Host unter dem alten Namen."));
+        }
+
+        return Task.FromResult(CheckOutcome.Warning(
+            Code,
+            $"{slugs.Count} Upstream(s) nennen den WASI-Host noch 'bifrost-wasi-host': {string.Join(", ", slugs)}. "
+            + "Sie laufen; der alte Name bezeichnet den umbenannten Host.",
+            "In der Konfiguration dieser Upstreams Wasi.HostExecutable auf 'faolan-wasi-host' (bzw. "
+            + "/usr/local/bin/faolan-wasi-host) umstellen. Die Übernahme ist eine Übergangshilfe, keine "
+            + "Zusage auf Dauer (docs/upgrade-faolan.md).",
+            CheckOutcome.Details(
+                ("anzahl", DetailFormat.Count(slugs.Count)),
+                ("upstreams", string.Join(", ", slugs)))));
+    }
+}

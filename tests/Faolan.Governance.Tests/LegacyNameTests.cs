@@ -30,6 +30,7 @@ public sealed class LegacyNameTests
         "bifrost://assets/",                                   // §2.3 Asset-URI
         "${bifrost:secret/",                                   // §2.3 Export-Platzhalter
         "X-Bifrost-",                                          // §2.3 Kopfzeilen
+        "bifrost-wasi-host",                                   // §2.3 alter Name des WASI-Hosts
         "__BifrostMigrationJournal",                           // §2.4 Tabelle
         "Bifrost.Server.ApprovalElicitation.RequestState.v1",  // §2.4 Schlüsselableitung
         "bifrost.db",                                          // §2.2 Datenbankdatei, §2.4 Archiveintrag
@@ -51,7 +52,6 @@ public sealed class LegacyNameTests
         ["src/Faolan.Core/Diagnostics/Checks/ConfigurationChecks.cs"] = "§2.2 BFR-CFG-0002 nennt die alten Präfixe",
         ["src/Faolan.Persistence/Startup/MigrationLock.cs"] = "§2.4 Sperrschlüssel „BIFROST“ + 1",
         ["src/Faolan.Upstream/Isolation/ContainerIdentity.cs"] = "§2.4 Container-Etiketten",
-        ["src/Faolan.Upstream/Wasi/WasiRuntimeConnector.cs"] = "§2.3 alter Name des WASI-Hosts",
         ["spikes/wasi-component-runtime/src/disk_cache.rs"] = "§2.4 Cache-Kennung BIFROSTC",
         ["docker-compose.yml"] = "§3 Hinweis für Bestandsinstallationen am Volume",
         ["docker-compose.postgres.yml"] ="§3 POSTGRES_DB/POSTGRES_USER bleiben bifrost",

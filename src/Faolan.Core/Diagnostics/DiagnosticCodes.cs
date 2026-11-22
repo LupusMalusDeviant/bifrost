@@ -120,6 +120,13 @@ public static class DiagnosticCodes
     /// <summary>Zustände der konfigurierten Upstreams.</summary>
     public const string UpstreamStates = "BFR-UP-0001";
 
+    /// <summary>
+    /// Upstreams, die den WASI-Host noch als <c>bifrost-wasi-host</c> nennen. Sie laufen — der alte
+    /// Name bezeichnet den umbenannten Host —, aber die Brücke ist keine Zusage auf Dauer
+    /// (Vertrag umbenennung-faolan §1, §2.3).
+    /// </summary>
+    public const string UpstreamLegacyHostName = "BFR-UP-0002";
+
     // ── BFR-UP-0010…0019: die Zeitlinie EINES Verbindungsversuchs (WP4.6) ───────────────────────
     //
     // BFR-UP-0001 beschreibt den Bestand („welche Upstreams sind bereit?"). Die Codes hier
@@ -193,6 +200,7 @@ public static class DiagnosticCodes
         ContainerRuntime,
         WasiHost,
         UpstreamStates,
+        UpstreamLegacyHostName,
         UpstreamValidation,
         UpstreamPolicy,
         UpstreamRuntime,

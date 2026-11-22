@@ -58,6 +58,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\Faolan.Abstractions\EnvironmentNameChain.cs" Link="Shared\EnvironmentNameChain.cs" />
+    <Compile Include="..\Faolan.Abstractions\WasiHostNames.cs" Link="Shared\WasiHostNames.cs" />
   </ItemGroup>
 
   <!--

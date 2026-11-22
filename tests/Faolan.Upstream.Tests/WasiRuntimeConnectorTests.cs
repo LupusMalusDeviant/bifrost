@@ -382,6 +382,21 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
         WasiRuntimeConnector.NamesHost(configured, host).Should().BeTrue();
     }
 
+    /// <summary>
+    /// Unter Windows passte der alte Name in jeder Schreibweise auf den alten Host; das muss für den
+    /// umbenannten so bleiben (Review-Befund).
+    /// </summary>
+    [Fact]
+    public void The_old_host_name_follows_the_case_rules_of_the_platform()
+    {
+        // Unter Windows in jeder Schreibweise, sonst nur genau so — wie der Dateiname selbst.
+        var expected = OperatingSystem.IsWindows();
+        var host = OperatingSystem.IsWindows() ? @"C:\faolan\faolan-wasi-host.exe" : "/usr/local/bin/faolan-wasi-host";
+
+        WasiRuntimeConnector.NamesHost("BIFROST-WASI-HOST.EXE", host).Should().Be(expected);
+        WasiRuntimeConnector.NamesHost("Bifrost-Wasi-Host", host).Should().Be(expected);
+    }
+
     /// <summary>Die Brücke lenkt nichts um: Der alte Name passt nur auf den umbenannten Host.</summary>
     [Theory]
     [InlineData("bifrost-wasi-host", "anderes-programm")]

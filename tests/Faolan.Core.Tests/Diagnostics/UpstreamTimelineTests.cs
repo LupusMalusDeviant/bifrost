@@ -86,6 +86,38 @@ public class UpstreamTimelineTests
     }
 
     /// <summary>
+    /// Review-Befund zum WASI-Hostnamen: Ein Upstream aus 0.12.0 nennt
+    /// <c>/usr/local/bin/bifrost-wasi-host</c>, im Image liegt nur <c>faolan-wasi-host</c>. Der
+    /// Connector nimmt den umbenannten Host; die Diagnose darf den Upstream nicht vorher als „Programm
+    /// fehlt" abweisen.
+    /// </summary>
+    [Fact]
+    public async Task Stufe3_Runtime_prueft_beim_alten_Hostnamen_den_umbenannten_Host()
+    {
+        var directory = OperatingSystem.IsWindows() ? @"C:\faolan\bin\" : "/usr/local/bin/";
+        var suffix = OperatingSystem.IsWindows() ? ".exe" : string.Empty;
+        var files = new FakeFileProbe();
+        files.Files.Add(directory + "faolan-wasi-host" + suffix);
+
+        var report = await RunAsync(
+            Wasi(directory + "bifrost-wasi-host" + suffix),
+            Ok(),
+            policy: HostExecutionPolicy.AllowedByOperator(),
+            files: files);
+
+        Outcome(report, UpstreamStage.Runtime).Should().Be(UpstreamStageOutcome.Passed,
+            "geprüft wird das Programm, das der Connector nimmt");
+    }
+
+    private static UpstreamServerConfig Wasi(string host) => new(
+        "wasi", "WASI", UpstreamTransportKind.Wasi, true,
+        Wasi: new WasiTransportOptions(
+            host,
+            OperatingSystem.IsWindows() ? @"C:\faolan\c.wasm" : "/data/c.wasm",
+            OperatingSystem.IsWindows() ? @"C:\faolan\c.sig" : "/data/c.sig",
+            []));
+
+    /// <summary>
     /// Stufe 4 — Zielschutz. Der Name löst auf, aber nach innen. Ohne diese Prüfung wäre das
     /// Gateway ein Werkzeug, um interne Dienste zu erreichen.
     /// </summary>

@@ -108,6 +108,41 @@ public class WasiHostCheckTests
     }
 }
 
+/// <summary>BFR-UP-0002 — die Brücke für den WASI-Hostnamen wird gemeldet (Vertrag umbenennung-faolan §1).</summary>
+public class UpstreamLegacyHostNameCheckTests
+{
+    [Fact]
+    public async Task Without_the_facts_it_is_skipped()
+    {
+        var result = await new UpstreamLegacyHostNameCheck()
+            .RunAsync(DiagnosticWorld.Context(), TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(CheckStatus.Skipped);
+    }
+
+    [Fact]
+    public async Task No_old_name_passes()
+    {
+        var context = DiagnosticWorld.Context() with { UpstreamsWithLegacyHostName = [] };
+
+        var result = await new UpstreamLegacyHostNameCheck().RunAsync(context, TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(CheckStatus.Pass);
+    }
+
+    [Fact]
+    public async Task An_old_name_warns_and_names_the_upstream()
+    {
+        var context = DiagnosticWorld.Context() with { UpstreamsWithLegacyHostName = ["zaehler", "wetter"] };
+
+        var result = await new UpstreamLegacyHostNameCheck().RunAsync(context, TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(CheckStatus.Warning);
+        result.Summary.Should().Contain("zaehler").And.Contain("wetter");
+        result.Remediation.Should().Contain("faolan-wasi-host");
+    }
+}
+
 public class UpstreamStatesCheckTests
 {
     [Fact]

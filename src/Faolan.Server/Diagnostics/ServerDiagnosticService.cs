@@ -162,6 +162,8 @@ public sealed class ServerDiagnosticContextFactory
             ContainerRuntimeName = runtimeName,
             Database = _database,
             Upstreams = _upstreamProbe,
+            // BFR-UP-0002: Gespeicherte Konfigurationen mit dem alten WASI-Hostnamen (Vertrag §2.3).
+            UpstreamsWithLegacyHostName = await UpstreamsWithLegacyHostNameAsync(_upstreams, ct).ConfigureAwait(false),
             // BFR-DB-0007: Was die Audit-Senke an Verlusten gezählt hat, gehört in den Bericht —
             // ein stiller Verlust ist genau das, was die Zusage "lückenloses Audit" bricht.
             Audit = _auditProbe,
@@ -175,6 +177,36 @@ public sealed class ServerDiagnosticContextFactory
             // uebernommen haben (ADR-0025 E3), und genau dieser Unterschied ist der Befund.
             HostExecution = _hostExecution.State,
         };
+    }
+
+    /// <summary>
+    /// Die Slugs der Upstreams, deren letzte Konfiguration den WASI-Host unter dem alten Namen nennt.
+    /// <c>null</c>, wenn die Konfigurationen nicht lesbar sind — „nicht ermittelt" ist ehrlicher als
+    /// „keiner". Auch der Start meldet diese Liste (Program.cs).
+    /// </summary>
+    internal static async Task<IReadOnlyList<string>?> UpstreamsWithLegacyHostNameAsync(
+        IUpstreamConfigStore store, CancellationToken ct)
+    {
+        try
+        {
+            var latest = await store.GetAllLatestAsync(ct).ConfigureAwait(false);
+            return [.. latest.Values
+                .Select(version => version.Config)
+                .Where(config => config.Kind is UpstreamTransportKind.Wasi
+                    && WasiHostNames.UsesLegacyName(config.Wasi?.HostExecutable))
+                .Select(config => config.Slug)
+                .Order(StringComparer.Ordinal)];
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+#pragma warning disable CA1031 // Eine unlesbare Konfiguration darf den Bericht nicht kippen; der Check meldet „nicht ermittelt".
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            return null;
+        }
     }
 
     private Dictionary<string, string> Snapshot()

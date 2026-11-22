@@ -81,6 +81,7 @@ public sealed class DiagnosticService : IDiagnosticService
         new WasiHostCheck(),
 
         new UpstreamStatesCheck(),
+        new UpstreamLegacyHostNameCheck(),
 
         new HostExecutionPolicyCheck(),
         new HostExecutionAdoptionCheck(),

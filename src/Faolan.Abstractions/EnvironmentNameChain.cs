@@ -120,11 +120,25 @@ static class EnvironmentNameChain
     /// anderen Wert als die Vorgabe trägt — dann hat ihn der Betreiber gesetzt, und die Regel oben
     /// gilt.
     /// </para>
+    /// <para>
+    /// <b>Auch als Datei.</b> <c>BIFROST_DATA_DIR_FILE</c> ist dieselbe Einstellung wie
+    /// <c>BIFROST_DATA_DIR</c>; ihr Inhalt wird gelesen und genauso verglichen. Eine Datei, die sich
+    /// nicht lesen lässt, ist ebenfalls ein Abbruchgrund — raten wäre wieder die stille Vorgabe.
+    /// </para>
+    /// <para>
+    /// <b>Werte stehen nie in der Meldung</b>, nur Namen: Eine Variable mit <c>_FILE</c> ist meist ein
+    /// Geheimnis, und ein abgeleitetes Image kann auch für eine Verbindungszeichenfolge eine Vorgabe
+    /// erklären. Eine unlesbare Deklaration bricht den Start ebenfalls ab, statt die Prüfung still zu
+    /// übergehen.
+    /// </para>
     /// </summary>
-    public static IReadOnlyList<(string OldName, string OldValue, string NewName, string ImageValue)> FindImageDefaultConflicts(
-        IDictionary environment)
+    /// <param name="readFile">Liest eine Datei; ersetzbar für Tests. Vorgabe: <see cref="File.ReadAllText(string)"/>.</param>
+    /// <returns>Je Problem eine fertige Meldung mit Abhilfe; leer heißt: Start frei.</returns>
+    public static IReadOnlyList<string> FindImageDefaultConflicts(
+        IDictionary environment, Func<string, string>? readFile = null)
     {
         ArgumentNullException.ThrowIfNull(environment);
+        readFile ??= File.ReadAllText;
 
         var present = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (DictionaryEntry entry in environment)
@@ -135,25 +149,29 @@ static class EnvironmentNameChain
             }
         }
 
-        var conflicts = new List<(string OldName, string OldValue, string NewName, string ImageValue)>();
+        var problems = new List<string>();
         if (!present.TryGetValue(ImageDefaultsVariable, out var declared))
         {
-            return conflicts;
+            return problems;
         }
 
         foreach (var pair in declared.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var separator = pair.IndexOf('=', StringComparison.Ordinal);
-            if (separator <= 0)
+            var newName = separator > 0 ? pair[..separator] : string.Empty;
+            if (separator <= 0
+                || !newName.StartsWith(CurrentPrefix, StringComparison.Ordinal)
+                || newName.Length == CurrentPrefix.Length)
             {
+                problems.Add(
+                    $"Start abgebrochen: {ImageDefaultsVariable} enthält einen Eintrag, der nicht die Form "
+                    + $"'{CurrentPrefix}NAME=Wert' hat. Ohne lesbare Deklaration lässt sich nicht prüfen, ob eine "
+                    + "Vorgabe des Images eine alte Einstellung verdeckt. Die Deklaration im Image berichtigen.");
                 continue;
             }
 
-            var newName = pair[..separator];
             var imageValue = pair[(separator + 1)..];
-            if (!newName.StartsWith(CurrentPrefix, StringComparison.Ordinal)
-                || !present.TryGetValue(newName, out var current)
-                || !string.Equals(current, imageValue, StringComparison.Ordinal))
+            if (!present.TryGetValue(newName, out var current) || !string.Equals(current, imageValue, StringComparison.Ordinal))
             {
                 continue;
             }
@@ -162,19 +180,64 @@ static class EnvironmentNameChain
             for (var generation = LegacyPrefixes.Count - 1; generation >= 0; generation--)
             {
                 var oldName = LegacyPrefixes[generation] + suffix;
-                if (present.TryGetValue(oldName, out var oldValue))
+                string? oldValue;
+                var shownName = oldName;
+                if (present.TryGetValue(oldName, out var direct))
                 {
-                    if (!string.Equals(oldValue, imageValue, StringComparison.Ordinal))
-                    {
-                        conflicts.Add((oldName, oldValue, newName, imageValue));
-                    }
-
-                    break;
+                    oldValue = direct;
                 }
+                else if (present.TryGetValue(oldName + "_FILE", out var path))
+                {
+                    shownName = oldName + "_FILE";
+                    try
+                    {
+                        oldValue = readFile(path).TrimEnd('\r', '\n');
+                    }
+#pragma warning disable CA1031 // Jeder Lesefehler führt zum selben Ergebnis: Abbruch mit Namen.
+                    catch (Exception)
+#pragma warning restore CA1031
+                    {
+                        problems.Add(
+                            $"Start abgebrochen: {shownName} ist gesetzt, die Datei lässt sich aber nicht lesen. "
+                            + $"Das Image setzt {newName} selbst; ohne den alten Wert lässt sich nicht entscheiden, "
+                            + $"welcher gemeint ist. {newName} (oder {newName}_FILE) setzen und {shownName} entfernen.");
+                        break;
+                    }
+                }
+                else
+                {
+                    continue;
+                }
+
+                if (!string.Equals(oldValue, imageValue, StringComparison.Ordinal))
+                {
+                    problems.Add(DescribeConflict(shownName, newName, oldValue));
+                }
+
+                break;
             }
         }
 
-        return conflicts;
+        return problems;
+    }
+
+    private static string DescribeConflict(string oldName, string newName, string oldValue)
+    {
+        var start = $"Start abgebrochen: {oldName} ist gesetzt und weicht von der Vorgabe ab, die das Image "
+            + $"für {newName} mitbringt. Bis 0.12.0 galt der Wert des Betreibers, nach der Umbenennung gälte "
+            + "still die Vorgabe des Images. ";
+
+        // Der alte Wert nennt den Host, den das Image bis 0.12.0 mitbrachte. Ihn unter dem neuen Namen
+        // zu setzen, zeigte auf ein Programm, das es im neuen Image nicht mehr gibt.
+        if (newName.EndsWith("_WASI_HOST", StringComparison.Ordinal) && WasiHostNames.UsesLegacyName(oldValue))
+        {
+            return start + $"Der alte Wert nennt den bis 0.12.0 mitgelieferten Host: {oldName} entfernen, das "
+                + "Image bringt den umbenannten Host selbst mit. Siehe docs/upgrade-faolan.md.";
+        }
+
+        return start + $"Ist der alte Wert gemeint, ihn unter {newName} setzen (bei einem Host: der Pfad des "
+            + $"tatsächlich eingebundenen Programms); ist die Vorgabe gemeint, {oldName} entfernen. "
+            + "Siehe docs/upgrade-faolan.md.";
     }
 
     /// <summary>

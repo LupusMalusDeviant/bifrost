@@ -193,7 +193,96 @@ public sealed class LegacyEnvironmentTests
             (oldName, "/srv/gateway")));
 
         conflicts.Should().ContainSingle()
-            .Which.Should().Be((oldName, "/srv/gateway", "FAOLAN_DATA_DIR", "/data"));
+            .Which.Should().Contain(oldName).And.Contain("FAOLAN_DATA_DIR")
+            .And.NotContain("/srv/gateway", "Werte stehen nie in der Meldung");
+    }
+
+    /// <summary>
+    /// Review-Befund: Die alte Einstellung als Datei (<c>BIFROST_DATA_DIR_FILE</c>) ist dieselbe
+    /// Einstellung. Ihr Inhalt wird verglichen wie ein direkter Wert.
+    /// </summary>
+    [Theory]
+    [InlineData("BIFROST_DATA_DIR_FILE")]
+    [InlineData("MCPMCP_DATA_DIR_FILE")]
+    public void An_old_setting_given_as_a_file_is_compared_by_its_content(string oldName)
+    {
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(
+            Environment(
+                (EnvironmentNameChain.ImageDefaultsVariable, ImageDefaults),
+                ("FAOLAN_DATA_DIR", "/data"),
+                (oldName, "/run/secrets/datadir")),
+            path => path == "/run/secrets/datadir" ? "/srv/gateway\n" : throw new FileNotFoundException(path));
+
+        conflicts.Should().ContainSingle().Which.Should().Contain(oldName).And.NotContain("/srv/gateway");
+    }
+
+    [Fact]
+    public void An_old_file_with_the_image_value_is_no_conflict()
+    {
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(
+            Environment(
+                (EnvironmentNameChain.ImageDefaultsVariable, ImageDefaults),
+                ("FAOLAN_DATA_DIR", "/data"),
+                ("BIFROST_DATA_DIR_FILE", "/run/secrets/datadir")),
+            _ => "/data\n");
+
+        conflicts.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void An_unreadable_old_file_stops_the_start()
+    {
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(
+            Environment(
+                (EnvironmentNameChain.ImageDefaultsVariable, ImageDefaults),
+                ("FAOLAN_DATA_DIR", "/data"),
+                ("BIFROST_DATA_DIR_FILE", "/fehlt")),
+            path => throw new FileNotFoundException(path));
+
+        conflicts.Should().ContainSingle().Which.Should().Contain("nicht lesen");
+    }
+
+    /// <summary>Review-Befund: Eine kaputte Deklaration darf die Prüfung nicht still abschalten.</summary>
+    [Theory]
+    [InlineData("FAOLAN_DATA_DIR:/data")]
+    [InlineData("DATA_DIR=/data")]
+    [InlineData("FAOLAN_=/data")]
+    public void A_malformed_declaration_stops_the_start(string declaration)
+    {
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(Environment(
+            (EnvironmentNameChain.ImageDefaultsVariable, declaration),
+            ("FAOLAN_DATA_DIR", "/data")));
+
+        conflicts.Should().ContainSingle().Which.Should().Contain(EnvironmentNameChain.ImageDefaultsVariable);
+    }
+
+    /// <summary>
+    /// Review-Befund: Wer den bis 0.12.0 mitgelieferten Host ausdrücklich gesetzt hatte, darf nicht
+    /// den Rat bekommen, diesen Pfad unter dem neuen Namen zu setzen — dort liegt kein Programm mehr.
+    /// </summary>
+    [Fact]
+    public void The_old_bundled_host_gets_the_advice_to_drop_the_variable()
+    {
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(Environment(
+            (EnvironmentNameChain.ImageDefaultsVariable, ImageDefaults),
+            ("FAOLAN_WASI_HOST", "/usr/local/bin/faolan-wasi-host"),
+            ("BIFROST_WASI_HOST", "/usr/local/bin/bifrost-wasi-host")));
+
+        conflicts.Should().ContainSingle().Which.Should().Contain("BIFROST_WASI_HOST entfernen")
+            .And.NotContain("unter FAOLAN_WASI_HOST setzen");
+    }
+
+    /// <summary>Review-Befund: Ein Geheimnis aus einer Vorgabe-Kollision erscheint nicht in der Meldung.</summary>
+    [Fact]
+    public void A_conflict_never_shows_the_values()
+    {
+        var secret = "Password=" + Guid.NewGuid().ToString("N");
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(Environment(
+            (EnvironmentNameChain.ImageDefaultsVariable, "FAOLAN_DB_CONNECTION=Host=db"),
+            ("FAOLAN_DB_CONNECTION", "Host=db"),
+            ("BIFROST_DB_CONNECTION", "Host=alt;" + secret)));
+
+        conflicts.Should().ContainSingle().Which.Should().NotContain(secret).And.NotContain("Host=alt");
     }
 
     [Fact]

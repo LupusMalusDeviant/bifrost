@@ -89,30 +89,64 @@ public sealed class RenameUpgradeTests
     /// <summary>
     /// Review-Befund H2 im echten Prozess: Das Image setzt <c>FAOLAN_DATA_DIR</c> selbst, der
     /// Betreiber hat noch <c>BIFROST_DATA_DIR</c> mit anderem Wert. Der Server darf nicht auf der
-    /// Vorgabe starten, sondern bricht ab und nennt beide Namen.
+    /// Vorgabe starten, sondern bricht ab und nennt beide Namen — für beide alten Präfixe und für die
+    /// Datei-Variante.
+    /// <para>
+    /// Mit Frist: Versagt die Sperre, läuft der Server einfach weiter. Ohne Frist hinge der Test dann,
+    /// statt rot zu werden.
+    /// </para>
     /// </summary>
-    [Fact]
-    public async Task An_image_default_hiding_an_old_setting_stops_the_start()
+    [Theory]
+    [InlineData("BIFROST_DATA_DIR", false)]
+    [InlineData("MCPMCP_DATA_DIR", false)]
+    [InlineData("BIFROST_DATA_DIR", true)]
+    public async Task An_image_default_hiding_an_old_setting_stops_the_start(string oldName, bool asFile)
     {
         var ct = TestContext.Current.CancellationToken;
         var imageDir = Directory.CreateTempSubdirectory("faolan-image-default").FullName;
         var operatorDir = Directory.CreateTempSubdirectory("faolan-operator-dir").FullName;
+        var valueFile = Path.Combine(operatorDir, "datadir.txt");
         try
         {
-            var start = ServerProcess.StartInfo(new Dictionary<string, string>
+            var environment = new Dictionary<string, string>
             {
                 ["FAOLAN_DATA_DIR"] = imageDir,
                 ["FAOLAN_IMAGE_DEFAULTS"] = "FAOLAN_DATA_DIR=" + imageDir,
-                ["BIFROST_DATA_DIR"] = operatorDir,
-            });
-            using var process = Process.Start(start) ?? throw new InvalidOperationException("Server startet nicht.");
+            };
+            if (asFile)
+            {
+                await File.WriteAllTextAsync(valueFile, operatorDir + "\n", ct);
+                environment[oldName + "_FILE"] = valueFile;
+            }
+            else
+            {
+                environment[oldName] = operatorDir;
+            }
+
+            using var process = Process.Start(ServerProcess.StartInfo(environment))
+                ?? throw new InvalidOperationException("Server startet nicht.");
             var stdout = process.StandardOutput.ReadToEndAsync(ct);
-            var stderr = await process.StandardError.ReadToEndAsync(ct);
-            await process.WaitForExitAsync(ct);
+            var stderr = process.StandardError.ReadToEndAsync(ct);
+
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            deadline.CancelAfter(TimeSpan.FromSeconds(60));
+            try
+            {
+                await process.WaitForExitAsync(deadline.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                process.Kill(entireProcessTree: true);
+                throw new InvalidOperationException(
+                    "Der Server lief nach 60 s noch — die Sperre hat den Start nicht verhindert.");
+            }
+
+            var error = await stderr;
             await stdout;
 
-            process.ExitCode.Should().Be(2);
-            stderr.Should().Contain("BIFROST_DATA_DIR").And.Contain("FAOLAN_DATA_DIR");
+            process.ExitCode.Should().Be(2, error);
+            error.Should().Contain(asFile ? oldName + "_FILE" : oldName).And.Contain("FAOLAN_DATA_DIR");
+            error.Should().NotContain(operatorDir, "die Meldung nennt Namen, keine Werte");
             Directory.EnumerateFileSystemEntries(imageDir).Should().BeEmpty(
                 "auf der Vorgabe des Images darf nichts angelegt worden sein");
         }

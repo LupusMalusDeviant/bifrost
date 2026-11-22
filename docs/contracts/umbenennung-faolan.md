@@ -1,6 +1,6 @@
 # Vertrag: Umbenennung auf Faolan
 
-**Stand:** 2026-11-22 · **Status:** Abgenommen vom Nutzer am 2026-11-16, Nachtrag (Container-Etiketten bleiben, UI-Cookies mit Bruch, Postgres-Volume über Variable, Volume-Messung) abgenommen am 2026-11-22; zweiter Nachtrag (Cache-Kennung und Sperrschlüssel bleiben) abgenommen am 2026-11-22; dritter Nachtrag (WASI-Hostname als Brücke, Vorgaben des Images) abgenommen am 2026-11-22 · **Gilt für:** Plan 0004, R1 – R7
+**Stand:** 2026-11-22 · **Status:** Abgenommen vom Nutzer am 2026-11-16, Nachtrag (Container-Etiketten bleiben, UI-Cookies mit Bruch, Postgres-Volume über Variable, Volume-Messung) abgenommen am 2026-11-22; zweiter Nachtrag (Cache-Kennung und Sperrschlüssel bleiben) abgenommen am 2026-11-22; dritter Nachtrag (WASI-Hostname als Brücke, Vorgaben des Images) abgenommen am 2026-11-22; vierter Nachtrag (Befunde des zweiten Reviews) abgenommen am 2026-11-22 · **Gilt für:** Plan 0004, R1 – R7
 **Grundlage:** [ADR-0026](../adr/0026-umbenennung-auf-faolan.md),
 [Plan 0004](../plans/0004-umbenennung-und-rueckkanal-projektion.md) Abschnitt 1.2
 
@@ -60,6 +60,11 @@ Image seine Vorgaben in `FAOLAN_IMAGE_DEFAULTS` (`NAME=Wert;…`). Trägt ein do
 den Vorgabewert und ist ein alter Name mit **anderem** Wert gesetzt, bricht der Start ab (Exit-Code 2)
 und nennt beide Variablen. Gleicht der alte Wert der Vorgabe, oder trägt der neue Name einen anderen
 Wert, gilt die gewöhnliche Regel. Ein Test hält Dockerfile und Deklaration übereinander.
+Ergänzt nach dem zweiten Review (vierter Nachtrag 2026-11-22): Die Datei-Variante
+(`BIFROST_DATA_DIR_FILE`) ist dieselbe Einstellung, ihr Inhalt wird ebenso verglichen; eine
+unlesbare Datei und eine unlesbare Deklaration brechen den Start ebenfalls ab. Die Meldung nennt nur
+Namen, nie Werte. Nennt der alte Wert den bis 0.12.0 mitgelieferten WASI-Host, rät sie zum Entfernen
+der alten Variable statt zum Umbenennen.
 
 ### 2.3 Was auf dem Draht oder in Dateien steht — Brücke
 
@@ -72,7 +77,7 @@ Wert, gilt die gewöhnliche Regel. Ein Test hält Dockerfile und Deklaration üb
 | Benachrichtigung ausgehend: dieselben zwei Header | — | **beide Paare mit gleichem Wert**, bis die Brücke entfällt |
 | `X-Bifrost-Setup-Token` eingehend | beide Namen | — |
 | `X-Bifrost-Instance` | beide Namen bei der Schleifenerkennung | `X-Faolan-Instance` |
-| `Wasi.HostExecutable` gespeicherter Upstreams: `bifrost-wasi-host`, `/usr/local/bin/bifrost-wasi-host` | der alte Name bezeichnet den Host `faolan-wasi-host` derselben Instanz, als Dateiname oder als Pfad im selben Verzeichnis; gestartet wird nur der Host des Betreibers (dritter Nachtrag 2026-11-22, Review-Befund H1) | was der Betreiber einträgt; die Doku nennt `faolan-wasi-host` |
+| `Wasi.HostExecutable` gespeicherter Upstreams: `bifrost-wasi-host`, `/usr/local/bin/bifrost-wasi-host` | der alte Name bezeichnet den Host `faolan-wasi-host` derselben Instanz, als Dateiname oder als Pfad im selben Verzeichnis; gestartet wird nur der Host des Betreibers (dritter Nachtrag 2026-11-22, Review-Befund H1). Groß- und Kleinschreibung wie im Dateisystem; Verbindungsdiagnose und Connector teilen die Regel (`WasiHostNames`); die Übernahme meldet der Start und `doctor` als `BFR-UP-0002` (vierter Nachtrag) | was der Betreiber einträgt; die Doku nennt `faolan-wasi-host` |
 
 Die ausgehende Benachrichtigung ist der eine Fall, in dem **geschrieben** wird, was ein fremdes
 System liest: Ein Empfänger, der heute `X-Bifrost-Signature` prüft, bekäme sonst über Nacht

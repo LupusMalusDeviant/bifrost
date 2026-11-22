@@ -565,7 +565,9 @@ public sealed partial class UpstreamConnectionDiagnostics : IUpstreamConnectionD
     {
         UpstreamTransportKind.Stdio => config.Stdio?.Command,
         UpstreamTransportKind.Cli => config.Cli?.Executable,
-        UpstreamTransportKind.Wasi => config.Wasi?.HostExecutable,
+        // Der alte Hostname bezeichnet den umbenannten Host (WasiHostNames, Vertrag §2.3) — geprüft
+        // wird das Programm, das der Connector tatsächlich nimmt, nicht der alte Pfad.
+        UpstreamTransportKind.Wasi => config.Wasi?.HostExecutable is { } host ? WasiHostNames.Translate(host) : null,
         _ => null,
     };
 

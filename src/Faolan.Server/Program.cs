@@ -55,13 +55,10 @@ if (args.Contains("--healthcheck"))
 var imageDefaultConflicts = EnvironmentNameChain.FindImageDefaultConflicts(Environment.GetEnvironmentVariables());
 if (imageDefaultConflicts.Count > 0)
 {
-    foreach (var (oldName, oldValue, newName, imageValue) in imageDefaultConflicts)
+    // Nur Namen, nie Werte: Die Meldung landet im Containerlog (EnvironmentNameChain).
+    foreach (var problem in imageDefaultConflicts)
     {
-        await Console.Error.WriteLineAsync(
-            $"Start abgebrochen: {oldName}='{oldValue}' ist gesetzt, das Image setzt aber {newName}='{imageValue}'. "
-            + $"Bis 0.12.0 galt der Wert des Betreibers, nach der Umbenennung gälte still die Vorgabe des Images. "
-            + $"{newName}='{oldValue}' setzen (oder {oldName} entfernen, wenn die Vorgabe gemeint ist). "
-            + "Siehe docs/upgrade-faolan.md.");
+        await Console.Error.WriteLineAsync(problem);
     }
 
     return 2;
@@ -620,6 +617,26 @@ if (await app.EnsureKeyRingUsableAsync() is { } keyRingExitCode)
 {
     return keyRingExitCode;
 }
+
+// Brücke WASI-Hostname (Vertrag umbenennung-faolan §1, §2.3): Jede Übernahme eines alten Namens
+// wird beim Start gemeldet. Die Upstreams laufen, aber auf einem Namen, den keine Doku mehr nennt.
+// Erst nach dem Start: Die Migrationen laufen als Hosted Service, vorher gibt es die Tabelle bei
+// einer frischen Instanz noch nicht.
+app.Lifetime.ApplicationStarted.Register(() => _ = Task.Run(async () =>
+{
+    var legacyHostUpstreams = await Faolan.Server.Diagnostics.ServerDiagnosticContextFactory
+        .UpstreamsWithLegacyHostNameAsync(app.Services.GetRequiredService<IUpstreamConfigStore>(), app.Lifetime.ApplicationStopping)
+        .ConfigureAwait(false);
+    if (legacyHostUpstreams is { Count: > 0 })
+    {
+#pragma warning disable CA1848 // Einmal beim Start — kein Hot Path.
+        app.Logger.LogWarning(
+            "WASI-Upstreams nennen den Host noch 'bifrost-wasi-host': {Upstreams}. Sie laufen gegen den "
+            + "umbenannten Host 'faolan-wasi-host'; Wasi.HostExecutable bitte umstellen (BFR-UP-0002).",
+            string.Join(", ", legacyHostUpstreams));
+#pragma warning restore CA1848
+    }
+}));
 
 // Das Sitzungs-Cookie der Web-UI trägt außerhalb von Development immer 'Secure' (NFR-04). Ein
 // Browser verwirft ein solches Cookie über Klartext-HTTP **stillschweigend**: Die Anmeldung geht

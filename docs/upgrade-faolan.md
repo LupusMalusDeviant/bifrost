@@ -111,6 +111,9 @@ faolan doctor
   keinen Grund, sie umzubenennen.
 - **`BFR-CFG-0002`** listet Variablen, die noch alt benannt sind. Das ist eine Empfehlung, kein
   Fehler.
+- **`BFR-UP-0002`** nennt WASI-Upstreams, die den Host noch `bifrost-wasi-host` nennen. Sie laufen;
+  `Wasi.HostExecutable` bei Gelegenheit auf `faolan-wasi-host` umstellen. Dieselbe Liste steht als
+  Warnung im Startlog.
 
 Danach in der Weboberfläche neu anmelden: Die Cookies heißen jetzt `faolan-*`, die alten Sitzungen
 gelten nicht mehr.
@@ -134,7 +137,16 @@ gelten nicht mehr.
 > `FAOLAN_WASI_HOST` selbst. Wer bisher `BIFROST_DATA_DIR` oder `BIFROST_WASI_HOST` auf einen
 > **anderen** Wert gesetzt hatte, bekäme sonst still die Vorgabe des Images — beim Datenverzeichnis
 > heißt das: eine leere Instanz. Stattdessen bricht der Start mit Exit-Code 2 ab und nennt beide
-> Variablen. Abhilfe: den Wert unter dem neuen Namen setzen (`FAOLAN_DATA_DIR=/srv/gateway`).
+> Variablen (nur die Namen, keine Werte). Das gilt auch für die Datei-Varianten
+> (`BIFROST_DATA_DIR_FILE`).
+>
+> Abhilfe:
+> - **Datenverzeichnis:** den Wert unter dem neuen Namen setzen (`FAOLAN_DATA_DIR=/srv/gateway`).
+> - **WASI-Host, alter mitgelieferter Pfad** (`/usr/local/bin/bifrost-wasi-host`): `BIFROST_WASI_HOST`
+>   **entfernen**. Das Image bringt den umbenannten Host mit; den alten Pfad unter dem neuen Namen zu
+>   setzen, zeigte auf ein Programm, das es im neuen Image nicht gibt.
+> - **WASI-Host, eigenes Programm:** `FAOLAN_WASI_HOST` auf den Pfad des tatsächlich eingebundenen
+>   Programms setzen.
 
 ## Ohne Docker
 
