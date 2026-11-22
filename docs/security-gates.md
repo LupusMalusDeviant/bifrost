@@ -153,9 +153,9 @@ gitleaks 8.30.1 über 152 Commits (4,79 MB): **19 Funde**. Jeder einzeln angeseh
 
 | Datei (Pfad zum Fundzeitpunkt) | Regel(n) | Befund |
 |---|---|---|
-| `tests/Bifrost.Core.Tests/Configuration/ConfigurationFixtures.cs` | `generic-api-key` ×7 | Kommentar im Quelltext: *„Erfunden, keine echten Zugangsdaten"* |
-| `tests/Bifrost.Core.Tests/Diagnostics/DiagnosticRedactionTests.cs` | `slack-bot-token`, `generic-api-key`, `private-key` | `…erfundenerslacktoken`, PEM-Rumpf enthält ausgeschrieben `erfundenerschluessel` |
-| `tests/Bifrost.Integration.Tests/Operations/OperationsApiTests.cs` | `generic-api-key` | `0123456789abcdef0123456789abcdef` |
+| `tests/Faolan.Core.Tests/Configuration/ConfigurationFixtures.cs` | `generic-api-key` ×7 | Kommentar im Quelltext: *„Erfunden, keine echten Zugangsdaten"* |
+| `tests/Faolan.Core.Tests/Diagnostics/DiagnosticRedactionTests.cs` | `slack-bot-token`, `generic-api-key`, `private-key` | `…erfundenerslacktoken`, PEM-Rumpf enthält ausgeschrieben `erfundenerschluessel` |
+| `tests/Faolan.Integration.Tests/Operations/OperationsApiTests.cs` | `generic-api-key` | `0123456789abcdef0123456789abcdef` |
 | `tests/McpMcp.Core.Tests/Guardrails/SecretGuardTests.cs` | `gitlab-pat`, `gcp-api-key`, `jwt` | `ghp_abcdefghijklmnopqrstuvwxyz0123456789` u. Ä. |
 | `tests/McpMcp.Core.Tests/Webhooks/WebhookSignatureTests.cs` | `generic-api-key` | `whsec_testgeheimnis_1234567890` |
 | `tests/McpMcp.Core.Tests/Invocation/TracingTests.cs` | `generic-api-key` | `sk-streng-geheim-4711` |
@@ -163,7 +163,7 @@ gitleaks 8.30.1 über 152 Commits (4,79 MB): **19 Funde**. Jeder einzeln angeseh
 | `tests/McpMcp.Integration.Tests/Persistence/PersistenceTestsBase.cs` | `generic-api-key` ×2 | `at_streng_geheim_4711`, `rt_auch_geheim_0815` |
 
 **Kein einziges echtes Zugangsdatum.** Alle stammen aus Testfixtures, die belegen sollen, dass
-B.I.F.R.O.S.T Secrets redigiert bzw. erkennt. Die `McpMcp.*`-Pfade sind der Stand vor der
+Faolan Secrets redigiert bzw. erkennt. Die `McpMcp.*`-Pfade sind der Stand vor der
 Umbenennung.
 
 Das ist kein Zufall, sondern die Bauart dieses Repositories: Ein Redaktionstest **muss**
@@ -377,9 +377,9 @@ behoben, wie beauftragt:
    erzwungen, wenn „Require review from Code Owners" in der Branch-Protection von `main` aktiv ist;
    siehe den Nachtrag in §5.*
 4. **DataProtection-Key-Ring im Arbeitsbaum:**
-   `src/Bifrost.Server/data/keys/key-bd37746a-c325-441d-81f4-f414c9d4c7ca.xml`.
-   **Kein Leck** — die Datei ist über `.gitignore:486` (`src/Bifrost.Server/data/`) ausgeschlossen
-   und war **nie** in einem Commit (`git log --all -- 'src/Bifrost.Server/data/**'` ist leer).
+   `src/Faolan.Server/data/keys/key-bd37746a-c325-441d-81f4-f414c9d4c7ca.xml`.
+   **Kein Leck** — die Datei ist über `.gitignore:486` (`src/Faolan.Server/data/`) ausgeschlossen
+   und war **nie** in einem Commit (`git log --all -- 'src/Faolan.Server/data/**'` ist leer).
    Erwähnt, weil es echtes Schlüsselmaterial ist: derselbe Schlüsseltyp, der laut SECURITY.md jedes
    Upstream-Credential entschlüsselt. Wer dieses Arbeitsverzeichnis weitergibt oder sichert, gibt
    den Schlüssel mit.

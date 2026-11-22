@@ -231,7 +231,7 @@ for the gate to come back.
 
 ## Before you expose it
 
-1. **TLS reverse proxy, always** (NFR-04). Also set `BIFROST_TRUSTED_PROXIES` — see
+1. **TLS reverse proxy, always** (NFR-04). Also set `FAOLAN_TRUSTED_PROXIES` — see
    [Operations](operations.md#tls-and-reverse-proxy).
 2. **Decide the key ring mode.** `certificate`, `file-secret` or an explicit `none`. Leaving it
    unset means the ring lies in cleartext *and* nobody decided that;
@@ -240,7 +240,7 @@ for the gate to come back.
    anything you do not.
 4. **Set `AllowPrivateTargets: false`** on HTTP upstreams that have no business reaching your
    internal network.
-5. **Run `bifrost doctor`** and treat `BFR-KEY-0002` (no key ring mode chosen) as a real finding.
+5. **Run `faolan doctor`** and treat `BFR-KEY-0002` (no key ring mode chosen) as a real finding.
 6. **Verify the release you are running.** Signatures, provenance and SBOMs are verifiable against
    public Sigstore infrastructure and GitHub — no key from us required. The procedure, including the
    part that matters most (proving the verification *rejects* something wrong), is in

@@ -27,37 +27,37 @@ solo operator, and audit retention on SQLite is an operational obligation, not a
 PostgreSQL is a real option — but one condition comes with it:
 
 - **PostgreSQL backup runs through `pg_dump`/`pg_restore`, and they must be on the host.** With
-  them, `bifrost backup`/`restore` work exactly as on SQLite, and the pre-migration backup is
+  them, `faolan backup`/`restore` work exactly as on SQLite, and the pre-migration backup is
   demanded before every schema change.
 - **Without them, both refuse with a message.** Then you own `pg_dump` **plus** the `keys/`
   directory, together, forever — and every upgrade runs without a way back, since there is no
   downgrade path.
 
-So: install the client package on the host that runs Bifrost. If nobody on the team will own that
+So: install the client package on the host that runs Faolan. If nobody on the team will own that
 (or a dump schedule instead), stay on SQLite and manage retention.
 See [Known limitations](../operations.md#known-limitations).
 
 **TLS.** Not optional here. More than one machine reaches the UI, which means the session cookie
-must travel over HTTPS or logins silently fail. Reverse proxy plus `BIFROST_TRUSTED_PROXIES`.
+must travel over HTTPS or logins silently fail. Reverse proxy plus `FAOLAN_TRUSTED_PROXIES`.
 
 **Key ring protection.** With several people able to reach the host, `file-secret` earns its keep:
 the PFX password never enters `.env`, `docker inspect` or `/proc/<pid>/environ`. The server creates
 both files with correct permissions:
 
 ```bash
-docker compose run --rm bifrost dotnet Bifrost.Server.dll --keyring-setup --cert /secrets/keyring.pfx
+docker compose run --rm faolan dotnet Faolan.Server.dll --keyring-setup --cert /secrets/keyring.pfx
 ```
 
 Then uncomment both `secrets:` blocks in `docker-compose.yml` and set, in `.env`:
 
 ```bash
-BIFROST_KEYRING_PROTECTION=file-secret
-BIFROST_KEYRING_CERT_PATH=/run/secrets/bifrost-keyring-pfx
-BIFROST_KEYRING_CERT_PASSWORD_FILE=/run/secrets/bifrost-keyring-password
+FAOLAN_KEYRING_PROTECTION=file-secret
+FAOLAN_KEYRING_CERT_PATH=/run/secrets/faolan-keyring-pfx
+FAOLAN_KEYRING_CERT_PASSWORD_FILE=/run/secrets/faolan-keyring-password
 ```
 
 A declared but missing secret aborts `up`, so create the files first. Do **not** also set
-`BIFROST_KEYRING_CERT_PASSWORD` — both forms together abort the start on purpose, because a
+`FAOLAN_KEYRING_CERT_PASSWORD` — both forms together abort the start on purpose, because a
 precedence rule between two sources of the same secret is one you would misremember.
 
 Keep the certificate **next to** the data directory, not inside it, or it travels in every backup
@@ -102,7 +102,7 @@ identity, so a shared key turns every question of the form "who called this" int
 Rotating one agent's key without disrupting everyone else also stops being possible.
 
 ```bash
-claude mcp add --transport http bifrost https://gateway.example.com/mcp \
+claude mcp add --transport http faolan https://gateway.example.com/mcp \
   --header "Authorization: Bearer <API-KEY>"
 ```
 
@@ -115,8 +115,8 @@ If you already run an identity provider, agents can authenticate with its access
 gateway then acts as an OAuth resource server; it issues no tokens itself.
 
 ```bash
-BIFROST_OAUTH_ISSUER=https://login.example.com/realms/bifrost
-BIFROST_PUBLIC_BASE_URL=https://gateway.example.com
+FAOLAN_OAUTH_ISSUER=https://login.example.com/realms/faolan
+FAOLAN_PUBLIC_BASE_URL=https://gateway.example.com
 ```
 
 Tokens are validated against the issuer's JWKS: signature, issuer, expiry — **and audience**. A
@@ -157,7 +157,7 @@ Guardrails are on by default. Two settings worth revisiting with more people inv
 Arming a rule you have never watched will, in doubt, abort somebody's productive work — and the
 person it happens to is not the person who wrote the rule.
 
-**Free-form regex is off by default.** `BIFROST_GUARD_ALLOW_CUSTOM_PATTERNS=1` enables it, and that
+**Free-form regex is off by default.** `FAOLAN_GUARD_ALLOW_CUSTOM_PATTERNS=1` enables it, and that
 is a trust decision: .NET offers no security boundary against malicious patterns, and the
 backtracking-free engine protects against expensive *inputs*, not malicious *patterns*. Whoever sets
 that switch is allowing admins to consume CPU inside the gateway process. The guided editor —
@@ -188,7 +188,7 @@ Statuses you will want to distinguish:
 
 Arguments are redacted using known secret field names, plus per-tool patterns you can maintain in
 the UI under **Tools → [tool]**. Results are **not** stored by default — only their size.
-`BIFROST_AUDIT_DEBUG_PAYLOADS=1` stores them, redacted, and is a debugging aid rather than a
+`FAOLAN_AUDIT_DEBUG_PAYLOADS=1` stores them, redacted, and is a debugging aid rather than a
 setting: responses can be large, and the audit table grows accordingly.
 
 **Telemetry carries no payloads.** Spans record timing, tool, server, status, origin and caller —
@@ -196,7 +196,7 @@ never arguments or results. The audit log is redacted; a telemetry backend is no
 less protected than the database. A test enforces this.
 
 If you export to an OTLP endpoint, the useful measurement is the difference between the
-`bifrost.tool_call` span and its `bifrost.upstream_call` child: that difference is the gateway's own
+`faolan.tool_call` span and its `faolan.upstream_call` child: that difference is the gateway's own
 overhead, which is the only way to tell whose fault a slow answer is.
 
 ---
@@ -210,8 +210,8 @@ automatic pre-migration backup at all.
 **Back up before every upgrade**, and verify the archive rather than assuming it:
 
 ```bash
-bifrost backup create --out /data/backups/pre-upgrade-$(date +%F).zip
-bifrost backup verify   /data/backups/pre-upgrade-$(date +%F).zip
+faolan backup create --out /data/backups/pre-upgrade-$(date +%F).zip
+faolan backup verify   /data/backups/pre-upgrade-$(date +%F).zip
 ```
 
 **Operations endpoints are admin-only.** Everything under `/api/v1/operations/*` requires a global

@@ -1,4 +1,4 @@
-# B.I.F.R.O.S.T — English documentation
+# Faolan — English documentation
 
 > **Language and precedence.** The full design documentation lives in [`docs/`](../) and is written
 > in **German**. These pages are the English core set for running the gateway and contributing to
@@ -37,7 +37,7 @@ Everything below is German and has no English translation — deliberately. See
 - [`docs/upgrade-matrix.md`](../upgrade-matrix.md) — what the upgrade harness checks and what it does not
 - [`docs/security/threat-model.md`](../security/threat-model.md) — findings, fixes, accepted residual risk
 - [`docs/security/verifying-releases.md`](../security/verifying-releases.md) — verifying signatures and provenance yourself
-- [`docs/gateway-cli.md`](../gateway-cli.md) / [`docs/cli-installation.md`](../cli-installation.md) — the `bifrost` CLI
+- [`docs/gateway-cli.md`](../gateway-cli.md) / [`docs/cli-installation.md`](../cli-installation.md) — the `faolan` CLI
 
 ## Contributing
 

@@ -55,72 +55,74 @@ Three commands. Nothing is built — the standard path pulls a published image. 
 [Quickstart](quickstart.md) for the walk-through.
 
 ```bash
-cp .env.example .env           # set BIFROST_VERSION to a published release
+cp .env.example .env           # set FAOLAN_VERSION to a published release
 docker compose up -d
 curl -fsS http://localhost:8080/healthz
 ```
 
 ### There is no `latest`
 
-The image is `ghcr.io/lupusmalusdeviant/bifrost`, tagged with `<version>` (`0.12.0`),
+The image is `ghcr.io/lupusmalusdeviant/faolan`, tagged with `<version>` (`0.12.0`),
 `<major>.<minor>` (`0.12`) and `sha-<short-sha>`. A `latest` tag is deliberately **not** set: a
 moving pointer turns a restart into an unnoticed upgrade. Which version runs belongs in a file you
 read before you change it — that file is `.env`.
 
-For production, pin the digest with `BIFROST_IMAGE`. `docker compose pull` is still worth running
+For production, pin the digest with `FAOLAN_IMAGE`. `docker compose pull` is still worth running
 with a digest: it fetches exactly that manifest and fails if it no longer exists, instead of
 silently using an older local copy.
 
 ### The volume name — the most expensive line on this page
 
-Compose prefixes every volume with the **project name**, which defaults to the lowercased name of
-the directory containing the compose file. `bifrost-data` therefore becomes
-`<project>_bifrost-data`.
+The data volume is named by `FAOLAN_DATA_VOLUME` in `.env`, `faolan-data` by default. The name is
+fixed (`name:` in the compose file), so it does **not** depend on the project or directory name.
+With `docker-compose.postgres.yml` the same holds for `FAOLAN_PGDATA_VOLUME`, default
+`faolan-pgdata`.
 
 ```bash
-docker compose config --volumes        # the keys
-docker compose config | tail -6        # the full names, including the prefix
+docker compose config | tail -6        # the name Compose will mount
+docker volume ls                       # the names that exist
 ```
 
-Rename the key, rename the directory, or move the compose file elsewhere, and you point at a
-**different** volume. Docker creates it silently and empty, the gateway finds an empty database,
-initialises it and reports itself ready — with no servers, no roles, no key ring. **The failure
-looks like a successful start.** It surfaces only when someone calls a tool or tries to log in.
+Point the variable at a name that does not exist, and Docker creates that volume silently and
+empty. The gateway finds an empty database, initialises it and reports itself ready — with no
+servers, no roles, no key ring. **The failure looks like a successful start.** `faolan doctor`
+reports it as `BFR-DB-0008` (empty instance).
 
-Set `COMPOSE_PROJECT_NAME=bifrost` once, on a new installation, to decouple the name from the
-directory. Doing it on an existing installation changes the volume name too — then you need the
-migration path below.
+### Migrating a Bifrost or MCP-MCP installation
 
-### Migrating an MCP-MCP installation
+Up to 0.12.0 the volume name depended on the Compose project: `<project>_bifrost-data`, and before
+the rename of 2026-07-31 `<project>_mcpmcp-data`. Left alone, today's compose file mounts a new,
+empty `faolan-data` instead — the failure described above.
 
-An installation from before the rename (2026-07-31) has service `mcpmcp` and volume
-`<project>_mcpmcp-data`. Today's compose file names both `bifrost`. Look before you act:
+No data needs to be moved. Put the existing name into `.env`:
 
 ```bash
-docker volume ls | grep -E 'mcpmcp|bifrost'
-docker compose config | tail -6
+docker volume ls | grep -E 'mcpmcp|bifrost|faolan'
 ```
 
-If they differ, the contents must be moved. Docker cannot rename volumes; copy through a throwaway
-container with the gateway **stopped**. `cp -a` preserves ownership — the container runs as
-non-root `app`, and a copy without `-a` hands it a directory it cannot write. The exact commands
-are in [`docs/operations.md` → *Umstieg einer MCP-MCP-Installation*](../operations.md).
+```dotenv
+FAOLAN_DATA_VOLUME=myproject_bifrost-data
+```
 
-Two things the gateway handles by itself: an existing `mcpmcp.db` keeps being used (no empty
-`bifrost.db` appears next to it), and old `MCPMCP_*` environment variables are adopted as
-`BIFROST_*` and named once in the log. The DataProtection application name stays `MCPMCP` on
-purpose — it feeds the key derivation, and changing it would make every stored ciphertext
-unreadable.
+The full steps, PostgreSQL included, are in [`docs/upgrade-faolan.md`](../upgrade-faolan.md)
+(German).
+
+Three things the gateway handles by itself: an existing `bifrost.db` or `mcpmcp.db` keeps being
+used (no empty `faolan.db` appears next to it); old `BIFROST_*` and `MCPMCP_*` environment variables
+are adopted as `FAOLAN_*` and named once in the log, the newest name winning; and upstream
+containers from 0.12.0 are still recognised and cleaned up. The DataProtection application name
+stays `MCPMCP` on purpose — it feeds the key derivation, and changing it would make every stored
+ciphertext unreadable.
 
 ---
 
 ## Configuration (environment variables)
 
 Configuration lives in `.env`, not in the compose file. `.env` is in `.gitignore`; use `chmod 600`.
-Because its entire contents go into the container environment, only `BIFROST_*`, `POSTGRES_*`,
+Because its entire contents go into the container environment, only `FAOLAN_*`, `POSTGRES_*`,
 `COMPOSE_*` and `OTEL_*` belong there — a `PATH=` line would overwrite the container's environment.
 
-Every `BIFROST_*` setting can also be supplied from a file via a `<NAME>_FILE` suffix. If both a
+Every `FAOLAN_*` setting can also be supplied from a file via a `<NAME>_FILE` suffix. If both a
 value and its `_FILE` form are set, **the start aborts**: a precedence rule between two sources of
 the same secret is a rule you would misremember, and then you would be running with the wrong one.
 
@@ -145,7 +147,7 @@ the same secret is a rule you would misremember, and then you would be running w
 | `FAOLAN_KEYRING_CERT_PATH_PREVIOUS` | *(unset)* | The **previous** certificate during a rotation. It no longer encrypts, but still decrypts |
 | `FAOLAN_OAUTH_ISSUER` | *(unset)* | Authorization server trusted for **inbound** agent tokens. Set = the gateway is also an OAuth resource server |
 | `FAOLAN_OAUTH_AUDIENCE` | `FAOLAN_PUBLIC_BASE_URL` | Canonical address of this gateway; a token must be addressed to it |
-| `FAOLAN_WASI_HOST` | *(unset; `/usr/local/bin/bifrost-wasi-host` in the image)* | Path to the WASI host binary. **Required for every WASI upstream and to install connector packages.** Only this host is started; an upstream's `Wasi.HostExecutable` must name it (same path or bare file name) and cannot point at another program — the host runs natively while a WASI upstream counts as isolated (ADR-0025) |
+| `FAOLAN_WASI_HOST` | *(unset; `/usr/local/bin/faolan-wasi-host` in the image)* | Path to the WASI host binary. **Required for every WASI upstream and to install connector packages.** Only this host is started; an upstream's `Wasi.HostExecutable` must name it (same path or bare file name) and cannot point at another program — the host runs natively while a WASI upstream counts as isolated (ADR-0025) |
 | `FAOLAN_MCP_STATELESS` | `1` | `0`/`false` reverts to the session-based operation of the previous protocol revision |
 | `FAOLAN_MCP_LIST_TTL_SECONDS` | `60` | How long a client may treat tool/resource/prompt lists as fresh. `0` = no hint |
 | `FAOLAN_MAX_RESULT_CHARS` | *(off)* | Truncates tool results above this character count (FR-16) |
@@ -397,7 +399,7 @@ modes — and none of them is a default state.
 | `none` | explicitly `FAOLAN_KEYRING_PROTECTION=none` | **nothing** — the key files are in cleartext. Defensible for a single instance with restrictive directory permissions | Every backup of the data directory then contains the upstream credentials |
 
 If **nothing** is set, none of these modes applies: the ring lies in cleartext as with `none`, but
-nobody decided that. The start warns, `bifrost doctor` reports `BFR-KEY-0002` as a warning, and
+nobody decided that. The start warns, `faolan doctor` reports `BFR-KEY-0002` as a warning, and
 `--keyring-check` exits `3`. Choosing unprotected operation makes it a decision instead of a gap,
 and turns the diagnosis green.
 
@@ -406,8 +408,8 @@ sets restrictive permissions on both (Unix `0600`, Windows an ACL without inheri
 exactly the step an `openssl` line from a tutorial does not do:
 
 ```bash
-docker compose run --rm bifrost dotnet Bifrost.Server.dll --keyring-setup --cert /secrets/keyring.pfx
-docker compose exec bifrost dotnet Bifrost.Server.dll --keyring-check
+docker compose run --rm faolan dotnet Faolan.Server.dll --keyring-setup --cert /secrets/keyring.pfx
+docker compose exec faolan dotnet Faolan.Server.dll --keyring-check
 ```
 
 An existing certificate is **never** overwritten. Keep the certificate **next to** the data
@@ -447,14 +449,14 @@ installation, which appears in every backup manifest).
 > ([ADR-0024 E3](../adr/0024-backup-restore-und-migrationssicherheit.md)). It belongs on a target
 > protected as well as the data directory itself, or it gets a passphrase.
 
-All commands below run through `bifrost` against a **running** gateway:
+All commands below run through `faolan` against a **running** gateway:
 
 ```bash
-bifrost backup create --out /data/backups/bifrost-2026-08-01.zip
-bifrost backup create --out /data/backups/db-only.zip --sections database,config
-bifrost backup verify /data/backups/bifrost-2026-08-01.zip
-bifrost restore /data/backups/bifrost-2026-08-01.zip
-bifrost restore /data/backups/bifrost-2026-08-01.zip --replace
+faolan backup create --out /data/backups/faolan-2026-08-01.zip
+faolan backup create --out /data/backups/db-only.zip --sections database,config
+faolan backup verify /data/backups/faolan-2026-08-01.zip
+faolan restore /data/backups/faolan-2026-08-01.zip
+faolan restore /data/backups/faolan-2026-08-01.zip --replace
 ```
 
 A passphrase is **never** accepted as an argument — it would appear in the process list and the
@@ -462,12 +464,12 @@ shell history. Use `--passphrase-env NAME` or `--passphrase-prompt`.
 
 `--replace` asks back; the answer is the word `replace`, and `--yes` supplies it in scripts. Before
 overwriting, a backup of the previous state is taken automatically — no overwrite without a way out
-(ADR-0024 E5). **A restore needs a maintenance window — and the order is not the obvious one.** `bifrost` is an
+(ADR-0024 E5). **A restore needs a maintenance window — and the order is not the obvious one.** `faolan` is an
 HTTP client; a stopped gateway accepts no restore. So it is **restore, then restart**:
 
 ```bash
-bifrost restore /data/backups/a.zip --replace --yes
-docker compose restart bifrost          # not optional
+faolan restore /data/backups/a.zip --replace --yes
+docker compose restart faolan          # not optional
 ```
 
 The restore swaps the files; the running process still holds its database connection and its
@@ -483,7 +485,7 @@ normal path rather than the exception.
 
 ### PostgreSQL: needs `pg_dump` and `pg_restore`
 
-`bifrost backup` and `bifrost restore` work on PostgreSQL too, via `pg_dump`/`pg_restore`
+`faolan backup` and `faolan restore` work on PostgreSQL too, via `pg_dump`/`pg_restore`
 ([ADR-0024 E2](../adr/0024-backup-restore-und-migrationssicherheit.md)). Archive format, manifest,
 checksums, key ring and encryption are the same as for SQLite; only the payload under `database/`
 is named `bifrost.dump` instead of `bifrost.db`.
@@ -503,7 +505,7 @@ server (`aborting because of server version mismatch`). This is the likely case,
 Ubuntu 24.04 ships client **16**, a current server is **17** or **18** — that combination has no
 backup at all, including the pre-migration one (E7).
 
-> **`bifrost doctor` says so up front: `BFR-DB-0006`.** It compares the major version of the
+> **`faolan doctor` says so up front: `BFR-DB-0006`.** It compares the major version of the
 > `pg_dump` actually found with the server the gateway actually runs against: "client 16, server 17
 > — this client cannot dump this server; >= 17 is required". If either number cannot be determined,
 > the finding says exactly that instead of claiming compatibility.
@@ -545,9 +547,9 @@ a reason, and that is the statement.
 
 ```bash
 docker compose down                      # stops containers, volumes stay
-# set BIFROST_VERSION (or BIFROST_IMAGE) in .env to the new version
+# set FAOLAN_VERSION (or FAOLAN_IMAGE) in .env to the new version
 docker compose pull && docker compose up -d
-docker compose logs -f bifrost           # confirm the migration message
+docker compose logs -f faolan           # confirm the migration message
 ```
 
 Back up the data directory first. The schema is migrated automatically at start, and **a migration
@@ -562,7 +564,7 @@ At start, exactly one of three things happens; the result is in the log
 | **Legacy database** from a build before migration management (created via `EnsureCreated`, no migration history) | Stamp the initial migration as a baseline (**no DDL, no data change**), then migrate | `BaselinedLegacySchema` |
 | Already migration-managed | Apply pending migrations | `Migrated` |
 
-Each provider has its own migrations assembly (`Bifrost.Persistence.Migrations.Sqlite` /
+Each provider has its own migrations assembly (`Faolan.Persistence.Migrations.Sqlite` /
 `.Postgres`); both ship in the image and the choice follows `FAOLAN_DB_PROVIDER`.
 
 ### The pre-migration backup — and where it does not exist
@@ -585,7 +587,7 @@ passphrase.
 
 ### What the upgrade harness proves — and what it does not
 
-`tests/Bifrost.Upgrade.Tests` runs 50 cases across 15 published migration states × 2 providers, plus
+`tests/Faolan.Upgrade.Tests` runs 50 cases across 15 published migration states × 2 providers, plus
 the archive path on both providers, with real ciphertext written by the real stores. Full detail:
 [`docs/upgrade-matrix.md`](../upgrade-matrix.md) (German). The limits that matter operationally:
 
@@ -614,14 +616,14 @@ deliberate (ADR-0024 E7).
 
 ```bash
 # The gateway is NOT running — so do this in the server process, not via the CLI:
-docker compose run --rm bifrost dotnet Bifrost.Server.dll --db-unblock
+docker compose run --rm faolan dotnet Faolan.Server.dll --db-unblock
 # without a container:
-dotnet run --project src/Bifrost.Server -- --db-unblock
+dotnet run --project src/Faolan.Server -- --db-unblock
 ```
 
 3. Start and confirm `Datenbank initialisiert` in the log.
 
-`bifrost db unblock` does the same thing but talks HTTP to a *running* gateway — useful where a
+`faolan db unblock` does the same thing but talks HTTP to a *running* gateway — useful where a
 second instance is still up (PostgreSQL, multiple nodes), not in the normal `BFR-DB-0101` case.
 Neither path assesses the schema state. They release what the operator has checked.
 
@@ -630,13 +632,13 @@ Neither path assesses the schema state. They release what the operator has check
 ## Diagnostics
 
 ```bash
-bifrost doctor                       # everything
-bifrost doctor --scope database,network
-bifrost --json doctor                # machine-readable
+faolan doctor                       # everything
+faolan doctor --scope database,network
+faolan --json doctor                # machine-readable
 ```
 
 The report only reads. The single exception is the write probe in the data directory: it creates a
-`.bifrost-doctor-*.tmp` file and deletes it immediately — writability cannot be answered reliably
+`.faolan-doctor-*.tmp` file and deletes it immediately — writability cannot be answered reliably
 read-only on either operating system.
 
 Every finding carries a **stable code** (`BFR-DB-0002`) that a runbook can rely on; the text next to
@@ -653,7 +655,7 @@ it may change, the code may not.
 | `BFR-UP-*` | Upstreams |
 
 The same view exists in the UI under **Betrieb** (admins only), together with creating a backup.
-`bifrost doctor` and that page never name the **location** of key material: of the PFX and the
+`faolan doctor` and that page never name the **location** of key material: of the PFX and the
 password file only the filename appears. The password appears nowhere, in any form.
 
 ---
@@ -663,9 +665,9 @@ password file only the filename appears. The password appears nowhere, in any fo
 For the case where someone should help analyse a problem without getting access to the installation:
 
 ```bash
-bifrost support-bundle --preview                 # first show what would go in
-bifrost support-bundle --out /data/support/b.zip # then create it
-bifrost support-bundle --categories version,diagnostics,runtime --log-lines 500
+faolan support-bundle --preview                 # first show what would go in
+faolan support-bundle --out /data/support/b.zip # then create it
+faolan support-bundle --categories version,diagnostics,runtime --log-lines 500
 ```
 
 The same two steps exist in the UI under **Betrieb** and over the API
@@ -702,10 +704,10 @@ A configuration export is **not a backup** (ADR-0024 E8): it does not restore th
 builds a comparable one — and therefore contains **no secret values**, only references and masks.
 
 ```bash
-bifrost config export --out configuration.json
-bifrost config export --include-secrets --passphrase-env EXPORT_PASSPHRASE --out full.json
-bifrost config import configuration.json --dry-run
-bifrost config import configuration.json
+faolan config export --out configuration.json
+faolan config export --include-secrets --passphrase-env EXPORT_PASSPHRASE --out full.json
+faolan config import configuration.json --dry-run
+faolan config import configuration.json
 ```
 
 The import is two-stage and **purely additive**: it creates, never overwrites, never deletes.
@@ -731,19 +733,19 @@ same threshold as RBAC administration and package installation. Every writing op
 ## Policy packs
 
 A policy pack is a **signed configuration payload** — roles and profiles from someone this instance
-trusts. It is not a second import path: the payload is exactly what `bifrost config export`
+trusts. It is not a second import path: the payload is exactly what `faolan config export`
 produces. What is new is the question of *who* it came from — and the answer to **who is allowed to
 do more afterwards**.
 
 ```bash
 # Show what would happen — writes nothing:
-bifrost policy plan team-standard.pack.json
+faolan policy plan team-standard.pack.json
 
 # Apply. The rights diff always comes first; --yes skips the prompt, not the display.
-bifrost policy apply team-standard.pack.json --undo-out undo.json
+faolan policy apply team-standard.pack.json --undo-out undo.json
 
 # And back:
-bifrost policy revert undo.json
+faolan policy revert undo.json
 ```
 
 **The rights diff is the point.** An object-level diff says "role `developer` changed". That reads
@@ -784,16 +786,16 @@ anything — the order is the whole point.
 
 ```bash
 # Look only. Creates nothing, changes nothing:
-bifrost import preview ~/.config/claude/claude_desktop_config.json
+faolan import preview ~/.config/claude/claude_desktop_config.json
 
 # Take over. Shows the same preview first, then commits:
-bifrost import apply mcp.json --isolation container --image ghcr.io/own/mcp-runner:1
+faolan import apply mcp.json --isolation container --image ghcr.io/own/mcp-runner:1
 
 # Selected servers only, with a connection test first:
-bifrost import apply mcp.json --only github,filesystem --probe --isolation host --confirm-risks
+faolan import apply mcp.json --only github,filesystem --probe --isolation host --confirm-risks
 
 # Show what would happen, write nothing:
-bifrost import apply mcp.json --dry-run
+faolan import apply mcp.json --dry-run
 ```
 
 **The CLI reads the file, not the gateway.** The content travels in the request body. `--origin
@@ -850,7 +852,7 @@ authenticated path. Once first access is redeemed it answers `404` — locally t
 
 ### Exit codes of the import commands
 
-These follow the table of the other `bifrost` commands, not the operations table above:
+These follow the table of the other `faolan` commands, not the operations table above:
 
 | Code | Meaning |
 |---:|---|
@@ -870,16 +872,16 @@ an overview:
 
 ```bash
 # Everything, as JSON Lines:
-bifrost audit export --out audit.jsonl
+faolan audit export --out audit.jsonl
 
 # As CSV, filtered:
-bifrost audit export --format csv --from 2026-08-01T00:00:00Z --tool github__ --out audit.csv
+faolan audit export --format csv --from 2026-08-01T00:00:00Z --tool github__ --out audit.csv
 
 # Continue where the last export stopped:
-bifrost audit export --after 481523 --out more.jsonl
+faolan audit export --after 481523 --out more.jsonl
 
 # Re-compute the chain:
-bifrost audit verify
+faolan audit verify
 ```
 
 The same paths over the API (`GET /api/v1/audit/export`, `…/verify`, both admin-only) and in the UI
@@ -902,7 +904,7 @@ executes code when opened would be the inverse of its purpose.
 ### The chain
 
 Every row now carries a SHA-256 over its predecessor **and** a canonical form of itself.
-`bifrost audit verify` re-computes that and names the **first** broken position with row number and
+`faolan audit verify` re-computes that and names the **first** broken position with row number and
 reason — not "invalid".
 
 It finds: a field changed after the fact, a removed row, a reordering. Both are proven against the
@@ -929,12 +931,12 @@ error — a script should be able to tell them apart.
 
 ## Observability
 
-Every tool call is measured (FR-26) under the meter `Bifrost.Gateway`:
+Every tool call is measured (FR-26) under the meter `Faolan.Gateway`:
 
 | Instrument | Meaning | Dimensions |
 |---|---|---|
-| `bifrost.tool_calls` | Counter of all calls — gives calls/s and error rate | `server`, `tool`, `status`, `origin` |
-| `bifrost.tool_call_duration` | Latency histogram (ms) — gives percentiles | `server`, `tool`, `status` |
+| `faolan.tool_calls` | Counter of all calls — gives calls/s and error rate | `server`, `tool`, `status`, `origin` |
+| `faolan.tool_call_duration` | Latency histogram (ms) — gives percentiles | `server`, `tool`, `status` |
 
 Export is **off** until a target is configured:
 
@@ -945,12 +947,12 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317
 Export is via **OTLP**. For Prometheus, put an OTel collector in front that accepts OTLP and offers
 a scrape endpoint — a direct Prometheus exporter is not yet stably published in the .NET ecosystem.
 
-The same switch enables **traces** from the source `Bifrost.Gateway`:
+The same switch enables **traces** from the source `Faolan.Gateway`:
 
 | Span | Meaning |
 |---|---|
-| `bifrost.tool_call` | The whole call through the pipeline |
-| `bifrost.upstream_call` | Only the upstream portion, as a child span |
+| `faolan.tool_call` | The whole call through the pipeline |
+| `faolan.upstream_call` | Only the upstream portion, as a child span |
 
 The difference between the two is the **gateway overhead** — exactly the question NFR-01 asks.
 
@@ -965,7 +967,7 @@ The difference between the two is the **gateway overhead** — exactly the quest
 - `GET /healthz` — process is alive (anonymous).
 - `GET /readyz` — database reachable + upstream states (anonymous).
 
-The container healthcheck uses `dotnet Bifrost.Server.dll --healthcheck` (self-ping, since the slim
+The container healthcheck uses `dotnet Faolan.Server.dll --healthcheck` (self-ping, since the slim
 runtime image has no `curl`). The container runs as non-root `app`.
 
 `best-effort` does not hold up tool calls when the audit pipeline is overloaded; drops are counted.
@@ -982,7 +984,7 @@ durable external spool/queue backend is still required before production use.**
 > wrong, though: with a permanently broken database the buffer would fill up and the loss would
 > simply move to intake — deferred, not avoided.
 
-**Losses are visible, not merely counted.** `bifrost doctor` reports under `BFR-DB-0007` **how
+**Losses are visible, not merely counted.** `faolan doctor` reports under `BFR-DB-0007` **how
 many** events were lost and **since when**, split by cause (dropped at intake / given up on write).
 A single loss is a **Fail** there — a promise whose breach shows up as a footnote is not a promise.
 
@@ -1012,9 +1014,9 @@ sit next to `bifrost.db`:
 | `bifrost.db-shm` | Shared memory of the participating connections; recreated as needed, never needs backing up |
 
 > **Copying the database file by hand without its `-wal` copies an older state** — and the copy does
-> not look any different. `bifrost backup` and `bifrost restore` are **not** affected: they have
+> not look any different. `faolan backup` and `faolan restore` are **not** affected: they have
 > always used SQLite's online backup API rather than copying the file (ADR-0024 E2). For anything
-> else: either all three files with the gateway stopped, or `bifrost backup`.
+> else: either all three files with the gateway stopped, or `faolan backup`.
 
 **The way back.** `FAOLAN_SQLITE_JOURNAL_MODE=delete` reverts to the classic rollback journal on
 the next start; the two companion files disappear. It exists for data directories where SQLite
@@ -1056,20 +1058,20 @@ without starting the gateway:
 
 ```bash
 # Issue a new setup token (even on an installation with existing accounts):
-docker compose run --rm bifrost dotnet Bifrost.Server.dll --bootstrap-init
+docker compose run --rm faolan dotnet Faolan.Server.dll --bootstrap-init
 
 # Reset the UI password (default user "admin"; role unchanged, a missing user is created as admin):
-docker compose run --rm bifrost dotnet Bifrost.Server.dll --reset-ui-admin
-docker compose run --rm bifrost dotnet Bifrost.Server.dll --reset-ui-admin operator
+docker compose run --rm faolan dotnet Faolan.Server.dll --reset-ui-admin
+docker compose run --rm faolan dotnet Faolan.Server.dll --reset-ui-admin operator
 
 # Emergency API key: creates a NEW agent identity with a global grant (existing ones untouched):
-docker compose run --rm bifrost dotnet Bifrost.Server.dll --issue-bootstrap-key
+docker compose run --rm faolan dotnet Faolan.Server.dll --issue-bootstrap-key
 
 # Release the BFR-DB-0101 block — only after checking the database:
-docker compose run --rm bifrost dotnet Bifrost.Server.dll --db-unblock
+docker compose run --rm faolan dotnet Faolan.Server.dll --db-unblock
 ```
 
-Without a container, use `dotnet run --project src/Bifrost.Server -- --reset-ui-admin`. Remove the
+Without a container, use `dotnet run --project src/Faolan.Server -- --reset-ui-admin`. Remove the
 emergency access afterwards if it only served recovery.
 
 `--bootstrap-init` issues a token on an installation with existing accounts only if it can prove

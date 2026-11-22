@@ -29,7 +29,7 @@ Weak answers, which will get asked about:
 If a test would pass with your change removed, it is not a test for your change.
 -->
 
-- [ ] `dotnet test Bifrost.slnx` (or `./build.sh verify-dotnet`) run locally — result:
+- [ ] `dotnet test Faolan.slnx` (or `./build.sh verify-dotnet`) run locally — result:
 - [ ] Rust touched? `./build.sh verify-rust` run — result:
 - [ ] Any new gate or check has been observed **failing** as well as passing
 
@@ -68,5 +68,5 @@ say so and let it be decided rather than deciding it in the implementation (ADR-
 
 - [ ] No credential can reach a log, a span, a command line, or an error message
 - [ ] Nothing changes the four DataProtection identifiers in
-      `src/Bifrost.Persistence/CryptographicNames.cs` (renaming one makes every stored ciphertext on
+      `src/Faolan.Persistence/CryptographicNames.cs` (renaming one makes every stored ciphertext on
       every existing installation unreadable, with no error at start)

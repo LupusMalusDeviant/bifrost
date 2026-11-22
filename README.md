@@ -1,4 +1,4 @@
-# B.I.F.R.O.S.T
+# Faolan
 
 [![ci](https://github.com/LupusMalusDeviant/bifrost/actions/workflows/ci.yml/badge.svg)](https://github.com/LupusMalusDeviant/bifrost/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -10,7 +10,7 @@
 >
 > Getting that first run out took three dry runs and three tag runs and produced **nine findings** — including a dry-run mode that had never itself been run, and a proof that had never worked on Linux while reporting green the whole time. They are written up in [the readiness protocol](docs/plans/product-readiness-status.md) and, in English, under [Troubleshooting → Release pipeline](docs/en/troubleshooting.md#release-pipeline--nine-findings-from-the-first-real-run).
 >
-> **Upgrading from an MCP-MCP install:** environment variables moved from `MCPMCP_*` to `BIFROST_*`, but the old names are still read and reported once at startup, and an existing `mcpmcp.db` keeps being used. The DataProtection application name and the encryption purposes deliberately keep their old values — renaming them would make every stored secret unreadable. Your session cookie is invalidated once, so expect a single re-login. **Do not let the volume name change with it** — a renamed volume is an empty volume, and the gateway starts on it without complaint.
+> **Faolan was called Bifrost up to 0.12.0** (and MCP-MCP before that). **Upgrading:** set `FAOLAN_DATA_VOLUME` to your existing volume (`<project>_bifrost-data`), or the gateway starts on a new, empty one without complaint. Environment variables are now `FAOLAN_*`; the old `BIFROST_*` and `MCPMCP_*` names are still read and reported once at startup, and an existing `bifrost.db` or `mcpmcp.db` keeps being used. The DataProtection application name and the encryption purposes deliberately keep their old values — renaming them would make every stored secret unreadable. Expect a single re-login in the web UI. Step by step (German): [docs/upgrade-faolan.md](docs/upgrade-faolan.md).
 >
 > The version is deliberately below 1.0, and that is the whole statement: the code is feature-complete for its scope and covered by tests against SQLite *and* real PostgreSQL, but **it still has barely any operational uptime behind it**. There are also gaps that a deployment plan has to account for — on PostgreSQL, backup, restore and the pre-migration backup **require `pg_dump`/`pg_restore` on the host**, and without them the commands refuse rather than improvise; see [Known limitations](docs/en/operations.md#known-limitations). 1.0 follows from running it over time, not from adding features — see [the product-readiness gates](docs/plans/product-readiness-status.md).
 
@@ -18,9 +18,9 @@
 
 Every agent × every MCP server = a config entry, a credential copy, and a pile of tool schemas eating your context window. No central log answers *which agent called which tool with which arguments*, no access control separates read-only agents from write-capable ones, and every server change means restarting agent sessions.
 
-## What B.I.F.R.O.S.T does about it
+## What Faolan does about it
 
-B.I.F.R.O.S.T is a reverse proxy for the Model Context Protocol: to your agents it is a single MCP server, to your MCP servers it is a single client. Every call flows through one enforcement pipeline — rate limit → RBAC → schema validation → guardrail → approval → audit — which is what makes the features below possible *by construction* rather than by convention. There is no second path around it: REST, MCP, the web UI and webhook triggers all end up in the same invoker.
+Faolan is a reverse proxy for the Model Context Protocol: to your agents it is a single MCP server, to your MCP servers it is a single client. Every call flows through one enforcement pipeline — rate limit → RBAC → schema validation → guardrail → approval → audit — which is what makes the features below possible *by construction* rather than by convention. There is no second path around it: REST, MCP, the web UI and webhook triggers all end up in the same invoker.
 
 | Feature | How |
 |---|---|
@@ -67,7 +67,7 @@ every support ticket, every log aggregator and every backup of the log directory
 place nobody ever rotates.
 
 ```bash
-docker compose exec bifrost cat /data/config/bootstrap-token.txt
+docker compose exec faolan cat /data/config/bootstrap-token.txt
 ```
 
 Open `http://localhost:8080/setup`, paste the token, and choose your own admin username and
@@ -77,7 +77,7 @@ Create the agent API key afterwards from **RBAC → Keys** in the web UI — it 
 with a ready-made client configuration:
 
 ```bash
-claude mcp add --transport http bifrost http://localhost:8080/mcp --header "Authorization: Bearer <API-KEY>"
+claude mcp add --transport http faolan http://localhost:8080/mcp --header "Authorization: Bearer <API-KEY>"
 ```
 
 Add upstream servers, roles and profiles from the web UI or the REST API — no config files. Always
@@ -90,15 +90,15 @@ git clone https://github.com/LupusMalusDeviant/bifrost.git
 ```
 
 ```bash
-dotnet build Bifrost.slnx
+dotnet build Faolan.slnx
 ```
 
 ```bash
-dotnet test Bifrost.slnx
+dotnet test Faolan.slnx
 ```
 
 ```bash
-ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/Bifrost.Server
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/Faolan.Server
 ```
 
 > **Keep `Development` when running from source.** Outside it, ASP.NET does not load the static web
@@ -108,7 +108,7 @@ ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/Bifrost.Server
 > serves the real files. (`dotnet run --environment Development` does **not** help — that argument
 > is swallowed; the variable has to come from the environment.)
 
-Requires the .NET 10 SDK. The integration tests spawn reference MCP servers (`tests/Bifrost.TestServers/*`) as real stdio/HTTP processes.
+Requires the .NET 10 SDK. The integration tests spawn reference MCP servers (`tests/Faolan.TestServers/*`) as real stdio/HTTP processes.
 
 Some proofs need extra infrastructure and **skip** without it — deliberately, so a machine without Docker or Rust doesn't fail the build. Set the matching variable to turn a skip into a failure, which is what CI does:
 
@@ -188,7 +188,7 @@ Read this part before exposing the gateway to anything you care about.
 | Skills in packages | A connector package carries the skills that explain its connector; consent is bound to the text, not the publisher ([ADR-0021](docs/adr/0021-skills-in-paketen.md)) | ✅ on `main`; a package type for skill bundles without a connector is decided but not built |
 | M9 "v0.6.0 pre-release" | Everything since v0.5.0 brought into a tagged build | ✅ [pre-release](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.6.0) |
 | First real operation | An instance running on real hardware — which surfaced three defects no test could have found: a silently dropped session cookie over HTTP, `http://` redirects behind a TLS proxy, and **an admin UI that was never interactive at all** because the Blazor entry point was never served | ✅ fixed in [v0.6.1](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.6.1) and [v0.6.2](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.6.2) |
-| M2 "Recoverability" | Backup/restore with a manifest and verification, migration safety with a journal and a start-time block, `bifrost doctor` with stable codes, configuration export/import | ✅ on `main`; PostgreSQL backup/restore needs `pg_dump`/`pg_restore` on the host ([ADR-0024](docs/adr/0024-backup-restore-und-migrationssicherheit.md) E2) |
+| M2 "Recoverability" | Backup/restore with a manifest and verification, migration safety with a journal and a start-time block, `faolan doctor` with stable codes, configuration export/import | ✅ on `main`; PostgreSQL backup/restore needs `pg_dump`/`pg_restore` on the host ([ADR-0024](docs/adr/0024-backup-restore-und-migrationssicherheit.md) E2) |
 | M3 "Secure defaults" | Container isolation as the default for new native upstreams, key-ring protection with loss detection, first access via a short-lived token instead of log credentials, security and supply-chain gates | ✅ on `main`; `AllowPrivateTargets` still undecided for existing HTTP upstreams |
 | M1 acceptance / [v0.12.0](https://github.com/LupusMalusDeviant/bifrost/releases/tag/v0.12.0) | The first run of the release pipeline: multi-arch image, five CLI archives, SBOMs, keyless signature, six attestations | ✅ released 2026-08-01 — after nine findings that only a real run could show |
 | "1.0" | Real-world operation over time — the one thing tests can't provide | ⏳ open |

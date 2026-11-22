@@ -1,6 +1,6 @@
 # Offizielle Gateway-CLI
 
-`bifrost` ist ein separater HTTP-Client. Er verwendet ausschließlich `/healthz`, `/readyz` und die
+`faolan` ist ein separater HTTP-Client. Er verwendet ausschließlich `/healthz`, `/readyz` und die
 öffentlichen `/api/v1`-Verträge; er liest weder Datenbank noch interne Stores.
 
 ## Konfiguration und Identität
@@ -8,7 +8,7 @@
 ```json
 {
   "endpoint": "https://gateway.example/",
-  "tokenFile": "C:/secure/bifrost.token",
+  "tokenFile": "C:/secure/faolan.token",
   "identity": "production-operator"
 }
 ```
@@ -30,27 +30,27 @@ Shell-History landen. TLS-Zertifikatsfehler werden nicht ignoriert.
 ## Befehle
 
 ```text
-bifrost status
-bifrost tools search <query>
-bifrost tools describe <tool>
-bifrost tools invoke <tool> --json '{...}'
-bifrost tools invoke <tool> --file args.json
-bifrost tools invoke <tool> --file -
-bifrost servers list
-bifrost servers add --file server.json
-bifrost servers enable <id>
-bifrost servers disable <id>
-bifrost servers remove <id>
-bifrost approvals list
-bifrost approvals approve <id>
-bifrost approvals deny <id>
-bifrost audit tail
+faolan status
+faolan tools search <query>
+faolan tools describe <tool>
+faolan tools invoke <tool> --json '{...}'
+faolan tools invoke <tool> --file args.json
+faolan tools invoke <tool> --file -
+faolan servers list
+faolan servers add --file server.json
+faolan servers enable <id>
+faolan servers disable <id>
+faolan servers remove <id>
+faolan approvals list
+faolan approvals approve <id>
+faolan approvals deny <id>
+faolan audit tail
 ```
 
 Globale Optionen stehen vor dem Befehl:
 
 ```text
-bifrost --json --config gateway.json tools search git
+faolan --json --config gateway.json tools search git
 ```
 
 `--json` gibt genau ein kompaktes JSON-Dokument auf stdout aus. Menschliche Hinweise und Fehler

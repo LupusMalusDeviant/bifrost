@@ -29,24 +29,22 @@ by component, and each one names what it looked like before anyone understood it
 
 ### No servers, no roles, no key ring — and no error
 
-**Cause: you are on a different volume.** Compose prefixes every volume with the project name, which
-defaults to the lowercased directory name. Renaming the directory, moving the compose file, or
-renaming the volume key points at a *different* volume; Docker creates it silently and empty, the
-gateway initialises a fresh database and reports itself ready.
+**Cause: you are on a different volume.** The compose file mounts the volume named by
+`FAOLAN_DATA_VOLUME` (default `faolan-data`). After an upgrade from Bifrost 0.12.0 without that
+variable, or with a typo in it, Docker creates a new volume silently and empty; the gateway
+initialises a fresh database and reports itself ready. `faolan doctor` says so as `BFR-DB-0008`.
 
 ```bash
-docker volume ls
-docker compose config --volumes        # the key
-docker compose config | tail -6        # the effective name, including the prefix
+docker volume ls                       # where the data really is
+docker compose config | tail -6        # the name Compose mounts
 ```
 
-If the effective name is not the one holding your data, move the contents — Docker cannot rename
-volumes. The copy runs through a throwaway container with the gateway stopped, and it needs `cp -a`:
-the container runs as non-root `app`, and a copy without `-a` hands it a directory it cannot write.
-Exact commands: [`docs/operations.md` → *Umstieg einer MCP-MCP-Installation*](../operations.md).
+If the two differ, set `FAOLAN_DATA_VOLUME` in `.env` to the name holding your data (with
+PostgreSQL also `FAOLAN_PGDATA_VOLUME`) and run `docker compose up -d` again. Nothing needs to be
+copied. Details: [`docs/upgrade-faolan.md`](../upgrade-faolan.md) (German).
 
-**Do not delete the old volume** until the log confirms the data is there (`Migrated` or
-`BaselinedLegacySchema`). A few hundred megabytes are cheap.
+**Do not delete the empty volume in a hurry, and never the old one**, until the log confirms the
+data is there (`Migrated` or `BaselinedLegacySchema`).
 
 > This is the failure that cost this project the most, twice: once during the v0.11.0 rename, and
 > once as a trap left in the repository — the rename commit dragged the volume name along in
@@ -57,7 +55,7 @@ Exact commands: [`docs/operations.md` → *Umstieg einer MCP-MCP-Installation*](
 
 The checked-in `.env.example` and the fallback in `docker-compose.yml` still name `0.11.0`, while
 `0.12.0` is the current release (state: 2026-08-01). There is no `latest` tag on purpose. Set
-`BIFROST_VERSION` — or better, pin `BIFROST_IMAGE` to a digest — explicitly in `.env`.
+`FAOLAN_VERSION` — or better, pin `FAOLAN_IMAGE` to a digest — explicitly in `.env`.
 
 ---
 
@@ -76,17 +74,17 @@ The gateway now says so itself: one line at start when it only listens on HTTP, 
 line on every login arriving over HTTP without a proxy having set `X-Forwarded-Proto: https`. Behind
 a correct TLS proxy the line does not appear — a warning that fires on correct setups gets ignored.
 
-Fix: put a TLS reverse proxy in front **and** set `BIFROST_TRUSTED_PROXIES`.
+Fix: put a TLS reverse proxy in front **and** set `FAOLAN_TRUSTED_PROXIES`.
 
 ### `400 The plain HTTP request was sent to HTTPS port`
 
-You are behind a TLS proxy but `BIFROST_TRUSTED_PROXIES` is unset, so the gateway ignores forwarded
+You are behind a TLS proxy but `FAOLAN_TRUSTED_PROXIES` is unset, so the gateway ignores forwarded
 headers, sees only HTTP, and builds `http://` redirects. Visiting a protected page while logged out
 bounces you from `https` to `http`, and the proxy rejects it.
 
 ```bash
-BIFROST_TRUSTED_PROXIES=any                      # only if reachable exclusively via the proxy
-BIFROST_TRUSTED_PROXIES=172.17.0.1,10.0.0.0/8
+FAOLAN_TRUSTED_PROXIES=any                      # only if reachable exclusively via the proxy
+FAOLAN_TRUSTED_PROXIES=172.17.0.1,10.0.0.0/8
 ```
 
 Opt-in is deliberate: on a directly reachable gateway, any client could claim
@@ -127,7 +125,7 @@ Previously, DataProtection would simply create a new ring for an empty directory
 up, reported ready, and could not decrypt a single stored credential. That is exactly what happened
 during the v0.11.0 migration.
 
-1. Does `BIFROST_DATA_DIR` point at the right volume? **A renamed volume looks exactly like this.**
+1. Does `FAOLAN_DATA_DIR` point at the right volume? **A renamed volume looks exactly like this.**
 2. Otherwise restore the key ring from a backup — it is in the full backup under `keyring/`.
 
 The same abort happens when the ring exists but cannot be opened with the configured certificate,
@@ -142,7 +140,7 @@ The recovery commands (`--bootstrap-init`, `--reset-ui-admin`, `--issue-bootstra
 
 ### The start aborts because a secret is configured twice
 
-`BIFROST_KEYRING_CERT_PASSWORD` and `BIFROST_KEYRING_CERT_PASSWORD_FILE` both set. There is
+`FAOLAN_KEYRING_CERT_PASSWORD` and `FAOLAN_KEYRING_CERT_PASSWORD_FILE` both set. There is
 deliberately **no precedence**: a rule between two sources of the same secret is one you would
 misremember, and then you would be running an instance with the wrong secret. Remove one. Exactly
 one trailing newline is stripped from a secret file (`echo secret > file` writes one); nothing else
@@ -158,14 +156,14 @@ nothing by itself, on purpose.
 2. Release the block — only after checking:
 
 ```bash
-docker compose run --rm bifrost dotnet Bifrost.Server.dll --db-unblock
+docker compose run --rm faolan dotnet Faolan.Server.dll --db-unblock
 # without a container:
-dotnet run --project src/Bifrost.Server -- --db-unblock
+dotnet run --project src/Faolan.Server -- --db-unblock
 ```
 
 3. Start and confirm `Datenbank initialisiert` in the log.
 
-`bifrost db unblock` does the same but talks HTTP to a *running* gateway — useful where a second
+`faolan db unblock` does the same but talks HTTP to a *running* gateway — useful where a second
 instance is still up, not in the normal case. Neither path assesses the schema. They release what
 you have checked.
 
@@ -187,7 +185,7 @@ Correct: once access exists, there is no route to a token **over the network**. 
 Issue one from the console instead:
 
 ```bash
-docker compose run --rm bifrost dotnet Bifrost.Server.dll --bootstrap-init
+docker compose run --rm faolan dotnet Faolan.Server.dll --bootstrap-init
 ```
 
 This requires provable write access to the data directory, checked by doing (probe file created,
@@ -230,7 +228,7 @@ which of its many callers the question should go to.
 
 Expected. An upstream on `2026-07-28` no longer announces changes, so the gateway re-polls on a
 schedule (default: every minute) and forwards only real changes. On the client side, the same effect
-comes from the list cache TTL (`BIFROST_MCP_LIST_TTL_SECONDS`, default 60).
+comes from the list cache TTL (`FAOLAN_MCP_LIST_TTL_SECONDS`, default 60).
 
 ### A tool has disappeared from the catalogue
 
@@ -257,7 +255,7 @@ suitable runtime is present, the upstream does not come up, with that exact mess
 
 ### A connector package will not install
 
-`BIFROST_WASI_HOST` is required. Without it a package cannot be probed, and nothing unprobed is
+`FAOLAN_WASI_HOST` is required. Without it a package cannot be probed, and nothing unprobed is
 activated. Also required: a pinned publisher — an empty trust store is fail-closed, not
 unrestricted. Installation order is signature → manifest → per-file hash → unpack into quarantine →
 actually start the connector and query its catalogue → only then activate atomically. A package that
@@ -290,9 +288,9 @@ On the **argument** direction the call is aborted before the upstream and there 
 
 ### A large result is rejected instead of passed
 
-Above `BIFROST_GUARD_MAX_SCAN_CHARS` (default 262144) payloads are rejected, not passed unscanned —
+Above `FAOLAN_GUARD_MAX_SCAN_CHARS` (default 262144) payloads are rejected, not passed unscanned —
 otherwise the limit would be exactly the blind spot to aim for. If you expect large results, combine
-with `BIFROST_MAX_RESULT_CHARS`: truncation happens first, and the truncated result passes the scan.
+with `FAOLAN_MAX_RESULT_CHARS`: truncation happens first, and the truncated result passes the scan.
 
 ### A client errors with "no ElicitationHandler is registered"
 
@@ -325,14 +323,14 @@ is still required before production use — it does not exist yet.
 
 ## Backup, restore and upgrade
 
-### `bifrost backup create` refuses on PostgreSQL: "pg_dump … not reachable"
+### `faolan backup create` refuses on PostgreSQL: "pg_dump … not reachable"
 
 Correct, and deliberate: it refuses rather than silently exporting rows. PostgreSQL backup runs
 through `pg_dump`/`pg_restore` (ADR-0024 E2), and they are not on this host.
 
 Install the PostgreSQL client package (`apt-get install postgresql-client`,
 `apk add postgresql17-client`, `dnf install postgresql`, `brew install libpq`), or set
-`BIFROST_POSTGRES_BIN` to the directory holding them — when that variable is set, **only** that
+`FAOLAN_POSTGRES_BIN` to the directory holding them — when that variable is set, **only** that
 directory is searched. Until then, `pg_dump` **plus** the `keys/` directory by hand; they only work
 together.
 
@@ -376,7 +374,7 @@ tables would not turn the matrix red. Full list of limits:
 
 The key ring did not come with it, or it cannot be decrypted here. On Windows, an unprotected key
 ring is DPAPI-bound to the executing user, so a full backup restored on another machine or under
-another account produces exactly this. Configure `BIFROST_KEYRING_CERT_PATH` if you need portability.
+another account produces exactly this. Configure `FAOLAN_KEYRING_CERT_PATH` if you need portability.
 Linux container operation is unaffected (cleartext ring).
 
 ---
@@ -430,7 +428,7 @@ for three milestones and sounded like a formality but was not* — is in
 
 ## Still stuck
 
-1. `bifrost doctor` — every finding has a stable code (`BFR-DB-0002`) that survives text changes.
+1. `faolan doctor` — every finding has a stable code (`BFR-DB-0002`) that survives text changes.
 2. Check the log at start: `Datenbank initialisiert (CreatedFromMigrations | BaselinedLegacySchema |
    Migrated)` tells you which database the gateway actually found.
 3. Search [`docs/operations.md`](../operations.md) (German) — it is longer and more detailed than

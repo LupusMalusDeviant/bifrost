@@ -39,7 +39,7 @@ beide. Ausschlaggebend war ein projektspezifischer Punkt:
   VEX-Statement im selben Ökosystem statt einer Notiz in einem Wiki, die niemand ausliest.
   SPDX kennt kein gleichwertiges, verbreitet unterstütztes Gegenstück.
 - **Der Anwendungsfall ist Analyse, nicht Lizenz-Compliance.** SPDX' Stärke ist die
-  juristisch belastbare Lizenzaussage. B.I.F.R.O.S.T ist ein Sicherheitsbauteil; die Frage, die
+  juristisch belastbare Lizenzaussage. Faolan ist ein Sicherheitsbauteil; die Frage, die
   ein Betreiber stellt, lautet „bin ich von CVE-X betroffen", nicht „welche Lizenzen liegen bei".
 - **Ein Format, nicht zwei.** Zwei Stücklisten desselben Artefakts sind zwei Dinge, die
   auseinanderlaufen können. Wer SPDX braucht, konvertiert mit einem Syft-Aufruf
@@ -52,8 +52,8 @@ Je Release entstehen sechs SBOMs:
 
 | Datei | Gegenstand |
 |---|---|
-| `bifrost-<version>-image.cdx.json` | das Image, erfasst über `<image>@<digest>` |
-| `bifrost-cli-<version>-<rid>.cdx.json` | je Runtime-ID (`win-x64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`) |
+| `faolan-<version>-image.cdx.json` | das Image, erfasst über `<image>@<digest>` |
+| `faolan-cli-<version>-<rid>.cdx.json` | je Runtime-ID (`win-x64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`) |
 
 Die Image-SBOM wird über den **Digest** erzeugt, nicht über das Tag. Der Workflow bricht ab, wenn
 der signierte Digest nicht in der erzeugten SBOM auftaucht — sonst könnte eine Stückliste ein
@@ -113,7 +113,7 @@ unlöschbar im Transparenzlog.
 Die geprüfte Identität lautet:
 
 ```
-^https://github\.com/LupusMalusDeviant/bifrost/\.github/workflows/release\.yml@refs/tags/v
+^https://github\.com/LupusMalusDeviant/(bifrost|faolan)/\.github/workflows/release\.yml@refs/tags/v
 ```
 
 Diese Zeichenkette steht an zwei Stellen: im Workflow (Selbsttest) und in
@@ -160,7 +160,7 @@ geführt. Kein Workflow-Schalter, keine Umgebungsvariable, kein `continue-on-err
 vulnerabilities:
   - id: CVE-0000-00000
     statement: >-
-      Nicht erreichbar: die betroffene Funktion wird von B.I.F.R.O.S.T nicht aufgerufen
+      Nicht erreichbar: die betroffene Funktion wird von Faolan nicht aufgerufen
       (Nachweis: <Link auf Issue/Analyse>). Freigabe: <PO-Name>, <Datum>.
     expired_at: 2026-10-31
 ```
@@ -262,7 +262,7 @@ nachbauen". Reproducible Builds sind ein eigenes Thema und stehen nicht in M1.
 
 ## 9. Sichtbarkeit des Repositories — geprüft, nicht angenommen
 
-`LupusMalusDeviant/bifrost` ist **öffentlich** (geprüft am 2026-07-31). Daraus folgt laut
+`LupusMalusDeviant/faolan` ist **öffentlich** (geprüft am 2026-07-31). Daraus folgt laut
 Dokumentation von `actions/attest-build-provenance`:
 
 - Bei **öffentlichen** Repositories signiert die Attestation über die *Public-Good-Instanz* von
@@ -272,7 +272,7 @@ Dokumentation von `actions/attest-build-provenance`:
   Funktion setzt einen **GitHub-Enterprise-Cloud**-Plan voraus. Auf Free/Pro/Team gibt es
   Attestations dort nicht.
 
-Für B.I.F.R.O.S.T ist der öffentliche Pfad also der zutreffende. **Was daraus folgt und hier nicht
+Für Faolan ist der öffentliche Pfad also der zutreffende. **Was daraus folgt und hier nicht
 zugesagt wird:** Wer das Projekt in ein privates Repository forkt, kann diesen Workflow nicht
 unverändert übernehmen. Der Cosign-Teil funktioniert weiter (Fulcio/Rekor sind öffentlich), der
 Attestation-Teil nicht.

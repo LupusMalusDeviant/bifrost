@@ -1,6 +1,6 @@
 # Changelog
 
-Alle nennenswerten Änderungen an B.I.F.R.O.S.T. Format nach
+Alle nennenswerten Änderungen an Faolan (bis 0.12.0 Bifrost, davor mcp-mcp). Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung nach
 [Semantic Versioning](https://semver.org/lang/de/) — mit der Einschränkung, die eine `0.x`-Linie
 ausmacht: **Breaking Changes können in einer Minor-Version auftreten**; sie stehen dann hier unter
@@ -10,6 +10,33 @@ Die Einträge nennen, was ein Betreiber merkt — nicht jeden Commit. Was ein Re
 steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise sichtbar bleiben.
 
 ## [Unveröffentlicht]
+
+### Geändert — Umbenennung auf Faolan
+
+- **Breaking: Bifrost heißt jetzt Faolan** ([ADR-0026](docs/adr/0026-umbenennung-auf-faolan.md),
+  [Vertrag](docs/contracts/umbenennung-faolan.md)). Image, Programme, Compose-Dateien, Metriken und
+  Log-Kategorien tragen den neuen Namen. Die Daten bleiben ohne Umwandlung lesbar. Die Anleitung
+  steht in [docs/upgrade-faolan.md](docs/upgrade-faolan.md).
+
+  **Läuft von selbst weiter:** Variablen `BIFROST_*` und `MCPMCP_*`, Datenbankdatei, Schlüsselring und
+  alle verschlüsselten Zugangsdaten, Sicherungen und Exporte aus 0.12.0, installierte Connector-Pakete,
+  eingehende Webhooks, Empfänger von Freigabe-Benachrichtigungen.
+
+  **Einmal anzufassen:**
+  1. Image-Referenz auf `ghcr.io/lupusmalusdeviant/faolan`.
+  2. `FAOLAN_DATA_VOLUME` auf das bestehende Volume, mit PostgreSQL auch `FAOLAN_PGDATA_VOLUME`.
+  3. Dashboards und Alarme von `bifrost.*` auf `faolan.*`.
+  4. Eigene Skripte, die `bifrost`, `bifrost-connector` oder `Bifrost.Server.dll` aufrufen.
+  5. Log-Filter auf `Bifrost.Server.*`.
+  6. In der Weboberfläche einmal neu anmelden.
+
+  **Empfohlen, nicht nötig:** Variablen auf `FAOLAN_*` umstellen. Die Übernahme ist eine
+  Übergangshilfe und keine Zusage auf Dauer.
+- **`BFR-DB-0008` — leere Instanz.** `faolan doctor` warnt, wenn die Instanz keinen Upstream, keine
+  Rolle und keinen API-Schlüssel hat. Nach dem Upgrade ist das das Bild des falschen Volumes, bei
+  einer Neuinstallation ist es erwartbar.
+- Neu erzeugte Schlüsselring-Zertifikate tragen `CN=faolan-keyring`; bestehende mit
+  `CN=bifrost-keyring` bleiben gültig, der Name wird nirgends abgeglichen.
 
 ### Sicherheit
 
@@ -22,11 +49,11 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   und das Verbot nativer Ausführung umgehen. Erlaubt sind jetzt `docker`, `podman`, `nerdctl`,
   `finch`, als Name. *Upgrade:* Ein Upstream mit anderem Wert (etwa einem absoluten Pfad) startet
   nicht mehr und meldet das; den Wert auf den Namen umstellen.
-- **Breaking: WASI-Host nur noch aus `BIFROST_WASI_HOST`.** Dieselbe Lücke über
+- **Breaking: WASI-Host nur noch aus `FAOLAN_WASI_HOST`.** Dieselbe Lücke über
   `Wasi.HostExecutable`. Gestartet wird jetzt ausschließlich der Host des Betreibers; die
   Konfiguration darf ihn nennen (gleicher Pfad oder Dateiname), aber nicht umlenken. Das Image setzt
-  `BIFROST_WASI_HOST=/usr/local/bin/bifrost-wasi-host`. *Upgrade:* Außerhalb des Images
-  `BIFROST_WASI_HOST` setzen, sonst startet kein WASI-Upstream.
+  `FAOLAN_WASI_HOST=/usr/local/bin/faolan-wasi-host`. *Upgrade:* Außerhalb des Images
+  `FAOLAN_WASI_HOST` setzen, sonst startet kein WASI-Upstream.
 - **Paket-Ids `.` und `..` werden abgewiesen.** Sie bestanden nur aus erlaubten Zeichen; ein Paket
   mit der Id `..` wäre neben dem Paketordner entpackt worden, und sein Entfernen hätte den Ordner
   darüber gelöscht. Ids und Versionen beginnen jetzt mit Buchstabe oder Ziffer, und jeder aus Namen
@@ -34,9 +61,9 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   Anfrage.
 - **Breaking: Sicherungen nur noch im Sicherungsverzeichnis.** `backup create`, `backup verify` und
   `restore` (REST, CLI, Oberfläche) nahmen jeden Pfad auf dem Gateway-Rechner. Neu ist
-  `BIFROST_BACKUP_DIR` (Vorgabe `<BIFROST_DATA_DIR>/backups`); ein bloßer Name liegt dort, ein Pfad
+  `FAOLAN_BACKUP_DIR` (Vorgabe `<FAOLAN_DATA_DIR>/backups`); ein bloßer Name liegt dort, ein Pfad
   außerhalb wird abgewiesen. *Upgrade:* `--out /irgendwo/x.zip` durch einen Namen ersetzen oder
-  `BIFROST_BACKUP_DIR` auf den gewünschten Ort setzen; vorhandene Archive dorthin verschieben.
+  `FAOLAN_BACKUP_DIR` auf den gewünschten Ort setzen; vorhandene Archive dorthin verschieben.
 - **WASI-Sandbox: wasmtime 48.0.8 → 48.0.10** (Befund der Gates vom 2026-11-20). `cargo audit` meldete
   zwei neue Einträge: RUSTSEC-2026-0587 (7.5, Ausbruch aus der WASI-Dateisystem-Sandbox unter Windows
   über eine Pfadkomponente mit Laufwerksbuchstaben) und RUSTSEC-2026-0571 (unbegrenzter Speicher bei
@@ -112,7 +139,7 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   Upstreams" in `docs/operations.md`).
   - **Fristen:** 5 s, dann 10, 20, 40, 80, 160 s, danach alle 300 s, jeweils um bis zu 20 % verkürzt.
     Nach einer abgelehnten Anmeldung (401/403, fehlendes OAuth-Token) fest 15 min — keine Schleife
-    gegen den Schlüssel. Einstellbar über `BIFROST_UPSTREAM_RECONNECT_INITIAL_SECONDS`,
+    gegen den Schlüssel. Einstellbar über `FAOLAN_UPSTREAM_RECONNECT_INITIAL_SECONDS`,
     `…_MAX_SECONDS`, `…_AUTH_SECONDS`.
   - **Geändertes Verhalten:** Die Vorgabe von `restart.maxRetries` ist nicht mehr 5, sondern
     unbegrenzt. Eine **ausdrücklich** gesetzte Grenze gilt weiter und steht jetzt sichtbar im
@@ -327,12 +354,12 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   das Repository auscheckt, liest keinen Workflow: Er fährt diese Nachweise nie und hält einen
   übersprungenen Test für einen bestandenen. Tabelle vervollständigt; ein Wächter hält sie jetzt
   gegen den Testcode.
-- **Vier Betriebsoptionen standen in keiner Betriebsdokumentation.** `BIFROST_ALLOW_HOST_EXECUTION`
+- **Vier Betriebsoptionen standen in keiner Betriebsdokumentation.** `FAOLAN_ALLOW_HOST_EXECUTION`
   — die schärfste Option des Produkts — stand nur im ADR und im Pflichtenheft, also dort, wo ein
   Betreiber nicht nachsieht; dazu die drei Schalter der Approval-Benachrichtigung
   (`…_WEBHOOK_URL`, `…_WEBHOOK_SECRET`, `…_WEBHOOK_ALLOW_PRIVATE`). Alle vier stehen jetzt mit
   Default, Risiko und Empfehlung in `docs/operations.md` und im englischen Spiegel; ein Wächter
-  hält künftig jede `BIFROST_*`-Option gegen die Betriebsdokumente.
+  hält künftig jede `FAOLAN_*`-Option gegen die Betriebsdokumente.
 - **Toolargumente verschwanden bei chunked übertragenen Anfragen.** Der Invoke-Endpunkt las den
   Rumpf nur bei gesetztem `Content-Length`; bei `Transfer-Encoding: chunked` ist der `null`. Jeder
   Client, der die Länge nicht vorab berechnet — darunter `HttpClient.PostAsJsonAsync` von .NET —
@@ -369,7 +396,7 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
 - **Policy Packs: der Plan nennt, wer danach mehr darf** (M6/WP6.1) — ein signiertes Pack wird
   vollständig geprüft, **bevor** sich eine Berechtigung ändert: Herausgeber und Vertrauensstufe,
   Objektänderungen, hier unbekannte Werkzeuge und vor allem der **Rechte-Diff je Identität**.
-  Erreichbar über `bifrost policy plan|apply|revert`, über die Seite **Policy Packs** (Admin) und
+  Erreichbar über `faolan policy plan|apply|revert`, über die Seite **Policy Packs** (Admin) und
   über `POST /api/v1/operations/policy/{plan,apply,revert}`. Die Übernahme ist auditiert mit
   Kennung, Version und Nutzlast-Fingerabdruck.
   - **Kein Objekt-Diff.** „Rolle geändert" liest sich harmlos und kann bedeuten, dass drei Agenten
@@ -391,7 +418,7 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
 
 - **Konfigurationsimport kann Rollen und Profile ersetzen** (M6/WP6.1) — neuer Modus `Update` neben
   dem bisherigen `AddOnly`, das Vorgabe bleibt und sich nicht ändert. Erreichbar über Policy Packs,
-  **nicht** über `bifrost config import`.
+  **nicht** über `faolan config import`.
   - **Die Rücknahme steht auf neuem Grund.** Bisher galt: Was der Vorgang nur angelegt hat, kann er
     gefahrlos entfernen. Sobald ersetzt wird, stimmt das nicht mehr. Der Vorgang schreibt deshalb
     den vorigen Inhalt mit; zurückgenommen wird einzeln — Ersetztes wird **zurückgeschrieben**,
@@ -437,13 +464,13 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   nur noch das Handle (BFR-F-0057).
 - **Die Beispielkonfiguration widerspricht dem Produkt nicht mehr** (BFR-F-0050, BFR-F-0051).
   `.env.example` behauptete, der Gateway könne das Passwort des Key-Rings nicht aus einer Datei
-  lesen — er kann es seit FR-P048, und die Compose-Datei wie auch `bifrost doctor` sagen es. Die
+  lesen — er kann es seit FR-P048, und die Compose-Datei wie auch `faolan doctor` sagen es. Die
   falsche Zeile drängte zum Klartextpasswort in `.env`, also dorthin, wo `docker inspect` es zeigt.
-  Und `BIFROST_KEYRING_PROTECTION`, die einzige Entscheidung, die das Produkt ausdrücklich
+  Und `FAOLAN_KEYRING_PROTECTION`, die einzige Entscheidung, die das Produkt ausdrücklich
   verlangt, fehlte ganz. Beides steht jetzt da, und zwei Wächter halten es fest.
 
 - **Ein eingespielter Restore verriegelt den Gateway, bis er neu gestartet ist** (BFR-F-0047).
-  Vorher meldete `bifrost restore` Erfolg, und der laufende Prozess bediente weiter den ersetzten
+  Vorher meldete `faolan restore` Erfolg, und der laufende Prozess bediente weiter den ersetzten
   Stand — die Zugänge aus dem Archiv bekamen `401`, die soeben überschriebenen weiter `200`. Jetzt
   antwortet der Gateway ab dem Restore auf jede Anfrage mit `503` und `restart-required`, auch auf
   `/healthz`: Ein Container, der „healthy" meldet und nichts mehr beantwortet, war genau das
@@ -452,7 +479,7 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
 
 - **Zum ersten Mal ist eine echte Installation aus einem veröffentlichten Release gefahren worden**
   (M7/WP7.3, Pilot 1 von 3) — mit Erstzugang, Backup, Prüfung und Restore auf eine zweite
-  Installation. Sie hat zehn Befunde ergeben, darunter einen Releaseblocker: `bifrost restore`
+  Installation. Sie hat zehn Befunde ergeben, darunter einen Releaseblocker: `faolan restore`
   meldet Erfolg, während der laufende Gateway bis zum Neustart weiter den überschriebenen Stand
   bedient. Der RC-Wächter steht deshalb rot — das ist seine Aufgabe.
 - **Die Anleitung „Releases selbst überprüfen" ist erstmals gegen ein echtes Release gefahren**
@@ -480,7 +507,7 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   diese Strecke. Bis dahin stand in der Abnahme „belegt keinen Reverse-Proxy-Sprung"; jetzt stehen
   dort Zahlen ([docs/acceptance/performance.md](docs/acceptance/performance.md)).
 
-- **Auditexport: JSONL und CSV, gestreamt** (M6/WP6.2, FR-P072) — `bifrost audit export`,
+- **Auditexport: JSONL und CSV, gestreamt** (M6/WP6.2, FR-P072) — `faolan audit export`,
   `GET /api/v1/audit/export` (admin-only) und eine Export-Karte im **Audit-Log** der Oberfläche.
   Derselbe Filter wie die Ansicht, dazu ein fortsetzbarer Cursor.
   - **Der Cursor ist eine Zeilennummer, keine Seitenzahl.** Wer über Seiten blättert, verliert oder
@@ -495,7 +522,7 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     startet, wäre die Umkehrung seines Zwecks.
 
 - **Integritätskette über das Auditlog** (M6/WP6.2, FR-P073) — jede Zeile trägt einen SHA-256 über
-  ihren Vorgänger **und** eine kanonische Fassung ihrer selbst. `bifrost audit verify` bzw.
+  ihren Vorgänger **und** eine kanonische Fassung ihrer selbst. `faolan audit verify` bzw.
   `GET /api/v1/audit/verify` rechnet nach und nennt die **erste** gebrochene Stelle mit Zeilennummer
   und Grund — nicht „ungültig". Exit-Code `4` bei einem Bruch: ein Befund, kein Programmfehler.
   - **Gefunden werden Änderung, Löschung und Umsortierung.** Belegt gegen die echte Ablage: Ein Test
@@ -512,7 +539,7 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
   - Zwei additive EF-Migrationen (SQLite und PostgreSQL), keine Änderung an bestehenden Zeilen.
 
 - **Benachrichtigung über wartende Freigaben** (M6/WP6.3, FR-P074) — ein signierter Webhook meldet
-  jede neue Freigabe an ein Ziel der Wahl (`BIFROST_APPROVAL_WEBHOOK_URL` und
+  jede neue Freigabe an ein Ziel der Wahl (`FAOLAN_APPROVAL_WEBHOOK_URL` und
   `…_SECRET`), mit Wiederholung, Backoff und sichtbarem Dead-Letter-Zustand unter
   `GET /api/v1/approvals/notifications` und in der Oberfläche neben der Warteschlange.
   - **Zustellung ist von der Entscheidung getrennt:** Eine Freigabe gilt, wenn sie entschieden
@@ -523,7 +550,7 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     Replay. Ohne hinterlegtes Geheimnis startet der Gateway gar nicht erst mit einem Ziel — eine
     unsignierte Benachrichtigung kann jeder fälschen.
   - **Jedes Ziel geht durch dieselbe SSRF-Prüfung wie ein Schemaimport**, bevor die Verbindung
-    steht; `BIFROST_APPROVAL_WEBHOOK_ALLOW_PRIVATE` ist der ausdrückliche Schalter für ein Ziel im
+    steht; `FAOLAN_APPROVAL_WEBHOOK_ALLOW_PRIVATE` ist der ausdrückliche Schalter für ein Ziel im
     eigenen Netz. Gefunden hat diese Lücke der bestehende Wächter über ausgehende Verbindungen —
     der erste Entwurf rief die konfigurierte Adresse ungeprüft.
   - **Noch nicht dabei:** SMTP, Eskalation nach Ablauf und ein Diagnosecheck für tote Ziele.
@@ -541,7 +568,7 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     Auditmenge — Letztere meldet ihre Zahlen ausdrücklich als Untergrenzen.
   - Admin-only: Die Auswertung nennt, was eine fremde Identität benutzt hat.
 
-- **Connector Developer Kit** (M6/WP6.5) — `bifrost-connector` baut, signiert und prüft Pakete
+- **Connector Developer Kit** (M6/WP6.5) — `faolan-connector` baut, signiert und prüft Pakete
   **ohne laufendes Gateway**: `init`, `build`, `sign`, `verify`, `test`, mit denselben Exitcodes wie
   die Betriebsbefehle. Anleitung und Beispiel: [`docs/connectors/developer-kit.md`](docs/connectors/developer-kit.md)
   und `samples/counter-connector`.
@@ -568,7 +595,7 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     hinterlegt sind — ein grüner Lauf ohne Konfiguration wäre die Behauptung, es sei geprüft worden.
 
 - **Support-Bundle** (M5/WP5.6, FR-P075) — ein weitergabefähiges Archiv für die Fehlersuche:
-  `bifrost support-bundle [--preview]`, `POST /api/v1/operations/support-bundle` und die Oberfläche
+  `faolan support-bundle [--preview]`, `POST /api/v1/operations/support-bundle` und die Oberfläche
   unter **Betrieb**. Enthalten sind Version, Konfiguration **ohne Secretwerte**, Diagnosebericht,
   Zustand von Datenbank und Upstreams, Migrationsstand und Laufzeitangaben, dazu ein
   `manifest.json` mit Prüfsumme je Datei.
@@ -654,7 +681,7 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     Probelauf nutzt den In-Process-Host), keine Linux-Zeile, keine GUI-Clients.
 
 - **Backup und Restore für PostgreSQL** (FR-P020, ADR-0024 E2) — bis hierher die größte offene
-  Lücke aus M2. `bifrost backup` und `bifrost restore` arbeiten dort über `pg_dump --format=custom`
+  Lücke aus M2. `faolan backup` und `faolan restore` arbeiten dort über `pg_dump --format=custom`
   und `pg_restore --single-transaction`; Archivformat, Manifest, Prüfsummen, Key-Ring und
   Verschlüsselung sind dieselben wie bei SQLite. Die Nutzlast heißt `database/bifrost.dump`.
   - **Das Format ist eine Entscheidung, keine Vorliebe:** `custom` ist eine Datei statt eines
@@ -665,11 +692,11 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     einer Meldung ab, die sagt, *was* fehlt und *wo* man es herbekommt. **Einen Zeilenexport als
     Ersatz gibt es nicht** und wird es nicht geben: Er wäre eine zweite, schlechter geprüfte
     Sicherung derselben Daten, und der Unterschied fiele erst beim Zurückspielen auf.
-    `BIFROST_POSTGRES_BIN` benennt ein Verzeichnis; ist es gesetzt, wird ausschließlich dort gesucht.
+    `FAOLAN_POSTGRES_BIN` benennt ein Verzeichnis; ist es gesetzt, wird ausschließlich dort gesucht.
   - **Das Passwort geht über eine `PGPASSFILE`** (auf Unix `0600`, nach dem Aufruf gelöscht) und
     nicht über die Kommandozeile — die steht in der Prozessliste jedes Benutzers auf dem Rechner.
 - **`BFR-DB-0006` — „dieser `pg_dump` kann diesen Server nicht sichern", *bevor* jemand sichern
-  will.** `bifrost doctor` vergleicht die Hauptversion des tatsächlich gefundenen `pg_dump` mit der
+  will.** `faolan doctor` vergleicht die Hauptversion des tatsächlich gefundenen `pg_dump` mit der
   des Servers, gegen den der Gateway wirklich läuft, und meldet: „Client 16, Server 17 — dieser
   Client kann diesen Server nicht sichern; gebraucht wird >= 17."
   - **Der Anlass ist gemessen, nicht ausgedacht:** Ubuntu 24.04 liefert Client 16, ein aktueller
@@ -681,9 +708,9 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     behaupten. Ein unbelegtes „passt schon" beruhigt genau den, der sich gerade auf seinen Rückweg
     verlässt.
   - Scheitert eine Sicherung trotzdem an der Versionslage, trägt die Fehlermeldung des Werkzeugs
-    jetzt die Abhilfe (PGDG-Paket, `BIFROST_POSTGRES_BIN`) und den Verweis auf `BFR-DB-0006`.
+    jetzt die Abhilfe (PGDG-Paket, `FAOLAN_POSTGRES_BIN`) und den Verweis auf `BFR-DB-0006`.
 
-- **`BFR-DB-0007` — „ist das Audit-Log lückenlos?"** `bifrost doctor` und der Bericht der laufenden
+- **`BFR-DB-0007` — „ist das Audit-Log lückenlos?"** `faolan doctor` und der Bericht der laufenden
   Instanz sagen jetzt, **wie viele** Audit-Ereignisse verlorengegangen sind und **seit wann** —
   getrennt nach Ursache: bei der Annahme verworfen (Puffer voll, Überlast) oder beim Schreiben
   aufgegeben (die Datenbank hat den Batch mehrfach abgelehnt).
@@ -708,9 +735,9 @@ keiner ist von außen erreichbar. Zwei davon waren echte Lücken neben der gemel
     Verbindung. Eine bestehende Installation wird beim ersten Start dauerhaft umgestellt. Neben
     `bifrost.db` entstehen dann `bifrost.db-wal` und `bifrost.db-shm`; **beide gehören zur
     Datenbank** — wer die Datei von Hand kopiert, kopiert ohne sie einen älteren Stand. Sicherung
-    und Wiederherstellung über `bifrost backup`/`bifrost restore` sind davon unberührt: Sie
+    und Wiederherstellung über `faolan backup`/`faolan restore` sind davon unberührt: Sie
     benutzen seit jeher die Online-Backup-API und nicht das Kopieren der Datei (ADR-0024 E2).
-  - **Der Rückweg:** `BIFROST_SQLITE_JOURNAL_MODE=delete` stellt beim nächsten Start auf das
+  - **Der Rückweg:** `FAOLAN_SQLITE_JOURNAL_MODE=delete` stellt beim nächsten Start auf das
     klassische Rollback-Journal zurück; die `-wal`/`-shm`-Dateien verschwinden dabei. Gedacht ist
     er für Datenverzeichnisse, auf denen SQLite den gemeinsamen Speicher nicht anlegen kann (ein
     Netzlaufwerk etwa) — er kauft den Sperrfehler zurück. Ein unbekannter Wert **bricht den Start

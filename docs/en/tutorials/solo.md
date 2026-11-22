@@ -29,12 +29,12 @@ without a word. There is no middle option that works.
 credential you are about to store. Pick one of `certificate`, `file-secret`, or an explicit `none`.
 Choosing `none` deliberately is fine for a single machine with restrictive directory permissions —
 what is not fine is leaving it unset, because then the ring lies in cleartext *and* nobody decided
-that. `bifrost doctor` will report it as a warning until you choose.
+that. `faolan doctor` will report it as a warning until you choose.
 
 For a solo setup, this is a reasonable answer:
 
 ```bash
-BIFROST_KEYRING_PROTECTION=none    # in .env — a decision, not an omission
+FAOLAN_KEYRING_PROTECTION=none    # in .env — a decision, not an omission
 ```
 
 If you would rather protect it, the server creates the certificate and password file for you with
@@ -46,7 +46,7 @@ correct permissions — see [Operations → Key ring protection](../operations.m
 
 ```bash
 git clone https://github.com/LupusMalusDeviant/bifrost.git
-cd bifrost
+cd faolan
 cp .env.example .env
 chmod 600 .env
 ```
@@ -54,14 +54,14 @@ chmod 600 .env
 In `.env`:
 
 ```bash
-BIFROST_VERSION=0.12.0
-COMPOSE_PROJECT_NAME=bifrost
-BIFROST_KEYRING_PROTECTION=none
+FAOLAN_VERSION=0.12.0
+FAOLAN_KEYRING_PROTECTION=none
 ```
 
-`COMPOSE_PROJECT_NAME` is the line that saves you later. Without it, the volume name depends on the
-directory name, and moving or renaming the directory gives you a **new, empty** volume that starts
-cleanly and reports itself ready. Set it now, on a fresh install, and it never bites.
+The data volume is called `faolan-data` regardless of the directory name. Upgrading an existing
+Bifrost install instead? Then add `FAOLAN_DATA_VOLUME=<project>_bifrost-data`, or the gateway
+starts on a **new, empty** volume and reports itself ready (see
+[`docs/upgrade-faolan.md`](../../upgrade-faolan.md)).
 
 ```bash
 docker compose config -q          # validates the file; exits 0 with no output
@@ -74,7 +74,7 @@ curl -fsS http://localhost:8080/healthz
 ## 3. First access
 
 ```bash
-docker compose exec bifrost cat /data/config/bootstrap-token.txt
+docker compose exec faolan cat /data/config/bootstrap-token.txt
 ```
 
 Open `http://localhost:8080/setup`, paste the token, choose your own username and password. The
@@ -82,7 +82,7 @@ token is single-use and expires after an hour; redeeming it deletes the file.
 
 If you miss the window and nobody is set up yet, the next start issues a new one. If you *are* set
 up and lose the password, there is no route over the network — use
-`docker compose run --rm bifrost dotnet Bifrost.Server.dll --reset-ui-admin`.
+`docker compose run --rm faolan dotnet Faolan.Server.dll --reset-ui-admin`.
 
 ---
 
@@ -113,7 +113,7 @@ silently.
 **RBAC → Keys → new key.** It is displayed **once**, with a ready-made client configuration.
 
 ```bash
-claude mcp add --transport http bifrost http://localhost:8080/mcp \
+claude mcp add --transport http faolan http://localhost:8080/mcp \
   --header "Authorization: Bearer <API-KEY>"
 ```
 
@@ -140,8 +140,8 @@ obligation, not a nicety — a very large log (> ~10 GB) is a reason to move to 
 **A backup habit.** On SQLite you get a product path, and it runs against the running gateway:
 
 ```bash
-bifrost backup create --out /data/backups/bifrost-$(date +%F).zip
-bifrost backup verify /data/backups/bifrost-$(date +%F).zip
+faolan backup create --out /data/backups/faolan-$(date +%F).zip
+faolan backup verify /data/backups/faolan-$(date +%F).zip
 ```
 
 > **A full backup is a secret.** It contains the key ring — the key to every upstream credential you
@@ -154,17 +154,17 @@ bifrost backup verify /data/backups/bifrost-$(date +%F).zip
 ## 7. Check your work
 
 ```bash
-bifrost doctor
+faolan doctor
 ```
 
 Every finding has a stable code. Two you should expect to care about:
 
-- `BFR-KEY-0002` — no key ring mode chosen. If you set `BIFROST_KEYRING_PROTECTION=none` in step 2,
+- `BFR-KEY-0002` — no key ring mode chosen. If you set `FAOLAN_KEYRING_PROTECTION=none` in step 2,
   this is green: you decided.
 - `BFR-NET-*` — ports, public address, proxy trust. Worth reading if you added a reverse proxy.
 
-`bifrost doctor` reads only, with one exception: it creates and immediately deletes a
-`.bifrost-doctor-*.tmp` file in the data directory, because writability cannot be checked reliably
+`faolan doctor` reads only, with one exception: it creates and immediately deletes a
+`.faolan-doctor-*.tmp` file in the data directory, because writability cannot be checked reliably
 read-only.
 
 ---
