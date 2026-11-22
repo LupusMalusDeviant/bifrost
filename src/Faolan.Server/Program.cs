@@ -60,7 +60,7 @@ if (KeyRingCommands.IsKeyRingCommand(args))
     return KeyRingCommands.Run(
         args,
         Environment.GetEnvironmentVariable,
-        Environment.GetEnvironmentVariable("BIFROST_DATA_DIR") ?? "data",
+        Environment.GetEnvironmentVariable("FAOLAN_DATA_DIR") ?? "data",
         TimeProvider.System,
         Console.Out,
         Console.Error);
@@ -102,12 +102,12 @@ if (!builder.Environment.IsDevelopment())
 builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
 
 // ── Konfiguration (NFR-05: Env-Vars + Volume) ────────────────────────────────
-var dataDir = builder.Configuration["BIFROST_DATA_DIR"] ?? "data";
+var dataDir = builder.Configuration["FAOLAN_DATA_DIR"] ?? "data";
 Directory.CreateDirectory(dataDir);
-var dbProvider = builder.Configuration["BIFROST_DB_PROVIDER"] ?? "sqlite";
+var dbProvider = builder.Configuration["FAOLAN_DB_PROVIDER"] ?? "sqlite";
 // Liegt im Datenverzeichnis noch eine Datenbank unter dem alten Namen, gewinnt sie — sonst
 // entstuende daneben eine leere neue, und der Gateway meldete "bereit" ohne einen einzigen Server.
-var connectionString = builder.Configuration["BIFROST_DB_CONNECTION"]
+var connectionString = builder.Configuration["FAOLAN_DB_CONNECTION"]
     ?? $"Data Source={LegacyEnvironment.ResolveSqliteFile(dataDir)}";
 
 // config/instance.json: die stabile Kennung dieser Installation (M2, WP2.7). Sie entsteht hier und
@@ -143,19 +143,19 @@ builder.Services.AddFaolanKeyRing(keyRing, builder.Configuration, dataDir);
 // Eine bestehende Instanz stellt beim ersten Start dauerhaft um (docs/operations.md, Rückweg
 // 'delete'). Ein unbekannter Wert bricht den Start ab statt still auf die Vorgabe zu fallen.
 var journalMode = FaolanDbOptions.ParseJournalMode(
-    builder.Configuration["BIFROST_SQLITE_JOURNAL_MODE"]);
+    builder.Configuration["FAOLAN_SQLITE_JOURNAL_MODE"]);
 builder.Services.AddDbContextFactory<FaolanDbContext>(options =>
     options.UseFaolanDatabase(dbProvider, connectionString, journalMode));
 builder.Services.AddSingleton<DatabaseInitializer>();
 // FR-25: Aufbewahrungsdauer ist Betriebsentscheidung (Plattenbedarf vs. Nachvollziehbarkeit),
 // darf also nicht im Code festgenagelt sein. Ungültige/fehlende Angabe fällt auf den Default zurück.
 var retentionDays = int.TryParse(
-    Environment.GetEnvironmentVariable("BIFROST_AUDIT_RETENTION_DAYS"),
+    Environment.GetEnvironmentVariable("FAOLAN_AUDIT_RETENTION_DAYS"),
     NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedDays) && parsedDays > 0
     ? parsedDays
     : 30;
 var auditMode = string.Equals(
-    Environment.GetEnvironmentVariable("BIFROST_AUDIT_MODE"),
+    Environment.GetEnvironmentVariable("FAOLAN_AUDIT_MODE"),
     "compliance",
     StringComparison.OrdinalIgnoreCase)
     ? AuditDeliveryMode.Compliance
@@ -273,15 +273,15 @@ builder.Services.AddSingleton<AuditRetentionJob>();
 // ── Guardrail: Secret-Erkennung (ADR-0011) ───────────────────────────────────
 builder.Services.AddSingleton(new GuardOptions
 {
-    Enabled = Environment.GetEnvironmentVariable("BIFROST_GUARD_ENABLED") is not ("0" or "false"),
+    Enabled = Environment.GetEnvironmentVariable("FAOLAN_GUARD_ENABLED") is not ("0" or "false"),
     MaxScanChars = int.TryParse(
-        Environment.GetEnvironmentVariable("BIFROST_GUARD_MAX_SCAN_CHARS"),
+        Environment.GetEnvironmentVariable("FAOLAN_GUARD_MAX_SCAN_CHARS"),
         NumberStyles.Integer, CultureInfo.InvariantCulture, out var scanChars) && scanChars > 0
         ? scanChars
         : 256 * 1024,
     // Freitext-Regex ist eine Vertrauensentscheidung, keine technische Absicherung (ADR-0011, E2):
     // .NET bietet laut Microsoft keine Sicherheitsgrenze gegen bösartige Muster. Default aus.
-    AllowCustomPatterns = Environment.GetEnvironmentVariable("BIFROST_GUARD_ALLOW_CUSTOM_PATTERNS") is "1" or "true",
+    AllowCustomPatterns = Environment.GetEnvironmentVariable("FAOLAN_GUARD_ALLOW_CUSTOM_PATTERNS") is "1" or "true",
 });
 builder.Services.AddSingleton<GuardRuleStore>();
 builder.Services.AddSingleton<IGuardRuleStore>(sp => sp.GetRequiredService<GuardRuleStore>());
@@ -354,7 +354,7 @@ builder.Services.AddSingleton<IRedactionService>(sp => sp.GetRequiredService<Red
 // FR-16: Kürzung übergroßer Ergebnisse. Default aus — sie ist verlustbehaftet, das soll niemand
 // unbemerkt bekommen. Wer sie einschaltet, begrenzt damit den Token-Hunger einzelner Tools.
 var maxResultChars = int.TryParse(
-    Environment.GetEnvironmentVariable("BIFROST_MAX_RESULT_CHARS"),
+    Environment.GetEnvironmentVariable("FAOLAN_MAX_RESULT_CHARS"),
     NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedChars) && parsedChars > 0
     ? parsedChars
     : 0;
@@ -362,7 +362,7 @@ builder.Services.AddSingleton(new ResultCompressionOptions(maxResultChars));
 
 // FR-24: Ergebnis-Payloads im Audit sind ausdrücklich zu aktivieren, nie Default (NFR-04).
 builder.Services.AddSingleton(new AuditOptions(
-    CaptureResponsePayloads: Environment.GetEnvironmentVariable("BIFROST_AUDIT_DEBUG_PAYLOADS") is "1" or "true"));
+    CaptureResponsePayloads: Environment.GetEnvironmentVariable("FAOLAN_AUDIT_DEBUG_PAYLOADS") is "1" or "true"));
 builder.Services.AddSingleton<IToolInvoker, ToolInvoker>();
 // Explizit statt per Konvention: Der Asset-Store ist ein OPTIONALER Konstruktorparameter, und
 // den fuellt der Container nicht von selbst — ohne diese Zeile gaebe es list_skills/read_skill,
@@ -397,12 +397,12 @@ builder.Services.AddHttpContextAccessor();
 //
 // Der Schalter ist da, weil ein Betreiber mit ausschliesslich alten Clients die zweite Wahl treffen
 // koennen muss, ohne auf ein SDK von gestern zurueckzugehen.
-var statelessMcp = builder.Configuration["BIFROST_MCP_STATELESS"] is not ("0" or "false");
+var statelessMcp = builder.Configuration["FAOLAN_MCP_STATELESS"] is not ("0" or "false");
 
 // Cache-Frist der Listen (SEP-2549). Im stateless Betrieb ist sie der einzige Weg, auf dem ein
 // angeschlossener Agent ueberhaupt von einem neuen Werkzeug erfaehrt.
 var listTtlSeconds = int.TryParse(
-    builder.Configuration["BIFROST_MCP_LIST_TTL_SECONDS"],
+    builder.Configuration["FAOLAN_MCP_LIST_TTL_SECONDS"],
     NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedTtl) && parsedTtl >= 0
     ? parsedTtl
     : (int)McpCacheOptions.Default.ListTimeToLive.TotalSeconds;
@@ -562,7 +562,7 @@ if (adoptedLegacyVariables.Count > 0)
 #pragma warning disable CA1848
     app.Logger.LogWarning(
         "Umgebungsvariablen mit altem Namen uebernommen: {Variables}. Der Praefix heisst seit der "
-        + "Umbenennung BIFROST_ (frueher MCPMCP_); bitte umstellen. Die alten Namen werden noch "
+        + "Umbenennung FAOLAN_ (frueher BIFROST_, davor MCPMCP_); bitte umstellen. Die alten Namen werden noch "
         + "gelesen, sind aber nicht mehr dokumentiert.",
         string.Join(", ", adoptedLegacyVariables));
 #pragma warning restore CA1848
@@ -639,7 +639,7 @@ if (!app.Environment.IsDevelopment())
 //
 // Bewusst OPT-IN: Wer X-Forwarded-Proto von jedem Absender glaubt, laesst sich von jedem Client
 // erzaehlen, die Verbindung sei sicher. Deshalb muss ein Betreiber sagen, WEM er glaubt.
-if (ForwardedProxyOptions.TryCreate(builder.Configuration["BIFROST_TRUSTED_PROXIES"], out var forwarded))
+if (ForwardedProxyOptions.TryCreate(builder.Configuration["FAOLAN_TRUSTED_PROXIES"], out var forwarded))
 {
     app.UseForwardedHeaders(forwarded);
 }

@@ -317,7 +317,7 @@ public sealed class GatewayCli
         + """
 
 
-        Authentifizierung: BIFROST_TOKEN, Token-Datei in --config oder --token-stdin.
+        Authentifizierung: FAOLAN_TOKEN, Token-Datei in --config oder --token-stdin.
 
         """
         + OperationsCli.UsageText;

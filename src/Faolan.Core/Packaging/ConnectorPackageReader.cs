@@ -341,7 +341,7 @@ public static class ConnectorPackageReader
             throw new ConnectorPackageException("Manifest ist leer.");
         }
 
-        if (!string.Equals(manifest.Schema, ConnectorManifest.SchemaV1, StringComparison.Ordinal))
+        if (!ConnectorManifest.IsKnownSchema(manifest.Schema))
         {
             throw new ConnectorPackageException(
                 $"Unbekanntes Manifest-Schema '{manifest.Schema}' — erwartet '{ConnectorManifest.SchemaV1}'.");

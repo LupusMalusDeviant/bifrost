@@ -117,8 +117,19 @@ public sealed record ConnectorManifest(
     string? Description = null,
     IReadOnlyList<ConnectorSkill>? Skills = null)
 {
-    /// <summary>Der einzige Schemawert, den v1 kennt.</summary>
-    public const string SchemaV1 = "bifrost.connector.v1";
+    /// <summary>Der Schemawert, den neu gebaute Pakete tragen.</summary>
+    public const string SchemaV1 = "faolan.connector.v1";
+
+    /// <summary>
+    /// Derselbe Vertrag unter dem Namen vor der Umbenennung (Vertrag umbenennung-faolan §2.3).
+    /// Pakete aus 0.12.0 tragen ihn in ihrem signierten Manifest; sie installieren sich weiter.
+    /// </summary>
+    public const string LegacySchemaV1 = "bifrost.connector.v1";
+
+    /// <summary>Ob <paramref name="schema"/> ein Schemawert ist, den dieses Gateway liest.</summary>
+    public static bool IsKnownSchema(string? schema)
+        => string.Equals(schema, SchemaV1, StringComparison.Ordinal)
+            || string.Equals(schema, LegacySchemaV1, StringComparison.Ordinal);
 
     /// <summary>Die Vertragsversion, die dieses Gateway sprechen kann.</summary>
     public const string SupportedContractVersion = "1";

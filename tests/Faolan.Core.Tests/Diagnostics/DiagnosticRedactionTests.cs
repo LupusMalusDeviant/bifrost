@@ -51,7 +51,7 @@ public class DiagnosticRedactionTests
 {
     [Theory]
     [InlineData("Verbindung fehlgeschlagen: " + SecretCorpus.PostgresConnection, SecretCorpus.Passphrase)]
-    [InlineData("BIFROST_KEYRING_CERT_PASSWORD=" + SecretCorpus.Passphrase, SecretCorpus.Passphrase)]
+    [InlineData("FAOLAN_KEYRING_CERT_PASSWORD=" + SecretCorpus.Passphrase, SecretCorpus.Passphrase)]
     [InlineData("Upstream antwortet nicht: " + SecretCorpus.UpstreamUrlWithCredentials, SecretCorpus.Passphrase)]
     [InlineData(SecretCorpus.BearerHeader, SecretCorpus.BearerValue)]
     [InlineData("token: " + SecretCorpus.GitHubToken, SecretCorpus.GitHubToken)]
@@ -156,15 +156,15 @@ public class DiagnosticReportLeakTests
     {
         var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["BIFROST_DATA_DIR"] = "/data",
+            ["FAOLAN_DATA_DIR"] = "/data",
             ["ASPNETCORE_URLS"] = "http://+:8080",
-            ["BIFROST_DB_PROVIDER"] = "postgres",
-            ["BIFROST_DB_CONNECTION"] = SecretCorpus.PostgresConnection,
-            ["BIFROST_KEYRING_CERT_PATH"] = "/secrets/keyring.pfx",
-            ["BIFROST_KEYRING_CERT_PASSWORD"] = SecretCorpus.Passphrase,
-            ["BIFROST_PUBLIC_BASE_URL"] = "https://gateway.example.com",
-            ["BIFROST_TRUSTED_PROXIES"] = "172.17.0.1",
-            ["BIFROST_WASI_HOST"] = "/usr/local/bin/bifrost-wasi-host",
+            ["FAOLAN_DB_PROVIDER"] = "postgres",
+            ["FAOLAN_DB_CONNECTION"] = SecretCorpus.PostgresConnection,
+            ["FAOLAN_KEYRING_CERT_PATH"] = "/secrets/keyring.pfx",
+            ["FAOLAN_KEYRING_CERT_PASSWORD"] = SecretCorpus.Passphrase,
+            ["FAOLAN_PUBLIC_BASE_URL"] = "https://gateway.example.com",
+            ["FAOLAN_TRUSTED_PROXIES"] = "172.17.0.1",
+            ["FAOLAN_WASI_HOST"] = "/usr/local/bin/bifrost-wasi-host",
             // Alt benannte Variablen: Der Check nennt ihre NAMEN — ihre Werte dürfen nie mitkommen.
             ["MCPMCP_KEYRING_CERT_PASSWORD"] = SecretCorpus.Passphrase,
             ["MCPMCP_UPSTREAM_TOKEN"] = SecretCorpus.GitHubToken,

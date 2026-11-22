@@ -603,12 +603,15 @@ public interface IUpstreamConfigStore
 
 /// <summary>
 /// Eindeutige Kennung dieser Gateway-Instanz (FR-05). Wird bei ausgehenden HTTP-MCP-Verbindungen
-/// als Header <c>X-Bifrost-Instance</c> mitgeschickt; empfängt der eigene MCP-Endpoint die eigene
+/// als Header <c>X-Faolan-Instance</c> mitgeschickt (gelesen wird auch der alte Name <c>X-Bifrost-Instance</c>, Vertrag umbenennung-faolan §2.3); empfängt der eigene MCP-Endpoint die eigene
 /// Kennung, ist das ein direkter Federations-Loop und wird abgewiesen.
 /// </summary>
 public sealed class GatewayIdentity
 {
-    public const string InstanceHeader = "X-Bifrost-Instance";
+    public const string InstanceHeader = "X-Faolan-Instance";
+
+    /// <summary>Der Name vor der Umbenennung; nur noch gelesen.</summary>
+    public const string LegacyInstanceHeader = "X-Bifrost-Instance";
 
     public string InstanceId { get; } = Guid.NewGuid().ToString("N");
 }

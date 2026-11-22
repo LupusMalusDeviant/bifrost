@@ -59,9 +59,9 @@ public sealed class ServerSupportBundleEnvironment : ISupportBundleEnvironment
                 .ToString(CultureInfo.InvariantCulture),
             // Nur ob einer konfiguriert ist und ob die Datei liegt — nicht der Pfad. Ein Pfad
             // verraet die Verzeichnisstruktur des Wirts und beantwortet die Frage nicht.
-            ["wasiHostConfigured"] = (Environment.GetEnvironmentVariable("BIFROST_WASI_HOST") is { Length: > 0 })
+            ["wasiHostConfigured"] = (Environment.GetEnvironmentVariable("FAOLAN_WASI_HOST") is { Length: > 0 })
                 .ToString(CultureInfo.InvariantCulture),
-            ["wasiHostPresent"] = (Environment.GetEnvironmentVariable("BIFROST_WASI_HOST") is { Length: > 0 } host
+            ["wasiHostPresent"] = (Environment.GetEnvironmentVariable("FAOLAN_WASI_HOST") is { Length: > 0 } host
                 && File.Exists(host)).ToString(CultureInfo.InvariantCulture),
         };
 

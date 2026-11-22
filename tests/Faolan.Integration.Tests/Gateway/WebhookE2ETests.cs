@@ -103,6 +103,87 @@ public sealed class WebhookE2ETests : IClassFixture<GatewayFixture>
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "der Body ist Teil der Signatur");
     }
 
+    /// <summary>
+    /// Ein Absender, der noch nach 0.12.0 signiert, schickt nur das alte Headerpaar. Er läuft
+    /// weiter (Vertrag umbenennung-faolan §2.3).
+    /// </summary>
+    [Fact]
+    public async Task A_sender_with_only_the_old_header_pair_is_accepted()
+    {
+        await _gw.AddEchoUpstreamAsync("hook4");
+        var (identity, _) = await _gw.SeedAdminAsync("hook-caller-4");
+        var (def, secret) = await Store.CreateAsync(
+            "test-hook-4", identity, new NamespacedToolName("hook4__echo"), TestContext.Current.CancellationToken);
+
+        var body = """{"message":"alter absender"}""";
+        var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var response = await SendAsync(def.Id, body, req =>
+        {
+            req.Headers.Add(WebhookSignature.LegacyTimestampHeader, ts.ToString());
+            req.Headers.Add(WebhookSignature.LegacySignatureHeader, WebhookSignature.Compute(secret, ts, body));
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Accepted);
+    }
+
+    /// <summary>
+    /// <b>Nie „eines von beiden passt".</b> Liegt das neue Paar vor, zählt nur das neue — auch wenn
+    /// daneben ein korrekt signiertes altes Paar steht. Sonst wäre jede Schwäche des einen Paars
+    /// eine des Ganzen.
+    /// </summary>
+    [Fact]
+    public async Task With_both_pairs_only_the_new_pair_counts()
+    {
+        await _gw.AddEchoUpstreamAsync("hook5");
+        var (identity, _) = await _gw.SeedAdminAsync("hook-caller-5");
+        var (def, secret) = await Store.CreateAsync(
+            "test-hook-5", identity, new NamespacedToolName("hook5__echo"), TestContext.Current.CancellationToken);
+
+        var body = """{"message":"widerspruch"}""";
+        var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var valid = WebhookSignature.Compute(secret, ts, body);
+        var wrong = WebhookSignature.Compute(secret, ts, body + " ");
+
+        var newWrongOldValid = await SendAsync(def.Id, body, req =>
+        {
+            req.Headers.Add(WebhookSignature.TimestampHeader, ts.ToString());
+            req.Headers.Add(WebhookSignature.SignatureHeader, wrong);
+            req.Headers.Add(WebhookSignature.LegacyTimestampHeader, ts.ToString());
+            req.Headers.Add(WebhookSignature.LegacySignatureHeader, valid);
+        });
+        newWrongOldValid.StatusCode.Should().Be(
+            HttpStatusCode.Unauthorized, "das neue Paar liegt vor und ist falsch; das alte zählt nicht");
+
+        var newValidOldWrong = await SendAsync(def.Id, body, req =>
+        {
+            req.Headers.Add(WebhookSignature.TimestampHeader, ts.ToString());
+            req.Headers.Add(WebhookSignature.SignatureHeader, valid);
+            req.Headers.Add(WebhookSignature.LegacyTimestampHeader, ts.ToString());
+            req.Headers.Add(WebhookSignature.LegacySignatureHeader, wrong);
+        });
+        newValidOldWrong.StatusCode.Should().Be(HttpStatusCode.Accepted, "nur das neue Paar wird geprüft");
+
+        var halfNewPair = await SendAsync(def.Id, body, req =>
+        {
+            req.Headers.Add(WebhookSignature.SignatureHeader, valid);
+            req.Headers.Add(WebhookSignature.LegacyTimestampHeader, ts.ToString());
+            req.Headers.Add(WebhookSignature.LegacySignatureHeader, valid);
+        });
+        halfNewPair.StatusCode.Should().Be(
+            HttpStatusCode.Unauthorized, "ein halbes neues Paar wird nicht mit dem alten aufgefüllt");
+    }
+
+    private async Task<HttpResponseMessage> SendAsync(Guid id, string body, Action<HttpRequestMessage> sign)
+    {
+        using var client = _gw.CreateDefaultClient();
+        using var req = new HttpRequestMessage(HttpMethod.Post, $"/webhooks/{id}/trigger")
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+        };
+        sign(req);
+        return await client.SendAsync(req, TestContext.Current.CancellationToken);
+    }
+
     [Fact]
     public async Task Unknown_webhook_id_is_unauthorized_not_notfound()
     {

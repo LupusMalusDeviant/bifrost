@@ -40,4 +40,10 @@ public static class CryptographicNames
 
     /// <summary>Zweck der Webhook-Secrets.</summary>
     public const string WebhookSecretPurpose = "McpMcp.Webhook.Secret.v1";
+
+    /// <summary>
+    /// Zweck des geschützten <c>requestState</c> der Freigabe per Elicitation. Er trägt den alten
+    /// Produktnamen aus demselben Grund wie die drei oben (Vertrag umbenennung-faolan §2.4).
+    /// </summary>
+    public const string ApprovalElicitationStatePurpose = "Bifrost.Server.ApprovalElicitation.RequestState.v1";
 }

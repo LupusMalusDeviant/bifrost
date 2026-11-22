@@ -161,11 +161,14 @@ public sealed partial class ApprovalNotificationDispatcher : IApprovalNotifier, 
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json"),
             };
-            message.Headers.TryAddWithoutValidation(
-                WebhookSignature.SignatureHeader,
-                WebhookSignature.Compute(pending.Target.Secret, unix, body));
-            message.Headers.TryAddWithoutValidation(
-                WebhookSignature.TimestampHeader, unix.ToString(CultureInfo.InvariantCulture));
+            // Beide Headerpaare mit gleichem Wert (Vertrag umbenennung-faolan §2.3): Ein Empfänger,
+            // der noch das alte Paar prüft, bekommt weiter signierte Nachrichten.
+            var signature = WebhookSignature.Compute(pending.Target.Secret, unix, body);
+            var timestamp = unix.ToString(CultureInfo.InvariantCulture);
+            message.Headers.TryAddWithoutValidation(WebhookSignature.SignatureHeader, signature);
+            message.Headers.TryAddWithoutValidation(WebhookSignature.TimestampHeader, timestamp);
+            message.Headers.TryAddWithoutValidation(WebhookSignature.LegacySignatureHeader, signature);
+            message.Headers.TryAddWithoutValidation(WebhookSignature.LegacyTimestampHeader, timestamp);
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(_options.RequestTimeout);

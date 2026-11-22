@@ -40,8 +40,8 @@ public class SecurityGatewayFixture : WebApplicationFactory<Program>
 
         Directory.CreateDirectory(_dataDir);
         builder.UseSetting("environment", "Development");
-        builder.UseSetting("BIFROST_DATA_DIR", _dataDir);
-        builder.UseSetting("BIFROST_DB_CONNECTION", $"Data Source={Path.Combine(_dataDir, "sec.db")}");
+        builder.UseSetting("FAOLAN_DATA_DIR", _dataDir);
+        builder.UseSetting("FAOLAN_DB_CONNECTION", $"Data Source={Path.Combine(_dataDir, "sec.db")}");
         builder.ConfigureLogging(logging =>
         {
             // Alles mitschreiben: Ein Filter auf Information waere die Stelle, an der ein

@@ -21,7 +21,7 @@ var server = builder.Services
 //
 // Zwei Typen statt einer zur Laufzeit gebauten Beschreibung, weil das SDK die Definition aus den
 // Attributen liest: Ein zusammengesetzter Text wäre ein zweiter Weg, auf dem ein Werkzeug entsteht.
-if (Environment.GetEnvironmentVariable("BIFROST_ECHO_DESCRIPTION") == "geaendert")
+if (Environment.GetEnvironmentVariable("FAOLAN_ECHO_DESCRIPTION") == "geaendert")
 {
     server.WithTools<ChangedEchoTools>();
 }

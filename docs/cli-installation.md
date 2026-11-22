@@ -101,7 +101,7 @@ neu herunterladen.
 Danach gegen das eigene Gateway:
 
 ```bash
-export BIFROST_ENDPOINT=https://gateway.example
+export FAOLAN_ENDPOINT=https://gateway.example
 bifrost status
 # Gateway ist bereit.
 ```

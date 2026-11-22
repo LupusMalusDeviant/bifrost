@@ -49,7 +49,7 @@ public static class FaolanDbOptions
 
     /// <param name="sqliteJournalMode">
     /// Nur für SQLite. Vorgabe ist <see cref="SqliteJournalMode.Wal"/>; der Rückweg
-    /// <see cref="SqliteJournalMode.Delete"/> ist über <c>BIFROST_SQLITE_JOURNAL_MODE</c>
+    /// <see cref="SqliteJournalMode.Delete"/> ist über <c>FAOLAN_SQLITE_JOURNAL_MODE</c>
     /// einstellbar. Bei PostgreSQL ohne Wirkung.
     /// </param>
     public static DbContextOptionsBuilder UseFaolanDatabase(
@@ -90,7 +90,7 @@ public static class FaolanDbOptions
     }
 
     /// <summary>
-    /// Liest den Wert von <c>BIFROST_SQLITE_JOURNAL_MODE</c>. Ein unbekannter Wert wird
+    /// Liest den Wert von <c>FAOLAN_SQLITE_JOURNAL_MODE</c>. Ein unbekannter Wert wird
     /// <b>abgewiesen</b> und nicht still auf die Vorgabe zurückgesetzt: Wer <c>walk</c> schreibt und
     /// stillschweigend WAL bekommt, hält seinen Rückweg für eingelegt.
     /// </summary>
@@ -106,7 +106,7 @@ public static class FaolanDbOptions
             "WAL" => SqliteJournalMode.Wal,
             "DELETE" => SqliteJournalMode.Delete,
             _ => throw new ArgumentException(
-                $"BIFROST_SQLITE_JOURNAL_MODE nennt '{value}' — bekannt sind nur 'wal' (Vorgabe) und "
+                $"FAOLAN_SQLITE_JOURNAL_MODE nennt '{value}' — bekannt sind nur 'wal' (Vorgabe) und "
                 + "'delete' (Rückweg auf das klassische Rollback-Journal).",
                 nameof(value)),
         };

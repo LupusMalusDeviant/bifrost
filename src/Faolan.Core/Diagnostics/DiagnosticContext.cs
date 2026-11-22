@@ -8,7 +8,7 @@ namespace Faolan.Core.Diagnostics;
 /// Sonden zur Außenwelt.
 /// <para>
 /// <b>Der Kontext trägt Konfigurationswerte — die Befunde tun es nie.</b> Die Umgebung enthält
-/// Passwörter (<c>BIFROST_KEYRING_CERT_PASSWORD</c>) und Verbindungszeichenfolgen. Ein Check liest
+/// Passwörter (<c>FAOLAN_KEYRING_CERT_PASSWORD</c>) und Verbindungszeichenfolgen. Ein Check liest
 /// sie, um zu entscheiden, und schreibt danach <b>Namen, Pfade, Zahlen und Ja/Nein</b> in seine
 /// Details. Das ist eine Positivliste; die Mustererkennung in <see cref="DiagnosticRedaction"/> ist
 /// die zweite Linie dahinter, nicht die erste.
@@ -91,23 +91,23 @@ public sealed record DiagnosticContext
             ? value.Trim()
             : null;
 
-    public string DataDirectory => Value("BIFROST_DATA_DIR") ?? "data";
+    public string DataDirectory => Value("FAOLAN_DATA_DIR") ?? "data";
 
     public string KeyRingDirectory => Path.Combine(DataDirectory, "keys");
 
-    public string DatabaseProvider => Value("BIFROST_DB_PROVIDER") ?? "sqlite";
+    public string DatabaseProvider => Value("FAOLAN_DB_PROVIDER") ?? "sqlite";
 
-    public bool HasDatabaseConnectionString => Value("BIFROST_DB_CONNECTION") is not null;
+    public bool HasDatabaseConnectionString => Value("FAOLAN_DB_CONNECTION") is not null;
 
-    public string? KeyRingCertificatePath => Value("BIFROST_KEYRING_CERT_PATH");
+    public string? KeyRingCertificatePath => Value("FAOLAN_KEYRING_CERT_PATH");
 
-    public string? PublicBaseUrl => Value("BIFROST_PUBLIC_BASE_URL");
+    public string? PublicBaseUrl => Value("FAOLAN_PUBLIC_BASE_URL");
 
-    public string? TrustedProxies => Value("BIFROST_TRUSTED_PROXIES");
+    public string? TrustedProxies => Value("FAOLAN_TRUSTED_PROXIES");
 
-    public string? OAuthIssuer => Value("BIFROST_OAUTH_ISSUER");
+    public string? OAuthIssuer => Value("FAOLAN_OAUTH_ISSUER");
 
-    public string? WasiHostPath => Value("BIFROST_WASI_HOST");
+    public string? WasiHostPath => Value("FAOLAN_WASI_HOST");
 
     /// <summary>
     /// Name der zu prüfenden Container-Runtime. Bewusst <b>keine</b> Umgebungsvariable: Die Runtime

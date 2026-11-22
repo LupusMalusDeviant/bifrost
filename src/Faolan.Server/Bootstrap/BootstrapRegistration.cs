@@ -6,7 +6,7 @@ namespace Faolan.Server.Bootstrap;
 public static class BootstrapSwitch
 {
     /// <summary>Gültigkeitsdauer des Setup-Tokens in Minuten. Ungültige Angabe fällt auf den Default.</summary>
-    public const string TimeToLiveMinutes = "BIFROST_BOOTSTRAP_TTL_MINUTES";
+    public const string TimeToLiveMinutes = "FAOLAN_BOOTSTRAP_TTL_MINUTES";
 }
 
 /// <summary>Verdrahtung des Erstzugangs (WP3.4).</summary>

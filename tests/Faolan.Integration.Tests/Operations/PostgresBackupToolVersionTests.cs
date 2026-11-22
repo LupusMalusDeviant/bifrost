@@ -204,8 +204,8 @@ public sealed class PostgresBackupToolVersionCheckTests
         {
             Environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["BIFROST_DB_PROVIDER"] = provider,
-                ["BIFROST_DB_CONNECTION"] = "Host=127.0.0.1;Database=bifrost",
+                ["FAOLAN_DB_PROVIDER"] = provider,
+                ["FAOLAN_DB_CONNECTION"] = "Host=127.0.0.1;Database=bifrost",
             },
             Database = database,
             PostgresBackupTools = tools,

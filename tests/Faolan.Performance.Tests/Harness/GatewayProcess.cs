@@ -38,7 +38,7 @@ internal sealed record GatewayProcessOptions(
     /// </summary>
     string? ExecutablePath = null,
     /// <summary>
-    /// Zusaetzliche Umgebungsvariablen — etwa <c>BIFROST_TRUSTED_PROXIES</c> fuer den
+    /// Zusaetzliche Umgebungsvariablen — etwa <c>FAOLAN_TRUSTED_PROXIES</c> fuer den
     /// Reverse-Proxy-Sprung. Sie werden NACH den Vorgaben gesetzt und koennen sie ueberschreiben.
     /// </summary>
     IReadOnlyDictionary<string, string>? Environment = null);
@@ -139,11 +139,11 @@ internal sealed class GatewayProcess : IAsyncDisposable
 
         var environment = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["BIFROST_DATA_DIR"] = dataDir,
-            ["BIFROST_DB_CONNECTION"] = $"Data Source={Path.Combine(dataDir, "perf.db")}",
+            ["FAOLAN_DATA_DIR"] = dataDir,
+            ["FAOLAN_DB_CONNECTION"] = $"Data Source={Path.Combine(dataDir, "perf.db")}",
             // ADR-0025 E2: stdio läuft nativ; ein Betreiber setzt diese Erlaubnis genauso.
-            ["BIFROST_ALLOW_HOST_EXECUTION"] = "true",
-            ["BIFROST_MCP_STATELESS"] = options.Stateless ? "1" : "0",
+            ["FAOLAN_ALLOW_HOST_EXECUTION"] = "true",
+            ["FAOLAN_MCP_STATELESS"] = options.Stateless ? "1" : "0",
             ["ASPNETCORE_ENVIRONMENT"] = "Production",
             // Der Lauf soll Anfragen messen und nicht das Schreiben von Logzeilen.
             ["Logging__LogLevel__Default"] = "Warning",

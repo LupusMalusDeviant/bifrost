@@ -82,6 +82,33 @@ public class WebhookSignatureTests
             .Should().NotBe(WebhookVerification.Valid);
     }
 
+    /// <summary>
+    /// Die Paarwahl nach Vertrag umbenennung-faolan §2.3: Das alte Paar zählt nur, wenn vom neuen
+    /// <b>kein einziger</b> Header vorliegt; gemischt wird nie.
+    /// </summary>
+    [Theory]
+    [InlineData("neu-sig", "neu-ts", "alt-sig", "alt-ts", "neu-sig", "neu-ts")]
+    [InlineData(null, null, "alt-sig", "alt-ts", "alt-sig", "alt-ts")]
+    [InlineData("neu-sig", null, "alt-sig", "alt-ts", "neu-sig", null)]
+    [InlineData(null, "neu-ts", "alt-sig", "alt-ts", null, "neu-ts")]
+    [InlineData("neu-sig", "neu-ts", null, null, "neu-sig", "neu-ts")]
+    [InlineData(null, null, null, null, null, null)]
+    public void The_new_pair_wins_as_soon_as_one_of_its_headers_is_present(
+        string? newSignature, string? newTimestamp, string? oldSignature, string? oldTimestamp,
+        string? expectedSignature, string? expectedTimestamp)
+    {
+        var headers = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            [WebhookSignature.SignatureHeader] = newSignature,
+            [WebhookSignature.TimestampHeader] = newTimestamp,
+            [WebhookSignature.LegacySignatureHeader] = oldSignature,
+            [WebhookSignature.LegacyTimestampHeader] = oldTimestamp,
+        };
+
+        WebhookSignature.SelectHeaders(name => headers.GetValueOrDefault(name))
+            .Should().Be((expectedSignature, expectedTimestamp));
+    }
+
     [Fact]
     public void Signature_length_mismatch_does_not_throw()
     {

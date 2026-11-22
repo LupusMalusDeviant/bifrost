@@ -55,7 +55,7 @@ internal static class WasiPackageProbe
                     WasiRuntimeConnector.HostSettingName] is { Length: > 0 } configured
                 ? configured
                 : throw new ConnectorPackageException(
-                    "Kein WASI-Host konfiguriert (BIFROST_WASI_HOST). Ohne ihn ließe sich das Paket "
+                    "Kein WASI-Host konfiguriert (FAOLAN_WASI_HOST). Ohne ihn ließe sich das Paket "
                     + "nicht proben, und ungeprobt wird nichts aktiv.");
 
             var connector = new WasiRuntimeConnector(

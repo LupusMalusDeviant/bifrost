@@ -25,7 +25,7 @@ public class DatabaseProviderCheckTests
     {
         var context = DiagnosticWorld.Context(new Dictionary<string, string>
         {
-            ["BIFROST_DB_PROVIDER"] = "postgre",
+            ["FAOLAN_DB_PROVIDER"] = "postgre",
         });
 
         var result = await new DatabaseProviderCheck().RunAsync(context, TestContext.Current.CancellationToken);
@@ -39,7 +39,7 @@ public class DatabaseProviderCheckTests
     {
         var context = DiagnosticWorld.Context(new Dictionary<string, string>
         {
-            ["BIFROST_DB_PROVIDER"] = "postgres",
+            ["FAOLAN_DB_PROVIDER"] = "postgres",
         });
 
         var result = await new DatabaseProviderCheck().RunAsync(context, TestContext.Current.CancellationToken);
@@ -52,8 +52,8 @@ public class DatabaseProviderCheckTests
     {
         var context = DiagnosticWorld.Context(new Dictionary<string, string>
         {
-            ["BIFROST_DB_PROVIDER"] = "postgres",
-            ["BIFROST_DB_CONNECTION"] = "Host=db;Username=bifrost;Password=Tr0ub4dor3",
+            ["FAOLAN_DB_PROVIDER"] = "postgres",
+            ["FAOLAN_DB_CONNECTION"] = "Host=db;Username=bifrost;Password=Tr0ub4dor3",
         });
 
         var result = await new DatabaseProviderCheck().RunAsync(context, TestContext.Current.CancellationToken);
@@ -171,7 +171,7 @@ public class SqliteDatabaseFileCheckTests
     {
         var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["BIFROST_DATA_DIR"] = "/data",
+            ["FAOLAN_DATA_DIR"] = "/data",
         };
         foreach (var (key, value) in extra ?? new Dictionary<string, string>())
         {
@@ -187,7 +187,7 @@ public class SqliteDatabaseFileCheckTests
     public async Task The_current_file_passes()
     {
         var (context, files) = World();
-        files.Files.Add(Path.Combine("/data", "bifrost.db"));
+        files.Files.Add(Path.Combine("/data", "faolan.db"));
 
         var result = await new SqliteDatabaseFileCheck().RunAsync(context, TestContext.Current.CancellationToken);
 
@@ -206,11 +206,13 @@ public class SqliteDatabaseFileCheckTests
         result.Remediation.Should().Contain("Volume");
     }
 
-    [Fact]
-    public async Task The_legacy_name_alone_warns_but_does_not_demand_action()
+    [Theory]
+    [InlineData("mcpmcp.db")]
+    [InlineData("bifrost.db")]
+    public async Task An_old_name_alone_warns_but_does_not_demand_action(string oldName)
     {
         var (context, files) = World();
-        files.Files.Add(Path.Combine("/data", "mcpmcp.db"));
+        files.Files.Add(Path.Combine("/data", oldName));
 
         var result = await new SqliteDatabaseFileCheck().RunAsync(context, TestContext.Current.CancellationToken);
 
@@ -218,16 +220,20 @@ public class SqliteDatabaseFileCheckTests
         result.Remediation.Should().Contain("Kein Handlungsdruck");
     }
 
-    [Fact]
-    public async Task Both_files_side_by_side_warn()
+    [Theory]
+    [InlineData("faolan.db", "bifrost.db")]
+    [InlineData("faolan.db", "mcpmcp.db")]
+    [InlineData("bifrost.db", "mcpmcp.db")]
+    public async Task Several_files_side_by_side_warn_and_name_the_one_in_use(string used, string leftover)
     {
         var (context, files) = World();
-        files.Files.Add(Path.Combine("/data", "bifrost.db"));
-        files.Files.Add(Path.Combine("/data", "mcpmcp.db"));
+        files.Files.Add(Path.Combine("/data", used));
+        files.Files.Add(Path.Combine("/data", leftover));
 
         var result = await new SqliteDatabaseFileCheck().RunAsync(context, TestContext.Current.CancellationToken);
 
         result.Status.Should().Be(CheckStatus.Warning);
+        result.Remediation.Should().Contain($"Benutzt wird '{used}'");
     }
 
     [Fact]
@@ -235,7 +241,7 @@ public class SqliteDatabaseFileCheckTests
     {
         var (context, _) = World(new Dictionary<string, string>
         {
-            ["BIFROST_DB_CONNECTION"] = "Data Source=/woanders/bifrost.db",
+            ["FAOLAN_DB_CONNECTION"] = "Data Source=/woanders/bifrost.db",
         });
 
         var result = await new SqliteDatabaseFileCheck().RunAsync(context, TestContext.Current.CancellationToken);
@@ -248,7 +254,7 @@ public class SqliteDatabaseFileCheckTests
     {
         var (context, _) = World(new Dictionary<string, string>
         {
-            ["BIFROST_DB_PROVIDER"] = "postgres",
+            ["FAOLAN_DB_PROVIDER"] = "postgres",
         });
 
         var result = await new SqliteDatabaseFileCheck().RunAsync(context, TestContext.Current.CancellationToken);

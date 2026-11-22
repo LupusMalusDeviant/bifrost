@@ -33,10 +33,12 @@ public static class WebhookEndpoint
             }
 
             var (definition, secret) = lookup.Value;
+            var (signature, timestamp) = WebhookSignature.SelectHeaders(
+                name => ctx.Request.Headers.TryGetValue(name, out var value) ? value.ToString() : null);
             var verification = WebhookSignature.Verify(
                 secret,
-                ctx.Request.Headers[WebhookSignature.SignatureHeader],
-                ctx.Request.Headers[WebhookSignature.TimestampHeader],
+                signature,
+                timestamp,
                 body,
                 time.GetUtcNow(),
                 ReplayTolerance);

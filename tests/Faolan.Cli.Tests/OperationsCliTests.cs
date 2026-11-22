@@ -104,7 +104,7 @@ public class OperationsCliTests
     [Fact]
     public async Task A_passphrase_comes_from_the_environment_and_travels_in_the_body()
     {
-        var variable = "BIFROST_TEST_PASSPHRASE_" + Guid.NewGuid().ToString("N")[..8];
+        var variable = "FAOLAN_TEST_PASSPHRASE_" + Guid.NewGuid().ToString("N")[..8];
         Environment.SetEnvironmentVariable(variable, "korrekt-pferd-batterie");
         try
         {
@@ -129,7 +129,7 @@ public class OperationsCliTests
         var handler = new RecordingHandler(_ => Json(HttpStatusCode.OK, "{}"));
 
         var exit = await RunAsync(
-            handler, ["backup", "create", "--out", "/a.zip", "--passphrase-env", "BIFROST_NICHT_GESETZT_XYZ"]);
+            handler, ["backup", "create", "--out", "/a.zip", "--passphrase-env", "FAOLAN_NICHT_GESETZT_XYZ"]);
 
         exit.Should().Be(OperationsCli.UsageError);
         handler.Requests.Should().BeEmpty();

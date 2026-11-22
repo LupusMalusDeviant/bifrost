@@ -214,7 +214,7 @@ public class RedactionCorpusTests
     /// </summary>
     [Theory]
     [InlineData("Verbindung fehlgeschlagen: Password={0}")]
-    [InlineData("BIFROST_KEYRING_CERT_PASSWORD={0}")]
+    [InlineData("FAOLAN_KEYRING_CERT_PASSWORD={0}")]
     [InlineData("Host=db;Username=bifrost;Password={0};Database=bifrost")]
     [InlineData("Authorization: Bearer {0}")]
     [InlineData("https://benutzer:{0}@interner-host/pfad")]

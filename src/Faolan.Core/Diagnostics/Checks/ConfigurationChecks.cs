@@ -1,3 +1,4 @@
+using Faolan.Abstractions;
 using Faolan.Abstractions.Operations;
 
 namespace Faolan.Core.Diagnostics.Checks;
@@ -31,7 +32,7 @@ public sealed class DataDirectoryCheck : IDiagnosticCheck
                 ? CheckOutcome.Fail(
                     Code,
                     $"Das Datenverzeichnis '{path}' ist eine Datei, kein Verzeichnis.",
-                    "BIFROST_DATA_DIR auf ein Verzeichnis zeigen lassen.",
+                    "FAOLAN_DATA_DIR auf ein Verzeichnis zeigen lassen.",
                     details)
                 : CheckOutcome.Warning(
                     Code,
@@ -57,9 +58,9 @@ public sealed class DataDirectoryCheck : IDiagnosticCheck
 }
 
 /// <summary>
-/// BFR-CFG-0002 — alt benannte <c>MCPMCP_*</c>-Variablen sind noch in Benutzung.
+/// BFR-CFG-0002 — alt benannte <c>MCPMCP_*</c>- oder <c>BIFROST_*</c>-Variablen sind noch in Benutzung.
 /// <para>
-/// Der Server übernimmt sie beim Start als <c>BIFROST_*</c>. Das ist eine Übergangshilfe und keine
+/// Der Server übernimmt sie beim Start als <c>FAOLAN_*</c> (<see cref="EnvironmentNameChain"/>). Das ist eine Übergangshilfe und keine
 /// Zusage: Sie stehen in keiner Doku mehr, und der nächste Mensch sucht die Einstellung vergeblich.
 /// </para>
 /// <para>
@@ -69,9 +70,6 @@ public sealed class DataDirectoryCheck : IDiagnosticCheck
 /// </summary>
 public sealed class LegacyEnvironmentVariablesCheck : IDiagnosticCheck
 {
-    private const string OldPrefix = "MCPMCP_";
-    private const string NewPrefix = "BIFROST_";
-
     public string Code => DiagnosticCodes.LegacyEnvironmentVariables;
 
     public DiagnosticScope Scope => DiagnosticScope.Configuration;
@@ -84,17 +82,21 @@ public sealed class LegacyEnvironmentVariablesCheck : IDiagnosticCheck
 
         var legacy = new List<string>();
         var shadowed = new List<string>();
+        var generations = EnvironmentNameChain.Generations;
         foreach (var (name, value) in context.Environment)
         {
-            if (!name.StartsWith(OldPrefix, StringComparison.OrdinalIgnoreCase)
-                || string.IsNullOrWhiteSpace(value))
+            var generation = LegacyGeneration(name);
+            if (generation < 0 || string.IsNullOrWhiteSpace(value))
             {
                 continue;
             }
 
             legacy.Add(name);
-            var newName = NewPrefix + name[OldPrefix.Length..];
-            if (context.Value(newName) is not null)
+
+            // Überschrieben ist ein alter Name, sobald eine jüngere Generation gesetzt ist — sie
+            // gewinnt beim Start, gleich ob es die gültige oder eine jüngere abgelöste ist.
+            var suffix = name[generations[generation].Length..];
+            if (generations.Skip(generation + 1).Any(prefix => context.Value(prefix + suffix) is not null))
             {
                 shadowed.Add(name);
             }
@@ -103,7 +105,7 @@ public sealed class LegacyEnvironmentVariablesCheck : IDiagnosticCheck
         if (legacy.Count == 0)
         {
             return Task.FromResult(CheckOutcome.Pass(
-                Code, "Keine alt benannten MCPMCP_-Umgebungsvariablen in Benutzung."));
+                Code, "Keine alt benannten MCPMCP_- oder BIFROST_-Umgebungsvariablen in Benutzung."));
         }
 
         legacy.Sort(StringComparer.Ordinal);
@@ -116,18 +118,34 @@ public sealed class LegacyEnvironmentVariablesCheck : IDiagnosticCheck
 
         return Task.FromResult(CheckOutcome.Warning(
             Code,
-            $"{legacy.Count} Umgebungsvariable(n) tragen noch den alten Präfix MCPMCP_ und werden "
-            + "beim Start als BIFROST_ übernommen.",
-            "Auf BIFROST_ umbenennen. Die Übernahme ist eine Übergangshilfe, keine Zusage — die "
-            + "alten Namen stehen in keiner Doku mehr. Sind beide gesetzt, gewinnt der neue Name.",
+            $"{legacy.Count} Umgebungsvariable(n) tragen noch einen alten Präfix (MCPMCP_ oder "
+            + $"BIFROST_) und werden beim Start als {EnvironmentNameChain.CurrentPrefix} übernommen.",
+            $"Auf {EnvironmentNameChain.CurrentPrefix} umbenennen. Die Übernahme ist eine Übergangshilfe, "
+            + "keine Zusage. Sind mehrere Generationen gesetzt, gewinnt die jüngste.",
             details));
+    }
+
+    /// <summary>Index des abgelösten Präfixes in der Kette, sonst -1.</summary>
+    private static int LegacyGeneration(string name)
+    {
+        var prefixes = EnvironmentNameChain.LegacyPrefixes;
+        for (var index = 0; index < prefixes.Count; index++)
+        {
+            if (name.StartsWith(prefixes[index], StringComparison.OrdinalIgnoreCase)
+                && name.Length > prefixes[index].Length)
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 }
 
 /// <summary>
 /// BFR-CFG-0003 — öffentliche Basis-URL, wenn ein Proxy oder OAuth davorsteht.
 /// <para>
-/// <c>BIFROST_PUBLIC_BASE_URL</c> ist die kanonische Adresse: Sie bildet die Redirect-URI der
+/// <c>FAOLAN_PUBLIC_BASE_URL</c> ist die kanonische Adresse: Sie bildet die Redirect-URI der
 /// Upstream-Autorisierung und die Vorgabe der OAuth-Audience. Fehlt sie hinter einem Proxy, zeigen
 /// beide auf das, was der Gateway selbst sieht — also auf die interne Adresse.
 /// </para>
@@ -153,7 +171,7 @@ public sealed class PublicBaseUrlCheck : IDiagnosticCheck
             return Task.FromResult(proxyDeclared || oauthConfigured
                 ? CheckOutcome.Warning(
                     Code,
-                    "BIFROST_PUBLIC_BASE_URL ist nicht gesetzt, obwohl "
+                    "FAOLAN_PUBLIC_BASE_URL ist nicht gesetzt, obwohl "
                     + (proxyDeclared ? "ein Proxy deklariert ist" : "OAuth konfiguriert ist")
                     + ".",
                     "Die öffentliche Adresse des Gateways setzen (z. B. https://gateway.example.com). "
@@ -162,7 +180,7 @@ public sealed class PublicBaseUrlCheck : IDiagnosticCheck
                     + "OAuth-Audience hat keinen Vorgabewert.")
                 : CheckOutcome.Skipped(
                     Code,
-                    "BIFROST_PUBLIC_BASE_URL ist nicht gesetzt und wird ohne Proxy und ohne OAuth "
+                    "FAOLAN_PUBLIC_BASE_URL ist nicht gesetzt und wird ohne Proxy und ohne OAuth "
                     + "auch nicht gebraucht."));
         }
 
@@ -171,7 +189,7 @@ public sealed class PublicBaseUrlCheck : IDiagnosticCheck
         {
             return Task.FromResult(CheckOutcome.Fail(
                 Code,
-                "BIFROST_PUBLIC_BASE_URL ist keine absolute http(s)-Adresse.",
+                "FAOLAN_PUBLIC_BASE_URL ist keine absolute http(s)-Adresse.",
                 "Vollständig angeben, mit Schema und ohne Pfad: https://gateway.example.com"));
         }
 
@@ -183,13 +201,13 @@ public sealed class PublicBaseUrlCheck : IDiagnosticCheck
         {
             return Task.FromResult(CheckOutcome.Warning(
                 Code,
-                "BIFROST_PUBLIC_BASE_URL nennt http, obwohl ein Proxy deklariert ist.",
+                "FAOLAN_PUBLIC_BASE_URL nennt http, obwohl ein Proxy deklariert ist.",
                 "Steht ein TLS-Proxy davor, ist die öffentliche Adresse eine https-Adresse. Ein "
                 + "OAuth-Fluss über Klartext wird von der Gegenseite abgelehnt.",
                 details));
         }
 
         return Task.FromResult(CheckOutcome.Pass(
-            Code, "BIFROST_PUBLIC_BASE_URL ist gesetzt und auswertbar.", details));
+            Code, "FAOLAN_PUBLIC_BASE_URL ist gesetzt und auswertbar.", details));
     }
 }

@@ -32,6 +32,43 @@ public sealed class ConnectorPackageReaderTests
     }
 
     /// <summary>
+    /// Ein Paket aus 0.12.0 trägt <c>bifrost.connector.v1</c> in seinem signierten Manifest. Es
+    /// installiert sich weiter; neu gebaute tragen die neue Id (Vertrag umbenennung-faolan §2.3).
+    /// </summary>
+    [Fact]
+    public void A_package_with_the_old_schema_id_is_still_accepted()
+    {
+        var manifest = TestPackage.Manifest(_publisher) with { Schema = ConnectorManifest.LegacySchemaV1 };
+        using var package = new MemoryStream(
+            ConnectorPackageBuilder.Build(manifest, TestPackage.Files(), _publisher.Sign));
+
+        var verified = ConnectorPackageReader.Verify(package, Pinned);
+
+        verified.Manifest.Schema.Should().Be("bifrost.connector.v1");
+        verified.Manifest.Id.Should().Be("com.example.echo");
+    }
+
+    [Fact]
+    public void A_newly_built_package_carries_the_new_schema_id()
+    {
+        using var package = TestPackage.Valid(_publisher);
+
+        ConnectorPackageReader.Verify(package, Pinned).Manifest.Schema.Should().Be("faolan.connector.v1");
+    }
+
+    [Fact]
+    public void An_unknown_schema_id_is_still_refused()
+    {
+        var manifest = TestPackage.Manifest(_publisher) with { Schema = "fremd.connector.v1" };
+        using var package = new MemoryStream(
+            ConnectorPackageBuilder.Build(manifest, TestPackage.Files(), _publisher.Sign));
+
+        var act = () => ConnectorPackageReader.Verify(package, Pinned);
+
+        act.Should().Throw<ConnectorPackageException>().WithMessage("*Unbekanntes Manifest-Schema*");
+    }
+
+    /// <summary>
     /// Der Kern: Ohne gepinnten Herausgeber wird nichts installiert. Ein leerer Store darf nicht
     /// „keine Einschränkung" bedeuten.
     /// </summary>

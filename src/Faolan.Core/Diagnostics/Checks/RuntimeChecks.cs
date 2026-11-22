@@ -107,7 +107,7 @@ public sealed class WasiHostCheck : IDiagnosticCheck
         {
             return Task.FromResult(CheckOutcome.Skipped(
                 Code,
-                "BIFROST_WASI_HOST ist nicht gesetzt. Ohne den Host lassen sich keine "
+                "FAOLAN_WASI_HOST ist nicht gesetzt. Ohne den Host lassen sich keine "
                 + "Connector-Pakete installieren; für alle anderen Upstream-Arten wird er nicht "
                 + "gebraucht."));
         }
@@ -117,7 +117,7 @@ public sealed class WasiHostCheck : IDiagnosticCheck
             ? CheckOutcome.Pass(Code, $"Das WASI-Host-Binary '{path}' ist vorhanden.", details)
             : CheckOutcome.Fail(
                 Code,
-                $"BIFROST_WASI_HOST zeigt auf '{path}', dort liegt keine Datei.",
+                $"FAOLAN_WASI_HOST zeigt auf '{path}', dort liegt keine Datei.",
                 "Pfad korrigieren. Im Container-Image liegt der Host unter "
                 + "/usr/local/bin/bifrost-wasi-host. Ohne ihn lässt sich ein Connector-Paket nicht "
                 + "proben — und ungeprobt wird nichts aktiv.",

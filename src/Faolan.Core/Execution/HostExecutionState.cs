@@ -70,13 +70,13 @@ public sealed record HostExecutionState(
 public static class HostExecutionSwitch
 {
     /// <summary>Der Name der Einstellung. Stabil — Runbooks und Container-Umgebungen zeigen darauf.</summary>
-    public const string Name = "BIFROST_ALLOW_HOST_EXECUTION";
+    public const string Name = "FAOLAN_ALLOW_HOST_EXECUTION";
 
     /// <summary>
     /// Liest den Wert der Einstellung.
     /// <para>
     /// Drei Ausgänge, und der dritte ist der wichtige: nicht gesetzt, gesetzt, oder gesetzt mit
-    /// einem Wert, den niemand deuten kann. Ein unverständliches <c>BIFROST_ALLOW_HOST_EXECUTION=ja
+    /// einem Wert, den niemand deuten kann. Ein unverständliches <c>FAOLAN_ALLOW_HOST_EXECUTION=ja
     /// bitte</c> wird nicht als „false" gelesen und auch nicht ignoriert — es ist ein Zustand
     /// „unbekannt", und der heißt nein (M3-Vertrag §6, Invariante 3).
     /// </para>

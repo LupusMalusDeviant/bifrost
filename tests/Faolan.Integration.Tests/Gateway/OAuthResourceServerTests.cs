@@ -37,7 +37,7 @@ public sealed class OAuthResourceServerTests
     public void An_issuer_without_an_audience_is_refused()
     {
         var act = () => OAuthResourceServerOptions.FromConfiguration(
-            Config(("BIFROST_OAUTH_ISSUER", "https://as.example.com")));
+            Config(("FAOLAN_OAUTH_ISSUER", "https://as.example.com")));
 
         act.Should().Throw<InvalidOperationException>().WithMessage("*kanonische Adresse*");
     }
@@ -46,8 +46,8 @@ public sealed class OAuthResourceServerTests
     public void The_public_base_url_serves_as_the_audience_when_none_is_given()
     {
         var options = OAuthResourceServerOptions.FromConfiguration(Config(
-            ("BIFROST_OAUTH_ISSUER", "https://as.example.com/"),
-            ("BIFROST_PUBLIC_BASE_URL", "https://gateway.example.com/")));
+            ("FAOLAN_OAUTH_ISSUER", "https://as.example.com/"),
+            ("FAOLAN_PUBLIC_BASE_URL", "https://gateway.example.com/")));
 
         options!.Issuer.Should().Be("https://as.example.com", "der Schrägstrich am Ende fällt weg");
         options.Audience.Should().Be("https://gateway.example.com");
@@ -57,9 +57,9 @@ public sealed class OAuthResourceServerTests
     public void An_explicit_audience_wins()
     {
         var options = OAuthResourceServerOptions.FromConfiguration(Config(
-            ("BIFROST_OAUTH_ISSUER", "https://as.example.com"),
-            ("BIFROST_PUBLIC_BASE_URL", "https://intern.example.com"),
-            ("BIFROST_OAUTH_AUDIENCE", "https://gateway.example.com/mcp")));
+            ("FAOLAN_OAUTH_ISSUER", "https://as.example.com"),
+            ("FAOLAN_PUBLIC_BASE_URL", "https://intern.example.com"),
+            ("FAOLAN_OAUTH_AUDIENCE", "https://gateway.example.com/mcp")));
 
         options!.Audience.Should().Be("https://gateway.example.com/mcp");
     }
@@ -72,8 +72,8 @@ public sealed class OAuthResourceServerTests
     public void The_metadata_url_follows_the_well_known_convention()
     {
         var options = OAuthResourceServerOptions.FromConfiguration(Config(
-            ("BIFROST_OAUTH_ISSUER", "https://as.example.com"),
-            ("BIFROST_PUBLIC_BASE_URL", "https://gateway.example.com")));
+            ("FAOLAN_OAUTH_ISSUER", "https://as.example.com"),
+            ("FAOLAN_PUBLIC_BASE_URL", "https://gateway.example.com")));
 
         options!.MetadataUrl.Should()
             .Be("https://gateway.example.com/.well-known/oauth-protected-resource");

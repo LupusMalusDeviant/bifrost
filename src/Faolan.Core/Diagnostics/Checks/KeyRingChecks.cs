@@ -15,15 +15,15 @@ namespace Faolan.Core.Diagnostics.Checks;
 public static class KeyRingLayout
 {
     /// <summary>Die ausdrückliche Erklärung des Betriebsmodus.</summary>
-    public const string ProtectionSetting = "BIFROST_KEYRING_PROTECTION";
+    public const string ProtectionSetting = "FAOLAN_KEYRING_PROTECTION";
 
-    public const string CertificatePathSetting = "BIFROST_KEYRING_CERT_PATH";
+    public const string CertificatePathSetting = "FAOLAN_KEYRING_CERT_PATH";
 
-    public const string CertificatePasswordSetting = "BIFROST_KEYRING_CERT_PASSWORD";
+    public const string CertificatePasswordSetting = "FAOLAN_KEYRING_CERT_PASSWORD";
 
-    public const string PreviousCertificatePathSetting = "BIFROST_KEYRING_CERT_PATH_PREVIOUS";
+    public const string PreviousCertificatePathSetting = "FAOLAN_KEYRING_CERT_PATH_PREVIOUS";
 
-    public const string PreviousCertificatePasswordSetting = "BIFROST_KEYRING_CERT_PASSWORD_PREVIOUS";
+    public const string PreviousCertificatePasswordSetting = "FAOLAN_KEYRING_CERT_PASSWORD_PREVIOUS";
 
     /// <summary>Das Namenssuffix für Datei-/Container-Secrets (FR-P048).</summary>
     public const string FileSuffix = "_FILE";
@@ -354,7 +354,7 @@ public sealed class KeyRingLossCheck : IDiagnosticCheck
                 + "leer. Sämtliche gespeicherten Upstream-Zugangsdaten, OAuth-Token und "
                 + "Webhook-Secrets sind damit nicht mehr entschlüsselbar.",
                 "Der Start legt in dieser Lage KEINEN neuen Ring an, sondern bricht ab. Zuerst "
-                + "prüfen, ob BIFROST_DATA_DIR auf das richtige Volume zeigt — ein umbenanntes "
+                + "prüfen, ob FAOLAN_DATA_DIR auf das richtige Volume zeigt — ein umbenanntes "
                 + "Volume sieht genau so aus. Andernfalls den Key-Ring aus der Sicherung "
                 + "zurückspielen (ADR-0024: er liegt im Vollbackup unter 'keyring/').",
                 details));

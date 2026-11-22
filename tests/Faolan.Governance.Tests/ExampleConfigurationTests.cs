@@ -16,7 +16,7 @@ namespace Faolan.Governance.Tests;
 /// <para>
 /// <b>Warum es diese Tests gibt</b> (BFR-F-0050, BFR-F-0051, Pilot 1): Die Datei behauptete, der
 /// Gateway könne das Passwort des Key-Rings „heute NICHT aus einer Datei lesen" — dabei liest er
-/// jede <c>BIFROST_*</c>-Einstellung auch aus <c>&lt;NAME&gt;_FILE</c> (FR-P048), die Compose-Datei
+/// jede <c>FAOLAN_*</c>-Einstellung auch aus <c>&lt;NAME&gt;_FILE</c> (FR-P048), die Compose-Datei
 /// zeigt es im Secret-Block, und <c>bifrost doctor</c> empfiehlt es wörtlich. Die falsche Zeile
 /// drängte damit zum Klartextpasswort in <c>.env</c> — also genau dorthin, wo es in
 /// <c>docker inspect</c> auftaucht. Und die eine Entscheidung, die das Produkt ausdrücklich
@@ -36,7 +36,7 @@ public sealed class ExampleConfigurationTests
     /// <c>KeyRingChecks.ProtectionSetting</c>: Dieses Projekt hält bewusst keine Referenz auf die
     /// Serverwelt — es prüft sie von außen, so wie ein Betreiber sie sieht.
     /// </summary>
-    private const string ProtectionSetting = "BIFROST_KEYRING_PROTECTION";
+    private const string ProtectionSetting = "FAOLAN_KEYRING_PROTECTION";
 
     private readonly ITestOutputHelper _output;
 
@@ -72,7 +72,7 @@ public sealed class ExampleConfigurationTests
             .ToList();
 
         withoutFileVariant.Should().BeEmpty(
-            "der Gateway liest jede BIFROST_*-Einstellung auch aus <NAME>_FILE (FR-P048). Steht "
+            "der Gateway liest jede FAOLAN_*-Einstellung auch aus <NAME>_FILE (FR-P048). Steht "
             + "nur die Wertform in der Beispieldatei, landet das Geheimnis im Klartext in .env und "
             + "damit in 'docker inspect':\n"
             + string.Join("\n", withoutFileVariant));
@@ -109,12 +109,12 @@ public sealed class ExampleConfigurationTests
     }
 
     /// <summary>
-    /// Alle <c>BIFROST_*</c>-Zuweisungen — auch die auskommentierten. Eine auskommentierte Zeile ist
+    /// Alle <c>FAOLAN_*</c>-Zuweisungen — auch die auskommentierten. Eine auskommentierte Zeile ist
     /// in dieser Datei die übliche Form: Sie zeigt den Namen und überlässt den Wert dem Betreiber.
     /// </summary>
     private static HashSet<string> Settings(string text)
         => new(
-            Regex.Matches(text, @"^#?\s*(BIFROST_[A-Z0-9_]+)\s*=", RegexOptions.Multiline)
+            Regex.Matches(text, @"^#?\s*(FAOLAN_[A-Z0-9_]+)\s*=", RegexOptions.Multiline)
                 .Select(m => m.Groups[1].Value),
             StringComparer.Ordinal);
 }

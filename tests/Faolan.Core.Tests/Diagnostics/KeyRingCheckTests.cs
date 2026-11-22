@@ -18,7 +18,7 @@ public class KeyRingCheckTests
     {
         var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["BIFROST_DATA_DIR"] = DataDir,
+            ["FAOLAN_DATA_DIR"] = DataDir,
         };
         foreach (var (key, value) in extra ?? new Dictionary<string, string>())
         {
@@ -75,7 +75,7 @@ public class KeyRingCheckTests
         var result = await new KeyRingProtectionCheck().RunAsync(context, TestContext.Current.CancellationToken);
 
         result.Status.Should().Be(CheckStatus.Warning);
-        result.Remediation.Should().Contain("BIFROST_KEYRING_CERT_PATH");
+        result.Remediation.Should().Contain("FAOLAN_KEYRING_CERT_PATH");
         result.SafeDetails!["geschuetzt"].Should().Be("nein");
     }
 
@@ -84,7 +84,7 @@ public class KeyRingCheckTests
     {
         var (context, _) = World(new Dictionary<string, string>
         {
-            ["BIFROST_KEYRING_CERT_PATH"] = "/run/secrets/bifrost-keyring-pfx",
+            ["FAOLAN_KEYRING_CERT_PATH"] = "/run/secrets/bifrost-keyring-pfx",
         });
 
         var result = await new KeyRingProtectionCheck().RunAsync(context, TestContext.Current.CancellationToken);
@@ -107,8 +107,8 @@ public class KeyRingCheckTests
     {
         var (context, _) = World(new Dictionary<string, string>
         {
-            ["BIFROST_KEYRING_CERT_PATH"] = "/secrets/keyring.pfx",
-            ["BIFROST_KEYRING_CERT_PASSWORD"] = "streng-geheim-4711",
+            ["FAOLAN_KEYRING_CERT_PATH"] = "/secrets/keyring.pfx",
+            ["FAOLAN_KEYRING_CERT_PASSWORD"] = "streng-geheim-4711",
         });
 
         var result = await new KeyRingCertificateCheck().RunAsync(context, TestContext.Current.CancellationToken);
@@ -122,7 +122,7 @@ public class KeyRingCheckTests
     {
         var (context, files) = World(new Dictionary<string, string>
         {
-            ["BIFROST_KEYRING_CERT_PATH"] = "/secrets/keyring.pfx",
+            ["FAOLAN_KEYRING_CERT_PATH"] = "/secrets/keyring.pfx",
         });
         files.Files.Add("/secrets/keyring.pfx");
 

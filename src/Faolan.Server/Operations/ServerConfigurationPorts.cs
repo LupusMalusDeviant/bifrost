@@ -196,7 +196,7 @@ public sealed partial class ServerConfigurationPorts : IConfigurationSnapshotSou
     /// <para>
     /// Der Freigabe-Vorgabeweg liegt in der Datenbank und wird übernommen. Die
     /// <see cref="GuardOptions"/> dagegen entstehen beim Start aus der Umgebung
-    /// (<c>BIFROST_GUARD_*</c>) und sind ein unveränderliches Singleton — sie hier zu „setzen"
+    /// (<c>FAOLAN_GUARD_*</c>) und sind ein unveränderliches Singleton — sie hier zu „setzen"
     /// hieße, eine Übernahme zu melden, die beim nächsten Start wieder weg wäre. Stattdessen wird
     /// der Unterschied protokolliert, damit ein Betreiber ihn in seiner <c>.env</c> nachzieht.
     /// </para>
@@ -225,7 +225,7 @@ public sealed partial class ServerConfigurationPorts : IConfigurationSnapshotSou
             EventId = 2711,
             Level = LogLevel.Warning,
             Message = "Der Import enthaelt abweichende Guardrail-Schalter. Sie stammen aus der Umgebung "
-                + "(BIFROST_GUARD_*) und lassen sich zur Laufzeit nicht setzen — bitte in der "
+                + "(FAOLAN_GUARD_*) und lassen sich zur Laufzeit nicht setzen — bitte in der "
                 + "Konfiguration der Zielinstanz nachziehen.")]
         public static partial void GuardOptionsNotApplied(ILogger logger);
     }

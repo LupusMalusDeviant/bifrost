@@ -4,8 +4,8 @@ namespace Faolan.Upstream;
 /// Die Umgebung, die ein stdio-Kindprozess sieht (ADR-0005, Nachtrag 2026-07-28).
 /// <para>
 /// Bis dahin erbte ein stdio-Server die <b>vollständige</b> Umgebung des Gateways — also auch
-/// <c>BIFROST_DB_CONNECTION</c> mit dem Datenbankpasswort und
-/// <c>BIFROST_KEYRING_CERT_PASSWORD</c>. Der CLI-Transport räumt seine Umgebung seit ADR-0014 auf;
+/// <c>FAOLAN_DB_CONNECTION</c> mit dem Datenbankpasswort und
+/// <c>FAOLAN_KEYRING_CERT_PASSWORD</c>. Der CLI-Transport räumt seine Umgebung seit ADR-0014 auf;
 /// beim ältesten Transport fehlte derselbe Schritt schlicht.
 /// </para>
 /// <para>

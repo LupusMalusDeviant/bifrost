@@ -9,7 +9,7 @@ namespace Faolan.Server.KeyRing;
 /// <param name="CertificatePath">Wohin das PFX geschrieben wurde.</param>
 /// <param name="PasswordPath">
 /// Wohin das Passwort geschrieben wurde — als Datei, damit es über
-/// <c>BIFROST_KEYRING_CERT_PASSWORD_FILE</c> zugeführt werden kann und nicht in <c>.env</c> landet.
+/// <c>FAOLAN_KEYRING_CERT_PASSWORD_FILE</c> zugeführt werden kann und nicht in <c>.env</c> landet.
 /// </param>
 /// <param name="Thumbprint">Der Fingerabdruck, an dem sich ein Zertifikat wiedererkennen lässt.</param>
 /// <param name="NotAfter">Ab wann es abgelaufen ist.</param>

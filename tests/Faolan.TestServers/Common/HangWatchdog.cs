@@ -21,10 +21,10 @@ namespace Faolan.TestServers.Common;
 /// </summary>
 public static class HangWatchdog
 {
-    /// <summary>Frist ohne Testwechsel. Über <c>BIFROST_HANG_TIMEOUT_SECONDS</c> anpassbar.</summary>
+    /// <summary>Frist ohne Testwechsel. Über <c>FAOLAN_HANG_TIMEOUT_SECONDS</c> anpassbar.</summary>
     public static TimeSpan Timeout { get; } =
         int.TryParse(
-            Environment.GetEnvironmentVariable("BIFROST_HANG_TIMEOUT_SECONDS"),
+            Environment.GetEnvironmentVariable("FAOLAN_HANG_TIMEOUT_SECONDS"),
             CultureInfo.InvariantCulture,
             out var seconds) && seconds > 0
             ? TimeSpan.FromSeconds(seconds)

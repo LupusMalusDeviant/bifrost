@@ -48,7 +48,7 @@ public static class KeyRingRegistration
             var certificates = KeyRingCertificates.Load(settings);
             keyRing.ProtectKeysWithCertificate(certificates[0])
                 // Für Zertifikatswechsel: mit dem alten Zertifikat verschlüsselte Schlüssel bleiben
-                // lesbar, solange es über BIFROST_KEYRING_CERT_PATH_PREVIOUS weiterhin dabei ist.
+                // lesbar, solange es über FAOLAN_KEYRING_CERT_PATH_PREVIOUS weiterhin dabei ist.
                 .UnprotectKeysWithAnyCertificate([.. certificates]);
         }
 

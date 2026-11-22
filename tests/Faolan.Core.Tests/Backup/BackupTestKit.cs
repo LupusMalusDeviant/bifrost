@@ -15,15 +15,21 @@ namespace Faolan.Core.Tests.Backup;
 /// </summary>
 internal sealed class InstanceDirectory : IDisposable
 {
-    public InstanceDirectory(string label)
+    /// <param name="label">Kennung im Verzeichnisnamen.</param>
+    /// <param name="databaseFileName">
+    /// Der Dateiname der Datenbank. Vorgabe ist der einer Neuinstallation; eine Bestandsinstallation
+    /// aus 0.12.0 hat <c>bifrost.db</c> (Vertrag umbenennung-faolan §2.2).
+    /// </param>
+    public InstanceDirectory(string label, string databaseFileName = "faolan.db")
     {
-        Root = Path.Combine(Path.GetTempPath(), $"bifrost-{label}-{Guid.NewGuid():N}");
+        Root = Path.Combine(Path.GetTempPath(), $"faolan-{label}-{Guid.NewGuid():N}");
         Directory.CreateDirectory(Root);
+        DatabaseFile = Path.Combine(Root, databaseFileName);
     }
 
     public string Root { get; }
 
-    public string DatabaseFile => Path.Combine(Root, "bifrost.db");
+    public string DatabaseFile { get; }
 
     public string KeyRingDirectory => Path.Combine(Root, "keys");
 

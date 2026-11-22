@@ -1,12 +1,14 @@
 using System.Collections;
 using AwesomeAssertions;
+using Faolan.Abstractions;
 using Faolan.Server;
 using Xunit;
 
 namespace Faolan.Integration.Tests;
 
 /// <summary>
-/// Der Übergang von <c>MCPMCP_*</c> auf <c>BIFROST_*</c> (Umbenennung am 2026-07-31).
+/// Der Übergang über drei Generationen: <c>MCPMCP_*</c> → <c>BIFROST_*</c> → <c>FAOLAN_*</c>
+/// (Vertrag <c>docs/contracts/umbenennung-faolan.md</c> §2.2, Nachweis aus §7).
 /// <para>
 /// <b>Warum das geprüft wird und nicht bloß behauptet:</b> Die Umgebungsvariablen sind die gesamte
 /// Konfiguration dieses Gateways. Greift die Übernahme nicht, startet eine bestehende Installation
@@ -28,15 +30,17 @@ public sealed class LegacyEnvironmentTests
         return table;
     }
 
-    [Fact]
-    public void An_old_name_is_adopted_under_the_new_one()
+    [Theory]
+    [InlineData("MCPMCP_DATA_DIR")]
+    [InlineData("BIFROST_DATA_DIR")]
+    public void An_old_name_of_either_generation_is_adopted_under_the_current_one(string oldName)
     {
         var plan = LegacyEnvironment.PlanAdoption(Environment(
-            ("MCPMCP_DATA_DIR", "/data"),
+            (oldName, "/data"),
             ("PATH", "/usr/bin")));
 
         plan.Should().ContainSingle()
-            .Which.Should().Be(("MCPMCP_DATA_DIR", "BIFROST_DATA_DIR", "/data"));
+            .Which.Should().Be((oldName, "FAOLAN_DATA_DIR", "/data"));
     }
 
     /// <summary>
@@ -45,13 +49,48 @@ public sealed class LegacyEnvironmentTests
     /// frisch gesetzte Konfiguration überschreiben, und zwar unsichtbar.
     /// </summary>
     [Fact]
-    public void The_new_name_wins_when_both_are_set()
+    public void The_current_name_wins_over_every_older_generation()
     {
         var plan = LegacyEnvironment.PlanAdoption(Environment(
             ("MCPMCP_DB_PROVIDER", "sqlite"),
-            ("BIFROST_DB_PROVIDER", "postgres")));
+            ("BIFROST_DB_PROVIDER", "sqlite"),
+            ("FAOLAN_DB_PROVIDER", "postgres")));
 
         plan.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Zwischen den beiden abgelösten Generationen gilt dieselbe Regel: Die jüngere gewinnt. Eine
+    /// Installation, die 2026-07 von MCPMCP_ auf BIFROST_ umgestellt und die alte Zeile stehen
+    /// gelassen hat, darf jetzt nicht auf den Wert von vor dem Sommer zurückfallen.
+    /// </summary>
+    [Fact]
+    public void Among_old_generations_the_younger_wins()
+    {
+        var plan = LegacyEnvironment.PlanAdoption(Environment(
+            ("MCPMCP_AUDIT_MODE", "standard"),
+            ("BIFROST_AUDIT_MODE", "compliance")));
+
+        plan.Should().ContainSingle()
+            .Which.Should().Be(("BIFROST_AUDIT_MODE", "FAOLAN_AUDIT_MODE", "compliance"));
+    }
+
+    /// <summary>
+    /// <c>_FILE</c>-Varianten sind gewöhnliche Namen der Kette — ein Geheimnis aus einer Datei
+    /// darf beim Umbenennen nicht verloren gehen.
+    /// </summary>
+    [Fact]
+    public void File_variants_go_through_the_same_chain()
+    {
+        var plan = LegacyEnvironment.PlanAdoption(Environment(
+            ("BIFROST_BACKUP_PASSPHRASE_FILE", "/run/secrets/passphrase"),
+            ("MCPMCP_KEYRING_CERT_PASSWORD_FILE", "/run/secrets/cert")));
+
+        plan.Should().BeEquivalentTo(
+        [
+            ("BIFROST_BACKUP_PASSPHRASE_FILE", "FAOLAN_BACKUP_PASSPHRASE_FILE", "/run/secrets/passphrase"),
+            ("MCPMCP_KEYRING_CERT_PASSWORD_FILE", "FAOLAN_KEYRING_CERT_PASSWORD_FILE", "/run/secrets/cert"),
+        ]);
     }
 
     /// <summary>
@@ -59,13 +98,15 @@ public sealed class LegacyEnvironmentTests
     /// leeren Zeile hängen, die jemand zum Abschalten hineingeschrieben hat.
     /// </summary>
     [Fact]
-    public void An_empty_new_name_does_not_block_the_adoption()
+    public void An_empty_newer_name_does_not_block_the_adoption()
     {
         var plan = LegacyEnvironment.PlanAdoption(Environment(
             ("MCPMCP_AUDIT_MODE", "compliance"),
-            ("BIFROST_AUDIT_MODE", "")));
+            ("BIFROST_AUDIT_MODE", ""),
+            ("FAOLAN_AUDIT_MODE", "")));
 
-        plan.Should().ContainSingle().Which.NewName.Should().Be("BIFROST_AUDIT_MODE");
+        plan.Should().ContainSingle()
+            .Which.Should().Be(("MCPMCP_AUDIT_MODE", "FAOLAN_AUDIT_MODE", "compliance"));
     }
 
     [Fact]
@@ -73,23 +114,33 @@ public sealed class LegacyEnvironmentTests
     {
         var plan = LegacyEnvironment.PlanAdoption(Environment(
             ("ASPNETCORE_URLS", "http://+:8080"),
-            ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317")));
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317"),
+            ("BIFROST_", "nur-ein-praefix")));
 
         plan.Should().BeEmpty();
     }
 
-    /// <summary>
-    /// <b>Der teuerste Fall.</b> Liegt im Datenverzeichnis nur die Datenbank unter dem alten Namen,
-    /// muss sie gewinnen. Sonst legt der Gateway daneben eine leere neue an — ohne Server, ohne
-    /// Rollen, ohne Schlüssel — und startet fehlerfrei in ein leeres System.
-    /// </summary>
     [Fact]
-    public void An_existing_database_under_the_old_name_wins()
+    public void The_chain_is_ordered_from_oldest_to_current()
     {
-        var directory = Directory.CreateTempSubdirectory("bifrost-legacy-db");
+        EnvironmentNameChain.Generations.Should().Equal("MCPMCP_", "BIFROST_", "FAOLAN_");
+        EnvironmentNameChain.CurrentPrefix.Should().Be("FAOLAN_");
+    }
+
+    /// <summary>
+    /// <b>Der teuerste Fall.</b> Liegt im Datenverzeichnis nur die Datenbank unter einem alten
+    /// Namen, muss sie gewinnen. Sonst legt der Gateway daneben eine leere neue an — ohne Server,
+    /// ohne Rollen, ohne Schlüssel — und startet fehlerfrei in ein leeres System.
+    /// </summary>
+    [Theory]
+    [InlineData("mcpmcp.db")]
+    [InlineData("bifrost.db")]
+    public void An_existing_database_under_an_old_name_wins(string oldName)
+    {
+        var directory = Directory.CreateTempSubdirectory("faolan-legacy-db");
         try
         {
-            var legacy = Path.Combine(directory.FullName, "mcpmcp.db");
+            var legacy = Path.Combine(directory.FullName, oldName);
             File.WriteAllText(legacy, "alt");
 
             LegacyEnvironment.ResolveSqliteFile(directory.FullName).Should().Be(legacy);
@@ -100,17 +151,22 @@ public sealed class LegacyEnvironmentTests
         }
     }
 
-    [Fact]
-    public void The_new_name_is_used_when_both_files_exist()
+    [Theory]
+    [InlineData(new[] { "bifrost.db", "mcpmcp.db" }, "bifrost.db")]
+    [InlineData(new[] { "faolan.db", "mcpmcp.db" }, "faolan.db")]
+    [InlineData(new[] { "faolan.db", "bifrost.db", "mcpmcp.db" }, "faolan.db")]
+    public void Among_existing_files_the_youngest_generation_wins(string[] existing, string expected)
     {
-        var directory = Directory.CreateTempSubdirectory("bifrost-both-db");
+        var directory = Directory.CreateTempSubdirectory("faolan-several-db");
         try
         {
-            File.WriteAllText(Path.Combine(directory.FullName, "mcpmcp.db"), "alt");
-            var current = Path.Combine(directory.FullName, "bifrost.db");
-            File.WriteAllText(current, "neu");
+            foreach (var name in existing)
+            {
+                File.WriteAllText(Path.Combine(directory.FullName, name), name);
+            }
 
-            LegacyEnvironment.ResolveSqliteFile(directory.FullName).Should().Be(current);
+            LegacyEnvironment.ResolveSqliteFile(directory.FullName)
+                .Should().Be(Path.Combine(directory.FullName, expected));
         }
         finally
         {
@@ -119,13 +175,13 @@ public sealed class LegacyEnvironmentTests
     }
 
     [Fact]
-    public void A_fresh_installation_gets_the_new_name()
+    public void A_fresh_installation_gets_the_current_name()
     {
-        var directory = Directory.CreateTempSubdirectory("bifrost-fresh-db");
+        var directory = Directory.CreateTempSubdirectory("faolan-fresh-db");
         try
         {
             LegacyEnvironment.ResolveSqliteFile(directory.FullName)
-                .Should().Be(Path.Combine(directory.FullName, "bifrost.db"));
+                .Should().Be(Path.Combine(directory.FullName, "faolan.db"));
         }
         finally
         {

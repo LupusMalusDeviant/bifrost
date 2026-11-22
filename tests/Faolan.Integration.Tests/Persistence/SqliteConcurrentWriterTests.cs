@@ -253,7 +253,7 @@ public sealed class SqliteConcurrentWriterTests : IAsyncLifetime
         }
 
         SqliteConnection.ClearAllPools();
-        ReadJournalMode(path).Should().Be("delete", "BIFROST_SQLITE_JOURNAL_MODE=delete ist der Rückweg");
+        ReadJournalMode(path).Should().Be("delete", "FAOLAN_SQLITE_JOURNAL_MODE=delete ist der Rückweg");
     }
 
     /// <summary>Liest das Journalverfahren der Datei über eine eigene, unbeteiligte Verbindung.</summary>

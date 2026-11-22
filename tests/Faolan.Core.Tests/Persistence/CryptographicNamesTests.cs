@@ -31,6 +31,7 @@ public class CryptographicNamesTests
     [InlineData(CryptographicNames.UpstreamConfigPurpose, "McpMcp.UpstreamConfig.v1")]
     [InlineData(CryptographicNames.UpstreamOAuthTokenPurpose, "McpMcp.UpstreamOAuthToken.v1")]
     [InlineData(CryptographicNames.WebhookSecretPurpose, "McpMcp.Webhook.Secret.v1")]
+    [InlineData(CryptographicNames.ApprovalElicitationStatePurpose, "Bifrost.Server.ApprovalElicitation.RequestState.v1")]
     public void A_cryptographic_name_never_changes(string actual, string expected)
         => actual.Should().Be(
             expected,
@@ -49,6 +50,7 @@ public class CryptographicNamesTests
             CryptographicNames.UpstreamConfigPurpose,
             CryptographicNames.UpstreamOAuthTokenPurpose,
             CryptographicNames.WebhookSecretPurpose,
+            CryptographicNames.ApprovalElicitationStatePurpose,
         ];
 
         purposes.Should().OnlyHaveUniqueItems();

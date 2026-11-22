@@ -21,14 +21,14 @@ namespace Faolan.Server.Operations;
 /// Schlüssel zu allen gespeicherten Zugangsdaten. Es landet unter
 /// <c>&lt;Datenverzeichnis&gt;/backups</c>, also im selben Schutzbereich wie die Datenbank und der
 /// Key-Ring, aus denen es entsteht — es entsteht also kein neuer Ort, der zu schützen wäre. Wer es
-/// trotzdem verschlüsselt haben will, setzt <c>BIFROST_BACKUP_PASSPHRASE</c>; ohne die Passphrase
+/// trotzdem verschlüsselt haben will, setzt <c>FAOLAN_BACKUP_PASSPHRASE</c>; ohne die Passphrase
 /// ist die Sicherung dann allerdings wertlos, und das ist die Zusage, die man damit eingeht.
 /// </para>
 /// </summary>
 public sealed partial class PreMigrationBackupService : IPreMigrationBackup
 {
     /// <summary>Passphrase für die automatischen Sicherungen. Leer = unverschlüsselt.</summary>
-    public const string PassphraseVariable = "BIFROST_BACKUP_PASSPHRASE";
+    public const string PassphraseVariable = "FAOLAN_BACKUP_PASSPHRASE";
 
     private readonly IBackupService _backup;
     private readonly BackupOptions _options;

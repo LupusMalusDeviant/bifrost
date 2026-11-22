@@ -51,6 +51,36 @@ public sealed class ApprovalNotificationTests
     }
 
     /// <summary>
+    /// Ein Empfänger, der heute <c>X-Bifrost-Signature</c> prüft, bekommt nach der Umbenennung weiter
+    /// signierte Nachrichten: <b>beide Headerpaare mit gleichem Wert</b> (Vertrag umbenennung-faolan
+    /// §2.3) — und das alte Paar ist für sich allein prüfbar.
+    /// </summary>
+    [Fact]
+    public async Task A_notification_carries_both_header_pairs_with_the_same_values()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK));
+        await using var dispatcher = Dispatcher(handler);
+
+        dispatcher.Notify(Request());
+        await handler.WaitForAsync(1);
+        var (request, body) = handler.Calls.Single();
+
+        var signature = request.Headers.GetValues(WebhookSignature.SignatureHeader).Single();
+        var timestamp = request.Headers.GetValues(WebhookSignature.TimestampHeader).Single();
+        request.Headers.GetValues(WebhookSignature.LegacySignatureHeader).Single().Should().Be(signature);
+        request.Headers.GetValues(WebhookSignature.LegacyTimestampHeader).Single().Should().Be(timestamp);
+
+        WebhookSignature.Verify(
+                "geheim-fuer-das-ziel",
+                request.Headers.GetValues(WebhookSignature.LegacySignatureHeader).Single(),
+                request.Headers.GetValues(WebhookSignature.LegacyTimestampHeader).Single(),
+                body,
+                Now,
+                TimeSpan.FromMinutes(5))
+            .Should().Be(WebhookVerification.Valid);
+    }
+
+    /// <summary>
     /// Der Replay-Schutz hängt am Zeitstempel <b>in</b> der Signatur. Ein Empfänger, der ein
     /// Zeitfenster prüft, muss einen mitgeschnittenen Ruf später abweisen können.
     /// </summary>

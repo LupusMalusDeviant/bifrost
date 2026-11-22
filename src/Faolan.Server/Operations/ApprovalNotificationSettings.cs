@@ -17,15 +17,15 @@ namespace Faolan.Server.Operations;
 /// </summary>
 public static class ApprovalNotificationSettings
 {
-    public const string EndpointKey = "BIFROST_APPROVAL_WEBHOOK_URL";
+    public const string EndpointKey = "FAOLAN_APPROVAL_WEBHOOK_URL";
 
-    public const string SecretKey = "BIFROST_APPROVAL_WEBHOOK_SECRET";
+    public const string SecretKey = "FAOLAN_APPROVAL_WEBHOOK_SECRET";
 
     /// <summary>
     /// Erlaubt ein Ziel im eigenen Netz. Vorgabe aus: Eine Adresse, die einmal gesetzt und danach
     /// von niemandem mehr angesehen wird, ist derselbe SSRF-Weg wie eine importierte Schemadatei.
     /// </summary>
-    public const string AllowPrivateKey = "BIFROST_APPROVAL_WEBHOOK_ALLOW_PRIVATE";
+    public const string AllowPrivateKey = "FAOLAN_APPROVAL_WEBHOOK_ALLOW_PRIVATE";
 
     public static ApprovalNotificationOptions FromConfiguration(IConfiguration configuration)
     {
@@ -33,7 +33,7 @@ public static class ApprovalNotificationSettings
 
         var endpoint = configuration[EndpointKey];
         var secret = configuration[SecretKey];
-        var publicBase = configuration["BIFROST_PUBLIC_BASE_URL"];
+        var publicBase = configuration["FAOLAN_PUBLIC_BASE_URL"];
 
         if (string.IsNullOrWhiteSpace(endpoint))
         {

@@ -88,6 +88,27 @@ public sealed class AssetDeliveryTests : IClassFixture<GatewayFixture>
             .Should().Be("Version 2 — aktualisiert", "ausgeliefert wird immer die neueste Version");
     }
 
+    /// <summary>
+    /// Agenten haben die URI aus 0.12.0 gespeichert. Gelistet wird nur noch <c>faolan://</c>, gelesen
+    /// wird auch <c>bifrost://</c> (Vertrag umbenennung-faolan §2.3).
+    /// </summary>
+    [Fact]
+    public async Task An_asset_stays_readable_under_the_old_uri_and_is_listed_under_the_new_one()
+    {
+        var name = $"skill-alt-{Guid.NewGuid():N}";
+        await Assets.CreateAsync(name, null, "Inhalt", metadata: null, TestContext.Current.CancellationToken);
+        var (_, apiKey) = await _gw.SeedAdminAsync($"asset-alt-{Guid.NewGuid():N}");
+
+        await using var client = await _gw.ConnectClientAsync(apiKey);
+
+        var resources = await client.ListResourcesAsync();
+        resources.Should().Contain(r => r.Uri == "faolan://assets/" + name);
+        resources.Should().NotContain(r => r.Uri.StartsWith(AssetDelivery.LegacyUriPrefix, StringComparison.Ordinal));
+
+        var read = await client.ReadResourceAsync(AssetDelivery.LegacyUriPrefix + name);
+        read.Contents.OfType<TextResourceContents>().Single().Text.Should().Be("Inhalt");
+    }
+
     [Fact]
     public async Task Updating_an_asset_changes_what_agents_receive()
     {

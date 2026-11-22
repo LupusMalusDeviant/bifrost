@@ -15,7 +15,7 @@ public sealed record CliConfiguration(
         TextReader input,
         CancellationToken ct)
     {
-        configPath ??= Environment.GetEnvironmentVariable("BIFROST_CONFIG");
+        configPath ??= Environment.GetEnvironmentVariable("FAOLAN_CONFIG");
         CliConfiguration? fileConfiguration = null;
         if (!string.IsNullOrWhiteSpace(configPath))
         {
@@ -26,11 +26,11 @@ public sealed record CliConfiguration(
                 ct);
         }
 
-        var endpointText = Environment.GetEnvironmentVariable("BIFROST_ENDPOINT");
+        var endpointText = Environment.GetEnvironmentVariable("FAOLAN_ENDPOINT");
         var endpoint = endpointText is { Length: > 0 }
             ? new Uri(endpointText, UriKind.Absolute)
             : fileConfiguration?.Endpoint ?? new Uri("http://localhost:8080");
-        var identity = Environment.GetEnvironmentVariable("BIFROST_IDENTITY")
+        var identity = Environment.GetEnvironmentVariable("FAOLAN_IDENTITY")
             ?? fileConfiguration?.Identity;
         var configuration = new CliConfiguration(
             EnsureTrailingSlash(endpoint),
@@ -44,7 +44,7 @@ public sealed record CliConfiguration(
         }
         else
         {
-            token = Environment.GetEnvironmentVariable("BIFROST_TOKEN");
+            token = Environment.GetEnvironmentVariable("FAOLAN_TOKEN");
             if (string.IsNullOrWhiteSpace(token) && configuration.TokenFile is { Length: > 0 } tokenFile)
             {
                 token = (await File.ReadAllTextAsync(Path.GetFullPath(tokenFile), ct)).Trim();

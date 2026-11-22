@@ -55,7 +55,7 @@ public sealed class ReverseProxyHopTests
                 Transport: GatewayTransport.Http,
                 Environment: new Dictionary<string, string>(StringComparer.Ordinal)
                 {
-                    ["BIFROST_TRUSTED_PROXIES"] = "any",
+                    ["FAOLAN_TRUSTED_PROXIES"] = "any",
                 }),
             ct);
 

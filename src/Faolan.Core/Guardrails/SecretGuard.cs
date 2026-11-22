@@ -206,7 +206,7 @@ public static class GuardMessages
         => $"Nutzlast ist mit {chars.ToString(CultureInfo.InvariantCulture)} Zeichen größer als die "
             + $"Prüfgrenze von {limit.ToString(CultureInfo.InvariantCulture)}; sie kann nicht auf "
             + "Zugangsdaten geprüft und wird deshalb nicht durchgelassen. "
-            + "Abhilfe: Ergebnis-Kürzung aktivieren (BIFROST_MAX_RESULT_CHARS) oder die Prüfgrenze anheben.";
+            + "Abhilfe: Ergebnis-Kürzung aktivieren (FAOLAN_MAX_RESULT_CHARS) oder die Prüfgrenze anheben.";
 
     private static string Describe(IReadOnlyList<GuardFinding> findings)
         => string.Join(", ", findings.Where(f => f.Mode == GuardMode.Block).Select(f => f.RuleDescription).Distinct());

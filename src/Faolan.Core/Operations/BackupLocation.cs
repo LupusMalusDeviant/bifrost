@@ -18,7 +18,7 @@ namespace Faolan.Core.Operations;
 public sealed class BackupLocation
 {
     /// <summary>Die Betreiber-Einstellung für das Sicherungsverzeichnis.</summary>
-    public const string SettingName = "BIFROST_BACKUP_DIR";
+    public const string SettingName = "FAOLAN_BACKUP_DIR";
 
     private readonly IReadOnlyList<string> _readRoots;
 

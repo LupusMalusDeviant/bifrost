@@ -100,6 +100,37 @@ public sealed class RestoreTests
         InstanceDirectory.CountRows(target.DatabaseFile).Should().Be(7, "am Ziel wurde nichts angefasst");
     }
 
+    /// <summary>
+    /// <b>Restore auf eine Bestandsinstallation aus 0.12.0</b> (Vertrag umbenennung-faolan §2.2,
+    /// §7): Sie hat noch <c>bifrost.db</c>. Das Archiv ersetzt genau diese Datei. Eine neue
+    /// <c>faolan.db</c> daneben wäre der teuerste Fehler: Der nächste Start nähme sie, und die
+    /// zurückgespielten Daten lägen unbenutzt in der alten Datei.
+    /// </summary>
+    [Fact]
+    public async Task Replace_on_an_installation_with_the_old_file_name_replaces_that_file()
+    {
+        using var source = new InstanceDirectory("quelle-alt", "bifrost.db");
+        using var target = new InstanceDirectory("ersetzen-alt", "bifrost.db");
+        using var archives = new ArchiveDirectory();
+        var archive = await BackupOfAsync(source, archives, rows: 42);
+
+        using (target.CreateDatabaseWithOpenWal(rows: 9))
+        {
+            target.WriteKeyRing(keys: 1);
+        }
+
+        var restore = RestoreInto(target);
+        var plan = await restore.PlanAsync(
+            new RestoreRequest(archive, RestoreMode.Replace), TestContext.Current.CancellationToken);
+        plan.CanApply.Should().BeTrue(string.Join(" | ", plan.Blockers));
+
+        var result = await restore.ApplyAsync(plan, TestContext.Current.CancellationToken);
+
+        result.Applied.Should().BeTrue();
+        InstanceDirectory.CountRows(target.DatabaseFile).Should().Be(42, "das Archiv steht jetzt in bifrost.db");
+        File.Exists(Path.Combine(target.Root, "faolan.db")).Should().BeFalse("daneben entsteht keine zweite Datenbank");
+    }
+
     [Fact]
     public async Task Replace_secures_the_previous_state_before_overwriting_it()
     {

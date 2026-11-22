@@ -93,7 +93,7 @@ public class InsecureCookieTransportCheckTests
         var environment = new Dictionary<string, string> { ["ASPNETCORE_URLS"] = urls };
         if (trustedProxies is not null)
         {
-            environment["BIFROST_TRUSTED_PROXIES"] = trustedProxies;
+            environment["FAOLAN_TRUSTED_PROXIES"] = trustedProxies;
         }
 
         return DiagnosticWorld.Context(environment) with { HostEnvironmentName = environmentName };
@@ -155,7 +155,7 @@ public class TrustedProxiesCheckTests
     private static DiagnosticContext World(string? value)
         => DiagnosticWorld.Context(value is null
             ? new Dictionary<string, string>()
-            : new Dictionary<string, string> { ["BIFROST_TRUSTED_PROXIES"] = value });
+            : new Dictionary<string, string> { ["FAOLAN_TRUSTED_PROXIES"] = value });
 
     [Fact]
     public async Task Not_set_is_skipped_and_explained()

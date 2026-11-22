@@ -7,7 +7,13 @@ public static class AssetDelivery
     public const string Namespace = "assets";
 
     /// <summary>URI-Schema, unter dem Assets zusätzlich als MCP-Resource lesbar sind.</summary>
-    public const string UriPrefix = "bifrost://assets/";
+    public const string UriPrefix = "faolan://assets/";
+
+    /// <summary>
+    /// Der Präfix vor der Umbenennung (Vertrag umbenennung-faolan §2.3). Geschrieben wird er nicht
+    /// mehr; gelesen wird er weiter, weil Agenten ihn in Gesprächen und Skripten gespeichert haben.
+    /// </summary>
+    public const string LegacyUriPrefix = "bifrost://assets/";
 
     public static string PromptName(string assetName) => $"{Namespace}{NamespacedToolName.Separator}{assetName}";
 
@@ -16,9 +22,12 @@ public static class AssetDelivery
     /// <summary>Liefert den Asset-Namen aus einem Prompt-Namen oder einer Resource-URI; null, wenn es keiner ist.</summary>
     public static string? TryGetAssetName(string promptNameOrUri)
     {
-        if (promptNameOrUri.StartsWith(UriPrefix, StringComparison.Ordinal))
+        foreach (var uriPrefix in (ReadOnlySpan<string>)[UriPrefix, LegacyUriPrefix])
         {
-            return Uri.UnescapeDataString(promptNameOrUri[UriPrefix.Length..]);
+            if (promptNameOrUri.StartsWith(uriPrefix, StringComparison.Ordinal))
+            {
+                return Uri.UnescapeDataString(promptNameOrUri[uriPrefix.Length..]);
+            }
         }
 
         var prefix = Namespace + NamespacedToolName.Separator;

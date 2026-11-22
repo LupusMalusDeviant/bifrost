@@ -5,7 +5,7 @@ namespace Faolan.Integration.Tests;
 
 /// <summary>
 /// Findet das gebaute Rust-Host-Binary und die signierten Fixture-Dateien (Plan 0003, ADR-0020).
-/// <c>BIFROST_WASI_HOST</c> zeigt direkt auf das Binary, sonst wird
+/// <c>FAOLAN_WASI_HOST</c> zeigt direkt auf das Binary, sonst wird
 /// <c>spikes/wasi-component-runtime/target/{release,debug}</c> abgesucht.
 /// <para>
 /// Fehlt der Host, wird der Test übersprungen — eine .NET-Umgebung ohne Rust-Toolchain soll das
@@ -33,7 +33,7 @@ internal static class WasiHostPaths
         if (host is null)
         {
             var required = Environment.GetEnvironmentVariable("FAOLAN_REQUIRE_WASI_HOST") is "1" or "true";
-            Assert.SkipUnless(required, "WASI-Host-Binary nicht gefunden — 'cargo build' in spikes/wasi-component-runtime oder BIFROST_WASI_HOST setzen.");
+            Assert.SkipUnless(required, "WASI-Host-Binary nicht gefunden — 'cargo build' in spikes/wasi-component-runtime oder FAOLAN_WASI_HOST setzen.");
             Assert.Fail("FAOLAN_REQUIRE_WASI_HOST ist gesetzt, aber kein Host-Binary auffindbar.");
         }
 
@@ -43,7 +43,7 @@ internal static class WasiHostPaths
     /// <summary>Der echte Host, falls gebaut — ohne zu überspringen (für Fixtures).</summary>
     public static string? Locate()
     {
-        if (Environment.GetEnvironmentVariable("BIFROST_WASI_HOST") is { Length: > 0 } configured)
+        if (Environment.GetEnvironmentVariable("FAOLAN_WASI_HOST") is { Length: > 0 } configured)
         {
             return File.Exists(configured) ? configured : null;
         }

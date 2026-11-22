@@ -13,6 +13,10 @@
          Deshalb muessen beide Migrations-Assemblies zur Laufzeit vorliegen. -->
     <ProjectReference Include="..\..\src\Faolan.Persistence.Migrations.Sqlite\Faolan.Persistence.Migrations.Sqlite.csproj" />
     <ProjectReference Include="..\..\src\Faolan.Persistence.Migrations.Postgres\Faolan.Persistence.Migrations.Postgres.csproj" />
+    <!-- RenameUpgradeTests starten den gebauten Server als eigenen Prozess (Vertrag
+         umbenennung-faolan §7). Nur die Bau-Reihenfolge, keine Assembly-Referenz: Die Tests
+         sollen den Server von aussen sehen, wie ein Betreiber ihn startet. -->
+    <ProjectReference Include="..\..\src\Faolan.Server\Faolan.Server.csproj" ReferenceOutputAssembly="false" />
     <!-- Welchen PostgreSQL-Server eine Suite starten darf, haengt am vorhandenen pg_dump — und
          diese Ableitung gibt es genau einmal, verlinkt statt kopiert. Zwei Fassungen waeren zwei
          Wahrheiten darueber, was hier startbar ist; die eine bekaeme irgendwann eine Korrektur, die

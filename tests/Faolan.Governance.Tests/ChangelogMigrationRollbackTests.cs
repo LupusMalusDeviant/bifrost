@@ -9,7 +9,7 @@ namespace Faolan.Governance.Tests;
 /// <para>
 /// <b>Die Gegenprüfung hat etwas gefunden</b>, und deshalb steht sie jetzt als Test da: Vier
 /// Umgebungsvariablen waren nirgends in der Betriebsdokumentation — darunter
-/// <c>BIFROST_ALLOW_HOST_EXECUTION</c>, die schärfste Option des Produkts, und die drei Schalter
+/// <c>FAOLAN_ALLOW_HOST_EXECUTION</c>, die schärfste Option des Produkts, und die drei Schalter
 /// der Approval-Benachrichtigung samt ihrem Signaturgeheimnis. Sie standen im ADR und im
 /// Pflichtenheft, also dort, wo ein Betreiber nicht nachsieht.
 /// </para>

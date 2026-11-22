@@ -54,7 +54,7 @@ internal static class ApprovalElicitation
     /// Zweck des Schutzes fuer den <c>requestState</c>. Die Versionsnummer steht drin, damit ein
     /// spaeteres Format alte Zustaende nicht stillschweigend akzeptiert.
     /// </summary>
-    private const string StatePurpose = "Bifrost.Server.ApprovalElicitation.RequestState.v1";
+    private const string StatePurpose = Faolan.Persistence.CryptographicNames.ApprovalElicitationStatePurpose;
 
     /// <summary>
     /// Zwei Ausgaenge, nicht drei. Es gibt kein „abgelehnt" mehr.

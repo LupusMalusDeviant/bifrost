@@ -6,14 +6,14 @@ using Xunit;
 namespace Faolan.Integration.Tests.Gateway;
 
 /// <summary>
-/// Der Gateway im <b>Sitzungsbetrieb</b> (<c>BIFROST_MCP_STATELESS=0</c>) — der Rückfallweg für
+/// Der Gateway im <b>Sitzungsbetrieb</b> (<c>FAOLAN_MCP_STATELESS=0</c>) — der Rückfallweg für
 /// Betreiber, deren Clients alle auf dem vorigen Stand stehen und die
 /// <c>tools/list_changed</c> brauchen.
 /// </summary>
 public sealed class StatefulGatewayFixture : GatewayFixture
 {
     protected override IEnumerable<KeyValuePair<string, string>> ExtraSettings =>
-        [new("BIFROST_MCP_STATELESS", "0")];
+        [new("FAOLAN_MCP_STATELESS", "0")];
 }
 
 /// <summary>

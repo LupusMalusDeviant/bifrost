@@ -13,15 +13,15 @@
 }
 ```
 
-Die Config wird mit `--config PATH` oder `BIFROST_CONFIG` gewählt.
-`BIFROST_ENDPOINT` überschreibt den Endpoint. Die wirksame Gateway-Identität stammt immer aus dem
-API-Token und damit aus der serverseitigen RBAC-Zuordnung; `identity`/`BIFROST_IDENTITY` ist nur ein
+Die Config wird mit `--config PATH` oder `FAOLAN_CONFIG` gewählt.
+`FAOLAN_ENDPOINT` überschreibt den Endpoint. Die wirksame Gateway-Identität stammt immer aus dem
+API-Token und damit aus der serverseitigen RBAC-Zuordnung; `identity`/`FAOLAN_IDENTITY` ist nur ein
 lokales Profil-Label.
 
 Tokenquellen:
 
 1. `--token-stdin`;
-2. `BIFROST_TOKEN`;
+2. `FAOLAN_TOKEN`;
 3. `tokenFile` aus der Config.
 
 Ein `--token`-Argument existiert absichtlich nicht, damit Tokens nicht in Prozesslisten oder

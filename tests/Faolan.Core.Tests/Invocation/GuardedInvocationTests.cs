@@ -100,7 +100,7 @@ public class GuardedInvocationTests
             TestContext.Current.CancellationToken);
 
         result.Status.Should().Be(InvocationStatus.GuardBlocked);
-        result.ErrorMessage.Should().Contain("Prüfgrenze").And.Contain("BIFROST_MAX_RESULT_CHARS",
+        result.ErrorMessage.Should().Contain("Prüfgrenze").And.Contain("FAOLAN_MAX_RESULT_CHARS",
             "die Meldung muss den Ausweg nennen, statt den Betreiber raten zu lassen");
     }
 

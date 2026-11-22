@@ -58,13 +58,13 @@ public class ConfigurationSecretExportTests
 
         document.SecretReferences.Select(r => r.Reference).Should().BeEquivalentTo(
         [
-            "${bifrost:secret/upstream/mit-cli/cli-env/API_KEY}",
-            "${bifrost:secret/upstream/mit-http/http-header/Authorization}",
-            "${bifrost:secret/upstream/mit-http/http-oauth/client-secret}",
-            "${bifrost:secret/upstream/mit-openapi/openapi/credential}",
-            "${bifrost:secret/upstream/mit-openrpc/openrpc/credential}",
-            "${bifrost:secret/upstream/mit-stdio/stdio-env/GITHUB_TOKEN}",
-            "${bifrost:secret/upstream/mit-wasi/wasi-secret/TOKEN}",
+            "${faolan:secret/upstream/mit-cli/cli-env/API_KEY}",
+            "${faolan:secret/upstream/mit-http/http-header/Authorization}",
+            "${faolan:secret/upstream/mit-http/http-oauth/client-secret}",
+            "${faolan:secret/upstream/mit-openapi/openapi/credential}",
+            "${faolan:secret/upstream/mit-openrpc/openrpc/credential}",
+            "${faolan:secret/upstream/mit-stdio/stdio-env/GITHUB_TOKEN}",
+            "${faolan:secret/upstream/mit-wasi/wasi-secret/TOKEN}",
         ]);
 
         document.SecretReferences.Should().AllSatisfy(r => r.Location.Should().NotBeNullOrWhiteSpace());

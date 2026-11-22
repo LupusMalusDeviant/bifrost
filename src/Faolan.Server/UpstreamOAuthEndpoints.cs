@@ -278,13 +278,13 @@ internal static class UpstreamOAuthEndpoints
 
     /// <summary>
     /// Die öffentlich erreichbare Adresse dieses Gateways — sie muss beim Authorization Server als
-    /// Redirect-URI hinterlegt sein. <c>BIFROST_PUBLIC_BASE_URL</c> gewinnt vor dem, was der Request
+    /// Redirect-URI hinterlegt sein. <c>FAOLAN_PUBLIC_BASE_URL</c> gewinnt vor dem, was der Request
     /// behauptet: Host-Header sind vom Aufrufer setzbar, und eine erratene Redirect-URI führt
     /// entweder zu einer Ablehnung oder — schlimmer — zu einem Code an fremder Adresse.
     /// </summary>
     private static string PublicBase(HttpContext ctx)
     {
-        var configured = ctx.RequestServices.GetService<IConfiguration>()?["BIFROST_PUBLIC_BASE_URL"];
+        var configured = ctx.RequestServices.GetService<IConfiguration>()?["FAOLAN_PUBLIC_BASE_URL"];
         return string.IsNullOrWhiteSpace(configured)
             ? $"{ctx.Request.Scheme}://{ctx.Request.Host}"
             : configured.TrimEnd('/');

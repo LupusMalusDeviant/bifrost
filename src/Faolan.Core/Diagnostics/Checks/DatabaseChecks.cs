@@ -1,5 +1,6 @@
 using System.Globalization;
 
+using Faolan.Abstractions;
 using Faolan.Abstractions.Operations;
 
 namespace Faolan.Core.Diagnostics.Checks;
@@ -37,7 +38,7 @@ public sealed class DatabaseProviderCheck : IDiagnosticCheck
         {
             return Task.FromResult(CheckOutcome.Fail(
                 Code,
-                $"BIFROST_DB_PROVIDER nennt '{provider}' — bekannt sind nur 'sqlite' und 'postgres'.",
+                $"FAOLAN_DB_PROVIDER nennt '{provider}' — bekannt sind nur 'sqlite' und 'postgres'.",
                 "Wert korrigieren. Ein unbekannter Provider fällt nicht still auf SQLite zurück.",
                 details));
         }
@@ -47,7 +48,7 @@ public sealed class DatabaseProviderCheck : IDiagnosticCheck
         {
             return Task.FromResult(CheckOutcome.Fail(
                 Code,
-                "Der Provider ist 'postgres', aber BIFROST_DB_CONNECTION fehlt.",
+                "Der Provider ist 'postgres', aber FAOLAN_DB_CONNECTION fehlt.",
                 "Bei PostgreSQL ist die Verbindungszeichenfolge Pflicht — es gibt keinen Vorgabewert.",
                 details));
         }
@@ -187,9 +188,6 @@ public sealed class PendingMigrationsCheck : IDiagnosticCheck
 /// </summary>
 public sealed class SqliteDatabaseFileCheck : IDiagnosticCheck
 {
-    private const string CurrentName = "bifrost.db";
-    private const string LegacyName = "mcpmcp.db";
-
     public string Code => DiagnosticCodes.SqliteDatabaseFile;
 
     public DiagnosticScope Scope => DiagnosticScope.Database;
@@ -212,42 +210,43 @@ public sealed class SqliteDatabaseFileCheck : IDiagnosticCheck
             // ausgewertet noch ausgegeben.
             return Task.FromResult(CheckOutcome.Skipped(
                 Code,
-                "BIFROST_DB_CONNECTION ist ausdrücklich gesetzt — die Datenbankdatei ergibt sich "
+                "FAOLAN_DB_CONNECTION ist ausdrücklich gesetzt — die Datenbankdatei ergibt sich "
                 + "daraus und nicht aus dem Datenverzeichnis."));
         }
 
         var directory = context.DataDirectory;
-        var current = Path.Combine(directory, CurrentName);
-        var legacy = Path.Combine(directory, LegacyName);
-        var hasCurrent = context.Files.FileExists(current);
-        var hasLegacy = context.Files.FileExists(legacy);
+        // Alle Generationen des Dateinamens (faolan.db, bifrost.db, mcpmcp.db); benutzt wird die
+        // jüngste vorhandene, wie beim Start (SqliteDatabaseFile).
+        var present = SqliteDatabaseFile.Names
+            .Where(name => context.Files.FileExists(Path.Combine(directory, name)))
+            .ToList();
         var details = CheckOutcome.Details(
-            ("verzeichnis", directory),
-            (CurrentName, DetailFormat.YesNo(hasCurrent)),
-            (LegacyName, DetailFormat.YesNo(hasLegacy)));
+            [("verzeichnis", directory),
+             .. SqliteDatabaseFile.Names.Select(name => (name, DetailFormat.YesNo(present.Contains(name))))]);
 
-        if (hasCurrent && hasLegacy)
+        if (present.Count > 1)
         {
+            var leftovers = string.Join(", ", present.Skip(1).Select(name => $"'{name}'"));
             return Task.FromResult(CheckOutcome.Warning(
                 Code,
-                $"Im Datenverzeichnis liegen beide Datenbankdateien ('{CurrentName}' und '{LegacyName}').",
-                $"Benutzt wird '{CurrentName}'. Die alte Datei liegt nur noch daneben — nach einer "
+                $"Im Datenverzeichnis liegen mehrere Datenbankdateien ('{present[0]}' und {leftovers}).",
+                $"Benutzt wird '{present[0]}'. Die älteren liegen nur noch daneben — nach einer "
                 + "Prüfung ihres Inhalts wegräumen, sonst spielt beim nächsten Vorfall jemand die "
                 + "falsche zurück.",
                 details));
         }
 
-        if (hasCurrent)
+        if (present.Count == 1 && present[0] == SqliteDatabaseFile.CurrentName)
         {
             return Task.FromResult(CheckOutcome.Pass(
-                Code, $"Die SQLite-Datenbank '{current}' ist vorhanden.", details));
+                Code, $"Die SQLite-Datenbank '{Path.Combine(directory, present[0])}' ist vorhanden.", details));
         }
 
-        if (hasLegacy)
+        if (present.Count == 1)
         {
             return Task.FromResult(CheckOutcome.Warning(
                 Code,
-                $"Im Datenverzeichnis liegt nur die alt benannte '{LegacyName}'. Sie wird "
+                $"Im Datenverzeichnis liegt nur die alt benannte '{present[0]}'. Sie wird "
                 + "weiterverwendet; es entsteht keine leere neue Datei daneben.",
                 "Kein Handlungsdruck. Wer umbenennen will, tut das bei gestopptem Gateway und mit "
                 + "Sicherung — die Datei enthält die gesamte Konfiguration.",
@@ -316,7 +315,7 @@ public sealed class PostgresBackupToolVersionCheck : IDiagnosticCheck
                 Code,
                 "Auf dieser Instanz sind 'pg_dump' und 'pg_restore' nicht erreichbar — es gibt "
                 + "damit keine Sicherung der PostgreSQL-Datenbank.",
-                "Das PostgreSQL-Clientpaket installieren oder BIFROST_POSTGRES_BIN auf sein "
+                "Das PostgreSQL-Clientpaket installieren oder FAOLAN_POSTGRES_BIN auf sein "
                 + "Verzeichnis setzen. Es gibt bewusst keinen Rückfall auf einen selbstgebauten "
                 + "Zeilenexport (ADR-0024 E2); ohne die Werkzeuge migriert der Start zwar weiter, "
                 + "aber ohne Rückweg.",
@@ -372,7 +371,7 @@ public sealed class PostgresBackupToolVersionCheck : IDiagnosticCheck
                 + "(Debian/Ubuntu: den PGDG-Apt-Spiegel einbinden, weil die Distribution nur ihre "
                 + "eigene Version führt; Alpine: 'postgresql"
                 + $"{server.Value.ToString(CultureInfo.InvariantCulture)}-client') — oder "
-                + "BIFROST_POSTGRES_BIN auf ein Verzeichnis setzen, in dem ein passender Client "
+                + "FAOLAN_POSTGRES_BIN auf ein Verzeichnis setzen, in dem ein passender Client "
                 + "liegt. Ein selbstgebauter Zeilenexport ist ausdrücklich kein Ersatz (ADR-0024 E2).",
                 details);
         }
@@ -468,7 +467,7 @@ public sealed class AuditCompletenessCheck : IDiagnosticCheck
             + "Verluste beim Schreiben heissen, die Datenbank hat den Batch mehrfach abgelehnt — "
             + $"den Serverlog um {(facts.FirstLossAt is { } t ? t.ToString("u", CultureInfo.InvariantCulture) : "den Zeitpunkt")} "
             + "nach der Ursache durchsehen (siehe BFR-DB-0002). Wo Lückenlosigkeit zugesichert ist, "
-            + "gehört die Instanz auf BIFROST_AUDIT_MODE=compliance — dort wird unbegrenzt "
+            + "gehört die Instanz auf FAOLAN_AUDIT_MODE=compliance — dort wird unbegrenzt "
             + "wiederholt und Überlast dem Aufrufer gemeldet, statt sie zu verschweigen.",
             details);
     }

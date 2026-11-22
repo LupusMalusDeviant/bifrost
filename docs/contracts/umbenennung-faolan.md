@@ -1,6 +1,6 @@
 # Vertrag: Umbenennung auf Faolan
 
-**Stand:** 2026-11-16 · **Status:** Abgenommen vom Nutzer am 2026-11-16 · **Gilt für:** Plan 0004, R1 – R7
+**Stand:** 2026-11-22 · **Status:** Abgenommen vom Nutzer am 2026-11-16, Nachtrag (Container-Etiketten bleiben, UI-Cookies mit Bruch, Postgres-Volume über Variable, Volume-Messung) abgenommen am 2026-11-22 · **Gilt für:** Plan 0004, R1 – R7
 **Grundlage:** [ADR-0026](../adr/0026-umbenennung-auf-faolan.md),
 [Plan 0004](../plans/0004-umbenennung-und-rueckkanal-projektion.md) Abschnitt 1.2
 
@@ -81,6 +81,7 @@ verschiedenen Werten, wird ausschließlich das neue geprüft — nie „eines vo
 | Diagnosecodes `BFR-*` | `DiagnosticCodes.cs` | undurchsichtige Kennungen in Doku, Support-Bundles und Runbooks |
 | WIT-Paket `mcpmcp` | Connector-ABI, vier `.wasm`-Fixtures | in ausgelieferte Komponenten einkompiliert |
 | Subjekt `CN=bifrost-keyring` in **bestehenden** Zertifikaten | Datenträger des Betreibers | wird nirgends abgeglichen; neu erzeugte bekommen `CN=faolan-keyring` |
+| Container-Etiketten `de.bifrost.owner` = `bifrost-gateway`, `de.bifrost.instance`, `de.bifrost.upstream`, Namenspräfix `bifrost-` | `ContainerIdentity.cs` | danach räumt der Gateway verwaiste Upstream-Container auf; mit neuem Namen fände er die aus 0.12.0 nicht mehr (Nachtrag 2026-11-22) |
 | Marke `_bifrost_truncated` | `Invocation.cs:75` | bleibt in Teil R unangetastet und entfällt erst mit dem [Projektionsvertrag](rueckkanal-projektion.md) — ein Bruch statt zwei |
 | CHANGELOG bis 0.12.0, ADR-0001 bis 0025, `docs/acceptance/*`, `docs/produktreife/BIFROST_*`, ältere Pläne, `gitleaks-baseline.json` | — | Geschichte; der Name war damals richtig |
 
@@ -98,6 +99,7 @@ verschiedenen Werten, wird ausschließlich das neue geprüft — nie „eines vo
 | `serverInfo.name = "bifrost"`, Server-Instructions | `faolan`, „Faolan gateway: …" | Clients, die den Servernamen anzeigen oder auswerten |
 | Vorgabename in `ClientConfigSnippets` | `faolan` | nur neu erzeugte Snippets |
 | Dateinamen `bifrost-audit.*`, `bifrost-support-*.zip`, temporäre Präfixe | `faolan-*` | keiner |
+| UI-Cookies `bifrost-ui`, `bifrost-ui-mode`, `bifrost-setup`, Claim `bifrost-ui-role` | `faolan-*` | einmal neu anmelden; ein laufendes Setup verliert seinen Griff (Nachtrag 2026-11-22) |
 
 ### 2.6 Die Betriebsvariablen im Einzelnen
 
@@ -129,6 +131,18 @@ ist im Recht, eine neue Instanz anzulegen.
 - **Nachzumessen in R4, bevor es in der Anleitung steht:** wie Compose reagiert, wenn ein mit `name:`
   angegebenes Volume von einem anderen Projekt angelegt wurde (Warnung oder Abbruch, und ob
   `external: true` nötig ist). `[braucht Nutzer]` für den Lauf gegen die echte Instanz.
+- **Gemessen am 2026-11-22** (Docker 29.9.3, Compose v5.7.0, Wegwerf-Volumes):
+  - Gleicher Projektname, `FAOLAN_DATA_VOLUME=<projekt>_bifrost-data`: Das alte Volume wird ohne
+    Warnung eingehängt, die Daten sind da.
+  - Anderer Projektname: Das Volume wird ebenfalls eingehängt, die Daten sind da. Compose warnt nur
+    (`already exists but was created for project …`) und bricht nicht ab.
+  - `external: true` ist **nicht** nötig. Es unterdrückt die Warnung, verlangt aber bei jeder
+    Neuinstallation ein vorher angelegtes Volume und taugt deshalb nicht als Vorgabe.
+  - Ohne die Variable entsteht still ein leeres `faolan-data`. Genau diesen Fall fängt nur `doctor`.
+- **Postgres-Datei** (Nachtrag 2026-11-22): `docker-compose.postgres.yml` benennt ihr Volume ebenso
+  über `FAOLAN_PGDATA_VOLUME`, Vorgabe `faolan-pgdata`. Ein Bestand setzt
+  `<projekt>_bifrost-pgdata`. Die Vorgaben für `POSTGRES_DB` und `POSTGRES_USER` bleiben `bifrost`:
+  Sie stehen in jeder bestehenden Datenbank, und mit gesetztem Volume passt der Bestand sofort.
 - `doctor` meldet eine Instanz ohne Upstreams, ohne Rollen und ohne Schlüssel als das, was sie ist —
   mit dem Hinweis auf diese Stelle. Das ersetzt die Anleitung nicht, fängt aber den Fall, dass sie
   niemand gelesen hat.
@@ -143,10 +157,11 @@ eingehende Webhooks, Empfänger von Freigabe-Benachrichtigungen.
 
 **Einmal anzufassen:**
 1. Image-Referenz auf `ghcr.io/lupusmalusdeviant/faolan`.
-2. `FAOLAN_DATA_VOLUME` auf das bestehende Volume.
+2. `FAOLAN_DATA_VOLUME` auf das bestehende Volume, mit PostgreSQL auch `FAOLAN_PGDATA_VOLUME`.
 3. Dashboards und Alarme von `bifrost.*` auf `faolan.*`.
 4. Eigene Skripte, die `bifrost`, `bifrost-connector` oder `Bifrost.Server.dll` aufrufen.
 5. Log-Filter auf `Bifrost.Server.*`.
+6. In der Weboberfläche einmal neu anmelden.
 
 **Empfohlen, nicht nötig:** Variablen auf `FAOLAN_*` umstellen. Die Übernahme ist eine
 Übergangshilfe und keine Zusage auf Dauer.

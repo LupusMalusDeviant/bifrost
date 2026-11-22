@@ -43,7 +43,7 @@ public static partial class DiagnosticRedaction
     /// <summary>
     /// Benannte Werte: <c>Password=…</c>, <c>token: …</c>, <c>?access_token=…</c>,
     /// <c>Authorization: Bearer …</c>. Ohne führendes <c>\b</c>, weil der Wortanker an
-    /// <c>BIFROST_KEYRING_CERT_PASSWORD</c> genau nicht greift — der Unterstrich ist ein
+    /// <c>FAOLAN_KEYRING_CERT_PASSWORD</c> genau nicht greift — der Unterstrich ist ein
     /// Wortzeichen. Ein vorangestelltes <c>Bearer</c>/<c>Basic</c> wird mitmaskiert: Der Befund ist
     /// ein Satz für Menschen, kein wiederverwendbarer Header.
     /// </summary>
@@ -138,7 +138,7 @@ public static partial class DiagnosticRedaction
     }
 
     /// <summary>
-    /// Ersetzt den Wert und behält alles davor — inklusive eines Präfixes wie <c>BIFROST_KEYRING_CERT_</c>,
+    /// Ersetzt den Wert und behält alles davor — inklusive eines Präfixes wie <c>FAOLAN_KEYRING_CERT_</c>,
     /// das erst den Namen vollständig macht.
     /// </summary>
     private static string MaskTrailingValue(Match match)

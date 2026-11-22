@@ -14,8 +14,36 @@ namespace Faolan.Core.Webhooks;
 public static class WebhookSignature
 {
     /// <summary>Header-Namen — an gängigen Anbietern orientiert.</summary>
-    public const string SignatureHeader = "X-Bifrost-Signature";
-    public const string TimestampHeader = "X-Bifrost-Timestamp";
+    public const string SignatureHeader = "X-Faolan-Signature";
+    public const string TimestampHeader = "X-Faolan-Timestamp";
+
+    /// <summary>
+    /// Die Header-Namen vor der Umbenennung (Vertrag umbenennung-faolan §2.3). Eingehend werden sie
+    /// weiter gelesen, ausgehend weiter geschrieben — ein Empfänger, der heute
+    /// <c>X-Bifrost-Signature</c> prüft, bekäme sonst über Nacht unsignierte Nachrichten.
+    /// </summary>
+    public const string LegacySignatureHeader = "X-Bifrost-Signature";
+    public const string LegacyTimestampHeader = "X-Bifrost-Timestamp";
+
+    /// <summary>
+    /// Welches Headerpaar eines eingehenden Requests geprüft wird.
+    /// <para>
+    /// <b>Liegt auch nur ein Header des neuen Paars vor, zählt ausschließlich das neue Paar.</b>
+    /// Nie „eines von beiden passt": Sonst könnte ein Absender, der ein Paar nicht korrekt bilden
+    /// kann, einfach das andere danebenlegen, und jede Schwäche des einen wäre eine des Ganzen.
+    /// Ein gemischtes Paar (neue Signatur, alter Zeitstempel) gibt es deshalb ebenfalls nicht.
+    /// </para>
+    /// </summary>
+    public static (string? Signature, string? Timestamp) SelectHeaders(Func<string, string?> header)
+    {
+        ArgumentNullException.ThrowIfNull(header);
+
+        var signature = header(SignatureHeader);
+        var timestamp = header(TimestampHeader);
+        return !string.IsNullOrEmpty(signature) || !string.IsNullOrEmpty(timestamp)
+            ? (signature, timestamp)
+            : (header(LegacySignatureHeader), header(LegacyTimestampHeader));
+    }
 
     /// <summary>Erzeugt die Signatur, die ein Absender mitschicken muss (Format <c>sha256=hex</c>).</summary>
     public static string Compute(string secret, long unixTimeSeconds, string body)

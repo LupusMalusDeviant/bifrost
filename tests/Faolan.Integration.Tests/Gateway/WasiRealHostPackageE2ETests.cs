@@ -45,7 +45,7 @@ public sealed class WasiRealHostPackageE2ETests : IClassFixture<RealWasiHostGate
     {
         var ct = TestContext.Current.CancellationToken;
         var host = WasiHostPaths.RequireHost();
-        // Der Host kommt aus der Fixture (BIFROST_WASI_HOST beim Start), nicht aus einer zur
+        // Der Host kommt aus der Fixture (FAOLAN_WASI_HOST beim Start), nicht aus einer zur
         // Laufzeit umgebogenen Umgebungsvariable: Die liest der Gateway nur einmal.
         var maintainer = await PinMaintainerAsync(ct);
         var installer = _gw.Services.GetRequiredService<ConnectorPackageInstaller>();

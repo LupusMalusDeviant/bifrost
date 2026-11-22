@@ -81,6 +81,32 @@ public class ConfigurationRoundtripTests
     }
 
     /// <summary>
+    /// Ein Export aus 0.12.0 trägt die Platzhalter noch als <c>${bifrost:secret/…}</c> (Vertrag
+    /// umbenennung-faolan §2.3). Würde der Import sie nicht als Platzhalter erkennen, legte er den
+    /// Upstream <b>eingeschaltet</b> an — mit dem Platzhaltertext als Passwort.
+    /// </summary>
+    [Fact]
+    public async Task Ein_export_mit_alten_platzhaltern_legt_den_upstream_ebenso_abgeschaltet_an()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var export = await ConfigurationFixtures.ServiceFor(ConfigurationFixtures.WithSecretsEverywhere())
+            .ExportAsync(new ConfigurationExportRequest(), ct);
+        var alt = export.Payload.Replace(
+            ConfigurationSecretScrubber.ReferencePrefix,
+            ConfigurationSecretScrubber.LegacyReferencePrefix,
+            StringComparison.Ordinal);
+        alt.Should().Contain(ConfigurationSecretScrubber.LegacyReferencePrefix, "sonst prüft der Test nichts");
+
+        var ziel = new FakeInstance();
+        var dienst = ConfigurationFixtures.ServiceFor(ziel);
+        var plan = await dienst.PlanImportAsync(alt, null, ct);
+        await dienst.ApplyImportAsync(plan, ct);
+
+        ziel.Upstreams.Should().NotBeEmpty().And.OnlyContain(u => !u.Config.Enabled);
+        plan.Additions.Should().Contain(a => a.Contains("nachgetragen", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// Der verschlüsselte Vollexport ist der Weg, auf dem eine Instanz vollständig umzieht — dort
     /// kommen die Zugangsdaten mit, und der Upstream bleibt eingeschaltet.
     /// </summary>

@@ -20,7 +20,7 @@ namespace Faolan.Integration.Tests.OAuth;
 /// </summary>
 public sealed class OAuthSaasSmokeTests
 {
-    private const string IssuerVariable = "BIFROST_OAUTH_SMOKE_ISSUER";
+    private const string IssuerVariable = "FAOLAN_OAUTH_SMOKE_ISSUER";
 
     [Fact]
     public async Task The_metadata_of_an_external_provider_is_usable()

@@ -35,7 +35,7 @@ public class GatewayFixture : WebApplicationFactory<Program>
     protected virtual IEnumerable<KeyValuePair<string, string>> ExtraSettings => [];
 
     /// <summary>
-    /// Der WASI-Host dieser Instanz (<c>BIFROST_WASI_HOST</c>), oder <c>null</c>, wenn der Stub nicht
+    /// Der WASI-Host dieser Instanz (<c>FAOLAN_WASI_HOST</c>), oder <c>null</c>, wenn der Stub nicht
     /// gebaut ist. Das kommt vor: Der Kompatibilitäts-Job baut nur sein eigenes Projekt und braucht
     /// kein WASI. Ohne Host lehnt der Gateway WASI-Upstreams ab — die Fixture darf deshalb nicht
     /// schon beim Start daran scheitern.
@@ -59,19 +59,19 @@ public class GatewayFixture : WebApplicationFactory<Program>
     {
         Directory.CreateDirectory(_dataDir);
         builder.UseSetting("environment", "Development"); // Cookie SecurePolicy=SameAsRequest → Tests laufen über HTTP
-        builder.UseSetting("BIFROST_DATA_DIR", _dataDir);
-        builder.UseSetting("BIFROST_DB_CONNECTION", $"Data Source={Path.Combine(_dataDir, "e2e.db")}");
+        builder.UseSetting("FAOLAN_DATA_DIR", _dataDir);
+        builder.UseSetting("FAOLAN_DB_CONNECTION", $"Data Source={Path.Combine(_dataDir, "e2e.db")}");
         // ADR-0025 E2: Eine frische Instanz verbietet native Ausfuehrung. Die E2E-Tests starten
         // echte stdio-Testserver; die Erlaubnis steht deshalb ausdruecklich da — genau so, wie ein
         // Betreiber sie setzen wuerde. Wer die Absage pruefen will, ueberschreibt sie in
         // ExtraSettings.
-        builder.UseSetting("BIFROST_ALLOW_HOST_EXECUTION", "true");
+        builder.UseSetting("FAOLAN_ALLOW_HOST_EXECUTION", "true");
         // Der WASI-Host kommt aus der Betreiber-Einstellung, nicht aus der Upstream-Konfiguration
         // (ADR-0025). Vorgabe ist der Stub; wer den echten Host braucht, nimmt
         // RealWasiHostGatewayFixture.
         if (WasiHost is { } wasiHost)
         {
-            builder.UseSetting("BIFROST_WASI_HOST", wasiHost);
+            builder.UseSetting("FAOLAN_WASI_HOST", wasiHost);
         }
         foreach (var (key, value) in ExtraSettings)
         {

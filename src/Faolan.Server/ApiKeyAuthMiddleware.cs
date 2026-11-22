@@ -40,8 +40,10 @@ public sealed class ApiKeyAuthMiddleware
         // Header der Upstream-Verbindung werden aber einmal beim Verbindungsaufbau gesetzt und
         // kennen den auslösenden Request nicht. Eine Meldung, die "transitiv" verspricht, wäre
         // eine Zusicherung, die der Mechanismus nicht einlöst.
-        if (context.Request.Headers.TryGetValue(GatewayIdentity.InstanceHeader, out var instance)
-            && instance == gateway.InstanceId)
+        // Beide Namen (Vertrag umbenennung-faolan §2.3): Die Schleife bleibt eine Schleife, gleich
+        // unter welchem Namen sie sich meldet.
+        if (IsOwnInstance(context.Request.Headers, GatewayIdentity.InstanceHeader, gateway.InstanceId)
+            || IsOwnInstance(context.Request.Headers, GatewayIdentity.LegacyInstanceHeader, gateway.InstanceId))
         {
             context.Response.StatusCode = StatusCodes.Status508LoopDetected;
             await context.Response.WriteAsJsonAsync(new
@@ -90,6 +92,9 @@ public sealed class ApiKeyAuthMiddleware
         context.Items[IdentityItemKey] = identity.Value;
         await _next(context);
     }
+
+    private static bool IsOwnInstance(IHeaderDictionary headers, string name, string instanceId)
+        => headers.TryGetValue(name, out var value) && value == instanceId;
 
     private static string? ExtractBearer(HttpRequest request)
     {

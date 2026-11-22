@@ -48,6 +48,19 @@
   </PropertyGroup>
 
   <!--
+    Die Namenskette der Umgebungsvariablen (MCPMCP_ → BIFROST_ → FAOLAN_) steht an genau einer
+    Stelle (Vertrag umbenennung-faolan §2.2). Die CLI hat bewusst keine Projektverweise und bindet
+    deshalb dieselbe Quelldatei ein — dort als internal (FAOLAN_CLI), damit Projekte, die CLI und
+    Abstractions zugleich kennen, keinen Typ doppelt sehen.
+  -->
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);FAOLAN_CLI</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Faolan.Abstractions\EnvironmentNameChain.cs" Link="Shared\EnvironmentNameChain.cs" />
+  </ItemGroup>
+
+  <!--
     Rückfallebene für den Commit in der Versionsausgabe.
 
     Im Normalfall füllt das SDK 'SourceRevisionId' selbst aus dem Arbeitsbaum (SourceLink ist seit

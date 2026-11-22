@@ -94,7 +94,7 @@ public static class DiagnosticCodes
     /// <summary>Nur HTTP, kein TLS-Proxy deklariert — das Sitzungs-Cookie trägt trotzdem 'Secure'.</summary>
     public const string InsecureCookieTransport = "BFR-NET-0002";
 
-    /// <summary><c>BIFROST_TRUSTED_PROXIES</c> ist lesbar (ein Tippfehler bricht den Start ab).</summary>
+    /// <summary><c>FAOLAN_TRUSTED_PROXIES</c> ist lesbar (ein Tippfehler bricht den Start ab).</summary>
     public const string TrustedProxies = "BFR-NET-0003";
 
     // ── BFR-RT: Container-Runtime, WASI-Host ────────────────────────────────────────────────────

@@ -146,7 +146,7 @@ public sealed class InsecureCookieTransportCheck : IDiagnosticCheck
             return Task.FromResult(CheckOutcome.Pass(
                 Code,
                 "Der Gateway lauscht nur auf HTTP, aber ein vertrauenswürdiger Proxy ist deklariert "
-                + "(BIFROST_TRUSTED_PROXIES) — der vorgesehene Produktionsaufbau.",
+                + "(FAOLAN_TRUSTED_PROXIES) — der vorgesehene Produktionsaufbau.",
                 details));
         }
 
@@ -157,7 +157,7 @@ public sealed class InsecureCookieTransportCheck : IDiagnosticCheck
             + "http://<adresse> auf, verwirft der Browser es stillschweigend: Die Anmeldung geht "
             + "durch, der nächste Seitenaufruf ist wieder die Login-Maske, und nirgends steht ein Grund.",
             "TLS-Proxy davorsetzen, der X-Forwarded-Proto: https und den Port im Host mitgibt "
-            + "(nginx: 'proxy_set_header Host $http_host'), und BIFROST_TRUSTED_PROXIES auf dessen "
+            + "(nginx: 'proxy_set_header Host $http_host'), und FAOLAN_TRUSTED_PROXIES auf dessen "
             + "Adresse setzen. Der Zugang über /mcp und /api ist nicht betroffen — Agenten "
             + "authentifizieren sich mit einem Header, nicht mit einem Cookie.",
             details));
@@ -165,7 +165,7 @@ public sealed class InsecureCookieTransportCheck : IDiagnosticCheck
 }
 
 /// <summary>
-/// BFR-NET-0003 — <c>BIFROST_TRUSTED_PROXIES</c> ist lesbar.
+/// BFR-NET-0003 — <c>FAOLAN_TRUSTED_PROXIES</c> ist lesbar.
 /// <para>
 /// Ein Tippfehler im Wert bricht den Start ab, statt still auf „aus" zu fallen. Das ist richtig so
 /// — aber ein Betreiber soll es hier erfahren und nicht am nicht mehr startenden Container.
@@ -188,7 +188,7 @@ public sealed class TrustedProxiesCheck : IDiagnosticCheck
         {
             return Task.FromResult(CheckOutcome.Skipped(
                 Code,
-                "BIFROST_TRUSTED_PROXIES ist nicht gesetzt; Forwarded-Header werden ignoriert. Das "
+                "FAOLAN_TRUSTED_PROXIES ist nicht gesetzt; Forwarded-Header werden ignoriert. Das "
                 + "ist richtig, wenn der Gateway direkt erreichbar ist."));
         }
 
@@ -196,7 +196,7 @@ public sealed class TrustedProxiesCheck : IDiagnosticCheck
         {
             return Task.FromResult(CheckOutcome.Warning(
                 Code,
-                "BIFROST_TRUSTED_PROXIES steht auf 'any' — jedem Absender wird geglaubt.",
+                "FAOLAN_TRUSTED_PROXIES steht auf 'any' — jedem Absender wird geglaubt.",
                 "Nur zulässig, wenn der Gateway ausschliesslich über den Proxy erreichbar ist. Steht "
                 + "er zusätzlich direkt im Netz, kann jeder Client 'X-Forwarded-Proto: https' "
                 + "behaupten. Besser die Adresse oder das Netz des Proxy eintragen.",
@@ -209,7 +209,7 @@ public sealed class TrustedProxiesCheck : IDiagnosticCheck
         {
             return Task.FromResult(CheckOutcome.Fail(
                 Code,
-                $"BIFROST_TRUSTED_PROXIES enthält {invalid.Count} unlesbare(n) Eintrag/Einträge: "
+                $"FAOLAN_TRUSTED_PROXIES enthält {invalid.Count} unlesbare(n) Eintrag/Einträge: "
                 + string.Join(", ", invalid),
                 "Erlaubt sind 'any' oder eine Kommaliste aus IP-Adressen und CIDR-Bereichen "
                 + "(z. B. '172.17.0.1, 10.0.0.0/8'). Ein ungültiger Wert bricht den Start ab.",
@@ -218,7 +218,7 @@ public sealed class TrustedProxiesCheck : IDiagnosticCheck
 
         return Task.FromResult(CheckOutcome.Pass(
             Code,
-            $"BIFROST_TRUSTED_PROXIES nennt {entries.Length} auswertbare(n) Eintrag/Einträge.",
+            $"FAOLAN_TRUSTED_PROXIES nennt {entries.Length} auswertbare(n) Eintrag/Einträge.",
             CheckOutcome.Details(("eintraege", DetailFormat.Count(entries.Length)))));
     }
 

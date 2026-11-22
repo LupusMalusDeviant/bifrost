@@ -7,8 +7,8 @@ namespace Faolan.Upstream.Tests;
 /// <summary>
 /// Was ein stdio-Kindprozess von der Umgebung des Gateways sieht (ADR-0005, Nachtrag 2026-07-28).
 /// <para>
-/// Bis dahin: alles. Ein stdio-Server las damit <c>BIFROST_DB_CONNECTION</c> — bei Postgres samt
-/// Passwort — und <c>BIFROST_KEYRING_CERT_PASSWORD</c>, mit dem der Key-Ring entschlüsselt wird. Der
+/// Bis dahin: alles. Ein stdio-Server las damit <c>FAOLAN_DB_CONNECTION</c> — bei Postgres samt
+/// Passwort — und <c>FAOLAN_KEYRING_CERT_PASSWORD</c>, mit dem der Key-Ring entschlüsselt wird. Der
 /// CLI-Transport räumt seine Umgebung seit ADR-0014 auf; beim ältesten Transport fehlte derselbe
 /// Schritt.
 /// </para>
@@ -17,9 +17,9 @@ public sealed class StdioProcessEnvironmentTests
 {
     /// <summary>Der Kernfall: Gateway-eigene Variablen erreichen den Kindprozess nicht.</summary>
     [Theory]
-    [InlineData("BIFROST_DB_CONNECTION")]
-    [InlineData("BIFROST_KEYRING_CERT_PASSWORD")]
-    [InlineData("BIFROST_PUBLIC_BASE_URL")]
+    [InlineData("FAOLAN_DB_CONNECTION")]
+    [InlineData("FAOLAN_KEYRING_CERT_PASSWORD")]
+    [InlineData("FAOLAN_PUBLIC_BASE_URL")]
     [InlineData("AWS_SECRET_ACCESS_KEY")]
     [InlineData("GITHUB_TOKEN")]
     public void Gateway_secrets_do_not_reach_the_child(string name)
@@ -87,7 +87,7 @@ public sealed class StdioProcessEnvironmentTests
     /// </summary>
     [Theory]
     [InlineData("IRGENDWAS_NEUES")]
-    [InlineData("BIFROST_WAS_AUCH_IMMER")]
+    [InlineData("FAOLAN_WAS_AUCH_IMMER")]
     public void Unknown_names_are_withheld(string name)
         => StdioProcessEnvironment.IsWithheldByDefault(name).Should().BeTrue();
 }

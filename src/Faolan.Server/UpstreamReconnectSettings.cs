@@ -15,9 +15,9 @@ namespace Faolan.Server;
 /// </summary>
 public static class UpstreamReconnectSettings
 {
-    public const string InitialSecondsKey = "BIFROST_UPSTREAM_RECONNECT_INITIAL_SECONDS";
-    public const string MaxSecondsKey = "BIFROST_UPSTREAM_RECONNECT_MAX_SECONDS";
-    public const string AuthSecondsKey = "BIFROST_UPSTREAM_RECONNECT_AUTH_SECONDS";
+    public const string InitialSecondsKey = "FAOLAN_UPSTREAM_RECONNECT_INITIAL_SECONDS";
+    public const string MaxSecondsKey = "FAOLAN_UPSTREAM_RECONNECT_MAX_SECONDS";
+    public const string AuthSecondsKey = "FAOLAN_UPSTREAM_RECONNECT_AUTH_SECONDS";
 
     private const int InitialDefault = 5;
     private const int InitialUpperBound = 300;

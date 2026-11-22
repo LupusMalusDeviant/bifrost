@@ -81,7 +81,7 @@ public sealed class ToolPinJourneyTests
                 TestServerPaths.Executable("EchoServer"),
                 [],
                 changed
-                    ? new Dictionary<string, string> { ["BIFROST_ECHO_DESCRIPTION"] = "geaendert" }
+                    ? new Dictionary<string, string> { ["FAOLAN_ECHO_DESCRIPTION"] = "geaendert" }
                     : null,
                 Isolation: new IsolationOptions(IsolationMode.Host)));
 

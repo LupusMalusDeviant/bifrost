@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 namespace Faolan.Server;
 
 /// <summary>
-/// Wem der Gateway die <c>X-Forwarded-*</c>-Header glaubt (<c>BIFROST_TRUSTED_PROXIES</c>).
+/// Wem der Gateway die <c>X-Forwarded-*</c>-Header glaubt (<c>FAOLAN_TRUSTED_PROXIES</c>).
 /// <para>
 /// <b>Warum das nicht einfach an ist:</b> Steht der Gateway direkt im Netz, kann jeder Client
 /// <c>X-Forwarded-Proto: https</c> mitschicken und behaupten, die Verbindung sei sicher. Danach
@@ -67,7 +67,7 @@ internal static class ForwardedProxyOptions
             else
             {
                 throw new InvalidOperationException(
-                    $"BIFROST_TRUSTED_PROXIES enthält '{entry}' — das ist weder eine IP-Adresse noch "
+                    $"FAOLAN_TRUSTED_PROXIES enthält '{entry}' — das ist weder eine IP-Adresse noch "
                     + $"ein CIDR-Bereich noch '{Any}'. Ein Tippfehler würde hier still dazu führen, "
                     + "dass die Header ignoriert werden.");
             }
@@ -78,7 +78,7 @@ internal static class ForwardedProxyOptions
         if (options.KnownProxies.Count == 0 && options.KnownIPNetworks.Count == 0)
         {
             throw new InvalidOperationException(
-                "BIFROST_TRUSTED_PROXIES ist gesetzt, ergibt aber keine Herkunft. Leer lassen schaltet "
+                "FAOLAN_TRUSTED_PROXIES ist gesetzt, ergibt aber keine Herkunft. Leer lassen schaltet "
                 + "die Auswertung ab; 'any' traut jedem Absender.");
         }
 

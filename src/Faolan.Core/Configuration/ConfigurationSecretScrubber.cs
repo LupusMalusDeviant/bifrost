@@ -23,7 +23,13 @@ public sealed record ScrubbedUpstream(UpstreamServerConfig Config, IReadOnlyList
 /// </summary>
 public static class ConfigurationSecretScrubber
 {
-    public const string ReferencePrefix = "${bifrost:secret/";
+    public const string ReferencePrefix = "${faolan:secret/";
+
+    /// <summary>
+    /// Der Präfix vor der Umbenennung (Vertrag umbenennung-faolan §2.3): Exporte aus 0.12.0 tragen
+    /// ihn. Gelesen wird er weiter, geschrieben nicht mehr.
+    /// </summary>
+    public const string LegacyReferencePrefix = "${bifrost:secret/";
 
     public const string ReferenceSuffix = "}";
 
@@ -32,7 +38,8 @@ public static class ConfigurationSecretScrubber
     /// <summary>Ist dieser Wert ein unaufgelöster Platzhalter aus einem Standardexport?</summary>
     public static bool IsReference(string? value)
         => value is not null
-            && value.StartsWith(ReferencePrefix, StringComparison.Ordinal)
+            && (value.StartsWith(ReferencePrefix, StringComparison.Ordinal)
+                || value.StartsWith(LegacyReferencePrefix, StringComparison.Ordinal))
             && value.EndsWith(ReferenceSuffix, StringComparison.Ordinal);
 
     /// <summary>Entfernt alle Zugangsdaten aus einer Upstream-Konfiguration.</summary>

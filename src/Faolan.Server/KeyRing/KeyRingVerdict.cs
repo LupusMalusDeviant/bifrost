@@ -117,7 +117,7 @@ public static class KeyRingJudgement
                     + $"OAuth-Token und Webhook-Secrets sind damit nicht mehr entschlüsselbar."),
                 "Es wird KEIN neuer Ring angelegt: Er würde die Instanz als 'bereit' melden, "
                 + "während nichts davon lesbar ist. Zuerst prüfen, ob das Datenverzeichnis "
-                + "(BIFROST_DATA_DIR) auf das richtige Volume zeigt — ein umbenanntes Volume sieht "
+                + "(FAOLAN_DATA_DIR) auf das richtige Volume zeigt — ein umbenanntes Volume sieht "
                 + "genau so aus. Andernfalls den Key-Ring aus der Sicherung zurückspielen "
                 + "(ADR-0024: er liegt im Vollbackup unter 'keyring/').");
         }
@@ -132,7 +132,7 @@ public static class KeyRingJudgement
                     + $"{evidence.EncryptedRowCount} Datensätze mit Geheimtext. Dieser Geheimtext "
                     + $"kann nur mit einem Key-Ring entstanden sein, der jetzt fehlt."),
                 "Es wird KEIN neuer Ring angelegt. Datenverzeichnis und Datenbank gehören "
-                + "zusammen — hier passen sie nicht zueinander. Entweder zeigt BIFROST_DATA_DIR auf "
+                + "zusammen — hier passen sie nicht zueinander. Entweder zeigt FAOLAN_DATA_DIR auf "
                 + "das falsche Volume, oder es wurde eine Datenbank ohne den zugehörigen Key-Ring "
                 + "zurückgespielt (ADR-0024 E3: beides gehört in dieselbe Sicherung).");
         }

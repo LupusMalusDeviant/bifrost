@@ -15,7 +15,7 @@ namespace Faolan.Upstream.Tests;
 /// die Versionsverhandlung mit älterer und neuerer Vertragsversion. Ohne diesen Test bliebe die
 /// Wire-Kompatibilität beider Implementierungen behauptet statt belegt.
 /// <para>
-/// Der Host wird nicht gebaut, sondern gesucht: <c>BIFROST_WASI_HOST</c> zeigt direkt auf das
+/// Der Host wird nicht gebaut, sondern gesucht: <c>FAOLAN_WASI_HOST</c> zeigt direkt auf das
 /// Binary, sonst wird <c>spikes/wasi-component-runtime/target/{release,debug}</c> abgesucht. Fehlt
 /// er, werden die Tests übersprungen — eine .NET-Umgebung ohne Rust-Toolchain soll das Gate nicht
 /// reißen. Damit der Nachweis nicht still ausfällt, erzwingt <c>FAOLAN_REQUIRE_WASI_HOST=1</c>
@@ -55,7 +55,7 @@ public sealed class WasiRealHostCompatibilityTests
         if (host is null)
         {
             var required = Environment.GetEnvironmentVariable("FAOLAN_REQUIRE_WASI_HOST") is "1" or "true";
-            Assert.SkipUnless(required, "WASI-Host-Binary nicht gefunden — 'cargo build' in spikes/wasi-component-runtime oder BIFROST_WASI_HOST setzen.");
+            Assert.SkipUnless(required, "WASI-Host-Binary nicht gefunden — 'cargo build' in spikes/wasi-component-runtime oder FAOLAN_WASI_HOST setzen.");
             Assert.Fail("FAOLAN_REQUIRE_WASI_HOST ist gesetzt, aber kein Host-Binary auffindbar.");
         }
 
@@ -64,7 +64,7 @@ public sealed class WasiRealHostCompatibilityTests
 
     private static string? LocateHost()
     {
-        if (Environment.GetEnvironmentVariable("BIFROST_WASI_HOST") is { Length: > 0 } configured)
+        if (Environment.GetEnvironmentVariable("FAOLAN_WASI_HOST") is { Length: > 0 } configured)
         {
             return File.Exists(configured) ? configured : null;
         }

@@ -127,7 +127,7 @@ public class KeyRingDiagnosticsDisclosureTests
     {
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["BIFROST_DATA_DIR"] = "/data",
+            ["FAOLAN_DATA_DIR"] = "/data",
         };
 
         if (environment is null)

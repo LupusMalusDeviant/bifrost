@@ -114,9 +114,9 @@ Some proofs need extra infrastructure and **skip** without it — deliberately, 
 
 | Variable | Turns on | Needs |
 |---|---|---|
-| `BIFROST_REQUIRE_POSTGRES=1` | PostgreSQL persistence tests | Docker (Testcontainers) |
-| `BIFROST_REQUIRE_CONTAINER=1` | CLI container isolation against a live runtime | Docker in Linux-container mode |
-| `BIFROST_REQUIRE_WASI_HOST=1` | WASI tests against the real Rust host | `cargo build --release` in `spikes/wasi-component-runtime` |
+| `FAOLAN_REQUIRE_POSTGRES=1` | PostgreSQL persistence tests | Docker (Testcontainers) |
+| `FAOLAN_REQUIRE_CONTAINER=1` | CLI container isolation against a live runtime | Docker in Linux-container mode |
+| `FAOLAN_REQUIRE_WASI_HOST=1` | WASI tests against the real Rust host | `cargo build --release` in `spikes/wasi-component-runtime` |
 
 ## Security
 

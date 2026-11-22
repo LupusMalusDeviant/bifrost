@@ -25,15 +25,15 @@ namespace Faolan.Server.Operations;
 /// </summary>
 public static class OperationsRegistration
 {
-    /// <param name="dataDirectory"><c>BIFROST_DATA_DIR</c>.</param>
-    /// <param name="databaseProvider"><c>BIFROST_DB_PROVIDER</c>.</param>
+    /// <param name="dataDirectory"><c>FAOLAN_DATA_DIR</c>.</param>
+    /// <param name="databaseProvider"><c>FAOLAN_DB_PROVIDER</c>.</param>
     /// <param name="connectionString">
     /// Die <b>tatsächlich</b> verwendete Verbindungszeichenfolge. Daraus kommt der Pfad der
     /// SQLite-Datei — eine aus dem Datenverzeichnis geratene Vorgabe hätte bei gesetztem
-    /// <c>BIFROST_DB_CONNECTION</c> die falsche Datei gesichert.
+    /// <c>FAOLAN_DB_CONNECTION</c> die falsche Datei gesichert.
     /// </param>
     /// <param name="backupDirectory">
-    /// <c>BIFROST_BACKUP_DIR</c>: wo Sicherungen über REST, CLI und Oberfläche entstehen und gelesen
+    /// <c>FAOLAN_BACKUP_DIR</c>: wo Sicherungen über REST, CLI und Oberfläche entstehen und gelesen
     /// werden. Vorgabe <c>&lt;Datenverzeichnis&gt;/backups</c>.
     /// </param>
     public static IServiceCollection AddFaolanOperations(

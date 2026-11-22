@@ -87,7 +87,7 @@ public class WasiHostCheckTests
         var files = new FakeFileProbe();
         files.Files.Add("/usr/local/bin/bifrost-wasi-host");
         var context = DiagnosticWorld.Context(
-            new Dictionary<string, string> { ["BIFROST_WASI_HOST"] = "/usr/local/bin/bifrost-wasi-host" },
+            new Dictionary<string, string> { ["FAOLAN_WASI_HOST"] = "/usr/local/bin/bifrost-wasi-host" },
             files);
 
         var result = await new WasiHostCheck().RunAsync(context, TestContext.Current.CancellationToken);
@@ -99,7 +99,7 @@ public class WasiHostCheckTests
     public async Task A_configured_but_missing_binary_fails()
     {
         var context = DiagnosticWorld.Context(
-            new Dictionary<string, string> { ["BIFROST_WASI_HOST"] = "/opt/falsch/host" });
+            new Dictionary<string, string> { ["FAOLAN_WASI_HOST"] = "/opt/falsch/host" });
 
         var result = await new WasiHostCheck().RunAsync(context, TestContext.Current.CancellationToken);
 

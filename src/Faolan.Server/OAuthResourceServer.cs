@@ -36,7 +36,7 @@ public sealed record OAuthResourceServerOptions(string Issuer, string Audience)
     public static OAuthResourceServerOptions? FromConfiguration(IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
-        var issuer = configuration["BIFROST_OAUTH_ISSUER"];
+        var issuer = configuration["FAOLAN_OAUTH_ISSUER"];
         if (string.IsNullOrWhiteSpace(issuer))
         {
             return null;
@@ -45,11 +45,11 @@ public sealed record OAuthResourceServerOptions(string Issuer, string Audience)
         // Die Audience ist die Adresse, unter der Agenten uns erreichen. Ohne öffentliche Adresse
         // gäbe es nichts, worauf ein Token lauten könnte — deshalb ist sie hier Pflicht und nicht
         // geraten.
-        var audience = configuration["BIFROST_OAUTH_AUDIENCE"]
-            ?? configuration["BIFROST_PUBLIC_BASE_URL"]
+        var audience = configuration["FAOLAN_OAUTH_AUDIENCE"]
+            ?? configuration["FAOLAN_PUBLIC_BASE_URL"]
             ?? throw new InvalidOperationException(
-                "BIFROST_OAUTH_ISSUER ist gesetzt, aber weder BIFROST_OAUTH_AUDIENCE noch "
-                + "BIFROST_PUBLIC_BASE_URL. Ohne die eigene kanonische Adresse lässt sich nicht "
+                "FAOLAN_OAUTH_ISSUER ist gesetzt, aber weder FAOLAN_OAUTH_AUDIENCE noch "
+                + "FAOLAN_PUBLIC_BASE_URL. Ohne die eigene kanonische Adresse lässt sich nicht "
                 + "prüfen, ob ein Token für diesen Gateway ausgestellt wurde.");
 
         return new OAuthResourceServerOptions(issuer.TrimEnd('/'), audience.TrimEnd('/'));

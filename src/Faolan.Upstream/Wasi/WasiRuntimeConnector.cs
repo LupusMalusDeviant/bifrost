@@ -27,7 +27,7 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
     public const string ProtocolVersion = "4";
 
     /// <summary>Die Betreiber-Einstellung, die den WASI-Host dieser Instanz benennt.</summary>
-    public const string HostSettingName = "BIFROST_WASI_HOST";
+    public const string HostSettingName = "FAOLAN_WASI_HOST";
 
     private readonly IPublisherTrustStore _trust;
     private readonly string? _hostExecutable;
@@ -36,7 +36,7 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
 
     /// <param name="trust">Die Vertrauensquelle für die Publisher (WP4).</param>
     /// <param name="hostExecutable">
-    /// Der WASI-Host dieser Instanz, vom Betreiber gesetzt (<c>BIFROST_WASI_HOST</c>). Gestartet wird
+    /// Der WASI-Host dieser Instanz, vom Betreiber gesetzt (<c>FAOLAN_WASI_HOST</c>). Gestartet wird
     /// <b>nur dieser</b>, nie der Wert aus der Upstream-Konfiguration: Ein WASI-Upstream gilt für die
     /// Host-Policy als isoliert (ADR-0025), der Host selbst läuft aber nativ. Ein freies Feld wäre
     /// deshalb der Weg am Verbot nativer Ausführung vorbei. <c>null</c> heißt: WASI ist auf dieser
@@ -144,7 +144,7 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
         {
             throw new InvalidOperationException(
                 $"Upstream '{config.Slug}': Auf dieser Instanz ist kein WASI-Host eingerichtet "
-                + "(BIFROST_WASI_HOST). Ohne ihn startet kein WASI-Upstream — ein Programm aus der "
+                + "(FAOLAN_WASI_HOST). Ohne ihn startet kein WASI-Upstream — ein Programm aus der "
                 + "Konfiguration wird bewusst nicht ersatzweise genommen.");
         }
 
@@ -152,7 +152,7 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
         {
             throw new InvalidOperationException(
                 $"Upstream '{config.Slug}': Wasi.HostExecutable '{options.HostExecutable}' ist nicht der "
-                + $"WASI-Host dieser Instanz ('{_hostExecutable}', BIFROST_WASI_HOST). Der Host läuft "
+                + $"WASI-Host dieser Instanz ('{_hostExecutable}', FAOLAN_WASI_HOST). Der Host läuft "
                 + "nativ; welches Programm das ist, entscheidet der Betreiber, nicht die "
                 + "Upstream-Konfiguration (ADR-0025).");
         }

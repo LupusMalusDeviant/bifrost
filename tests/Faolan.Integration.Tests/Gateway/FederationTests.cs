@@ -81,8 +81,14 @@ public sealed class FederationTests : IClassFixture<GatewayFixture>, IAsyncLifet
         await _gw.Supervisor.RemoveAsync(id, DrainPolicy.Immediate, TestContext.Current.CancellationToken);
     }
 
-    [Fact]
-    public async Task Own_instance_header_on_mcp_endpoint_is_rejected_as_loop()
+    /// <summary>
+    /// Unter beiden Namen (Vertrag umbenennung-faolan §2.3): Die Schleife bleibt eine Schleife,
+    /// gleich unter welchem Namen sie sich meldet.
+    /// </summary>
+    [Theory]
+    [InlineData(GatewayIdentity.InstanceHeader)]
+    [InlineData(GatewayIdentity.LegacyInstanceHeader)]
+    public async Task Own_instance_header_on_mcp_endpoint_is_rejected_as_loop(string header)
     {
         var gatewayInstance = _gw.Services.GetRequiredService<GatewayIdentity>();
         using var client = _gw.CreateDefaultClient();
@@ -90,7 +96,7 @@ public sealed class FederationTests : IClassFixture<GatewayFixture>, IAsyncLifet
         {
             Content = new StringContent("{}", Encoding.UTF8, "application/json"),
         };
-        request.Headers.Add(GatewayIdentity.InstanceHeader, gatewayInstance.InstanceId);
+        request.Headers.Add(header, gatewayInstance.InstanceId);
 
         var response = await client.SendAsync(request);
 

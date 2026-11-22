@@ -10,7 +10,7 @@ namespace Faolan.Persistence.Backup;
 /// </summary>
 public sealed class BackupOptions
 {
-    /// <summary>Das Datenverzeichnis der Instanz (<c>BIFROST_DATA_DIR</c>).</summary>
+    /// <summary>Das Datenverzeichnis der Instanz (<c>FAOLAN_DATA_DIR</c>).</summary>
     public required string DataDirectory { get; init; }
 
     public DatabaseProvider Provider { get; init; } = DatabaseProvider.Sqlite;
@@ -36,7 +36,7 @@ public sealed class BackupOptions
 
     /// <summary>
     /// Wo <c>pg_dump</c> und <c>pg_restore</c> liegen, falls sie nicht im <c>PATH</c> stehen. Leer
-    /// heißt: <c>BIFROST_POSTGRES_BIN</c>, sonst <c>PATH</c>. Ist der Wert gesetzt, wird
+    /// heißt: <c>FAOLAN_POSTGRES_BIN</c>, sonst <c>PATH</c>. Ist der Wert gesetzt, wird
     /// <b>ausschließlich</b> dort gesucht (siehe <see cref="PostgresTools.TryLocate(string?, out PostgresToolset?)"/>).
     /// </summary>
     public string? PostgresToolDirectory { get; init; }
@@ -81,9 +81,7 @@ public sealed class BackupOptions
                 return SqliteFilePath;
             }
 
-            var current = Path.Combine(DataDirectory, "bifrost.db");
-            var legacy = Path.Combine(DataDirectory, "mcpmcp.db");
-            return !File.Exists(current) && File.Exists(legacy) ? legacy : current;
+            return Faolan.Abstractions.SqliteDatabaseFile.Resolve(DataDirectory);
         }
     }
 

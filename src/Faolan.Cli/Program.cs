@@ -1,7 +1,19 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
 
+using Faolan.Abstractions;
 using Faolan.Cli;
+
+// Alt benannte Variablen (MCPMCP_*, BIFROST_*) übernehmen, bevor irgendetwas sie liest —
+// dieselbe Kette wie im Server (Vertrag umbenennung-faolan §2.2).
+// Der Hinweis geht nach stderr, damit --json-Ausgaben auf stdout unverändert bleiben.
+var adoptedLegacyVariables = EnvironmentNameChain.Adopt();
+if (adoptedLegacyVariables.Count > 0)
+{
+    await Console.Error.WriteLineAsync(
+        $"Hinweis: alt benannte Umgebungsvariablen übernommen ({string.Join(", ", adoptedLegacyVariables)}); "
+        + $"auf {EnvironmentNameChain.CurrentPrefix} umstellen.");
+}
 
 var arguments = args.ToList();
 var jsonOutput = false;

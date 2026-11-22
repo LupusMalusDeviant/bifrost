@@ -815,7 +815,7 @@ internal static class ApiEndpoints
 
             try
             {
-                // Nur ins Sicherungsverzeichnis — ein bloßer Name landet dort (BIFROST_BACKUP_DIR).
+                // Nur ins Sicherungsverzeichnis — ein bloßer Name landet dort (FAOLAN_BACKUP_DIR).
                 var result = await backups.CreateAsync(
                     new BackupRequest(location.ResolveTarget(body.TargetPath), sections, body.Passphrase), ct);
                 AuditManagement(audit, time, ctx, AuditEventKind.ConfigChanged, null,

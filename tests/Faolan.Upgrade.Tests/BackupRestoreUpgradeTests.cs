@@ -102,7 +102,7 @@ public sealed class BackupRestoreUpgradeTests : IAsyncLifetime
         result.RestoredSections.Should().HaveFlag(BackupSections.Config);
 
         // Vor dem Start: Der wiederhergestellte Stand ist wirklich der alte.
-        var restored = SqliteFactory(Path.Combine(target, "bifrost.db"));
+        var restored = SqliteFactory(Path.Combine(target, "faolan.db"));
         await using (var db = await restored.CreateDbContextAsync(ct))
         {
             (await db.Database.GetPendingMigrationsAsync(ct))
@@ -151,7 +151,7 @@ public sealed class BackupRestoreUpgradeTests : IAsyncLifetime
         (await restore.ApplyAsync(plan, ct)).RestoredSections
             .Should().NotHaveFlag(BackupSections.KeyRing);
 
-        var restored = SqliteFactory(Path.Combine(target, "bifrost.db"));
+        var restored = SqliteFactory(Path.Combine(target, "faolan.db"));
         (await new DatabaseInitializer(restored).InitializeAsync(ct))
             .Should().Be(DatabaseInitOutcome.Migrated, "die Zeilen kommen sehr wohl durch");
 
@@ -199,7 +199,7 @@ public sealed class BackupRestoreUpgradeTests : IAsyncLifetime
         await apply.Should().ThrowAsync<InvalidOperationException>();
 
         // „Abgelehnt statt versucht" heisst: Es steht nichts im Ziel. Nicht halb, nicht als Rest.
-        File.Exists(Path.Combine(target, "bifrost.db")).Should().BeFalse();
+        File.Exists(Path.Combine(target, "faolan.db")).Should().BeFalse();
         Directory.Exists(Path.Combine(target, "keys")).Should().BeFalse();
         Directory.EnumerateFileSystemEntries(target).Should().BeEmpty(
             "eine Absage, die trotzdem Dateien hinterlaesst, ist keine Absage");
@@ -268,7 +268,7 @@ public sealed class BackupRestoreUpgradeTests : IAsyncLifetime
         // einer neueren Version angefasst wurde (dieselbe Nachstellung wie in MigrationSafetyTests).
         SqliteConnection.ClearAllPools();
         await using (var connection = new SqliteConnection(
-            $"Data Source={Path.Combine(source.Directory, "bifrost.db")}"))
+            $"Data Source={Path.Combine(source.Directory, "faolan.db")}"))
         {
             await connection.OpenAsync(ct);
             await using var command = connection.CreateCommand();
@@ -300,7 +300,7 @@ public sealed class BackupRestoreUpgradeTests : IAsyncLifetime
         (await restore.ApplyAsync(plan, ct)).Applied.Should().BeTrue();
 
         // Erst hier faellt es auf — und dann wenigstens hart.
-        var restored = SqliteFactory(Path.Combine(target, "bifrost.db"));
+        var restored = SqliteFactory(Path.Combine(target, "faolan.db"));
         var error = await Assert.ThrowsAsync<DatabaseInitializationException>(
             () => new DatabaseInitializer(restored).InitializeAsync(ct));
 
@@ -364,7 +364,7 @@ public sealed class BackupRestoreUpgradeTests : IAsyncLifetime
         var directory = Path.Combine(_root, name);
         System.IO.Directory.CreateDirectory(directory);
 
-        var factory = SqliteFactory(Path.Combine(directory, "bifrost.db"));
+        var factory = SqliteFactory(Path.Combine(directory, "faolan.db"));
         await UpgradeHarness.CreateFixtureAsync(factory, fixtureMigration, ct);
 
         var protection = UpgradeHarness.KeyRing(Path.Combine(directory, "keys"));

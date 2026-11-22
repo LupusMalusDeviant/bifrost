@@ -120,7 +120,7 @@ public class DiagnosticServiceTests
         // still bestehen, und der Bericht muss trotzdem vollständig sein.
         var context = DiagnosticWorld.Context(new Dictionary<string, string>
         {
-            ["BIFROST_DATA_DIR"] = "/data",
+            ["FAOLAN_DATA_DIR"] = "/data",
             ["ASPNETCORE_URLS"] = "http://+:8080",
         });
         var service = DiagnosticService.CreateDefault(context);

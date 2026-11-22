@@ -37,7 +37,7 @@ you would plan a deployment, and each one is easy to discover too late.
 
 | Limitation | Consequence | Detail |
 |---|---|---|
-| **PostgreSQL backup needs `pg_dump`/`pg_restore` on the host.** Without them the call is refused with a message rather than silently exporting rows | Install the PostgreSQL client package (or set `BIFROST_POSTGRES_BIN`). Without it, backup on PostgreSQL stays entirely your own responsibility: `pg_dump` **plus** the `keys/` directory | [Backup](#backup-and-restore), [ADR-0024 E2](../adr/0024-backup-restore-und-migrationssicherheit.md), [upgrade matrix §4.5](../upgrade-matrix.md) |
+| **PostgreSQL backup needs `pg_dump`/`pg_restore` on the host.** Without them the call is refused with a message rather than silently exporting rows | Install the PostgreSQL client package (or set `FAOLAN_POSTGRES_BIN`). Without it, backup on PostgreSQL stays entirely your own responsibility: `pg_dump` **plus** the `keys/` directory | [Backup](#backup-and-restore), [ADR-0024 E2](../adr/0024-backup-restore-und-migrationssicherheit.md), [upgrade matrix §4.5](../upgrade-matrix.md) |
 | **Whether the shipped container image carries `postgresql-client` is an open decision** (image weight vs. the 350 MB CI gate) | If it does not, PostgreSQL backup inside the container needs the client mounted or installed. Everything else keeps running; only backup and restore report the refusal | [Backup](#backup-and-restore) |
 | **Without those tools, no pre-migration backup is taken on PostgreSQL.** The start warns and migrates anyway | **That upgrade runs without a way back.** With the tools present the server demands the backup (`Always`); without them, take your own dump before every upgrade | [Upgrades](#upgrades), [upgrade matrix §4.8](../upgrade-matrix.md) |
 | **A `pg_restore` cannot be undone by moving files back.** Its safety net is the pre-backup taken beforehand, plus `--single-transaction` while it runs | On SQLite a failed switch-over rolls back; on PostgreSQL a *completed* restore is final. Keep the pre-backup | [Backup](#backup-and-restore) |
@@ -126,53 +126,53 @@ the same secret is a rule you would misremember, and then you would be running w
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `BIFROST_DATA_DIR` | `data` (`/data` in the container) | Directory for the SQLite database **and** the DataProtection key ring |
-| `BIFROST_BACKUP_DIR` | `<BIFROST_DATA_DIR>/backups` | The only place for backups via REST, CLI and UI: `backup create`, `backup verify` and `restore` accept paths inside it only; a bare name lands there. The automatic backups taken before a restore or migration stay readable even if the directory lives elsewhere (e.g. on a NAS mount) |
-| `BIFROST_DB_PROVIDER` | `sqlite` | `sqlite` or `postgres` |
-| `BIFROST_DB_CONNECTION` | `Data Source=<datadir>/bifrost.db` | Connection string (mandatory for Postgres) |
-| `BIFROST_SQLITE_JOURNAL_MODE` | `wal` | Journal mode of the SQLite file. `delete` is the way back to the classic rollback journal. An unknown value aborts startup |
-| `BIFROST_AUDIT_MODE` | `best-effort` | `best-effort` retries a failed batch three times, then drops it **and counts it** (finding `BFR-DB-0007`); `compliance` reports overload explicitly to the caller and retries DB failures indefinitely |
-| `BIFROST_AUDIT_RETENTION_DAYS` | `30` | Audit retention in days; older events are deleted daily (FR-25) |
-| `BIFROST_AUDIT_DEBUG_PAYLOADS` | *(off)* | `1`/`true` writes full response payloads to the audit log, redacted. Debug aid, not for continuous operation |
-| `BIFROST_BOOTSTRAP_TTL_MINUTES` | `60` | Lifetime of the setup token. An invalid value falls back to the default |
+| `FAOLAN_DATA_DIR` | `data` (`/data` in the container) | Directory for the SQLite database **and** the DataProtection key ring |
+| `FAOLAN_BACKUP_DIR` | `<FAOLAN_DATA_DIR>/backups` | The only place for backups via REST, CLI and UI: `backup create`, `backup verify` and `restore` accept paths inside it only; a bare name lands there. The automatic backups taken before a restore or migration stay readable even if the directory lives elsewhere (e.g. on a NAS mount) |
+| `FAOLAN_DB_PROVIDER` | `sqlite` | `sqlite` or `postgres` |
+| `FAOLAN_DB_CONNECTION` | `Data Source=<datadir>/bifrost.db` | Connection string (mandatory for Postgres) |
+| `FAOLAN_SQLITE_JOURNAL_MODE` | `wal` | Journal mode of the SQLite file. `delete` is the way back to the classic rollback journal. An unknown value aborts startup |
+| `FAOLAN_AUDIT_MODE` | `best-effort` | `best-effort` retries a failed batch three times, then drops it **and counts it** (finding `BFR-DB-0007`); `compliance` reports overload explicitly to the caller and retries DB failures indefinitely |
+| `FAOLAN_AUDIT_RETENTION_DAYS` | `30` | Audit retention in days; older events are deleted daily (FR-25) |
+| `FAOLAN_AUDIT_DEBUG_PAYLOADS` | *(off)* | `1`/`true` writes full response payloads to the audit log, redacted. Debug aid, not for continuous operation |
+| `FAOLAN_BOOTSTRAP_TTL_MINUTES` | `60` | Lifetime of the setup token. An invalid value falls back to the default |
 | `ASPNETCORE_URLS` | `http://+:8080` (container) | Bind address/port |
-| `BIFROST_TRUSTED_PROXIES` | *(unset)* | `any`, or a comma list of addresses and CIDR ranges. Unset means forwarded headers are **ignored** |
-| `BIFROST_PUBLIC_BASE_URL` | *(unset)* | Public address of this gateway; required for the upstream OAuth redirect URI |
-| `BIFROST_KEYRING_PROTECTION` | *(unset)* | Explicit mode: `certificate`, `file-secret` or `none`. Unset = **no choice made**, and the start warns |
-| `BIFROST_KEYRING_CERT_PATH` | *(unset)* | PFX certificate encrypting the key ring |
-| `BIFROST_KEYRING_CERT_PASSWORD` | *(unset)* | PFX password. **Lives in the process environment** and is readable via `docker inspect` |
-| `BIFROST_KEYRING_CERT_PASSWORD_FILE` | *(unset)* | The same password as a **file secret** (FR-P048). Setting both forms aborts the start |
-| `BIFROST_KEYRING_CERT_PATH_PREVIOUS` | *(unset)* | The **previous** certificate during a rotation. It no longer encrypts, but still decrypts |
-| `BIFROST_OAUTH_ISSUER` | *(unset)* | Authorization server trusted for **inbound** agent tokens. Set = the gateway is also an OAuth resource server |
-| `BIFROST_OAUTH_AUDIENCE` | `BIFROST_PUBLIC_BASE_URL` | Canonical address of this gateway; a token must be addressed to it |
-| `BIFROST_WASI_HOST` | *(unset; `/usr/local/bin/bifrost-wasi-host` in the image)* | Path to the WASI host binary. **Required for every WASI upstream and to install connector packages.** Only this host is started; an upstream's `Wasi.HostExecutable` must name it (same path or bare file name) and cannot point at another program — the host runs natively while a WASI upstream counts as isolated (ADR-0025) |
-| `BIFROST_MCP_STATELESS` | `1` | `0`/`false` reverts to the session-based operation of the previous protocol revision |
-| `BIFROST_MCP_LIST_TTL_SECONDS` | `60` | How long a client may treat tool/resource/prompt lists as fresh. `0` = no hint |
-| `BIFROST_MAX_RESULT_CHARS` | *(off)* | Truncates tool results above this character count (FR-16) |
-| `BIFROST_UPSTREAM_RECONNECT_INITIAL_SECONDS` | `5` | Delay after the first failed connection attempt to an upstream; doubles from there. Allowed 1 – 300. Retries never stop while the upstream is enabled |
-| `BIFROST_UPSTREAM_RECONNECT_MAX_SECONDS` | `300` | Cap of that delay. Allowed: initial delay – 3600 |
-| `BIFROST_UPSTREAM_RECONNECT_AUTH_SECONDS` | `900` | Fixed delay after an upstream **rejected authentication** (401/403, missing OAuth token). Long on purpose, so the gateway never loops against a key. Allowed: cap – 86400 |
-| `BIFROST_GUARD_ENABLED` | `1` | `0`/`false` disables the secret guardrail globally (emergency stop) |
-| `BIFROST_GUARD_MAX_SCAN_CHARS` | `262144` | Payloads above this are **rejected**, not passed unscanned |
-| `BIFROST_GUARD_ALLOW_CUSTOM_PATTERNS` | *(off)* | Allows admins to enter free-form regex in the UI |
-| `BIFROST_BACKUP_PASSPHRASE` | *(unset)* | Encrypts the **automatic** pre-migration backups. Without it they are written unencrypted; with it they are worthless without the passphrase |
+| `FAOLAN_TRUSTED_PROXIES` | *(unset)* | `any`, or a comma list of addresses and CIDR ranges. Unset means forwarded headers are **ignored** |
+| `FAOLAN_PUBLIC_BASE_URL` | *(unset)* | Public address of this gateway; required for the upstream OAuth redirect URI |
+| `FAOLAN_KEYRING_PROTECTION` | *(unset)* | Explicit mode: `certificate`, `file-secret` or `none`. Unset = **no choice made**, and the start warns |
+| `FAOLAN_KEYRING_CERT_PATH` | *(unset)* | PFX certificate encrypting the key ring |
+| `FAOLAN_KEYRING_CERT_PASSWORD` | *(unset)* | PFX password. **Lives in the process environment** and is readable via `docker inspect` |
+| `FAOLAN_KEYRING_CERT_PASSWORD_FILE` | *(unset)* | The same password as a **file secret** (FR-P048). Setting both forms aborts the start |
+| `FAOLAN_KEYRING_CERT_PATH_PREVIOUS` | *(unset)* | The **previous** certificate during a rotation. It no longer encrypts, but still decrypts |
+| `FAOLAN_OAUTH_ISSUER` | *(unset)* | Authorization server trusted for **inbound** agent tokens. Set = the gateway is also an OAuth resource server |
+| `FAOLAN_OAUTH_AUDIENCE` | `FAOLAN_PUBLIC_BASE_URL` | Canonical address of this gateway; a token must be addressed to it |
+| `FAOLAN_WASI_HOST` | *(unset; `/usr/local/bin/bifrost-wasi-host` in the image)* | Path to the WASI host binary. **Required for every WASI upstream and to install connector packages.** Only this host is started; an upstream's `Wasi.HostExecutable` must name it (same path or bare file name) and cannot point at another program — the host runs natively while a WASI upstream counts as isolated (ADR-0025) |
+| `FAOLAN_MCP_STATELESS` | `1` | `0`/`false` reverts to the session-based operation of the previous protocol revision |
+| `FAOLAN_MCP_LIST_TTL_SECONDS` | `60` | How long a client may treat tool/resource/prompt lists as fresh. `0` = no hint |
+| `FAOLAN_MAX_RESULT_CHARS` | *(off)* | Truncates tool results above this character count (FR-16) |
+| `FAOLAN_UPSTREAM_RECONNECT_INITIAL_SECONDS` | `5` | Delay after the first failed connection attempt to an upstream; doubles from there. Allowed 1 – 300. Retries never stop while the upstream is enabled |
+| `FAOLAN_UPSTREAM_RECONNECT_MAX_SECONDS` | `300` | Cap of that delay. Allowed: initial delay – 3600 |
+| `FAOLAN_UPSTREAM_RECONNECT_AUTH_SECONDS` | `900` | Fixed delay after an upstream **rejected authentication** (401/403, missing OAuth token). Long on purpose, so the gateway never loops against a key. Allowed: cap – 86400 |
+| `FAOLAN_GUARD_ENABLED` | `1` | `0`/`false` disables the secret guardrail globally (emergency stop) |
+| `FAOLAN_GUARD_MAX_SCAN_CHARS` | `262144` | Payloads above this are **rejected**, not passed unscanned |
+| `FAOLAN_GUARD_ALLOW_CUSTOM_PATTERNS` | *(off)* | Allows admins to enter free-form regex in the UI |
+| `FAOLAN_BACKUP_PASSPHRASE` | *(unset)* | Encrypts the **automatic** pre-migration backups. Without it they are written unencrypted; with it they are worthless without the passphrase |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | *(unset)* | Target for metrics **and** traces |
 
 ---
 
 ### Options that are not in the table above
 
-- `BIFROST_ALLOW_HOST_EXECUTION` (default *off*) — **the sharpest option in the product.** `true`
+- `FAOLAN_ALLOW_HOST_EXECUTION` (default *off*) — **the sharpest option in the product.** `true`
   lets upstream programs run natively with the gateway's privileges; they can then read everything
   that user can, including every agent's API keys and every other upstream's secrets. A fresh
   instance defaults to `false` (ADR-0025 E2). Recommendation: leave it off and use container
   isolation — a program's access to the machine's files appears in **no** log of this gateway.
-- `BIFROST_APPROVAL_WEBHOOK_URL` (default *unset*) — target for the notification about pending
+- `FAOLAN_APPROVAL_WEBHOOK_URL` (default *unset*) — target for the notification about pending
   approvals. Without a secret the gateway refuses to start with a target set: an unsigned
   notification can be forged by anyone.
-- `BIFROST_APPROVAL_WEBHOOK_SECRET` (default *unset*) — signing secret for that notification, same
+- `FAOLAN_APPROVAL_WEBHOOK_SECRET` (default *unset*) — signing secret for that notification, same
   scheme as for inbound webhooks (ADR-0013). Required as soon as a target is set.
-- `BIFROST_APPROVAL_WEBHOOK_ALLOW_PRIVATE` (default *off*) — allows a target inside your own
+- `FAOLAN_APPROVAL_WEBHOOK_ALLOW_PRIVATE` (default *off*) — allows a target inside your own
   network. Every target otherwise goes through the same SSRF check as a schema import; this switch
   is the explicit way past it and belongs only where the target really is internal.
 
@@ -190,7 +190,7 @@ gateway.example.com {
 
 The proxy must forward `X-Forwarded-Proto` **and** the port in `Host` (`proxy_set_header Host
 $http_host` — `$host` drops the port). The web UI additionally needs WebSockets (Blazor Interactive
-Server) and unbuffered responses for `/mcp` (server-sent events). Set `BIFROST_TRUSTED_PROXIES`, or
+Server) and unbuffered responses for `/mcp` (server-sent events). Set `FAOLAN_TRUSTED_PROXIES`, or
 the gateway builds `http://` redirects behind your `https://` proxy — see
 [Quickstart step 3](quickstart.md#3-open-the-web-ui) for the full symptom table.
 
@@ -211,11 +211,11 @@ stateless operation:
 - **In-call approval prompts.** A `2026-07-28` client gets them via MRTR (the call ends with a
   question, the client repeats it with the answer). An older client does not — for it, the approval
   queue in the UI remains the path.
-- **`tools/list_changed`.** Replaced by the list cache hint (`BIFROST_MCP_LIST_TTL_SECONDS`): the
+- **`tools/list_changed`.** Replaced by the list cache hint (`FAOLAN_MCP_LIST_TTL_SECONDS`): the
   client re-fetches after expiry. A catalogue change is therefore visible after at most one TTL,
   not immediately.
 
-`BIFROST_MCP_STATELESS=0` makes sense only when *all* connected clients are on the old revision and
+`FAOLAN_MCP_STATELESS=0` makes sense only when *all* connected clients are on the old revision and
 the in-call prompt is needed. **The switch is gateway-wide, not per client:** in session mode a
 `2026-07-28` request is rejected with `-32022 UnsupportedProtocolVersion`, after which the client
 negotiates the old revision itself. It keeps working — but the whole installation then speaks the
@@ -262,7 +262,7 @@ results.
   Position and length live in the finding itself and do not reach the log. A secret detector that
   logs its finds in cleartext copies secrets into a second, usually less protected system.
 - **Above the scan limit, payloads are rejected**, not passed — otherwise the limit would be
-  exactly the blind spot to aim for. Combine with `BIFROST_MAX_RESULT_CHARS` if you expect large
+  exactly the blind spot to aim for. Combine with `FAOLAN_MAX_RESULT_CHARS` if you expect large
   results: truncation happens first, and the truncated result passes the scan.
 
 New custom rules always start in **observe** mode. Arming a rule you have never seen fire will, in
@@ -392,9 +392,9 @@ modes — and none of them is a default state.
 
 | Mode | Requires | Protects | Does not protect |
 |---|---|---|---|
-| `certificate` | `BIFROST_KEYRING_CERT_PATH` (PFX with private key), password in `BIFROST_KEYRING_CERT_PASSWORD` | The key files are encrypted. **A backup or volume dump alone** is no longer enough to reach the credentials | The password sits in `.env` and in the process environment — readable by anyone who may run `docker inspect` |
-| `file-secret` | the same, but the password via `BIFROST_KEYRING_CERT_PASSWORD_FILE` (Compose/K8s secret) | additionally: the password never leaves the secret store. Neither `.env` nor `docker inspect` nor `/proc/<pid>/environ` show it | Whoever is root on the machine reaches both. That is the limit of any file-based scheme |
-| `none` | explicitly `BIFROST_KEYRING_PROTECTION=none` | **nothing** — the key files are in cleartext. Defensible for a single instance with restrictive directory permissions | Every backup of the data directory then contains the upstream credentials |
+| `certificate` | `FAOLAN_KEYRING_CERT_PATH` (PFX with private key), password in `FAOLAN_KEYRING_CERT_PASSWORD` | The key files are encrypted. **A backup or volume dump alone** is no longer enough to reach the credentials | The password sits in `.env` and in the process environment — readable by anyone who may run `docker inspect` |
+| `file-secret` | the same, but the password via `FAOLAN_KEYRING_CERT_PASSWORD_FILE` (Compose/K8s secret) | additionally: the password never leaves the secret store. Neither `.env` nor `docker inspect` nor `/proc/<pid>/environ` show it | Whoever is root on the machine reaches both. That is the limit of any file-based scheme |
+| `none` | explicitly `FAOLAN_KEYRING_PROTECTION=none` | **nothing** — the key files are in cleartext. Defensible for a single instance with restrictive directory permissions | Every backup of the data directory then contains the upstream credentials |
 
 If **nothing** is set, none of these modes applies: the ring lies in cleartext as with `none`, but
 nobody decided that. The start warns, `bifrost doctor` reports `BFR-KEY-0002` as a warning, and
@@ -416,7 +416,7 @@ directory, not inside it — otherwise it travels in every backup and protects a
 **Rotation: rehearse before you switch.** `--keyring-rotate --new-cert … --new-password-file …`
 copies the ring, tries to open it with the new **and** the old certificate, and answers either
 "safe" with the lines to set, or "DO NOT SWITCH" (exit code 4). Keep the previous certificate in
-`BIFROST_KEYRING_CERT_PATH_PREVIOUS` as long as a single key is still encrypted with it —
+`FAOLAN_KEYRING_CERT_PATH_PREVIOUS` as long as a single key is still encrypted with it —
 DataProtection does not re-encrypt existing keys.
 
 ### A missing key ring stops the start
@@ -438,7 +438,7 @@ looks like — but it is logged loudly and recorded as an audit event. The recov
 
 ## Backup and restore
 
-Everything persistent lives in the data directory (`BIFROST_DATA_DIR`): `bifrost.db`, `keys/`
+Everything persistent lives in the data directory (`FAOLAN_DATA_DIR`): `bifrost.db`, `keys/`
 (the key ring), `packages/`, and `config/instance.json` (the stable identifier of this
 installation, which appears in every backup manifest).
 
@@ -495,7 +495,7 @@ rather than an executable SQL script, and the only format that supports `pg_rest
 **If the tools are missing, that is an error with a message — never a silent row export.** The
 message names what is missing and where to get it. Install the PostgreSQL client package
 (`apt-get install postgresql-client`, `apk add postgresql17-client`, `dnf install postgresql`,
-`brew install libpq`), or point `BIFROST_POSTGRES_BIN` at the directory holding them. When that
+`brew install libpq`), or point `FAOLAN_POSTGRES_BIN` at the directory holding them. When that
 variable is set, **only** that directory is searched.
 
 **The client major version must be at least the server's.** `pg_dump` refuses to dump a newer
@@ -510,7 +510,7 @@ backup at all, including the pre-migration one (E7).
 
 Remedy: install a client from the PGDG apt mirror (`postgresql-client-17`/`-18`; the distribution
 package only ever carries its own version), `apk add postgresql17-client` on Alpine, or point
-`BIFROST_POSTGRES_BIN` at a directory holding a matching client. A hand-written row export is not a
+`FAOLAN_POSTGRES_BIN` at a directory holding a matching client. A hand-written row export is not a
 substitute (ADR-0024 E2).
 
 The password reaches `pg_dump` through a `PGPASSFILE` created for the duration of the call (mode
@@ -563,7 +563,7 @@ At start, exactly one of three things happens; the result is in the log
 | Already migration-managed | Apply pending migrations | `Migrated` |
 
 Each provider has its own migrations assembly (`Bifrost.Persistence.Migrations.Sqlite` /
-`.Postgres`); both ship in the image and the choice follows `BIFROST_DB_PROVIDER`.
+`.Postgres`); both ship in the image and the choice follows `FAOLAN_DB_PROVIDER`.
 
 ### The pre-migration backup — and where it does not exist
 
@@ -572,7 +572,7 @@ On **SQLite**, a full backup is created automatically before a schema-changing m
 path is recorded in the migration journal and named in the failure message.
 
 That backup is **unencrypted** by default — it sits in the same protection domain as the database it
-came from. `BIFROST_BACKUP_PASSPHRASE` encrypts it, at the price of being worthless without that
+came from. `FAOLAN_BACKUP_PASSPHRASE` encrypts it, at the price of being worthless without that
 passphrase.
 
 > **On PostgreSQL it depends on the tools.** At startup the server checks once whether `pg_dump`
@@ -1016,7 +1016,7 @@ sit next to `bifrost.db`:
 > always used SQLite's online backup API rather than copying the file (ADR-0024 E2). For anything
 > else: either all three files with the gateway stopped, or `bifrost backup`.
 
-**The way back.** `BIFROST_SQLITE_JOURNAL_MODE=delete` reverts to the classic rollback journal on
+**The way back.** `FAOLAN_SQLITE_JOURNAL_MODE=delete` reverts to the classic rollback journal on
 the next start; the two companion files disappear. It exists for data directories where SQLite
 cannot create its shared memory — an NFS or SMB mount, for instance. It buys back the locking error
 that WAL fixes; on such a directory SQLite is not a viable operating mode anyway. An **unknown**

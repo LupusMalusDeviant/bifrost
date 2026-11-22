@@ -124,7 +124,7 @@ public sealed class PostgresBackupToolProbe : IPostgresBackupToolProbe
 
     /// <param name="binDirectory">
     /// Ein ausdrücklich konfiguriertes Verzeichnis (<c>BackupOptions.PostgresToolDirectory</c>);
-    /// <c>null</c> heißt <c>BIFROST_POSTGRES_BIN</c>, sonst <c>PATH</c>.
+    /// <c>null</c> heißt <c>FAOLAN_POSTGRES_BIN</c>, sonst <c>PATH</c>.
     /// </param>
     public PostgresBackupToolProbe(string? binDirectory = null) => _binDirectory = binDirectory;
 

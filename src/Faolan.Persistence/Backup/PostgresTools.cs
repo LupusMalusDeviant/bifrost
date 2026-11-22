@@ -87,7 +87,7 @@ public static class PostgresTools
     /// Verzeichnis, in dem die Werkzeuge liegen, falls sie nicht im <c>PATH</c> stehen. Gedacht für
     /// Installationen, die den Client neben einer anderen Serverversion halten.
     /// </summary>
-    public const string BinDirectoryVariable = "BIFROST_POSTGRES_BIN";
+    public const string BinDirectoryVariable = "FAOLAN_POSTGRES_BIN";
 
     public const string DumpProgram = "pg_dump";
     public const string RestoreProgram = "pg_restore";

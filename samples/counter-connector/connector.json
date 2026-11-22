@@ -1,5 +1,5 @@
 {
-  "schema": "bifrost.connector.v1",
+  "schema": "faolan.connector.v1",
   "id": "counter-connector",
   "version": "0.1.0",
   "contractVersion": "1",

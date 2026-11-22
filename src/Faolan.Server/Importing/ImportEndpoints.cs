@@ -41,7 +41,10 @@ public static class ImportEndpoints
     public const string SetupPreviewPath = "/setup/import/preview";
 
     /// <summary>Der Kopf, in dem der Setup-Weg das Erstzugangs-Token erwartet.</summary>
-    public const string SetupTokenHeader = "X-Bifrost-Setup-Token";
+    public const string SetupTokenHeader = "X-Faolan-Setup-Token";
+
+    /// <summary>Der Name vor der Umbenennung (Vertrag umbenennung-faolan §2.3); wird weiter gelesen.</summary>
+    public const string LegacySetupTokenHeader = "X-Bifrost-Setup-Token";
 
     public static void MapImportEndpoints(this WebApplication app)
     {
@@ -242,7 +245,9 @@ public static class ImportEndpoints
             // 3. Das Token. Gegen den gespeicherten Hash, in konstanter Zeit — und ohne es zu
             //    verbrauchen.
             var record = state.Read();
-            var presented = ctx.Request.Headers[SetupTokenHeader].ToString().Trim();
+            var presented = (ctx.Request.Headers.TryGetValue(SetupTokenHeader, out var current) && current.Count > 0
+                ? current
+                : ctx.Request.Headers[LegacySetupTokenHeader]).ToString().Trim();
             if (record is not { Phase: BootstrapPhase.Pending, TokenHash: not null }
                 || record.ExpiresAt is null
                 || record.ExpiresAt <= time.GetUtcNow()

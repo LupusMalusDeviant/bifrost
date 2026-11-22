@@ -14,7 +14,7 @@ public class DataDirectoryCheckTests
     {
         var files = new FakeFileProbe();
         var context = DiagnosticWorld.Context(
-            new Dictionary<string, string> { ["BIFROST_DATA_DIR"] = dataDir },
+            new Dictionary<string, string> { ["FAOLAN_DATA_DIR"] = dataDir },
             files);
         return (context, files);
     }
@@ -76,7 +76,7 @@ public class LegacyEnvironmentVariablesCheckTests
     {
         var context = DiagnosticWorld.Context(new Dictionary<string, string>
         {
-            ["BIFROST_DATA_DIR"] = "/data",
+            ["FAOLAN_DATA_DIR"] = "/data",
         });
 
         var result = await new LegacyEnvironmentVariablesCheck().RunAsync(context, TestContext.Current.CancellationToken);
@@ -120,13 +120,54 @@ public class LegacyEnvironmentVariablesCheckTests
         var context = DiagnosticWorld.Context(new Dictionary<string, string>
         {
             ["MCPMCP_DATA_DIR"] = "/alt",
-            ["BIFROST_DATA_DIR"] = "/neu",
+            ["FAOLAN_DATA_DIR"] = "/neu",
         });
 
         var result = await new LegacyEnvironmentVariablesCheck().RunAsync(context, TestContext.Current.CancellationToken);
 
         result.Status.Should().Be(CheckStatus.Warning);
         result.SafeDetails!["ueberschrieben_durch_neuen_namen"].Should().Contain("MCPMCP_DATA_DIR");
+    }
+
+    /// <summary>
+    /// Seit der zweiten Umbenennung ist auch <c>BIFROST_*</c> ein alter Name (Vertrag
+    /// umbenennung-faolan §2.2): gemeldet wie <c>MCPMCP_*</c>, mit Namen, ohne Werte.
+    /// </summary>
+    [Fact]
+    public async Task Names_of_the_second_generation_are_reported_too()
+    {
+        var context = DiagnosticWorld.Context(new Dictionary<string, string>
+        {
+            ["BIFROST_DATA_DIR"] = "/zwischen",
+            ["BIFROST_BACKUP_PASSPHRASE"] = "auch-geheim-0815",
+        });
+
+        var result = await new LegacyEnvironmentVariablesCheck().RunAsync(context, TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(CheckStatus.Warning);
+        result.SafeDetails!["variablen"].Should().Be("BIFROST_BACKUP_PASSPHRASE, BIFROST_DATA_DIR");
+        result.SafeDetails!["ueberschrieben_durch_neuen_namen"].Should().Be("-");
+        Flatten(result).Should().NotContain("auch-geheim-0815").And.NotContain("/zwischen");
+    }
+
+    /// <summary>
+    /// Überschrieben ist ein alter Name schon dann, wenn eine jüngere <b>abgelöste</b> Generation
+    /// gesetzt ist — beim Start gewinnt sie, also ist der älteste Wert der tote.
+    /// </summary>
+    [Fact]
+    public async Task An_oldest_name_shadowed_by_the_middle_generation_is_named_as_such()
+    {
+        var context = DiagnosticWorld.Context(new Dictionary<string, string>
+        {
+            ["MCPMCP_AUDIT_MODE"] = "standard",
+            ["BIFROST_AUDIT_MODE"] = "compliance",
+        });
+
+        var result = await new LegacyEnvironmentVariablesCheck().RunAsync(context, TestContext.Current.CancellationToken);
+
+        result.Status.Should().Be(CheckStatus.Warning);
+        result.SafeDetails!["variablen"].Should().Be("BIFROST_AUDIT_MODE, MCPMCP_AUDIT_MODE");
+        result.SafeDetails!["ueberschrieben_durch_neuen_namen"].Should().Be("MCPMCP_AUDIT_MODE");
     }
 
     internal static string Flatten(DiagnosticCheck check)
@@ -154,7 +195,7 @@ public class PublicBaseUrlCheckTests
     {
         var context = DiagnosticWorld.Context(new Dictionary<string, string>
         {
-            ["BIFROST_TRUSTED_PROXIES"] = "172.17.0.1",
+            ["FAOLAN_TRUSTED_PROXIES"] = "172.17.0.1",
         });
 
         var result = await new PublicBaseUrlCheck().RunAsync(context, TestContext.Current.CancellationToken);
@@ -168,8 +209,8 @@ public class PublicBaseUrlCheckTests
     {
         var context = DiagnosticWorld.Context(new Dictionary<string, string>
         {
-            ["BIFROST_TRUSTED_PROXIES"] = "172.17.0.1",
-            ["BIFROST_PUBLIC_BASE_URL"] = "https://gateway.example.com",
+            ["FAOLAN_TRUSTED_PROXIES"] = "172.17.0.1",
+            ["FAOLAN_PUBLIC_BASE_URL"] = "https://gateway.example.com",
         });
 
         var result = await new PublicBaseUrlCheck().RunAsync(context, TestContext.Current.CancellationToken);
@@ -182,7 +223,7 @@ public class PublicBaseUrlCheckTests
     {
         var context = DiagnosticWorld.Context(new Dictionary<string, string>
         {
-            ["BIFROST_PUBLIC_BASE_URL"] = "gateway.example.com",
+            ["FAOLAN_PUBLIC_BASE_URL"] = "gateway.example.com",
         });
 
         var result = await new PublicBaseUrlCheck().RunAsync(context, TestContext.Current.CancellationToken);
@@ -195,8 +236,8 @@ public class PublicBaseUrlCheckTests
     {
         var context = DiagnosticWorld.Context(new Dictionary<string, string>
         {
-            ["BIFROST_TRUSTED_PROXIES"] = "any",
-            ["BIFROST_PUBLIC_BASE_URL"] = "http://gateway.example.com",
+            ["FAOLAN_TRUSTED_PROXIES"] = "any",
+            ["FAOLAN_PUBLIC_BASE_URL"] = "http://gateway.example.com",
         });
 
         var result = await new PublicBaseUrlCheck().RunAsync(context, TestContext.Current.CancellationToken);

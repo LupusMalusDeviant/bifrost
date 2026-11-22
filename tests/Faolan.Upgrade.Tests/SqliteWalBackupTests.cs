@@ -66,7 +66,7 @@ public sealed class SqliteWalBackupTests : IAsyncLifetime
         var ct = TestContext.Current.CancellationToken;
         var source = Path.Combine(_root, "quelle");
         Directory.CreateDirectory(source);
-        var dbFile = Path.Combine(source, "bifrost.db");
+        var dbFile = Path.Combine(source, "faolan.db");
 
         var factory = SqliteFactory(dbFile);
         await new DatabaseInitializer(factory).InitializeAsync(ct);
@@ -148,7 +148,7 @@ public sealed class SqliteWalBackupTests : IAsyncLifetime
         plan.CanApply.Should().BeTrue("Blocker: {0}", string.Join(" | ", plan.Blockers));
         (await restore.ApplyAsync(plan, ct)).Applied.Should().BeTrue();
 
-        var restored = SqliteFactory(Path.Combine(target, "bifrost.db"));
+        var restored = SqliteFactory(Path.Combine(target, "faolan.db"));
         await using (var db = await restored.CreateDbContextAsync(ct))
         {
             (await db.AuditEvents.CountAsync(ct)).Should().Be(
@@ -173,7 +173,7 @@ public sealed class SqliteWalBackupTests : IAsyncLifetime
         var ct = TestContext.Current.CancellationToken;
         var source = Path.Combine(_root, "rb-quelle");
         Directory.CreateDirectory(source);
-        await new DatabaseInitializer(SqliteFactory(Path.Combine(source, "bifrost.db")))
+        await new DatabaseInitializer(SqliteFactory(Path.Combine(source, "faolan.db")))
             .InitializeAsync(ct);
         SqliteConnection.ClearAllPools();
 
@@ -187,7 +187,7 @@ public sealed class SqliteWalBackupTests : IAsyncLifetime
         // stört. Der Rückbaustapel läuft danach, und genau darum geht es hier.
         var target = Path.Combine(_root, "rb-ziel");
         Directory.CreateDirectory(target);
-        var targetDb = Path.Combine(target, "bifrost.db");
+        var targetDb = Path.Combine(target, "faolan.db");
         Directory.CreateDirectory(targetDb);
 
         // Daneben liegen die Begleiter einer früheren Datenbank — mit dem Zeugen darin.

@@ -199,7 +199,7 @@ public class CliUpstreamConnectorTests
     [Fact]
     public async Task Host_environment_is_not_inherited_but_configured_values_are_available()
     {
-        var variable = $"BIFROST_HOST_SECRET_{Guid.NewGuid():N}";
+        var variable = $"FAOLAN_HOST_SECRET_{Guid.NewGuid():N}";
         Environment.SetEnvironmentVariable(variable, "host-secret");
         try
         {
