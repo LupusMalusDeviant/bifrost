@@ -317,6 +317,26 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
             ? guarded.DescribeFailure(exception)
             : UpstreamFailure.DescribeWithoutConfig(exception);
 
+    /// <summary>
+    /// Das gebaute Eingabeschema je Katalogeintrag. Der Eintrag ist der Schlüssel, nicht der Text:
+    /// Ändert sich der Katalog, gibt es neue Einträge, und die alten fallen mit ihnen weg — eine
+    /// Obergrenze oder ein Aufräumen braucht es nicht.
+    /// </summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<CatalogEntry, JsonSchema>
+        CompiledSchemas = new();
+
+    /// <summary>
+    /// Baut ein Schema mit einer <b>eigenen</b> Registry. Mit den Vorgaben legt JsonSchema.Net jedes
+    /// gebaute Schema in <c>SchemaRegistry.Global</c> ab und gibt es nie wieder frei. Gebaut wurde bis
+    /// hierher bei jedem Werkzeugaufruf — das war das Speicherwachstum des Soak-Nachtlaufs: rund
+    /// 700 Bytes je Aufruf, 269 → 3768 MB in vier Stunden. Die eigene Registry lebt so lange wie das
+    /// Schema; Verweise auf andere Schemata löst sie wie bisher über die globale auf.
+    /// </summary>
+    internal static JsonSchema BuildSchema(CatalogEntry entry)
+        => JsonSchema.FromText(
+            entry.InputSchema.GetRawText(),
+            new BuildOptions { SchemaRegistry = new SchemaRegistry() });
+
     private string? ValidateArguments(CatalogEntry entry, JsonElement args)
     {
         if (entry.InputSchema.ValueKind is not JsonValueKind.Object)
@@ -327,7 +347,7 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         JsonSchema schema;
         try
         {
-            schema = JsonSchema.FromText(entry.InputSchema.GetRawText());
+            schema = CompiledSchemas.GetValue(entry, BuildSchema);
         }
         catch (Exception ex)
         {

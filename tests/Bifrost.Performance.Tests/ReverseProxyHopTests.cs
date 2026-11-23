@@ -36,6 +36,9 @@ public sealed class ReverseProxyHopTests
     /// </summary>
     private const string HostAlias = "host.docker.internal";
 
+    /// <summary>Wie lange nginx bereit werden darf; ein Bild ziehen und starten dauert Sekunden.</summary>
+    private static readonly TimeSpan ReadinessTimeout = TimeSpan.FromMinutes(2);
+
     private readonly ITestOutputHelper _output;
 
     public ReverseProxyHopTests(ITestOutputHelper output) => _output = output;
@@ -56,7 +59,10 @@ public sealed class ReverseProxyHopTests
                 Environment: new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     ["BIFROST_TRUSTED_PROXIES"] = "any",
-                }),
+                },
+                // Der Container muss den Gateway erreichen; auf Loopback allein geht das unter Linux
+                // nicht (seit Oktober jeden Montag eine Stunde Hänger im geplanten ci-Lauf).
+                ListenOnAllInterfaces: true),
             ct);
 
         await gateway.AddStdioUpstreamAsync("slow", "SlowServer", ct);
@@ -179,11 +185,27 @@ public sealed class ReverseProxyHopTests
             .WithResourceMapping(new FileInfo(file), "/etc/nginx/")
             .WithExtraHost(HostAlias, "host-gateway")
             .WithPortBinding(80, assignRandomHostPort: true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilHttpRequestIsSucceeded(request => request
-                .ForPath("/healthz").ForPort(80)))
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilHttpRequestIsSucceeded(
+                request => request.ForPath("/healthz").ForPort(80),
+                // Ohne Schranke wartet Testcontainers, bis der Testlauf nach einer Stunde abbricht —
+                // und der Grund (nginx erreicht den Gateway nicht) steht nirgends.
+                wait => wait.WithTimeout(ReadinessTimeout)))
             .Build();
 
-        await container.StartAsync(ct);
+        try
+        {
+            await container.StartAsync(ct);
+        }
+        catch (TimeoutException exception)
+        {
+            var (stdout, stderr) = await container.GetLogsAsync(ct: CancellationToken.None);
+            await container.DisposeAsync();
+            throw new TimeoutException(
+                $"nginx wurde in {ReadinessTimeout.TotalSeconds:F0} s nicht bereit: /healthz kam nicht durch "
+                + $"bis zum Gateway auf {HostAlias}:{gatewayPort}. nginx-Log:\n{stdout}\n{stderr}",
+                exception);
+        }
+
         return container;
     }
 }

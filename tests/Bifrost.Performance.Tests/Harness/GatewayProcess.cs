@@ -41,7 +41,15 @@ internal sealed record GatewayProcessOptions(
     /// Zusaetzliche Umgebungsvariablen — etwa <c>BIFROST_TRUSTED_PROXIES</c> fuer den
     /// Reverse-Proxy-Sprung. Sie werden NACH den Vorgaben gesetzt und koennen sie ueberschreiben.
     /// </summary>
-    IReadOnlyDictionary<string, string>? Environment = null);
+    IReadOnlyDictionary<string, string>? Environment = null,
+    /// <summary>
+    /// Lauscht auf allen Schnittstellen statt nur auf <c>127.0.0.1</c>. Gebraucht, wenn ein
+    /// Container den Gateway erreichen soll: Unter Linux zeigt <c>host-gateway</c> auf die
+    /// Bridge-Adresse des Rechners, und an der liegt ein nur auf Loopback lauschender Gateway nicht.
+    /// Docker Desktop leitet dagegen auch auf Loopback weiter — deshalb lief der Proxy-Sprung lokal
+    /// und hing im Linux-Runner. Der Client spricht den Gateway weiter über <c>127.0.0.1</c> an.
+    /// </summary>
+    bool ListenOnAllInterfaces = false);
 
 /// <summary>
 /// Der Gateway als <b>echter Prozess</b> hinter einem echten Socket — nicht als in-process
@@ -172,7 +180,9 @@ internal sealed class GatewayProcess : IAsyncDisposable
         var port = FreeTcpPort();
         var scheme = options.Transport == GatewayTransport.Https ? "https" : "http";
         var baseAddress = new Uri($"{scheme}://127.0.0.1:{port}/");
-        environment["ASPNETCORE_URLS"] = baseAddress.ToString().TrimEnd('/');
+        environment["ASPNETCORE_URLS"] = options.ListenOnAllInterfaces
+            ? $"{scheme}://0.0.0.0:{port}"
+            : baseAddress.ToString().TrimEnd('/');
 
         var process = StartServer(executable, environment, out var sink);
         var gateway = new GatewayProcess(process, dataDir, baseAddress, apiKey, certificate)
