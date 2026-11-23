@@ -639,6 +639,24 @@ app.Lifetime.ApplicationStarted.Register(() => _ = Task.Run(async () =>
             string.Join(", ", legacyHostUpstreams));
 #pragma warning restore CA1848
     }
+
+    // BFR-DB-0008 auch hier, nicht nur in doctor (fünftes Review): Auf dem falschen, leeren Volume
+    // gilt der alte API-Schlüssel nicht, doctor bekäme nur eine 401 — und ein neu ausgegebener
+    // Schlüssel wäre selbst Bestand und brächte den Befund zum Schweigen. Das Startlog braucht keine
+    // Anmeldung.
+    var database = await app.Services.GetRequiredService<Faolan.Core.Diagnostics.IDatabaseDiagnosticProbe>()
+        .DescribeAsync(app.Lifetime.ApplicationStopping)
+        .ConfigureAwait(false);
+    if (database.Content is { Upstreams: 0, Roles: 0, ApiKeys: 0 })
+    {
+#pragma warning disable CA1848 // Einmal beim Start — kein Hot Path.
+        app.Logger.LogWarning(
+            "Die Instanz ist leer: kein Upstream, keine Rolle, kein API-Schlüssel (BFR-DB-0008). Bei einer "
+            + "Neuinstallation ist das erwartet. Nach einem Upgrade heißt es fast immer: das falsche Volume "
+            + "(FAOLAN_DATA_VOLUME, mit PostgreSQL FAOLAN_PGDATA_VOLUME) — dann KEINEN neuen API-Schlüssel "
+            + "ausgeben, sondern das Volume richtigstellen. Siehe docs/upgrade-faolan.md.");
+#pragma warning restore CA1848
+    }
 }));
 
 // Das Sitzungs-Cookie der Web-UI trägt außerhalb von Development immer 'Secure' (NFR-04). Ein

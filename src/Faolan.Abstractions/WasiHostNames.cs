@@ -117,7 +117,16 @@ static class WasiHostNames
                     && configured.Equals(hostName[..^4], NameComparison));
         }
 
-        return Path.GetFullPath(configured).Equals(Path.GetFullPath(host), NameComparison);
+        try
+        {
+            return Path.GetFullPath(configured).Equals(Path.GetFullPath(host), NameComparison);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            // Ein Pfad, der sich nicht normalisieren lässt, nennt keinen Host. So antworten Connector
+            // und Diagnose mit „nicht der Host dieser Instanz" statt mit einer Ausnahme.
+            return false;
+        }
     }
 
     /// <summary>

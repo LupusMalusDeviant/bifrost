@@ -33,8 +33,12 @@ steht ausdrücklich dabei: Diese Datei ist auch der Ort, an dem offene Nachweise
   **Empfohlen, nicht nötig:** Variablen auf `FAOLAN_*` umstellen. Die Übernahme ist eine
   Übergangshilfe und keine Zusage auf Dauer.
 - **`BFR-DB-0008` — leere Instanz.** `faolan doctor` warnt, wenn die Instanz keinen Upstream, keine
-  Rolle und keinen API-Schlüssel hat. Nach dem Upgrade ist das das Bild des falschen Volumes, bei
-  einer Neuinstallation ist es erwartbar.
+  eigene Rolle und keinen API-Schlüssel hat. Nach dem Upgrade ist das das Bild des falschen Volumes,
+  bei einer Neuinstallation ist es erwartbar. Dieselbe Warnung steht im Startlog — dort ist sie ohne
+  Anmeldung zu sehen, denn auf dem falschen Volume gilt der alte API-Schlüssel nicht.
+- Eingehende Webhooks: Ein vorhandener, auch leerer `X-Faolan-Signature`- oder
+  `X-Faolan-Timestamp`-Header wählt das neue Paar; auf `X-Bifrost-*` wird dann nicht mehr
+  ausgewichen.
 - Neu erzeugte Schlüsselring-Zertifikate tragen `CN=faolan-keyring`; bestehende mit
   `CN=bifrost-keyring` bleiben gültig, der Name wird nirgends abgeglichen.
 - WASI-Upstreams, die den Host noch als `bifrost-wasi-host` (Name oder Pfad) nennen, laufen weiter;

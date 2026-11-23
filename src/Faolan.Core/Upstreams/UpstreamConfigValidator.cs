@@ -177,6 +177,14 @@ public static partial class UpstreamConfigValidator
             throw new ArgumentException("Wasi.HostExecutable darf nicht leer sein.", nameof(config));
         }
 
+        // Steuerzeichen (NUL vorneweg) sind in keinem Pfad gültig; Path.GetFullPath würfe darauf —
+        // in der Verbindungsdiagnose an einer Stelle, an der niemand mehr einen Befund daraus macht.
+        if (wasi.HostExecutable.Any(char.IsControl))
+        {
+            throw new ArgumentException(
+                "Wasi.HostExecutable enthält ein Steuerzeichen und ist kein gültiger Pfad.", nameof(config));
+        }
+
         // Zwei zulässige Quellen: ein installiertes Paket (ADR-0016) oder Pfade in der
         // Konfiguration. Genau eine davon muss dastehen — beides zugleich wäre zweideutig, und die
         // Zweideutigkeit fiele erst beim Start auf, wenn eine der beiden ins Leere zeigt.

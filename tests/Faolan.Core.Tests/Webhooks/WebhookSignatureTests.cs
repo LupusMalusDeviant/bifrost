@@ -93,6 +93,9 @@ public class WebhookSignatureTests
     [InlineData(null, "neu-ts", "alt-sig", "alt-ts", null, "neu-ts")]
     [InlineData("neu-sig", "neu-ts", null, null, "neu-sig", "neu-ts")]
     [InlineData(null, null, null, null, null, null)]
+    // Fünftes Review: ein vorhandener, aber leerer neuer Header wählt das neue Paar.
+    [InlineData("", null, "alt-sig", "alt-ts", "", null)]
+    [InlineData(null, "", "alt-sig", "alt-ts", null, "")]
     public void The_new_pair_wins_as_soon_as_one_of_its_headers_is_present(
         string? newSignature, string? newTimestamp, string? oldSignature, string? oldTimestamp,
         string? expectedSignature, string? expectedTimestamp)
@@ -107,6 +110,27 @@ public class WebhookSignatureTests
 
         WebhookSignature.SelectHeaders(name => headers.GetValueOrDefault(name))
             .Should().Be((expectedSignature, expectedTimestamp));
+    }
+
+    /// <summary>
+    /// Fünftes Review, über die ganze Prüfung: Ein leeres <c>X-Faolan-Signature:</c> neben einem
+    /// gültigen alten Paar wird abgewiesen, statt über das alte Paar durchzugehen.
+    /// </summary>
+    [Fact]
+    public void An_empty_new_header_next_to_a_valid_old_pair_is_rejected()
+    {
+        var ts = Now.ToUnixTimeSeconds();
+        var headers = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            [WebhookSignature.SignatureHeader] = string.Empty,
+            [WebhookSignature.LegacySignatureHeader] = WebhookSignature.Compute(Secret, ts, "{}"),
+            [WebhookSignature.LegacyTimestampHeader] = ts.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        };
+
+        var (signature, timestamp) = WebhookSignature.SelectHeaders(name => headers.GetValueOrDefault(name));
+
+        WebhookSignature.Verify(Secret, signature, timestamp, "{}", Now, Tolerance)
+            .Should().NotBe(WebhookVerification.Valid);
     }
 
     [Fact]

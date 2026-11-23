@@ -33,6 +33,11 @@ public static class WebhookSignature
     /// kann, einfach das andere danebenlegen, und jede Schwäche des einen wäre eine des Ganzen.
     /// Ein gemischtes Paar (neue Signatur, alter Zeitstempel) gibt es deshalb ebenfalls nicht.
     /// </para>
+    /// <para>
+    /// „Vorliegen" heißt: Der Header ist da, auch leer. <paramref name="header"/> liefert
+    /// <c>null</c> nur für einen fehlenden Header. Ein leeres <c>X-Faolan-Signature:</c> neben einem
+    /// gültigen alten Paar wählt das neue Paar — und scheitert —, statt auf das alte auszuweichen.
+    /// </para>
     /// </summary>
     public static (string? Signature, string? Timestamp) SelectHeaders(Func<string, string?> header)
     {
@@ -40,7 +45,7 @@ public static class WebhookSignature
 
         var signature = header(SignatureHeader);
         var timestamp = header(TimestampHeader);
-        return !string.IsNullOrEmpty(signature) || !string.IsNullOrEmpty(timestamp)
+        return signature is not null || timestamp is not null
             ? (signature, timestamp)
             : (header(LegacySignatureHeader), header(LegacyTimestampHeader));
     }

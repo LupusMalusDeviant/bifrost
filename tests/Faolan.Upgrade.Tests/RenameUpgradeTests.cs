@@ -232,6 +232,38 @@ public sealed class RenameUpgradeTests
         }
     }
 
+    /// <summary>
+    /// Fünftes Review: Auf dem falschen, leeren Volume kommt der Betreiber an <c>doctor</c> nicht heran —
+    /// der alte API-Schlüssel gilt dort nicht. Der Befund BFR-DB-0008 muss deshalb ohne Anmeldung
+    /// sichtbar sein: im Startlog eines echten Prozesses, ohne dass ein Schlüssel ausgegeben wurde.
+    /// </summary>
+    [Fact]
+    public async Task An_empty_instance_is_reported_in_the_startup_log_without_a_key()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var dataDir = Directory.CreateTempSubdirectory("faolan-wrong-volume").FullName;
+        try
+        {
+            var environment = new Dictionary<string, string> { ["FAOLAN_DATA_DIR"] = dataDir };
+            await using var server = await ServerProcess.StartAsync(environment, "kein-gueltiger-schluessel", ct);
+
+            var deadline = DateTime.UtcNow.AddSeconds(30);
+            while (!server.Output.Contains("BFR-DB-0008", StringComparison.Ordinal) && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(200, ct);
+            }
+
+            server.Output.Should().Contain("BFR-DB-0008").And.Contain("FAOLAN_DATA_VOLUME");
+            var unauthorized = await server.Client.GetAsync("api/v1/operations/doctor", ct);
+            unauthorized.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+                "genau deshalb muss der Befund im Startlog stehen");
+        }
+        finally
+        {
+            TryDelete(dataDir);
+        }
+    }
+
     private static async Task<string> IssueApiKeyAsync(IReadOnlyDictionary<string, string> environment, CancellationToken ct)
     {
         var start = ServerProcess.StartInfo(environment);

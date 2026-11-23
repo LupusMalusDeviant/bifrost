@@ -1,6 +1,6 @@
 # Vertrag: Umbenennung auf Faolan
 
-**Stand:** 2026-11-23 · **Status:** Abgenommen vom Nutzer am 2026-11-16, Nachtrag (Container-Etiketten bleiben, UI-Cookies mit Bruch, Postgres-Volume über Variable, Volume-Messung) abgenommen am 2026-11-22; zweiter Nachtrag (Cache-Kennung und Sperrschlüssel bleiben) abgenommen am 2026-11-22; dritter Nachtrag (WASI-Hostname als Brücke, Vorgaben des Images) abgenommen am 2026-11-22; vierter Nachtrag (Befunde des zweiten Reviews) abgenommen am 2026-11-22; fünfter Nachtrag (Befunde des vierten Reviews) abgenommen am 2026-11-23 · **Gilt für:** Plan 0004, R1 – R7
+**Stand:** 2026-11-23 · **Status:** Abgenommen vom Nutzer am 2026-11-16, Nachtrag (Container-Etiketten bleiben, UI-Cookies mit Bruch, Postgres-Volume über Variable, Volume-Messung) abgenommen am 2026-11-22; zweiter Nachtrag (Cache-Kennung und Sperrschlüssel bleiben) abgenommen am 2026-11-22; dritter Nachtrag (WASI-Hostname als Brücke, Vorgaben des Images) abgenommen am 2026-11-22; vierter Nachtrag (Befunde des zweiten Reviews) abgenommen am 2026-11-22; fünfter Nachtrag (Befunde des vierten Reviews) abgenommen am 2026-11-23; sechster Nachtrag (Befunde des fünften Reviews) abgenommen am 2026-11-23 · **Gilt für:** Plan 0004, R1 – R7
 **Grundlage:** [ADR-0026](../adr/0026-umbenennung-auf-faolan.md),
 [Plan 0004](../plans/0004-umbenennung-und-rueckkanal-projektion.md) Abschnitt 1.2
 
@@ -73,8 +73,10 @@ Nach dem vierten Review (fünfter Nachtrag 2026-11-23): Auch eine ausdrücklich 
 Deklaration (`FAOLAN_IMAGE_DEFAULTS=`) gilt als kaputt, sonst schaltete sie die Prüfung still ab.
 Steht der alte Wert nicht fest (unlesbare Datei, direkter Wert und Datei zugleich), rät die Meldung
 beim WASI-Host zuerst zum Entfernen der alten Variablen, falls sie den mitgelieferten Pfad nannten.
-„Nur direkt setzen, nicht als `…_FILE`" gilt allein für `FAOLAN_DATA_DIR` und `FAOLAN_WASI_HOST`;
-für jede andere Vorgabe, etwa ein Geheimnis eines abgeleiteten Images, bleibt `…_FILE` der Rat.
+Zu `…_FILE` rät die Meldung nur für Einstellungen, die der Gateway wirklich als Datei liest — die
+Passwörter des Schlüsselrings; jede andere, auch eine Verbindungszeichenfolge, ist direkt zu setzen
+(korrigiert nach dem fünften Review, sechster Nachtrag 2026-11-23). Ein Test hält die Liste mit den
+Aufrufen von `FileSecret.Read` übereinander.
 
 ### 2.3 Was auf dem Draht oder in Dateien steht — Brücke
 
@@ -83,7 +85,7 @@ für jede andere Vorgabe, etwa ein Geheimnis eines abgeleiteten Images, bleibt `
 | Connector-Manifest `bifrost.connector.v1` | beide Schema-Ids | `faolan.connector.v1` |
 | Asset-URI `bifrost://assets/` | beide Präfixe | `faolan://assets/` |
 | Secret-Referenz `${bifrost:secret/…}` | beide Präfixe | `${faolan:secret/…}` |
-| Webhook eingehend: `X-Bifrost-Signature`, `X-Bifrost-Timestamp` | beide Paare; liegt das neue vor, zählt nur das neue | — |
+| Webhook eingehend: `X-Bifrost-Signature`, `X-Bifrost-Timestamp` | beide Paare; liegt das neue vor, zählt nur das neue. „Vorliegen" heißt: der Header ist da, auch leer (sechster Nachtrag 2026-11-23) | — |
 | Benachrichtigung ausgehend: dieselben zwei Header | — | **beide Paare mit gleichem Wert**, bis die Brücke entfällt |
 | `X-Bifrost-Setup-Token` eingehend | beide Namen | — |
 | `X-Bifrost-Instance` | beide Namen bei der Schleifenerkennung | `X-Faolan-Instance` |
@@ -167,7 +169,11 @@ ist im Recht, eine neue Instanz anzulegen.
   - Ohne die Variable entsteht still ein leeres `faolan-data`. Genau diesen Fall fängt nur `doctor`
     (`BFR-DB-0008`: kein Upstream, keine Rolle, kein API-Schlüssel). Die Rolle `ui-internal-admin`,
     die der Gateway bei jedem Start selbst anlegt, zählt dabei nicht mit (fünfter Nachtrag
-    2026-11-23) — sonst wäre keine gestartete Instanz je leer.
+    2026-11-23) — sonst wäre keine gestartete Instanz je leer. Derselbe Befund steht auch im
+    Startlog (sechster Nachtrag 2026-11-23): Auf dem falschen Volume gilt der alte API-Schlüssel
+    nicht, `doctor` antwortet dort mit 401, und ein neu ausgegebener Schlüssel wäre selbst Bestand.
+  - Die Upgrade-Anleitung stoppt den alten Stack mit den **alten** Compose-Dateien, bevor sie sie
+    ersetzt; der umbenannte Dienst ließe den Dienst `bifrost` sonst weiterlaufen.
 - **Postgres-Datei** (Nachtrag 2026-11-22): `docker-compose.postgres.yml` benennt ihr Volume ebenso
   über `FAOLAN_PGDATA_VOLUME`, Vorgabe `faolan-pgdata`. Ein Bestand setzt
   `<projekt>_bifrost-pgdata`. Die Vorgaben für `POSTGRES_DB` und `POSTGRES_USER` bleiben `bifrost`:

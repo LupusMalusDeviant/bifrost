@@ -193,6 +193,25 @@ public class UpstreamTimelineTests
         Failure(missing).Check.Summary.Should().Contain("FAOLAN_WASI_HOST");
     }
 
+    /// <summary>
+    /// Fünftes Review: Ein Hostpfad mit Steuerzeichen bricht die Zeitlinie nicht ab — er fällt in
+    /// Stufe 1 durch, und auch ohne diese Prüfung nennt er keinen Host, statt zu werfen.
+    /// </summary>
+    [Fact]
+    public async Task Ein_Hostpfad_mit_Steuerzeichen_endet_als_Befund_nicht_als_Ausnahme()
+    {
+        var directory = OperatingSystem.IsWindows() ? @"C:\opt\" : "/opt/";
+        var report = await RunAsync(
+            Wasi(directory + "bin\0/faolan-wasi-host"),
+            Ok(),
+            policy: HostExecutionPolicy.AllowedByOperator(),
+            wasiHost: new WasiHostSetting(directory + "faolan-wasi-host"));
+
+        Failure(report).Stage.Should().Be(UpstreamStage.Validation);
+        Faolan.Abstractions.WasiHostNames.NamesHost(directory + "bin\0/x", directory + "faolan-wasi-host")
+            .Should().BeFalse();
+    }
+
     private static UpstreamServerConfig Wasi(string host) => new(
         "wasi", "WASI", UpstreamTransportKind.Wasi, true,
         Wasi: new WasiTransportOptions(

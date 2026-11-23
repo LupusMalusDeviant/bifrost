@@ -267,13 +267,16 @@ static class EnvironmentNameChain
     }
 
     /// <summary>
-    /// Einstellungen, die der Gateway nur direkt liest — nie als <c>…_FILE</c>. Für alle anderen
-    /// (Geheimnisse eines abgeleiteten Images) bleibt die Datei der richtige Weg.
+    /// Die Einstellungen, die der Gateway auch als <c>…_FILE</c> liest (<c>FileSecret.Read</c>): die
+    /// Passwörter des Schlüsselrings. Jede andere wird nur direkt gelesen — auch eine
+    /// Verbindungszeichenfolge. Ein Rat zu <c>…_FILE</c> für sie liesse die Vorgabe des Images
+    /// wirken, nachdem der Betreiber die alte Variable entfernt hat (fünftes Review). Ein Test hält
+    /// die Liste mit den Aufrufen von <c>FileSecret.Read</c> übereinander.
     /// </summary>
-    private static readonly HashSet<string> DirectOnlySettings = new(StringComparer.Ordinal)
+    public static IReadOnlySet<string> FileReadableSettings { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        CurrentPrefix + "DATA_DIR",
-        CurrentPrefix + "WASI_HOST",
+        CurrentPrefix + "KEYRING_CERT_PASSWORD",
+        CurrentPrefix + "KEYRING_CERT_PASSWORD_PREVIOUS",
     };
 
     /// <summary>
@@ -286,10 +289,10 @@ static class EnvironmentNameChain
             ? $"Nannte der alte Wert den bis 0.12.0 mitgelieferten Host {WasiHostNames.LegacyBundledPath}: "
                 + $"{oldVariables} entfernen, das Image bringt den umbenannten Host selbst mit. Sonst: "
             : string.Empty;
-        var target = DirectOnlySettings.Contains(newName)
-            ? $"den gemeinten Wert direkt unter {newName} setzen (nicht als {newName}_FILE — diese Einstellung "
-                + "wird nur direkt gelesen)"
-            : $"den gemeinten Wert unter {newName} setzen (ein Geheimnis als {newName}_FILE)";
+        var target = FileReadableSettings.Contains(newName)
+            ? $"den gemeinten Wert unter {newName} oder als Datei unter {newName}_FILE setzen"
+            : $"den gemeinten Wert direkt unter {newName} setzen (nicht als {newName}_FILE — diese Einstellung "
+                + "wird nur direkt gelesen)";
         var sentence = host + target + $" und {oldVariables} entfernen. Siehe docs/upgrade-faolan.md.";
         return host.Length == 0 ? char.ToUpperInvariant(sentence[0]) + sentence[1..] : sentence;
     }

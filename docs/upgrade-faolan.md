@@ -79,7 +79,21 @@ bestehenden Datenbank; mit gesetztem Volume passt der Bestand sofort.
 
 `external: true` ist nicht nötig. Die Warnung im zweiten Fall ist harmlos.
 
-### 4. Neue Compose-Dateien und Image
+### 4. Den alten Stack stoppen — mit den alten Dateien
+
+**Vor** dem Austausch der Compose-Dateien. Der Dienst heißt danach `faolan` statt `bifrost`; ein
+`docker compose down` mit den neuen Dateien kennt den alten Dienst nicht und ließe ihn laufen — auf
+demselben Port oder, schlimmer, auf demselben Datenbestand neben dem neuen Gateway.
+
+```bash
+docker compose down
+# mit PostgreSQL dieselben Dateien wie beim Start:
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml down
+```
+
+`down` ohne `-v` lässt die Volumes stehen; genau die sollen bleiben.
+
+### 5. Neue Compose-Dateien und Image
 
 Die mitgelieferten Compose-Dateien aus dem neuen Release übernehmen. Der Dienst heißt jetzt
 `faolan`, das Image `ghcr.io/lupusmalusdeviant/faolan`. In `.env` werden `BIFROST_VERSION`,
@@ -90,15 +104,26 @@ Die Compose-Secrets heißen jetzt `faolan-keyring-pfx` und `faolan-keyring-passw
 benutzt, benennt die Einträge in einer eigenen Override-Datei entsprechend um.
 
 ```bash
-docker compose down
 docker compose pull
 docker compose up -d
 docker compose logs -f faolan
+# mit PostgreSQL:
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
 ```
 
-### 5. Prüfen
+### 6. Prüfen
 
-Mit der neuen CLI (Archiv `faolan-cli-<version>-<plattform>` aus dem Release, siehe
+**Zuerst das Startlog.** Liegt der Gateway auf einem leeren Bestand, steht dort eine Warnung mit
+`BFR-DB-0008`. Das ist die Stelle, die ohne Anmeldung auskommt: Auf dem falschen Volume gilt der alte
+API-Schlüssel nicht, und `faolan doctor` bekäme nur eine 401. **Keinen neuen Schlüssel ausgeben**,
+sondern zurück zu Schritt 2 — ein neuer Schlüssel wäre selbst Bestand und brächte die Warnung zum
+Schweigen.
+
+```bash
+docker compose logs faolan | grep BFR-DB-0008
+```
+
+Dann mit der neuen CLI (Archiv `faolan-cli-<version>-<plattform>` aus dem Release, siehe
 [CLI-Installation](cli-installation.md); das Programm heißt jetzt `faolan`):
 
 ```bash

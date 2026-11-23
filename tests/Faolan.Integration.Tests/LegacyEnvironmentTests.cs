@@ -276,21 +276,62 @@ public sealed class LegacyEnvironmentTests
     }
 
     /// <summary>
-    /// Viertes Review: Für ein Geheimnis, das ein abgeleitetes Image vorgibt, ist die Datei der
-    /// richtige Weg — „nur direkt" gilt allein für Datenverzeichnis und WASI-Host.
+    /// Fünftes Review: <c>…_FILE</c> rät die Meldung nur, wo der Gateway die Datei auch liest. Eine
+    /// Verbindungszeichenfolge liest er nur direkt — der Rat zu <c>FAOLAN_DB_CONNECTION_FILE</c>
+    /// liesse nach dem Entfernen der alten Variable still die Datenbank des Images wirken.
     /// </summary>
     [Fact]
-    public void The_advice_for_an_unreadable_secret_file_allows_the_new_file_variable()
+    public void The_advice_names_a_file_variable_only_where_the_gateway_reads_one()
     {
-        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(
+        var connection = EnvironmentNameChain.FindImageDefaultConflicts(
             Environment(
                 (EnvironmentNameChain.ImageDefaultsVariable, "FAOLAN_DB_CONNECTION=Host=db"),
                 ("FAOLAN_DB_CONNECTION", "Host=db"),
                 ("BIFROST_DB_CONNECTION_FILE", "/fehlt")),
             path => throw new FileNotFoundException(path));
+        connection.Should().ContainSingle().Which.Should().Contain("direkt unter FAOLAN_DB_CONNECTION setzen");
 
-        conflicts.Should().ContainSingle().Which.Should().Contain("als FAOLAN_DB_CONNECTION_FILE")
-            .And.NotContain("nur direkt gelesen");
+        var password = EnvironmentNameChain.FindImageDefaultConflicts(
+            Environment(
+                (EnvironmentNameChain.ImageDefaultsVariable, "FAOLAN_KEYRING_CERT_PASSWORD=vorgabe"),
+                ("FAOLAN_KEYRING_CERT_PASSWORD", "vorgabe"),
+                ("BIFROST_KEYRING_CERT_PASSWORD_FILE", "/fehlt")),
+            path => throw new FileNotFoundException(path));
+        password.Should().ContainSingle().Which.Should().Contain("als Datei unter FAOLAN_KEYRING_CERT_PASSWORD_FILE");
+    }
+
+    /// <summary>
+    /// Die Liste der als Datei lesbaren Einstellungen ist genau die, die <c>FileSecret.Read</c> liest.
+    /// Kommt dort eine dazu, ohne dass die Liste folgt, rät die Startsperre falsch.
+    /// </summary>
+    [Fact]
+    public void The_file_readable_settings_match_what_the_server_reads_as_a_file()
+    {
+        var root = FindRepositoryRoot();
+        var calls = Directory.EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+            .SelectMany(file => System.Text.RegularExpressions.Regex.Matches(
+                File.ReadAllText(file), @"FileSecret\.Read\(\s*configuration,\s*KeyRingSwitch\.(\w+)\)"))
+            .Select(match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        calls.Should().BeEquivalentTo(["CertificatePassword", "PreviousCertificatePassword"],
+            "neue Aufrufe von FileSecret.Read gehören in EnvironmentNameChain.FileReadableSettings");
+        EnvironmentNameChain.FileReadableSettings.Should().BeEquivalentTo(
+        [
+            Faolan.Server.KeyRing.KeyRingSwitch.CertificatePassword,
+            Faolan.Server.KeyRing.KeyRingSwitch.PreviousCertificatePassword,
+        ]);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Faolan.slnx")))
+        {
+            directory = directory.Parent;
+        }
+
+        return directory?.FullName ?? throw new InvalidOperationException("Faolan.slnx nicht gefunden.");
     }
 
     /// <summary>
