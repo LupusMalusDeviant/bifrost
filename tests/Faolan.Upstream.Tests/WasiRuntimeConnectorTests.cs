@@ -413,7 +413,10 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
         WasiRuntimeConnector.ReliesOnLegacyHostName(oldImagePath, imageHost).Should().BeTrue("nur über die Brücke");
         WasiRuntimeConnector.ReliesOnLegacyHostName("bifrost-wasi-host", imageHost).Should().BeTrue();
         WasiRuntimeConnector.ReliesOnLegacyHostName(imageHost, imageHost).Should().BeFalse("neuer Name");
-        WasiRuntimeConnector.ReliesOnLegacyHostName(oldImagePath, null).Should().BeTrue("ohne Host zählt der Name");
+        // Viertes Review: Ohne eingerichteten Host startet nichts — das ist keine Brücke, sondern ein
+        // fehlender Host, und der Rat „auf faolan-wasi-host umstellen" hülfe dort nicht.
+        WasiRuntimeConnector.ReliesOnLegacyHostName(oldImagePath, null).Should().BeFalse("ohne Host keine Brücke");
+        WasiRuntimeConnector.ReliesOnLegacyHostName(oldImagePath, "").Should().BeFalse();
     }
 
     [Fact]

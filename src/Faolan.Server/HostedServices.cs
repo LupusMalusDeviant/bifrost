@@ -17,6 +17,12 @@ public sealed partial class GatewayStartupService : IHostedService
 {
     private const string UiInternalIdentityName = "ui-internal";
 
+    /// <summary>
+    /// Die Rolle, die der Gateway bei jedem Start selbst anlegt. Sie ist kein Bestand des Betreibers
+    /// und zählt deshalb für BFR-DB-0008 („leere Instanz") nicht mit.
+    /// </summary>
+    public const string UiInternalRoleName = "ui-internal-admin";
+
     private readonly DatabaseInitializer _databaseInitializer;
     private readonly PersistentRbacStore _rbacStore;
     private readonly ToolDescriptionOverrideStore _descriptionOverrides;
@@ -226,7 +232,7 @@ public sealed partial class GatewayStartupService : IHostedService
             return;
         }
 
-        var role = new Role(RoleId.New(), "ui-internal-admin",
+        var role = new Role(RoleId.New(), UiInternalRoleName,
             [new Grant(new PermissionScope(null, null), [ToolAction.UseTool, ToolAction.ReadResource, ToolAction.UsePrompt])]);
         var identity = new Identity(IdentityId.New(), UiInternalIdentityName, IdentityKind.User, [role.Id]);
         await _rbacStore.UpsertRoleAsync(role, ct);

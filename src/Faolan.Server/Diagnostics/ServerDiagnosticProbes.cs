@@ -87,7 +87,11 @@ public sealed class EfDatabaseDiagnosticProbe : IDatabaseDiagnosticProbe
         try
         {
             var upstreams = await db.ConfigVersions.Select(r => r.ServerId).Distinct().CountAsync(ct).ConfigureAwait(false);
-            var roles = await db.Roles.CountAsync(ct).ConfigureAwait(false);
+            // Ohne die Rolle, die der Gateway bei jedem Start selbst anlegt — sonst wäre keine
+            // gestartete Instanz je „leer", auch die auf dem falschen Volume nicht.
+            var roles = await db.Roles
+                .CountAsync(r => r.Name != GatewayStartupService.UiInternalRoleName, ct)
+                .ConfigureAwait(false);
             var keys = await db.ApiKeys.CountAsync(ct).ConfigureAwait(false);
             return new InstanceContentFacts(upstreams, roles, keys);
         }

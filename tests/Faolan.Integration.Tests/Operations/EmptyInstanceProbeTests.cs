@@ -40,6 +40,29 @@ public sealed class EmptyInstanceProbeTests : IDisposable
         result.Remediation.Should().Contain("FAOLAN_DATA_VOLUME");
     }
 
+    /// <summary>
+    /// Viertes Review: Nach dem echten Start hat der Gateway seine eigene Rolle
+    /// <c>ui-internal-admin</c> angelegt. Zählte sie mit, wäre keine gestartete Instanz je „leer" —
+    /// auch die auf dem falschen Volume nicht. Geprüft wird deshalb nach dem Start der Hosted Services,
+    /// ohne einen Schlüssel auszugeben, der selbst Bestand wäre.
+    /// </summary>
+    [Fact]
+    public async Task A_started_gateway_without_operator_content_is_reported_as_an_empty_instance()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var gateway = new Faolan.Integration.Tests.Gateway.GatewayFixture();
+        var probe = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
+            .GetRequiredService<IDatabaseDiagnosticProbe>(gateway.Services);
+
+        var facts = await probe.DescribeAsync(ct);
+
+        facts.Content.Should().Be(new InstanceContentFacts(0, 0, 0),
+            "die Rolle, die der Gateway selbst anlegt, ist kein Bestand des Betreibers");
+        var result = await new EmptyInstanceCheck().RunAsync(
+            new DiagnosticContext { Environment = new Dictionary<string, string>(), Database = probe }, ct);
+        result.Status.Should().Be(CheckStatus.Warning);
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();

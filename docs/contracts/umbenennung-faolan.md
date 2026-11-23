@@ -1,6 +1,6 @@
 # Vertrag: Umbenennung auf Faolan
 
-**Stand:** 2026-11-22 · **Status:** Abgenommen vom Nutzer am 2026-11-16, Nachtrag (Container-Etiketten bleiben, UI-Cookies mit Bruch, Postgres-Volume über Variable, Volume-Messung) abgenommen am 2026-11-22; zweiter Nachtrag (Cache-Kennung und Sperrschlüssel bleiben) abgenommen am 2026-11-22; dritter Nachtrag (WASI-Hostname als Brücke, Vorgaben des Images) abgenommen am 2026-11-22; vierter Nachtrag (Befunde des zweiten Reviews) abgenommen am 2026-11-22 · **Gilt für:** Plan 0004, R1 – R7
+**Stand:** 2026-11-23 · **Status:** Abgenommen vom Nutzer am 2026-11-16, Nachtrag (Container-Etiketten bleiben, UI-Cookies mit Bruch, Postgres-Volume über Variable, Volume-Messung) abgenommen am 2026-11-22; zweiter Nachtrag (Cache-Kennung und Sperrschlüssel bleiben) abgenommen am 2026-11-22; dritter Nachtrag (WASI-Hostname als Brücke, Vorgaben des Images) abgenommen am 2026-11-22; vierter Nachtrag (Befunde des zweiten Reviews) abgenommen am 2026-11-22; fünfter Nachtrag (Befunde des vierten Reviews) abgenommen am 2026-11-23 · **Gilt für:** Plan 0004, R1 – R7
 **Grundlage:** [ADR-0026](../adr/0026-umbenennung-auf-faolan.md),
 [Plan 0004](../plans/0004-umbenennung-und-rueckkanal-projektion.md) Abschnitt 1.2
 
@@ -69,6 +69,12 @@ jeder andere Pfad gilt als eigenes Programm. Nach dem dritten Review außerdem: 
 `_FILE` derselben alten Generation beide gesetzt, bricht der Start ab. Die Deklaration wird streng
 gelesen — jeder Name nur aus `FAOLAN_` plus `A–Z`, `0–9`, `_`, und eine gesetzte Deklaration ohne
 gültigen Eintrag gilt als kaputt.
+Nach dem vierten Review (fünfter Nachtrag 2026-11-23): Auch eine ausdrücklich leer gesetzte
+Deklaration (`FAOLAN_IMAGE_DEFAULTS=`) gilt als kaputt, sonst schaltete sie die Prüfung still ab.
+Steht der alte Wert nicht fest (unlesbare Datei, direkter Wert und Datei zugleich), rät die Meldung
+beim WASI-Host zuerst zum Entfernen der alten Variablen, falls sie den mitgelieferten Pfad nannten.
+„Nur direkt setzen, nicht als `…_FILE`" gilt allein für `FAOLAN_DATA_DIR` und `FAOLAN_WASI_HOST`;
+für jede andere Vorgabe, etwa ein Geheimnis eines abgeleiteten Images, bleibt `…_FILE` der Rat.
 
 ### 2.3 Was auf dem Draht oder in Dateien steht — Brücke
 
@@ -81,7 +87,7 @@ gültigen Eintrag gilt als kaputt.
 | Benachrichtigung ausgehend: dieselben zwei Header | — | **beide Paare mit gleichem Wert**, bis die Brücke entfällt |
 | `X-Bifrost-Setup-Token` eingehend | beide Namen | — |
 | `X-Bifrost-Instance` | beide Namen bei der Schleifenerkennung | `X-Faolan-Instance` |
-| `Wasi.HostExecutable` gespeicherter Upstreams: `bifrost-wasi-host`, `/usr/local/bin/bifrost-wasi-host` | der alte Name bezeichnet den Host `faolan-wasi-host` derselben Instanz, als Dateiname oder als Pfad im selben Verzeichnis; gestartet wird nur der Host des Betreibers (dritter Nachtrag 2026-11-22, Review-Befund H1). Groß- und Kleinschreibung wie im Dateisystem; Verbindungsdiagnose und Connector teilen die Regel (`WasiHostNames`): erst genau vergleichen, nur bei Bedarf übersetzen — ein eigenes Programm, das wirklich so heißt, bleibt gemeint. Die Übernahme meldet der Start und `doctor` als `BFR-UP-0002`, und nur dann, wenn die Brücke wirklich gebraucht wird (vierter Nachtrag) | was der Betreiber einträgt; die Doku nennt `faolan-wasi-host` |
+| `Wasi.HostExecutable` gespeicherter Upstreams: `bifrost-wasi-host`, `/usr/local/bin/bifrost-wasi-host` | der alte Name bezeichnet den Host `faolan-wasi-host` derselben Instanz, als Dateiname oder als Pfad im selben Verzeichnis; gestartet wird nur der Host des Betreibers (dritter Nachtrag 2026-11-22, Review-Befund H1). Groß- und Kleinschreibung wie im Dateisystem; Verbindungsdiagnose und Connector teilen die Regel (`WasiHostNames`): erst genau vergleichen, nur bei Bedarf übersetzen — ein eigenes Programm, das wirklich so heißt, bleibt gemeint. Die Übernahme meldet der Start und `doctor` als `BFR-UP-0002`, und nur dann, wenn die Brücke wirklich gebraucht wird (vierter Nachtrag) — gemessen am Host der Instanz; ohne eingerichteten `FAOLAN_WASI_HOST` startet nichts, das ist keine Brücke. Die Verbindungsdiagnose prüft das Programm, das der Connector startet: den Host der Instanz, wenn der Verweis ihn nennt, sonst meldet sie in Stufe 3, dass er es nicht tut (fünfter Nachtrag 2026-11-23) | was der Betreiber einträgt; die Doku nennt `faolan-wasi-host` |
 
 Die ausgehende Benachrichtigung ist der eine Fall, in dem **geschrieben** wird, was ein fremdes
 System liest: Ein Empfänger, der heute `X-Bifrost-Signature` prüft, bekäme sonst über Nacht
@@ -158,7 +164,10 @@ ist im Recht, eine neue Instanz anzulegen.
     (`already exists but was created for project …`) und bricht nicht ab.
   - `external: true` ist **nicht** nötig. Es unterdrückt die Warnung, verlangt aber bei jeder
     Neuinstallation ein vorher angelegtes Volume und taugt deshalb nicht als Vorgabe.
-  - Ohne die Variable entsteht still ein leeres `faolan-data`. Genau diesen Fall fängt nur `doctor`.
+  - Ohne die Variable entsteht still ein leeres `faolan-data`. Genau diesen Fall fängt nur `doctor`
+    (`BFR-DB-0008`: kein Upstream, keine Rolle, kein API-Schlüssel). Die Rolle `ui-internal-admin`,
+    die der Gateway bei jedem Start selbst anlegt, zählt dabei nicht mit (fünfter Nachtrag
+    2026-11-23) — sonst wäre keine gestartete Instanz je leer.
 - **Postgres-Datei** (Nachtrag 2026-11-22): `docker-compose.postgres.yml` benennt ihr Volume ebenso
   über `FAOLAN_PGDATA_VOLUME`, Vorgabe `faolan-pgdata`. Ein Bestand setzt
   `<projekt>_bifrost-pgdata`. Die Vorgaben für `POSTGRES_DB` und `POSTGRES_USER` bleiben `bifrost`:

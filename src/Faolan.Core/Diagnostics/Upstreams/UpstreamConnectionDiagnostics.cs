@@ -48,6 +48,13 @@ public interface IUpstreamConnectionDiagnostics
 /// Tabelle wäre die, die als Erste veraltet.
 /// </para>
 /// </summary>
+/// <summary>
+/// Der WASI-Host der Instanz (<c>FAOLAN_WASI_HOST</c>), wie ihn der Connector startet.
+/// <see cref="Executable"/> <c>null</c> heißt: nicht eingerichtet — anders als ein fehlendes
+/// <see cref="WasiHostSetting"/>, das heißt: der Diagnose nicht bekannt.
+/// </summary>
+public sealed record WasiHostSetting(string? Executable);
+
 public sealed partial class UpstreamConnectionDiagnostics : IUpstreamConnectionDiagnostics
 {
     private readonly IUpstreamConnectionTester _tester;
@@ -67,7 +74,8 @@ public sealed partial class UpstreamConnectionDiagnostics : IUpstreamConnectionD
         IProcessProbe? processes = null,
         IUpstreamNegotiationProbe? negotiation = null,
         TimeProvider? timeProvider = null,
-        ILogger<UpstreamConnectionDiagnostics>? logger = null)
+        ILogger<UpstreamConnectionDiagnostics>? logger = null,
+        WasiHostSetting? wasiHost = null)
     {
         ArgumentNullException.ThrowIfNull(tester);
         _tester = tester;
@@ -78,7 +86,10 @@ public sealed partial class UpstreamConnectionDiagnostics : IUpstreamConnectionD
         _negotiation = negotiation;
         _time = timeProvider ?? TimeProvider.System;
         _log = logger ?? NullLogger<UpstreamConnectionDiagnostics>.Instance;
+        _wasiHost = wasiHost;
     }
+
+    private readonly WasiHostSetting? _wasiHost;
 
     /// <summary>
     /// Läuft die Zeitlinie. Der Bericht kommt immer — auch wenn eine Stufe wirft; ein
@@ -190,11 +201,44 @@ public sealed partial class UpstreamConnectionDiagnostics : IUpstreamConnectionD
 
         var program = ProgramPathOf(config);
 
-        // Der alte Hostname bezeichnet den umbenannten Host (WasiHostNames, Vertrag §2.3) — aber nur,
-        // wenn es unter dem alten Pfad nichts gibt. Ein eigenes Programm, das so heißt, bleibt gemeint.
-        if (program is not null && config.Kind is UpstreamTransportKind.Wasi && Path.IsPathFullyQualified(program))
+        if (program is not null && config.Kind is UpstreamTransportKind.Wasi)
         {
-            program = WasiHostNames.Resolve(program, _files.FileExists).Effective;
+            if (_wasiHost is not null)
+            {
+                // Gestartet wird nie der gespeicherte Verweis, sondern der Host der Instanz
+                // (FAOLAN_WASI_HOST) — wenn der Verweis ihn nennt, genau oder über den alten Namen.
+                // Geprüft wird deshalb dieses Programm, nach derselben Regel wie im Connector.
+                if (string.IsNullOrWhiteSpace(_wasiHost.Executable))
+                {
+                    timeline.Fail(
+                        UpstreamStage.Runtime,
+                        "Auf dieser Instanz ist kein WASI-Host eingerichtet (FAOLAN_WASI_HOST).",
+                        "FAOLAN_WASI_HOST auf den Pfad des WASI-Hosts setzen. Ohne ihn startet kein "
+                        + "WASI-Upstream; ein Programm aus der Konfiguration wird nicht ersatzweise genommen.");
+                    return null;
+                }
+
+                if (!WasiHostNames.NamesHost(program, _wasiHost.Executable))
+                {
+                    timeline.Fail(
+                        UpstreamStage.Runtime,
+                        $"Wasi.HostExecutable '{program}' ist nicht der WASI-Host dieser Instanz "
+                        + $"('{_wasiHost.Executable}', FAOLAN_WASI_HOST).",
+                        "Wasi.HostExecutable auf den Host der Instanz stellen. Welches Programm läuft, "
+                        + "entscheidet der Betreiber, nicht die Upstream-Konfiguration (ADR-0025).",
+                        ("programm", program));
+                    return null;
+                }
+
+                program = _wasiHost.Executable;
+            }
+            else if (Path.IsPathFullyQualified(program))
+            {
+                // Ohne Kenntnis des Hosts (Tests, Werkzeuge): Der alte Hostname bezeichnet den
+                // umbenannten Host (WasiHostNames, Vertrag §2.3) — aber nur, wenn es unter dem alten
+                // Pfad nichts gibt.
+                program = WasiHostNames.Resolve(program, _files.FileExists).Effective;
+            }
         }
 
         if (program is null)

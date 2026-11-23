@@ -130,6 +130,69 @@ public class UpstreamTimelineTests
         Outcome(report, UpstreamStage.Runtime).Should().Be(UpstreamStageOutcome.Passed);
     }
 
+    /// <summary>
+    /// Viertes Review: Liegen alter und neuer Host im selben Verzeichnis und ist der neue der Host der
+    /// Instanz, startet der Connector den neuen. Die Diagnose prüft genau ihn — ein fehlender
+    /// <c>faolan-wasi-host</c> fällt hier auf, auch wenn die alte Datei noch daneben liegt.
+    /// </summary>
+    [Fact]
+    public async Task Stufe3_Runtime_prueft_den_Host_der_Instanz_auch_wenn_der_alte_noch_daneben_liegt()
+    {
+        var directory = OperatingSystem.IsWindows() ? @"C:\faolan\bin\" : "/usr/local/bin/";
+        var suffix = OperatingSystem.IsWindows() ? ".exe" : string.Empty;
+        var files = new FakeFileProbe();
+        files.Files.Add(directory + "bifrost-wasi-host" + suffix);
+
+        var report = await RunAsync(
+            Wasi(directory + "bifrost-wasi-host" + suffix),
+            Ok(),
+            policy: HostExecutionPolicy.AllowedByOperator(),
+            files: files,
+            wasiHost: new WasiHostSetting(directory + "faolan-wasi-host" + suffix));
+
+        Outcome(report, UpstreamStage.Runtime).Should().Be(UpstreamStageOutcome.Failed);
+        Failure(report).Check.Summary.Should().Contain("faolan-wasi-host");
+
+        files.Files.Add(directory + "faolan-wasi-host" + suffix);
+        var healed = await RunAsync(
+            Wasi(directory + "bifrost-wasi-host" + suffix),
+            Ok(),
+            policy: HostExecutionPolicy.AllowedByOperator(),
+            files: files,
+            wasiHost: new WasiHostSetting(directory + "faolan-wasi-host" + suffix));
+        Outcome(healed, UpstreamStage.Runtime).Should().Be(UpstreamStageOutcome.Passed);
+    }
+
+    /// <summary>
+    /// Viertes Review: Ein Verweis, der nicht der Host der Instanz ist, startet im Connector nicht —
+    /// und die Diagnose sagt das in Stufe 3, statt ein vorhandenes fremdes Programm gutzuheißen.
+    /// Ohne eingerichteten Host ebenso.
+    /// </summary>
+    [Fact]
+    public async Task Stufe3_Runtime_weist_einen_fremden_oder_fehlenden_Host_ab()
+    {
+        var directory = OperatingSystem.IsWindows() ? @"C:\opt\vendor\" : "/opt/vendor/";
+        var files = new FakeFileProbe();
+        files.Files.Add(directory + "anderer-host");
+
+        var foreign = await RunAsync(
+            Wasi(directory + "anderer-host"),
+            Ok(),
+            policy: HostExecutionPolicy.AllowedByOperator(),
+            files: files,
+            wasiHost: new WasiHostSetting(directory + "faolan-wasi-host"));
+        Outcome(foreign, UpstreamStage.Runtime).Should().Be(UpstreamStageOutcome.Failed);
+
+        var missing = await RunAsync(
+            Wasi(directory + "anderer-host"),
+            Ok(),
+            policy: HostExecutionPolicy.AllowedByOperator(),
+            files: files,
+            wasiHost: new WasiHostSetting(null));
+        Outcome(missing, UpstreamStage.Runtime).Should().Be(UpstreamStageOutcome.Failed);
+        Failure(missing).Check.Summary.Should().Contain("FAOLAN_WASI_HOST");
+    }
+
     private static UpstreamServerConfig Wasi(string host) => new(
         "wasi", "WASI", UpstreamTransportKind.Wasi, true,
         Wasi: new WasiTransportOptions(
@@ -546,13 +609,15 @@ public class UpstreamTimelineTests
         RecordingTester tester,
         Faolan.Abstractions.Execution.IHostExecutionPolicy? policy = null,
         IHostResolutionProbe? resolution = null,
-        FakeFileProbe? files = null)
+        FakeFileProbe? files = null,
+        WasiHostSetting? wasiHost = null)
         => new UpstreamConnectionDiagnostics(
                 tester,
                 policy,
                 resolution ?? PublicTarget,
                 files ?? new FakeFileProbe(),
-                new FakeProcessProbe())
+                new FakeProcessProbe(),
+                wasiHost: wasiHost)
             .DiagnoseAsync(config, TestContext.Current.CancellationToken);
 
     private static UpstreamStageResult Failure(UpstreamDiagnosticReport report)

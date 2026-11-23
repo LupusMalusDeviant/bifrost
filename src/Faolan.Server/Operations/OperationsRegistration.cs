@@ -113,7 +113,11 @@ public static class OperationsRegistration
             sp.GetRequiredService<IHostExecutionPolicy>(),
             negotiation: sp.GetRequiredService<IUpstreamNegotiationProbe>(),
             timeProvider: sp.GetRequiredService<TimeProvider>(),
-            logger: sp.GetRequiredService<ILogger<UpstreamConnectionDiagnostics>>()));
+            logger: sp.GetRequiredService<ILogger<UpstreamConnectionDiagnostics>>(),
+            // Der Host, den der Connector wirklich startet — die Zeitlinie prüft dasselbe Programm
+            // (viertes Review), nicht den gespeicherten Verweis.
+            wasiHost: new WasiHostSetting(
+                sp.GetRequiredService<IConfiguration>()[Faolan.Upstream.Wasi.WasiRuntimeConnector.HostSettingName])));
 
         // ── Konfigurationsexport (WP2.5) ───────────────────────────────────────────────────────
         services.AddSingleton<ServerConfigurationPorts>();

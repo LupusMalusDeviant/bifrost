@@ -170,7 +170,16 @@ public sealed class RenameUpgradeTests
         try
         {
             var slug = "alt-host-" + Guid.NewGuid().ToString("N")[..8];
-            var environment = new Dictionary<string, string> { ["FAOLAN_DATA_DIR"] = dataDir };
+            var suffix = OperatingSystem.IsWindows() ? ".exe" : string.Empty;
+            var hostDirectory = Directory.CreateDirectory(Path.Combine(dataDir, "bin")).FullName;
+
+            // Viertes Review: gemeldet wird gemessen am Host der Instanz. Ohne FAOLAN_WASI_HOST startet
+            // kein WASI-Upstream — dann ist es keine Brücke, und es gibt nichts zu melden.
+            var withoutHost = new Dictionary<string, string> { ["FAOLAN_DATA_DIR"] = dataDir };
+            var environment = new Dictionary<string, string>(withoutHost)
+            {
+                ["FAOLAN_WASI_HOST"] = Path.Combine(hostDirectory, "faolan-wasi-host" + suffix),
+            };
             var apiKey = await IssueApiKeyAsync(environment, ct);
             await using (var first = await ServerProcess.StartAsync(environment, apiKey, ct))
             {
@@ -180,7 +189,7 @@ public sealed class RenameUpgradeTests
                     UpstreamTransportKind.Wasi,
                     Enabled: false,
                     Wasi: new WasiTransportOptions(
-                        "/usr/local/bin/bifrost-wasi-host",
+                        Path.Combine(hostDirectory, "bifrost-wasi-host" + suffix),
                         Path.Combine(dataDir, "c.wasm"),
                         Path.Combine(dataDir, "c.sig"),
                         []));
@@ -205,6 +214,17 @@ public sealed class RenameUpgradeTests
                 .Single(check => check.GetProperty("code").GetString() == "BFR-UP-0002");
             finding.GetProperty("status").GetString().Should().Be("Warning");
             finding.GetRawText().Should().Contain(slug);
+            await second.DisposeAsync();
+
+            await using var third = await ServerProcess.StartAsync(withoutHost, apiKey, ct);
+            var report = await third.Client.GetStringAsync("api/v1/operations/doctor", ct);
+            using var withoutHostReport = System.Text.Json.JsonDocument.Parse(report);
+            var withoutHostFinding = withoutHostReport.RootElement.GetProperty("checks").EnumerateArray()
+                .Single(check => check.GetProperty("code").GetString() == "BFR-UP-0002");
+            withoutHostFinding.GetProperty("status").GetString().Should().NotBe("Warning",
+                "ohne eingerichteten Host läuft der Upstream nicht über die Brücke");
+            withoutHostFinding.GetRawText().Should().NotContain(slug);
+            third.Output.Should().NotContain("BFR-UP-0002");
         }
         finally
         {
@@ -245,6 +265,7 @@ public sealed class RenameUpgradeTests
         private readonly Process _process;
         private readonly StringBuilder _output = new();
         private readonly Lock _lock = new();
+        private bool _disposed;
 
         private ServerProcess(Process process, HttpClient client)
         {
@@ -369,6 +390,14 @@ public sealed class RenameUpgradeTests
 
         public async ValueTask DisposeAsync()
         {
+            // Zweimal aufrufbar: Ein Test beendet einen Prozess vorzeitig, um denselben Datenbestand
+            // neu zu starten, und 'await using' ruft danach noch einmal.
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
             Client.Dispose();
             if (!_process.HasExited)
             {

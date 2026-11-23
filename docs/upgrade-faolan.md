@@ -105,15 +105,18 @@ Mit der neuen CLI (Archiv `faolan-cli-<version>-<plattform>` aus dem Release, si
 faolan doctor
 ```
 
-- **`BFR-DB-0008`** warnt, wenn die Instanz keinen Upstream, keine Rolle und keinen API-Schlüssel
-  hat. Nach einem Upgrade heißt das fast immer: das falsche Volume. Zurück zu Schritt 2.
+- **`BFR-DB-0008`** warnt, wenn die Instanz keinen Upstream, keine eigene Rolle und keinen
+  API-Schlüssel hat (die Rolle `ui-internal-admin` legt der Gateway selbst an, sie zählt nicht). Nach
+  einem Upgrade heißt das fast immer: das falsche Volume. Zurück zu Schritt 2.
 - **`BFR-DB-0005`** nennt die benutzte SQLite-Datei. `bifrost.db` ist richtig und bleibt so; es gibt
   keinen Grund, sie umzubenennen.
 - **`BFR-CFG-0002`** listet Variablen, die noch alt benannt sind. Das ist eine Empfehlung, kein
   Fehler.
-- **`BFR-UP-0002`** nennt WASI-Upstreams, die den Host noch `bifrost-wasi-host` nennen. Sie laufen;
-  `Wasi.HostExecutable` bei Gelegenheit auf `faolan-wasi-host` umstellen. Dieselbe Liste steht als
-  Warnung im Startlog.
+- **`BFR-UP-0002`** nennt WASI-Upstreams, die den Host noch `bifrost-wasi-host` nennen und nur über
+  diesen alten Namen zum Host der Instanz passen. Sie laufen; `Wasi.HostExecutable` bei Gelegenheit
+  auf `faolan-wasi-host` umstellen. Dieselbe Liste steht als Warnung im Startlog. Ohne
+  `FAOLAN_WASI_HOST` meldet der Befund nichts — dann startet gar kein WASI-Upstream, und das sagt
+  der Verbindungstest des Upstreams.
 
 Danach in der Weboberfläche neu anmelden: Die Cookies heißen jetzt `faolan-*`, die alten Sitzungen
 gelten nicht mehr.
@@ -139,7 +142,9 @@ gelten nicht mehr.
 > heißt das: eine leere Instanz. Stattdessen bricht der Start mit Exit-Code 2 ab und nennt beide
 > Variablen (nur die Namen, keine Werte). Das gilt auch für die Datei-Varianten
 > (`BIFROST_DATA_DIR_FILE`) und für den Fall, dass direkter Wert und Datei beide gesetzt sind.
-> Das Datenverzeichnis wird nur direkt gelesen: `FAOLAN_DATA_DIR` setzen, nicht `…_FILE`.
+> Datenverzeichnis und WASI-Host werden nur direkt gelesen: `FAOLAN_DATA_DIR` bzw.
+> `FAOLAN_WASI_HOST` setzen, nicht `…_FILE`. Auch ein leer gesetztes `FAOLAN_IMAGE_DEFAULTS`
+> bricht den Start ab.
 >
 > Abhilfe:
 > - **Datenverzeichnis:** den Wert unter dem neuen Namen setzen (`FAOLAN_DATA_DIR=/srv/gateway`).

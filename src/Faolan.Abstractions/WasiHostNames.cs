@@ -83,6 +83,54 @@ static class WasiHostNames
         return configured[..^fileName.Length] + Current + fileName[Legacy.Length..];
     }
 
+    /// <summary>
+    /// Nennt <paramref name="configured"/> den Host <paramref name="host"/> der Instanz — genau oder
+    /// über den alten Namen? Dieselbe Regel, nach der der Connector entscheidet, ob er startet; die
+    /// Verbindungsdiagnose fragt hier, damit sie das Programm prüft, das wirklich liefe.
+    /// </summary>
+    public static bool NamesHost(string? configured, string? host)
+    {
+        if (string.IsNullOrWhiteSpace(configured) || string.IsNullOrWhiteSpace(host))
+        {
+            return false;
+        }
+
+        return NamesHostExactly(configured, host)
+            || (UsesLegacyName(configured) && NamesHostExactly(Translate(configured), host));
+    }
+
+    /// <summary>
+    /// Nennt <paramref name="configured"/> den Host genau so, wie er heißt — als bloßen Dateinamen
+    /// (<c>.exe</c> darf fehlen) oder als denselben vollständigen Pfad?
+    /// </summary>
+    public static bool NamesHostExactly(string configured, string host)
+    {
+        ArgumentNullException.ThrowIfNull(configured);
+        ArgumentNullException.ThrowIfNull(host);
+        if (Path.GetFileName(configured) == configured)
+        {
+            // Nur ".exe" darf fehlen — GetFileNameWithoutExtension hielte unter Linux jeden Punkt im
+            // Namen für den Beginn einer Endung.
+            var hostName = Path.GetFileName(host);
+            return configured.Equals(hostName, NameComparison)
+                || (hostName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                    && configured.Equals(hostName[..^4], NameComparison));
+        }
+
+        return Path.GetFullPath(configured).Equals(Path.GetFullPath(host), NameComparison);
+    }
+
+    /// <summary>
+    /// Läuft dieser Verweis nur über die Brücke? Er nennt den Host unter dem alten Namen und passt
+    /// genau genommen nicht. Ohne eingerichteten Host (<paramref name="host"/> leer) läuft gar nichts —
+    /// dann ist es auch keine Brücke, sondern ein fehlender Host, den die Diagnose eigens meldet.
+    /// </summary>
+    public static bool ReliesOnLegacyName(string? configured, string? host)
+        => UsesLegacyName(configured)
+            && !string.IsNullOrWhiteSpace(host)
+            && !NamesHostExactly(configured!, host)
+            && NamesHost(configured, host);
+
     /// <summary>Dateinamen werden so verglichen, wie das Betriebssystem sie vergleicht.</summary>
     public static StringComparison NameComparison
         => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;

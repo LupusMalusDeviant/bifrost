@@ -152,6 +152,14 @@ static class EnvironmentNameChain
         var problems = new List<string>();
         if (!present.TryGetValue(ImageDefaultsVariable, out var declared))
         {
+            // Ausdrücklich leer gesetzt (FAOLAN_IMAGE_DEFAULTS=) ist nicht „nicht deklariert": Ein
+            // abgeleitetes Image oder ein Betreiber schaltete damit die Prüfung still ab, während die
+            // Vorgaben selbst weiter gelten (viertes Review).
+            if (IsDeclaredButEmpty(environment))
+            {
+                problems.Add(MalformedDeclaration());
+            }
+
             return problems;
         }
 
@@ -194,8 +202,8 @@ static class EnvironmentNameChain
                     // sonst entschiede die Reihenfolge der Prüfung, und eine Datei bliebe ungelesen.
                     problems.Add(
                         $"Start abgebrochen: {oldName} und {oldName}_FILE sind beide gesetzt. Das Image setzt "
-                        + $"{newName} selbst; welcher alte Wert gemeint ist, lässt sich nicht entscheiden. Den "
-                        + $"gemeinten Wert unter {newName} setzen und beide alten Variablen entfernen.");
+                        + $"{newName} selbst; welcher alte Wert gemeint ist, lässt sich nicht entscheiden. "
+                        + DescribeRemedy(newName, $"beide alten Variablen ({oldName}, {oldName}_FILE)"));
                     break;
                 }
 
@@ -217,8 +225,7 @@ static class EnvironmentNameChain
                         problems.Add(
                             $"Start abgebrochen: {shownName} ist gesetzt, die Datei lässt sich aber nicht lesen. "
                             + $"Das Image setzt {newName} selbst; ohne den alten Wert lässt sich nicht entscheiden, "
-                            + $"welcher gemeint ist. Den gemeinten Wert direkt unter {newName} setzen (nicht als "
-                            + $"{newName}_FILE — diese Einstellung wird nur direkt gelesen) und {shownName} entfernen.");
+                            + "welcher gemeint ist. " + DescribeRemedy(newName, shownName));
                         break;
                     }
                 }
@@ -244,6 +251,48 @@ static class EnvironmentNameChain
             + $"der nicht die Form '{CurrentPrefix}NAME=Wert' hat (NAME nur aus A–Z, 0–9 und _). Ohne lesbare "
             + "Deklaration lässt sich nicht prüfen, ob eine Vorgabe des Images eine alte Einstellung verdeckt. "
             + "Die Deklaration im Image berichtigen.";
+
+    private static bool IsDeclaredButEmpty(IDictionary environment)
+    {
+        foreach (DictionaryEntry entry in environment)
+        {
+            if (entry.Key is string key
+                && string.Equals(key, ImageDefaultsVariable, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Einstellungen, die der Gateway nur direkt liest — nie als <c>…_FILE</c>. Für alle anderen
+    /// (Geheimnisse eines abgeleiteten Images) bleibt die Datei der richtige Weg.
+    /// </summary>
+    private static readonly HashSet<string> DirectOnlySettings = new(StringComparer.Ordinal)
+    {
+        CurrentPrefix + "DATA_DIR",
+        CurrentPrefix + "WASI_HOST",
+    };
+
+    /// <summary>
+    /// Die Abhilfe, wenn der alte Wert nicht feststeht (unlesbare Datei, zwei alte Quellen):
+    /// beim alten mitgelieferten WASI-Host entfernen, sonst den gemeinten Wert neu benennen.
+    /// </summary>
+    private static string DescribeRemedy(string newName, string oldVariables)
+    {
+        var host = newName.EndsWith("_WASI_HOST", StringComparison.Ordinal)
+            ? $"Nannte der alte Wert den bis 0.12.0 mitgelieferten Host {WasiHostNames.LegacyBundledPath}: "
+                + $"{oldVariables} entfernen, das Image bringt den umbenannten Host selbst mit. Sonst: "
+            : string.Empty;
+        var target = DirectOnlySettings.Contains(newName)
+            ? $"den gemeinten Wert direkt unter {newName} setzen (nicht als {newName}_FILE — diese Einstellung "
+                + "wird nur direkt gelesen)"
+            : $"den gemeinten Wert unter {newName} setzen (ein Geheimnis als {newName}_FILE)";
+        var sentence = host + target + $" und {oldVariables} entfernen. Siehe docs/upgrade-faolan.md.";
+        return host.Length == 0 ? char.ToUpperInvariant(sentence[0]) + sentence[1..] : sentence;
+    }
 
     private static bool IsCurrentVariableName(string name)
     {

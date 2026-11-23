@@ -170,49 +170,16 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
     /// <c>doctor</c> (BFR-UP-0002).
     /// </para>
     /// </summary>
-    internal static bool NamesHost(string configured, string host)
-    {
-        if (string.IsNullOrWhiteSpace(configured))
-        {
-            return false;
-        }
-
-        return NamesHostExactly(configured, host)
-            || (WasiHostNames.UsesLegacyName(configured) && NamesHostExactly(WasiHostNames.Translate(configured), host));
-    }
+    internal static bool NamesHost(string configured, string host) => WasiHostNames.NamesHost(configured, host);
 
     /// <summary>
     /// Läuft dieser Verweis nur über die Brücke — nennt er den Host also unter dem alten Namen, und
     /// passt er genau genommen nicht? Das ist der Fall, den Start und <c>doctor</c> (BFR-UP-0002)
-    /// melden. Ein eigenes Programm, das wirklich <c>bifrost-wasi-host</c> heißt, ist keiner.
-    /// Ohne eingerichteten Host zählt allein der alte Name.
+    /// melden. Ein eigenes Programm, das wirklich <c>bifrost-wasi-host</c> heißt, ist keiner. Ohne
+    /// eingerichteten Host läuft kein WASI-Upstream; das ist dann auch keine Brücke (viertes Review).
     /// </summary>
     public static bool ReliesOnLegacyHostName(string? configured, string? host)
-    {
-        if (!WasiHostNames.UsesLegacyName(configured))
-        {
-            return false;
-        }
-
-        return host is null || (!NamesHostExactly(configured!, host) && NamesHost(configured!, host));
-    }
-
-    private static bool NamesHostExactly(string configured, string host)
-    {
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-
-        if (Path.GetFileName(configured) == configured)
-        {
-            // Nur ".exe" darf fehlen — GetFileNameWithoutExtension hielte unter Linux jeden Punkt im
-            // Namen für den Beginn einer Endung.
-            var hostName = Path.GetFileName(host);
-            return configured.Equals(hostName, comparison)
-                || (hostName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-                    && configured.Equals(hostName[..^4], comparison));
-        }
-
-        return Path.GetFullPath(configured).Equals(Path.GetFullPath(host), comparison);
-    }
+        => WasiHostNames.ReliesOnLegacyName(configured, host);
 
     /// <summary>
     /// Woher Component und Signatur kommen: aus einem installierten Paket (ADR-0016) oder aus

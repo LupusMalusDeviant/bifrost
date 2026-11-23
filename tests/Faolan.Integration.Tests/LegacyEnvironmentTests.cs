@@ -276,6 +276,44 @@ public sealed class LegacyEnvironmentTests
     }
 
     /// <summary>
+    /// Viertes Review: Für ein Geheimnis, das ein abgeleitetes Image vorgibt, ist die Datei der
+    /// richtige Weg — „nur direkt" gilt allein für Datenverzeichnis und WASI-Host.
+    /// </summary>
+    [Fact]
+    public void The_advice_for_an_unreadable_secret_file_allows_the_new_file_variable()
+    {
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(
+            Environment(
+                (EnvironmentNameChain.ImageDefaultsVariable, "FAOLAN_DB_CONNECTION=Host=db"),
+                ("FAOLAN_DB_CONNECTION", "Host=db"),
+                ("BIFROST_DB_CONNECTION_FILE", "/fehlt")),
+            path => throw new FileNotFoundException(path));
+
+        conflicts.Should().ContainSingle().Which.Should().Contain("als FAOLAN_DB_CONNECTION_FILE")
+            .And.NotContain("nur direkt gelesen");
+    }
+
+    /// <summary>
+    /// Viertes Review: Direkter Wert und Datei beim alten mitgelieferten WASI-Host — der Rat nennt
+    /// das Entfernen, nicht nur das Umbenennen auf einen Pfad, den es im Image nicht mehr gibt.
+    /// </summary>
+    [Fact]
+    public void Two_old_sources_for_the_wasi_host_get_the_advice_to_drop_them()
+    {
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(
+            Environment(
+                (EnvironmentNameChain.ImageDefaultsVariable, ImageDefaults),
+                ("FAOLAN_WASI_HOST", "/usr/local/bin/faolan-wasi-host"),
+                ("BIFROST_WASI_HOST", "/usr/local/bin/bifrost-wasi-host"),
+                ("BIFROST_WASI_HOST_FILE", "/run/secrets/host")),
+            _ => "/usr/local/bin/bifrost-wasi-host");
+
+        conflicts.Should().ContainSingle().Which.Should()
+            .Contain("BIFROST_WASI_HOST, BIFROST_WASI_HOST_FILE) entfernen, das Image bringt den umbenannten Host")
+            .And.Contain(WasiHostNames.LegacyBundledPath);
+    }
+
+    /// <summary>
     /// Drittes Review: Ein eigenes Programm, das zufällig <c>bifrost-wasi-host</c> heißt, ist nicht
     /// der mitgelieferte Host — der Rat zum Entfernen gälte dort nicht.
     /// </summary>
@@ -299,6 +337,8 @@ public sealed class LegacyEnvironmentTests
     [InlineData("FAOLAN_DATA_DIR =/data")]
     [InlineData(";;")]
     [InlineData("FAOLAN_data_dir=/data")]
+    [InlineData("")] // Viertes Review: ausdrücklich leer gesetzt schaltet die Prüfung nicht ab.
+    [InlineData("   ")]
     public void A_malformed_declaration_stops_the_start(string declaration)
     {
         var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(Environment(
