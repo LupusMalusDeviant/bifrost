@@ -242,11 +242,63 @@ public sealed class LegacyEnvironmentTests
         conflicts.Should().ContainSingle().Which.Should().Contain("nicht lesen");
     }
 
+    /// <summary>
+    /// Drittes Review: Der Rat bei unlesbarer Datei darf nicht auf <c>FAOLAN_DATA_DIR_FILE</c>
+    /// zeigen — das Datenverzeichnis wird nur direkt gelesen.
+    /// </summary>
+    [Fact]
+    public void The_advice_for_an_unreadable_file_names_the_direct_variable()
+    {
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(
+            Environment(
+                (EnvironmentNameChain.ImageDefaultsVariable, ImageDefaults),
+                ("FAOLAN_DATA_DIR", "/data"),
+                ("BIFROST_DATA_DIR_FILE", "/fehlt")),
+            path => throw new FileNotFoundException(path));
+
+        conflicts.Should().ContainSingle().Which.Should().Contain("direkt unter FAOLAN_DATA_DIR setzen");
+    }
+
+    /// <summary>Drittes Review: Direkter Wert und Datei derselben alten Generation — nicht raten.</summary>
+    [Fact]
+    public void A_direct_value_and_a_file_of_the_same_old_name_stop_the_start()
+    {
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(
+            Environment(
+                (EnvironmentNameChain.ImageDefaultsVariable, ImageDefaults),
+                ("FAOLAN_DATA_DIR", "/data"),
+                ("BIFROST_DATA_DIR", "/data"),
+                ("BIFROST_DATA_DIR_FILE", "/run/secrets/datadir")),
+            _ => "/srv/gateway");
+
+        conflicts.Should().ContainSingle().Which.Should()
+            .Contain("BIFROST_DATA_DIR und BIFROST_DATA_DIR_FILE").And.NotContain("/srv/gateway");
+    }
+
+    /// <summary>
+    /// Drittes Review: Ein eigenes Programm, das zufällig <c>bifrost-wasi-host</c> heißt, ist nicht
+    /// der mitgelieferte Host — der Rat zum Entfernen gälte dort nicht.
+    /// </summary>
+    [Fact]
+    public void A_custom_host_with_the_old_name_gets_the_advice_to_set_the_new_variable()
+    {
+        var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(Environment(
+            (EnvironmentNameChain.ImageDefaultsVariable, ImageDefaults),
+            ("FAOLAN_WASI_HOST", "/usr/local/bin/faolan-wasi-host"),
+            ("BIFROST_WASI_HOST", "/opt/vendor/bifrost-wasi-host")));
+
+        conflicts.Should().ContainSingle().Which.Should().Contain("unter FAOLAN_WASI_HOST setzen")
+            .And.NotContain("BIFROST_WASI_HOST entfernen, das Image");
+    }
+
     /// <summary>Review-Befund: Eine kaputte Deklaration darf die Prüfung nicht still abschalten.</summary>
     [Theory]
     [InlineData("FAOLAN_DATA_DIR:/data")]
     [InlineData("DATA_DIR=/data")]
     [InlineData("FAOLAN_=/data")]
+    [InlineData("FAOLAN_DATA_DIR =/data")]
+    [InlineData(";;")]
+    [InlineData("FAOLAN_data_dir=/data")]
     public void A_malformed_declaration_stops_the_start(string declaration)
     {
         var conflicts = EnvironmentNameChain.FindImageDefaultConflicts(Environment(

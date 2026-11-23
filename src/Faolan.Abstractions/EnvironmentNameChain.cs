@@ -155,18 +155,22 @@ static class EnvironmentNameChain
             return problems;
         }
 
-        foreach (var pair in declared.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        var entries = declared.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (entries.Length == 0)
+        {
+            // Gesetzt, aber ohne einen Eintrag: Das ist keine Aussage „keine Vorgaben", sondern eine
+            // kaputte Deklaration — sonst schaltete sie die Prüfung still ab.
+            problems.Add(MalformedDeclaration());
+            return problems;
+        }
+
+        foreach (var pair in entries)
         {
             var separator = pair.IndexOf('=', StringComparison.Ordinal);
             var newName = separator > 0 ? pair[..separator] : string.Empty;
-            if (separator <= 0
-                || !newName.StartsWith(CurrentPrefix, StringComparison.Ordinal)
-                || newName.Length == CurrentPrefix.Length)
+            if (!IsCurrentVariableName(newName))
             {
-                problems.Add(
-                    $"Start abgebrochen: {ImageDefaultsVariable} enthält einen Eintrag, der nicht die Form "
-                    + $"'{CurrentPrefix}NAME=Wert' hat. Ohne lesbare Deklaration lässt sich nicht prüfen, ob eine "
-                    + "Vorgabe des Images eine alte Einstellung verdeckt. Die Deklaration im Image berichtigen.");
+                problems.Add(MalformedDeclaration());
                 continue;
             }
 
@@ -182,16 +186,29 @@ static class EnvironmentNameChain
                 var oldName = LegacyPrefixes[generation] + suffix;
                 string? oldValue;
                 var shownName = oldName;
-                if (present.TryGetValue(oldName, out var direct))
+                var hasDirect = present.TryGetValue(oldName, out var direct);
+                var hasFile = present.TryGetValue(oldName + "_FILE", out var path);
+                if (hasDirect && hasFile)
                 {
-                    oldValue = direct;
+                    // Zwei Quellen derselben alten Einstellung: Welche gemeint ist, wird nicht geraten —
+                    // sonst entschiede die Reihenfolge der Prüfung, und eine Datei bliebe ungelesen.
+                    problems.Add(
+                        $"Start abgebrochen: {oldName} und {oldName}_FILE sind beide gesetzt. Das Image setzt "
+                        + $"{newName} selbst; welcher alte Wert gemeint ist, lässt sich nicht entscheiden. Den "
+                        + $"gemeinten Wert unter {newName} setzen und beide alten Variablen entfernen.");
+                    break;
                 }
-                else if (present.TryGetValue(oldName + "_FILE", out var path))
+
+                if (hasDirect)
+                {
+                    oldValue = direct!;
+                }
+                else if (hasFile)
                 {
                     shownName = oldName + "_FILE";
                     try
                     {
-                        oldValue = readFile(path).TrimEnd('\r', '\n');
+                        oldValue = readFile(path!).TrimEnd('\r', '\n');
                     }
 #pragma warning disable CA1031 // Jeder Lesefehler führt zum selben Ergebnis: Abbruch mit Namen.
                     catch (Exception)
@@ -200,7 +217,8 @@ static class EnvironmentNameChain
                         problems.Add(
                             $"Start abgebrochen: {shownName} ist gesetzt, die Datei lässt sich aber nicht lesen. "
                             + $"Das Image setzt {newName} selbst; ohne den alten Wert lässt sich nicht entscheiden, "
-                            + $"welcher gemeint ist. {newName} (oder {newName}_FILE) setzen und {shownName} entfernen.");
+                            + $"welcher gemeint ist. Den gemeinten Wert direkt unter {newName} setzen (nicht als "
+                            + $"{newName}_FILE — diese Einstellung wird nur direkt gelesen) und {shownName} entfernen.");
                         break;
                     }
                 }
@@ -221,6 +239,30 @@ static class EnvironmentNameChain
         return problems;
     }
 
+    private static string MalformedDeclaration()
+        => $"Start abgebrochen: {ImageDefaultsVariable} ist gesetzt, enthält aber keinen oder einen Eintrag, "
+            + $"der nicht die Form '{CurrentPrefix}NAME=Wert' hat (NAME nur aus A–Z, 0–9 und _). Ohne lesbare "
+            + "Deklaration lässt sich nicht prüfen, ob eine Vorgabe des Images eine alte Einstellung verdeckt. "
+            + "Die Deklaration im Image berichtigen.";
+
+    private static bool IsCurrentVariableName(string name)
+    {
+        if (!name.StartsWith(CurrentPrefix, StringComparison.Ordinal) || name.Length == CurrentPrefix.Length)
+        {
+            return false;
+        }
+
+        foreach (var character in name)
+        {
+            if (character is not ((>= 'A' and <= 'Z') or (>= '0' and <= '9') or '_'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static string DescribeConflict(string oldName, string newName, string oldValue)
     {
         var start = $"Start abgebrochen: {oldName} ist gesetzt und weicht von der Vorgabe ab, die das Image "
@@ -228,8 +270,10 @@ static class EnvironmentNameChain
             + "still die Vorgabe des Images. ";
 
         // Der alte Wert nennt den Host, den das Image bis 0.12.0 mitbrachte. Ihn unter dem neuen Namen
-        // zu setzen, zeigte auf ein Programm, das es im neuen Image nicht mehr gibt.
-        if (newName.EndsWith("_WASI_HOST", StringComparison.Ordinal) && WasiHostNames.UsesLegacyName(oldValue))
+        // zu setzen, zeigte auf ein Programm, das es im neuen Image nicht mehr gibt. Nur genau dieser
+        // Pfad: Ein eigenes Programm, das zufällig so heißt, liegt woanders und bleibt gemeint.
+        if (newName.EndsWith("_WASI_HOST", StringComparison.Ordinal)
+            && string.Equals(oldValue, WasiHostNames.LegacyBundledPath, StringComparison.Ordinal))
         {
             return start + $"Der alte Wert nennt den bis 0.12.0 mitgelieferten Host: {oldName} entfernen, das "
                 + "Image bringt den umbenannten Host selbst mit. Siehe docs/upgrade-faolan.md.";

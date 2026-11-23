@@ -163,7 +163,8 @@ public sealed class ServerDiagnosticContextFactory
             Database = _database,
             Upstreams = _upstreamProbe,
             // BFR-UP-0002: Gespeicherte Konfigurationen mit dem alten WASI-Hostnamen (Vertrag §2.3).
-            UpstreamsWithLegacyHostName = await UpstreamsWithLegacyHostNameAsync(_upstreams, ct).ConfigureAwait(false),
+            UpstreamsWithLegacyHostName = await UpstreamsWithLegacyHostNameAsync(
+                _upstreams, _configuration[Faolan.Upstream.Wasi.WasiRuntimeConnector.HostSettingName], ct).ConfigureAwait(false),
             // BFR-DB-0007: Was die Audit-Senke an Verlusten gezählt hat, gehört in den Bericht —
             // ein stiller Verlust ist genau das, was die Zusage "lückenloses Audit" bricht.
             Audit = _auditProbe,
@@ -180,20 +181,23 @@ public sealed class ServerDiagnosticContextFactory
     }
 
     /// <summary>
-    /// Die Slugs der Upstreams, deren letzte Konfiguration den WASI-Host unter dem alten Namen nennt.
+    /// Die Slugs der Upstreams, deren letzte Konfiguration den WASI-Host nur über die Brücke erreicht:
+    /// unter dem alten Namen, und ohne dass dieser genau auf den Host der Instanz passt. Ein eigenes
+    /// Programm, das wirklich so heißt, ist kein Fall dafür.
     /// <c>null</c>, wenn die Konfigurationen nicht lesbar sind — „nicht ermittelt" ist ehrlicher als
     /// „keiner". Auch der Start meldet diese Liste (Program.cs).
     /// </summary>
     internal static async Task<IReadOnlyList<string>?> UpstreamsWithLegacyHostNameAsync(
-        IUpstreamConfigStore store, CancellationToken ct)
+        IUpstreamConfigStore store, string? hostExecutable, CancellationToken ct)
     {
+        var host = string.IsNullOrWhiteSpace(hostExecutable) ? null : hostExecutable;
         try
         {
             var latest = await store.GetAllLatestAsync(ct).ConfigureAwait(false);
             return [.. latest.Values
                 .Select(version => version.Config)
                 .Where(config => config.Kind is UpstreamTransportKind.Wasi
-                    && WasiHostNames.UsesLegacyName(config.Wasi?.HostExecutable))
+                    && Faolan.Upstream.Wasi.WasiRuntimeConnector.ReliesOnLegacyHostName(config.Wasi?.HostExecutable, host))
                 .Select(config => config.Slug)
                 .Order(StringComparer.Ordinal)];
         }

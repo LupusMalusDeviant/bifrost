@@ -189,6 +189,14 @@ public sealed partial class UpstreamConnectionDiagnostics : IUpstreamConnectionD
         }
 
         var program = ProgramPathOf(config);
+
+        // Der alte Hostname bezeichnet den umbenannten Host (WasiHostNames, Vertrag §2.3) — aber nur,
+        // wenn es unter dem alten Pfad nichts gibt. Ein eigenes Programm, das so heißt, bleibt gemeint.
+        if (program is not null && config.Kind is UpstreamTransportKind.Wasi && Path.IsPathFullyQualified(program))
+        {
+            program = WasiHostNames.Resolve(program, _files.FileExists).Effective;
+        }
+
         if (program is null)
         {
             timeline.Skip(
@@ -565,9 +573,7 @@ public sealed partial class UpstreamConnectionDiagnostics : IUpstreamConnectionD
     {
         UpstreamTransportKind.Stdio => config.Stdio?.Command,
         UpstreamTransportKind.Cli => config.Cli?.Executable,
-        // Der alte Hostname bezeichnet den umbenannten Host (WasiHostNames, Vertrag §2.3) — geprüft
-        // wird das Programm, das der Connector tatsächlich nimmt, nicht der alte Pfad.
-        UpstreamTransportKind.Wasi => config.Wasi?.HostExecutable is { } host ? WasiHostNames.Translate(host) : null,
+        UpstreamTransportKind.Wasi => config.Wasi?.HostExecutable,
         _ => null,
     };
 

@@ -27,6 +27,30 @@ static class WasiHostNames
     /// <summary>Der Name des Hosts seit der Umbenennung.</summary>
     public const string Current = "faolan-wasi-host";
 
+    /// <summary>Wo das Image bis 0.12.0 den Host ablegte.</summary>
+    public const string LegacyBundledPath = "/usr/local/bin/" + Legacy;
+
+    /// <summary>
+    /// Welches Programm ein gespeicherter Verweis meint, gemessen an dem, was es gibt: Der Verweis
+    /// selbst, wenn er etwas Vorhandenes bezeichnet; sonst, beim alten Namen, der umbenannte Host. So
+    /// bleibt ein eigenes Programm, das wirklich <c>bifrost-wasi-host</c> heißt, gemeint.
+    /// </summary>
+    /// <param name="configured">Der gespeicherte Verweis.</param>
+    /// <param name="exists">Bezeichnet der Verweis ein vorhandenes Programm?</param>
+    /// <returns>Der wirksame Verweis und ob dafür der alte Name übersetzt werden musste.</returns>
+    public static (string Effective, bool Translated) Resolve(string configured, Func<string, bool> exists)
+    {
+        ArgumentNullException.ThrowIfNull(configured);
+        ArgumentNullException.ThrowIfNull(exists);
+        if (exists(configured) || !UsesLegacyName(configured))
+        {
+            return (configured, false);
+        }
+
+        var translated = Translate(configured);
+        return exists(translated) ? (translated, true) : (configured, false);
+    }
+
     /// <summary>
     /// Nennt <paramref name="configured"/> den Host unter seinem alten Namen? Unter Windows ohne
     /// Rücksicht auf Groß- und Kleinschreibung, wie der Dateiname dort auch.

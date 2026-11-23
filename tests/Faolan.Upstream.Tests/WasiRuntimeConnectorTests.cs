@@ -397,6 +397,38 @@ public class WasiRuntimeConnectorTests : IAsyncLifetime
         WasiRuntimeConnector.NamesHost("Bifrost-Wasi-Host", host).Should().Be(expected);
     }
 
+    /// <summary>
+    /// Drittes Review: Gemeldet (Start, BFR-UP-0002) wird nur, was wirklich über die Brücke läuft. Ein
+    /// eigener Host, der so heißt, passt genau und ist kein Fall dafür.
+    /// </summary>
+    [Fact]
+    public void Only_a_reference_that_needs_the_bridge_is_reported()
+    {
+        var root = OperatingSystem.IsWindows() ? @"C:\" : "/";
+        var vendorHost = Path.Combine(root, "opt", "vendor", "bifrost-wasi-host");
+        var imageHost = Path.Combine(root, "usr", "local", "bin", "faolan-wasi-host");
+        var oldImagePath = Path.Combine(root, "usr", "local", "bin", "bifrost-wasi-host");
+
+        WasiRuntimeConnector.ReliesOnLegacyHostName(vendorHost, vendorHost).Should().BeFalse("passt genau");
+        WasiRuntimeConnector.ReliesOnLegacyHostName(oldImagePath, imageHost).Should().BeTrue("nur über die Brücke");
+        WasiRuntimeConnector.ReliesOnLegacyHostName("bifrost-wasi-host", imageHost).Should().BeTrue();
+        WasiRuntimeConnector.ReliesOnLegacyHostName(imageHost, imageHost).Should().BeFalse("neuer Name");
+        WasiRuntimeConnector.ReliesOnLegacyHostName(oldImagePath, null).Should().BeTrue("ohne Host zählt der Name");
+    }
+
+    [Fact]
+    public void Resolve_keeps_an_existing_program_and_translates_only_a_missing_one()
+    {
+        var existing = new HashSet<string>(StringComparer.Ordinal) { "/opt/vendor/bifrost-wasi-host", "/usr/local/bin/faolan-wasi-host" };
+
+        WasiHostNames.Resolve("/opt/vendor/bifrost-wasi-host", existing.Contains)
+            .Should().Be(("/opt/vendor/bifrost-wasi-host", false));
+        WasiHostNames.Resolve("/usr/local/bin/bifrost-wasi-host", existing.Contains)
+            .Should().Be(("/usr/local/bin/faolan-wasi-host", true));
+        WasiHostNames.Resolve("/nirgends/bifrost-wasi-host", existing.Contains)
+            .Should().Be(("/nirgends/bifrost-wasi-host", false), "ohne Ziel bleibt der Verweis, wie er ist");
+    }
+
     /// <summary>Die Brücke lenkt nichts um: Der alte Name passt nur auf den umbenannten Host.</summary>
     [Theory]
     [InlineData("bifrost-wasi-host", "anderes-programm")]

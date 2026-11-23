@@ -625,7 +625,10 @@ if (await app.EnsureKeyRingUsableAsync() is { } keyRingExitCode)
 app.Lifetime.ApplicationStarted.Register(() => _ = Task.Run(async () =>
 {
     var legacyHostUpstreams = await Faolan.Server.Diagnostics.ServerDiagnosticContextFactory
-        .UpstreamsWithLegacyHostNameAsync(app.Services.GetRequiredService<IUpstreamConfigStore>(), app.Lifetime.ApplicationStopping)
+        .UpstreamsWithLegacyHostNameAsync(
+            app.Services.GetRequiredService<IUpstreamConfigStore>(),
+            app.Configuration[Faolan.Upstream.Wasi.WasiRuntimeConnector.HostSettingName],
+            app.Lifetime.ApplicationStopping)
         .ConfigureAwait(false);
     if (legacyHostUpstreams is { Count: > 0 })
     {

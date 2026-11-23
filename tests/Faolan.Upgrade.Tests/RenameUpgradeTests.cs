@@ -157,6 +157,61 @@ public sealed class RenameUpgradeTests
         }
     }
 
+    /// <summary>
+    /// Drittes Review: Die Brücke für den WASI-Hostnamen wird über den echten Weg gemeldet — eine
+    /// gespeicherte Konfiguration in der Datenbank, ein Neustart, die Warnung im Startlog und der
+    /// Befund BFR-UP-0002 im doctor-Bericht.
+    /// </summary>
+    [Fact]
+    public async Task A_saved_upstream_with_the_old_host_name_is_reported_at_start_and_in_doctor()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var dataDir = Directory.CreateTempSubdirectory("faolan-legacy-host").FullName;
+        try
+        {
+            var slug = "alt-host-" + Guid.NewGuid().ToString("N")[..8];
+            var environment = new Dictionary<string, string> { ["FAOLAN_DATA_DIR"] = dataDir };
+            var apiKey = await IssueApiKeyAsync(environment, ct);
+            await using (var first = await ServerProcess.StartAsync(environment, apiKey, ct))
+            {
+                var config = new UpstreamServerConfig(
+                    slug,
+                    "Alter Host",
+                    UpstreamTransportKind.Wasi,
+                    Enabled: false,
+                    Wasi: new WasiTransportOptions(
+                        "/usr/local/bin/bifrost-wasi-host",
+                        Path.Combine(dataDir, "c.wasm"),
+                        Path.Combine(dataDir, "c.sig"),
+                        []));
+                var created = await first.Client.PostAsJsonAsync("api/v1/servers", config, ct);
+                created.IsSuccessStatusCode.Should().BeTrue(await created.Content.ReadAsStringAsync(ct));
+            }
+
+            await using var second = await ServerProcess.StartAsync(environment, apiKey, ct);
+
+            // Die Warnung entsteht nach dem Start (die Migrationen laufen als Hosted Service).
+            var deadline = DateTime.UtcNow.AddSeconds(30);
+            while (!second.Output.Contains("BFR-UP-0002", StringComparison.Ordinal) && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(200, ct);
+            }
+
+            second.Output.Should().Contain("BFR-UP-0002").And.Contain(slug, "der Start nennt den Upstream");
+
+            var doctor = await second.Client.GetStringAsync("api/v1/operations/doctor", ct);
+            using var document = System.Text.Json.JsonDocument.Parse(doctor);
+            var finding = document.RootElement.GetProperty("checks").EnumerateArray()
+                .Single(check => check.GetProperty("code").GetString() == "BFR-UP-0002");
+            finding.GetProperty("status").GetString().Should().Be("Warning");
+            finding.GetRawText().Should().Contain(slug);
+        }
+        finally
+        {
+            TryDelete(dataDir);
+        }
+    }
+
     private static async Task<string> IssueApiKeyAsync(IReadOnlyDictionary<string, string> environment, CancellationToken ct)
     {
         var start = ServerProcess.StartInfo(environment);

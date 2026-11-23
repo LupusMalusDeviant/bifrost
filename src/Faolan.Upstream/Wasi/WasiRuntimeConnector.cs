@@ -181,6 +181,22 @@ public sealed class WasiRuntimeConnector : IUpstreamConnector
             || (WasiHostNames.UsesLegacyName(configured) && NamesHostExactly(WasiHostNames.Translate(configured), host));
     }
 
+    /// <summary>
+    /// Läuft dieser Verweis nur über die Brücke — nennt er den Host also unter dem alten Namen, und
+    /// passt er genau genommen nicht? Das ist der Fall, den Start und <c>doctor</c> (BFR-UP-0002)
+    /// melden. Ein eigenes Programm, das wirklich <c>bifrost-wasi-host</c> heißt, ist keiner.
+    /// Ohne eingerichteten Host zählt allein der alte Name.
+    /// </summary>
+    public static bool ReliesOnLegacyHostName(string? configured, string? host)
+    {
+        if (!WasiHostNames.UsesLegacyName(configured))
+        {
+            return false;
+        }
+
+        return host is null || (!NamesHostExactly(configured!, host) && NamesHost(configured!, host));
+    }
+
     private static bool NamesHostExactly(string configured, string host)
     {
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;

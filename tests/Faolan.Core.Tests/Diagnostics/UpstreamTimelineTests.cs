@@ -109,6 +109,27 @@ public class UpstreamTimelineTests
             "geprüft wird das Programm, das der Connector nimmt");
     }
 
+    /// <summary>
+    /// Drittes Review: Ein eigenes Programm, das wirklich <c>bifrost-wasi-host</c> heißt, wird geprüft,
+    /// wie es ist — nicht übersetzt auf einen Host, den es dort nicht gibt.
+    /// </summary>
+    [Fact]
+    public async Task Stufe3_Runtime_prueft_ein_eigenes_Programm_mit_altem_Namen_unuebersetzt()
+    {
+        var directory = OperatingSystem.IsWindows() ? @"C:\opt\vendor\" : "/opt/vendor/";
+        var suffix = OperatingSystem.IsWindows() ? ".exe" : string.Empty;
+        var files = new FakeFileProbe();
+        files.Files.Add(directory + "bifrost-wasi-host" + suffix);
+
+        var report = await RunAsync(
+            Wasi(directory + "bifrost-wasi-host" + suffix),
+            Ok(),
+            policy: HostExecutionPolicy.AllowedByOperator(),
+            files: files);
+
+        Outcome(report, UpstreamStage.Runtime).Should().Be(UpstreamStageOutcome.Passed);
+    }
+
     private static UpstreamServerConfig Wasi(string host) => new(
         "wasi", "WASI", UpstreamTransportKind.Wasi, true,
         Wasi: new WasiTransportOptions(

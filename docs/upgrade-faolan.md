@@ -138,7 +138,8 @@ gelten nicht mehr.
 > **anderen** Wert gesetzt hatte, bekäme sonst still die Vorgabe des Images — beim Datenverzeichnis
 > heißt das: eine leere Instanz. Stattdessen bricht der Start mit Exit-Code 2 ab und nennt beide
 > Variablen (nur die Namen, keine Werte). Das gilt auch für die Datei-Varianten
-> (`BIFROST_DATA_DIR_FILE`).
+> (`BIFROST_DATA_DIR_FILE`) und für den Fall, dass direkter Wert und Datei beide gesetzt sind.
+> Das Datenverzeichnis wird nur direkt gelesen: `FAOLAN_DATA_DIR` setzen, nicht `…_FILE`.
 >
 > Abhilfe:
 > - **Datenverzeichnis:** den Wert unter dem neuen Namen setzen (`FAOLAN_DATA_DIR=/srv/gateway`).
