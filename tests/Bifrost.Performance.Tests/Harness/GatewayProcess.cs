@@ -452,34 +452,42 @@ internal sealed class GatewayProcess : IAsyncDisposable
     /// <summary>
     /// Ein Port, der auf Loopback und auf jeder zusätzlichen Adresse frei ist. Belegt ihn auf einer
     /// zusätzlichen Adresse schon jemand, wird ein neuer gezogen — sonst bräche der Gateway erst
-    /// beim Start mit einem Bindungsfehler ab.
+    /// beim Start mit einem Bindungsfehler ab. Findet sich nach 20 Versuchen keiner, bricht das
+    /// Gerüst mit der Adresse und dem Fehler der letzten Probe ab.
     /// </summary>
     private static int FreeTcpPort(IReadOnlyList<IPAddress> additional)
     {
-        for (var attempt = 0; ; attempt++)
+        const int attempts = 20;
+        string? lastFailure = null;
+        for (var attempt = 0; attempt < attempts; attempt++)
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
             var port = ((IPEndPoint)listener.LocalEndpoint).Port;
             listener.Stop();
 
-            if (additional.All(address => IsFree(address, port)) || attempt >= 20)
+            lastFailure = additional.Select(address => Probe(address, port)).FirstOrDefault(failure => failure is not null);
+            if (lastFailure is null)
             {
                 return port;
             }
         }
 
-        static bool IsFree(IPAddress address, int port)
+        throw new InvalidOperationException(
+            $"Kein Port gefunden, der auf Loopback und auf {string.Join(", ", additional)} frei ist "
+            + $"({attempts} Versuche). Letzter Fehler: {lastFailure}");
+
+        static string? Probe(IPAddress address, int port)
         {
             var probe = new TcpListener(address, port);
             try
             {
                 probe.Start();
-                return true;
+                return null;
             }
-            catch (SocketException)
+            catch (SocketException exception)
             {
-                return false;
+                return $"{address}:{port} — {exception.Message}";
             }
             finally
             {

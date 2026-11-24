@@ -339,21 +339,22 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// <b>Auswertungsfehler gehören ausdrücklich nicht hierher.</b> Ob ein unauflösbarer
     /// <c>$ref</c> überhaupt erreicht wird, hängt an den Argumenten (<c>properties</c>,
     /// <c>anyOf</c>, <c>if/then</c> werten nur aus, was die Instanz berührt). Gemerkt, schaltete ein
-    /// einziger Aufruf mit dem passenden Feld die Prüfung für alle Aufrufer ab (Review-Befund H1);
-    /// ausgewertet wird deshalb bei jedem Aufruf, nur die Logzeile entsteht einmal
-    /// (<see cref="LoggedEvaluationFailures"/>).
+    /// einziger Aufruf mit dem passenden Feld die Prüfung für alle Aufrufer ab (Review-Befund H1).
+    /// Ein Aufruf, dessen Auswertung wirft, wird abgewiesen; siehe <see cref="ValidateArguments"/>.
     /// </para>
     /// </summary>
     internal static readonly System.Runtime.CompilerServices.ConditionalWeakTable<CatalogEntry, string>
         UnusableSchemas = new();
 
     /// <summary>
-    /// Welche Art Auswertungsfehler je Eintrag schon im Log steht. Gegen das Fluten des Logs durch
-    /// einen Upstream, dessen Schema bei jeder Auswertung wirft — ohne an der Prüfung selbst etwas zu
-    /// ändern.
+    /// Welche Auswertungsfehler (Art und Meldung) je Eintrag dieser Invoker schon geloggt hat. Gegen
+    /// das Fluten des Logs durch einen Upstream, dessen Schema bei jeder Auswertung wirft. Die
+    /// Meldung gehört zum Schlüssel, damit zwei verschiedene unauflösbare Verweise beide im Log
+    /// stehen; sie nennt den Verweis aus dem Schematext und bleibt damit je Eintrag endlich. Je
+    /// Instanz, damit ein zweiter Invoker mit eigenem Logger seine Zeile selbst schreibt.
     /// </summary>
-    internal static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
-        CatalogEntry, System.Collections.Concurrent.ConcurrentDictionary<Type, byte>> LoggedEvaluationFailures = new();
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        CatalogEntry, System.Collections.Concurrent.ConcurrentDictionary<string, byte>> _loggedEvaluationFailures = new();
 
     /// <summary>Ein leeres Argumentobjekt, einmal geparst statt je Aufruf ohne Argumente.</summary>
     private static readonly JsonElement EmptyArguments = ParseEmptyObject();
@@ -376,10 +377,9 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// auf das <c>$id</c> eines <i>anderen</i> Werkzeugs löst nicht mehr auf — früher gelang das nur,
     /// wenn jenes zufällig schon aufgerufen worden war, und nur, solange nichts im Produkt Schemata
     /// global ablegt. Gebaut wird ein solches Schema noch; erst die Auswertung wirft
-    /// <c>RefResolutionException</c>, und nur, wenn die Argumente den Verweis erreichen. Das fällt
-    /// für diesen einen Aufruf in den R3-Ausweichweg: Er läuft ungeprüft durch, die Ursache steht
-    /// einmal je Katalogeintrag im Log. Aufrufe, die den Verweis nicht erreichen, werden weiter
-    /// geprüft und abgewiesen.
+    /// <c>RefResolutionException</c>, und nur, wenn die Argumente den Verweis erreichen. Ein solcher
+    /// Aufruf wird abgewiesen (siehe <see cref="ValidateArguments"/>); Aufrufe, die den Verweis nicht
+    /// erreichen, werden normal geprüft.
     /// Dafür überschreiben sich zwei Werkzeuge mit demselben <c>$id</c> nicht mehr gegenseitig.
     /// </para>
     /// </summary>
@@ -388,7 +388,17 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
             entry.InputSchema.GetRawText(),
             new BuildOptions { SchemaRegistry = new SchemaRegistry() });
 
-    /// <summary>Serverseitige Argument-Validierung — Pflicht für den Lazy-Pfad ohne Client-Schema (ADR-0003).</summary>
+    /// <summary>
+    /// Serverseitige Argument-Validierung — Pflicht für den Lazy-Pfad ohne Client-Schema (ADR-0003).
+    /// <para>
+    /// <b>Zwei Ausweichwege, verschieden entschieden (2026-11-24).</b> Ein Schema, das sich nicht
+    /// <i>bauen</i> lässt, hängt allein am Upstream: R3, der Aufruf läuft ungeprüft durch und die
+    /// Ursache steht im Log. Ein Schema, das sich baut, aber bei der <i>Auswertung</i> wirft (etwa
+    /// ein unauflösbarer <c>$ref</c>), weist den Aufruf ab. Ob die Auswertung wirft, wählt der
+    /// Aufrufer mit seinen Argumenten; liesse sie durch, bräuchte er nur das passende Feld
+    /// mitzuschicken, und jedes andere Feld des Aufrufs bliebe ungeprüft.
+    /// </para>
+    /// </summary>
     private string? ValidateArguments(CatalogEntry entry, JsonElement args)
     {
         if (entry.InputSchema.ValueKind is not JsonValueKind.Object)
@@ -429,15 +439,14 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         }
         catch (Exception ex)
         {
-            // R3 für diesen Aufruf. Nicht gemerkt: Ob die Auswertung wirft, hängt an den Argumenten
-            // (ein $ref, den nur ein bestimmtes Feld erreicht). Nur die Logzeile kommt einmal je
-            // Eintrag und Fehlerart.
-            if (LoggedEvaluationFailures.GetOrCreateValue(entry).TryAdd(ex.GetType(), 0))
+            // Abweisen statt durchlassen, und nicht gemerkt: Ob die Auswertung wirft, hängt an den
+            // Argumenten. Die Logzeile kommt einmal je Eintrag, Fehlerart und Meldung.
+            if (_loggedEvaluationFailures.GetOrCreateValue(entry).TryAdd($"{ex.GetType().FullName}: {ex.Message}", 0))
             {
-                Log.SchemaUnparseable(_logger, entry.Name.Value, ex.Message);
+                Log.SchemaNotEvaluable(_logger, entry.Name.Value, ex.Message);
             }
 
-            return null;
+            return $"Argument-Validierung fehlgeschlagen — das Schema des Werkzeugs lässt sich für diese Argumente nicht auswerten ({ex.Message}).";
         }
     }
 
@@ -625,6 +634,10 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         [LoggerMessage(Level = LogLevel.Warning,
             Message = "Schema von {Tool} nicht validierbar ({Reason}) — Call wird ohne Validierung durchgelassen (R3-Fallback).")]
         public static partial void SchemaUnparseable(ILogger logger, string tool, string reason);
+
+        [LoggerMessage(Level = LogLevel.Warning,
+            Message = "Schema von {Tool} nicht auswertbar ({Reason}) — Call wird abgewiesen.")]
+        public static partial void SchemaNotEvaluable(ILogger logger, string tool, string reason);
 
         [LoggerMessage(Level = LogLevel.Error,
             Message = "Unerwarteter Fehler in der Invoker-Pipeline für {Tool}: {Types}.")]

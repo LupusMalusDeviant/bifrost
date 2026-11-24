@@ -383,6 +383,18 @@ public sealed class ReverseProxyHopTests
                             + "kanonisches Subnetz, das dieses Gateway enthält.");
                     }
 
+                    // Spricht docker mit einem anderen Daemon (DOCKER_HOST, docker context, rootless),
+                    // liegt dieses Gateway nicht auf diesem Rechner; der Gateway könnte dort nicht
+                    // lauschen und bräche mit "Cannot assign requested address" ab.
+                    if (!IsLocalAddress(gateway))
+                    {
+                        var reason =
+                            $"Das Gateway {gateway} des Docker-Netzes 'bridge' ist keine Adresse dieses Rechners — "
+                            + "docker spricht vermutlich mit einem entfernten oder rootless Daemon (DOCKER_HOST, docker context).";
+                        Assert.SkipUnless(ContainerRequired, reason);
+                        throw new InvalidOperationException(reason);
+                    }
+
                     return new ContainerBridge([gateway], subnet.ToString());
                 }
             }
@@ -395,4 +407,9 @@ public sealed class ReverseProxyHopTests
 
     private static bool ContainerRequired
         => Environment.GetEnvironmentVariable("BIFROST_REQUIRE_CONTAINER") is "1" or "true";
+
+    private static bool IsLocalAddress(IPAddress address)
+        => System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+            .SelectMany(nic => nic.GetIPProperties().UnicastAddresses)
+            .Any(unicast => unicast.Address.Equals(address));
 }

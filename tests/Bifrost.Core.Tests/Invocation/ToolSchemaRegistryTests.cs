@@ -145,11 +145,11 @@ public sealed class ToolSchemaRegistryTests
     /// <summary>
     /// Review-Befund L1: Ein Verweis auf das Schema eines anderen Werkzeugs löst nicht auf. Gebaut
     /// wird das Schema noch; erst die Auswertung wirft <see cref="RefResolutionException"/>. Über den
-    /// Aufrufweg heißt das: R3-Ausweichweg, der Aufruf läuft ungeprüft durch, statt abgewiesen zu
-    /// werden. Früher hing das davon ab, ob das andere Werkzeug schon gerufen war.
+    /// Aufrufweg heißt das seit der fünften Runde: abgewiesen, nicht ungeprüft durchgelassen.
+    /// Früher hing das davon ab, ob das andere Werkzeug schon gerufen war.
     /// </summary>
     [Fact]
-    public async Task A_reference_to_another_tools_schema_does_not_resolve_and_falls_back()
+    public async Task A_reference_to_another_tools_schema_does_not_resolve_and_is_rejected()
     {
         const string referencing =
             """{"type":"object","properties":{"message":{"$ref":"https://example.invalid/common#/$defs/y"}}}""";
@@ -168,7 +168,7 @@ public sealed class ToolSchemaRegistryTests
         {
             var result = await invoker.InvokeAsync(
                 InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct);
-            result.Status.Should().Be(InvocationStatus.Success, "R3: nicht auswertbar heißt durchlassen und loggen");
+            result.Status.Should().Be(InvocationStatus.ValidationFailed, "nicht auswertbar heißt abweisen");
         }
 
         // Review-Befund (dritte Runde): Grund und Werkzeug stehen im Log — einmal, nicht je Aufruf.
@@ -180,13 +180,14 @@ public sealed class ToolSchemaRegistryTests
     }
 
     /// <summary>
-    /// Review-Befund H1 (vierte Runde): Ob ein unauflösbarer Verweis erreicht wird, hängt an den
-    /// Argumenten. Ein Aufruf, der ihn erreicht, darf die Prüfung nicht für alle folgenden Aufrufe
-    /// abschalten — sonst genügte einem Aufrufer ein passendes Feld, und danach liefe jeder
-    /// fehlerhafte Aufruf ungeprüft zum Upstream.
+    /// Review-Befunde H1 (vierte Runde) und M1 (fünfte Runde): Ob ein unauflösbarer Verweis erreicht
+    /// wird, wählt der Aufrufer mit seinen Argumenten. Ein Aufruf, der ihn erreicht, wird abgewiesen
+    /// — auch dann, wenn ein <i>anderes</i> Feld ungültig ist; liesse er durch, schmuggelte das
+    /// passende Feld jeden fehlerhaften Wert zum Upstream. Und er schaltet die Prüfung für die
+    /// folgenden Aufrufe nicht ab.
     /// </summary>
     [Fact]
-    public async Task A_call_that_reaches_an_unresolvable_reference_does_not_switch_off_validation()
+    public async Task A_call_that_reaches_an_unresolvable_reference_is_rejected_and_does_not_switch_off_validation()
     {
         const string schema =
             """{"type":"object","required":["id"],"properties":{"id":{"type":"integer"},"extra":{"$ref":"https://other.invalid/x"}}}""";
@@ -200,15 +201,52 @@ public sealed class ToolSchemaRegistryTests
         {
             var reaching = await invoker.InvokeAsync(
                 InvokerTestWorld.Request(admin, world.Echo, new { id = 1, extra = 1 }), ct);
-            reaching.Status.Should().Be(InvocationStatus.Success, "R3 für den Aufruf, der den Verweis erreicht");
+            reaching.Status.Should().Be(InvocationStatus.ValidationFailed, "der Verweis lässt sich nicht auswerten");
+
+            var smuggling = await invoker.InvokeAsync(
+                InvokerTestWorld.Request(admin, world.Echo, new { id = "abc", extra = 1 }), ct);
+            smuggling.Status.Should().Be(InvocationStatus.ValidationFailed,
+                "das Feld mit dem Verweis darf das ungültige id nicht an der Prüfung vorbeiführen");
 
             var invalid = await invoker.InvokeAsync(
                 InvokerTestWorld.Request(admin, world.Echo, new { id = "abc" }), ct);
             invalid.Status.Should().Be(InvocationStatus.ValidationFailed,
                 "ein Aufruf, der den Verweis nicht erreicht, wird weiter geprüft");
+
+            var valid = await invoker.InvokeAsync(
+                InvokerTestWorld.Request(admin, world.Echo, new { id = 1 }), ct);
+            valid.Status.Should().Be(InvocationStatus.Success, "ohne den Verweis ist das Werkzeug nutzbar");
         }
 
         log.Lines.Should().ContainSingle("der Grund steht einmal im Log, nicht je Aufruf");
+    }
+
+    /// <summary>
+    /// Review-Befund L1 (fünfte Runde): Zwei verschiedene unauflösbare Verweise im selben Schema
+    /// stehen beide im Log — je einmal.
+    /// </summary>
+    [Fact]
+    public async Task Two_different_unresolvable_references_are_logged_once_each()
+    {
+        const string schema =
+            """{"type":"object","properties":{"a":{"$ref":"https://first.invalid/a"},"b":{"$ref":"https://second.invalid/b"}}}""";
+        var world = new InvokerTestWorld(echoSchema: schema);
+        var admin = world.RegisterAdmin();
+        var log = new CapturingLogger();
+        var invoker = world.WithLogger(log);
+        var ct = TestContext.Current.CancellationToken;
+
+        for (var call = 0; call < 5; call++)
+        {
+            (await invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { a = 1 }), ct))
+                .Status.Should().Be(InvocationStatus.ValidationFailed);
+            (await invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { b = 1 }), ct))
+                .Status.Should().Be(InvocationStatus.ValidationFailed);
+        }
+
+        log.Lines.Should().HaveCount(2);
+        log.Lines.Should().ContainSingle(line => line.Contains("https://first.invalid/a"));
+        log.Lines.Should().ContainSingle(line => line.Contains("https://second.invalid/b"));
     }
 
     /// <summary>
