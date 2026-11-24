@@ -143,22 +143,55 @@ public sealed class ToolSchemaRegistryTests
     }
 
     /// <summary>
-    /// Review-Befund L1: Ein Verweis auf das Schema eines anderen Werkzeugs löst nicht auf. Der Bau
-    /// scheitert, und der Aufruf geht über den R3-Ausweichweg — ungeprüft durch, mit Logzeile —
-    /// statt abgewiesen zu werden. Früher hing das davon ab, ob das andere Werkzeug schon gerufen war.
+    /// Review-Befund L1: Ein Verweis auf das Schema eines anderen Werkzeugs löst nicht auf. Gebaut
+    /// wird das Schema noch; erst die Auswertung wirft <see cref="RefResolutionException"/>. Über den
+    /// Aufrufweg heißt das: R3-Ausweichweg, der Aufruf läuft ungeprüft durch, statt abgewiesen zu
+    /// werden. Früher hing das davon ab, ob das andere Werkzeug schon gerufen war.
     /// </summary>
     [Fact]
-    public void A_reference_to_another_tools_schema_does_not_resolve()
+    public async Task A_reference_to_another_tools_schema_does_not_resolve_and_falls_back()
     {
-        ToolInvoker.BuildSchema(Entry(
-            """{"$id":"https://example.invalid/common","$defs":{"y":{"type":"string"}}}"""));
+        const string referencing =
+            """{"type":"object","properties":{"message":{"$ref":"https://example.invalid/common#/$defs/y"}}}""";
 
-        var referencing = Entry(
-            """{"type":"object","properties":{"x":{"$ref":"https://example.invalid/common#/$defs/y"}}}""");
-        var build = () => ToolInvoker.BuildSchema(referencing).Evaluate(
-            JsonDocument.Parse("""{"x":1}""").RootElement);
+        var evaluate = () => ToolInvoker.BuildSchema(Entry(referencing))
+            .Evaluate(JsonDocument.Parse("""{"message":"hi"}""").RootElement);
+        evaluate.Should().Throw<RefResolutionException>();
 
-        build.Should().Throw<Exception>("ein fremder Verweis bleibt unaufgelöst; ValidateArguments fängt das ab");
+        var world = new InvokerTestWorld(echoSchema: referencing);
+        var admin = world.RegisterAdmin();
+        var result = await world.Invoker.InvokeAsync(
+            InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), TestContext.Current.CancellationToken);
+        result.Status.Should().Be(InvocationStatus.Success, "R3: nicht auswertbar heißt durchlassen und loggen");
+    }
+
+    /// <summary>
+    /// Review-Befund M2: Schemas mit ausdrücklichem <c>$schema</c>. Die eigene Registry fällt für die
+    /// Meta-Schemata auf die globale zurück; bräche das, liefe jeder Aufruf eines solchen Werkzeugs
+    /// still über den R3-Ausweichweg — und kein anderer Test fiele auf. Je Draft ein Schlüsselwort,
+    /// das es nur dort gibt, über den echten Aufrufweg.
+    /// </summary>
+    [Theory]
+    [InlineData("http://json-schema.org/draft-07/schema#", "items")]
+    [InlineData("https://json-schema.org/draft/2019-09/schema", "items")]
+    [InlineData("https://json-schema.org/draft/2020-12/schema", "prefixItems")]
+    public async Task Schemas_of_each_draft_still_reject_invalid_arguments(string dialect, string tupleKeyword)
+    {
+        var schema = "{\"$schema\":\"" + dialect + "\",\"type\":\"object\",\"required\":[\"message\",\"pair\"],"
+            + "\"properties\":{\"message\":{\"type\":\"string\"},\"pair\":{\"type\":\"array\",\""
+            + tupleKeyword + "\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}}}";
+        var world = new InvokerTestWorld(echoSchema: schema);
+        var admin = world.RegisterAdmin();
+        var ct = TestContext.Current.CancellationToken;
+
+        var valid = await world.Invoker.InvokeAsync(
+            InvokerTestWorld.Request(admin, world.Echo, new { message = "hi", pair = new object[] { "a", 1 } }), ct);
+        var invalid = await world.Invoker.InvokeAsync(
+            InvokerTestWorld.Request(admin, world.Echo, new { message = "hi", pair = new object[] { 1, "a" } }), ct);
+
+        valid.Status.Should().Be(InvocationStatus.Success);
+        invalid.Status.Should().Be(InvocationStatus.ValidationFailed,
+            "das Tupel-Schlüsselwort des Drafts muss greifen; sonst wäre der Aufruf über R3 ungeprüft durchgelaufen");
     }
 
     [Fact]

@@ -76,7 +76,8 @@ internal sealed class InvokerTestWorld
 
     public InvokerTestWorld(
         bool echoRequiresApproval = false,
-        bool echoSensitive = false)
+        bool echoSensitive = false,
+        string? echoSchema = null)
     {
         Authorization = new AuthorizationService(Directory);
         Server = Supervisor.SetServer(Slug, new UpstreamInventory(
@@ -84,7 +85,7 @@ internal sealed class InvokerTestWorld
                 new ToolDescriptor(
                     "echo",
                     "Echoes a message back.",
-                    StrictSchema(echoSensitive),
+                    echoSchema is null ? StrictSchema(echoSensitive) : Parse(echoSchema),
                     echoRequiresApproval ? CapabilityRisk.Destructive : CapabilityRisk.Read,
                     echoRequiresApproval),
                 new ToolDescriptor("free", "Tool ohne verwertbares Schema.", BrokenSchema()),
@@ -156,6 +157,12 @@ internal sealed class InvokerTestWorld
         var schema = sensitive
             ? """{"type":"object","properties":{"message":{"type":"string","writeOnly":true}},"required":["message"]}"""
             : """{"type":"object","properties":{"message":{"type":"string"}},"required":["message"]}""";
+        using var doc = JsonDocument.Parse(schema);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement Parse(string schema)
+    {
         using var doc = JsonDocument.Parse(schema);
         return doc.RootElement.Clone();
     }

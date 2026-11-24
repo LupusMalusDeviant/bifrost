@@ -337,14 +337,20 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// hierher bei jedem Werkzeugaufruf — das war das Speicherwachstum des Soak-Nachtlaufs: rund
     /// 700 Bytes je Aufruf, 269 → 3768 MB in vier Stunden.
     /// <para>
-    /// <b>Folge für Verweise:</b> Verweise innerhalb des Schemas (<c>#/$defs/…</c>, ein eigenes
-    /// <c>$id</c>) lösen wie bisher auf. Ein <c>$ref</c> auf das <c>$id</c> eines <i>anderen</i>
-    /// Werkzeugs löst nicht mehr auf — früher gelang das nur, wenn jenes zufällig schon aufgerufen
-    /// worden war. Ein solches Schema lässt sich nicht bauen und fällt in den R3-Ausweichweg: Der
-    /// Aufruf läuft ungeprüft durch, die Ursache steht im Log. Dafür überschreiben sich zwei
-    /// Werkzeuge mit demselben <c>$id</c> nicht mehr gegenseitig.
+    /// <b>Folge für Verweise:</b> Die eigene Registry fällt beim Nachschlagen auf die globale
+    /// zurück; so lösen die Meta-Schemata der Drafts (<c>$schema</c>) weiter auf. Verweise innerhalb
+    /// des Schemas (<c>#/$defs/…</c>, ein eigenes <c>$id</c>) lösen wie bisher auf. Ein <c>$ref</c>
+    /// auf das <c>$id</c> eines <i>anderen</i> Werkzeugs löst nicht mehr auf — früher gelang das nur,
+    /// wenn jenes zufällig schon aufgerufen worden war, und nur, solange nichts im Produkt Schemata
+    /// global ablegt. Gebaut wird ein solches Schema noch; erst die Auswertung wirft
+    /// <c>RefResolutionException</c>. Das fällt in den R3-Ausweichweg: Der Aufruf läuft ungeprüft
+    /// durch, die Ursache steht bei jedem Aufruf im Log. Dafür überschreiben sich zwei Werkzeuge mit
+    /// demselben <c>$id</c> nicht mehr gegenseitig.
     /// </para>
     /// </summary>
+    /// <summary>Ein leeres Argumentobjekt, einmal geparst statt je Aufruf ohne Argumente.</summary>
+    private static readonly JsonElement EmptyArguments = JsonDocument.Parse("{}").RootElement.Clone();
+
     internal static JsonSchema BuildSchema(CatalogEntry entry)
         => JsonSchema.FromText(
             entry.InputSchema.GetRawText(),
@@ -370,9 +376,7 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
 
         try
         {
-            var instance = args.ValueKind is JsonValueKind.Undefined
-                ? JsonDocument.Parse("{}").RootElement
-                : args;
+            var instance = args.ValueKind is JsonValueKind.Undefined ? EmptyArguments : args;
             var evaluation = schema.Evaluate(instance, new EvaluationOptions { OutputFormat = OutputFormat.List });
             if (evaluation.IsValid)
             {

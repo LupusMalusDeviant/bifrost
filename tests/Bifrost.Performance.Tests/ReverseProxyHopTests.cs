@@ -53,19 +53,18 @@ public sealed class ReverseProxyHopTests
         await RequireRuntimeAsync();
 
         var ct = TestContext.Current.CancellationToken;
+        var bridge = await ContainerBridgeAsync(ct);
 
-        // 'any' ist hier zulässig und sonst nicht: Diese Instanz steht in einem Testlauf, und die
-        // Zeile im Diagnosebericht (BFR-NET-0003) sagt genau das — jedem Absender wird geglaubt.
         await using var gateway = await GatewayProcess.StartAsync(
             new GatewayProcessOptions(
                 Transport: GatewayTransport.Http,
                 Environment: new Dictionary<string, string>(StringComparer.Ordinal)
                 {
-                    ["BIFROST_TRUSTED_PROXIES"] = "any",
+                    ["BIFROST_TRUSTED_PROXIES"] = bridge.TrustedProxies,
                 },
                 // Der Container muss den Gateway erreichen; auf Loopback allein geht das unter Linux
                 // nicht (seit Oktober jeden Montag eine Stunde Hänger im geplanten ci-Lauf).
-                AdditionalListenAddresses: await ContainerFacingAddressesAsync(TestContext.Current.CancellationToken)),
+                AdditionalListenAddresses: bridge.ListenAddresses),
             ct);
 
         await gateway.AddStdioUpstreamAsync("slow", "SlowServer", ct);
@@ -121,7 +120,7 @@ public sealed class ReverseProxyHopTests
     /// </summary>
     private static async Task RequireRuntimeAsync()
     {
-        var required = Environment.GetEnvironmentVariable("BIFROST_REQUIRE_CONTAINER") is "1" or "true";
+        var required = ContainerRequired;
         try
         {
             var probe = new ContainerBuilder("nginx:1.27-alpine").WithCommand("true").Build();
@@ -153,7 +152,7 @@ public sealed class ReverseProxyHopTests
     /// aus, als hinge er.
     /// </para>
     /// </summary>
-    private static async Task<IContainer> StartNginxAsync(int gatewayPort, CancellationToken ct)
+    private async Task<IContainer> StartNginxAsync(int gatewayPort, CancellationToken ct)
     {
         var configuration = $$"""
             events {}
@@ -208,7 +207,7 @@ public sealed class ReverseProxyHopTests
             // Jeder Startfehler, nicht nur die Zeitüberschreitung: nginx kann auch sofort enden
             // ("host not found in upstream"). Das Log ist dann die einzige Auskunft.
             var log = await ReadLogAsync(container);
-            await container.DisposeAsync();
+            await DisposeQuietlyAsync(container);
             throw new InvalidOperationException(
                 $"nginx kam nicht in Betrieb ({exception.GetType().Name}: {exception.Message}). Erwartet: "
                 + $"/healthz bis zum Gateway auf {HostAlias}:{gatewayPort} binnen {ReadinessTimeout.TotalSeconds:F0} s, "
@@ -218,7 +217,7 @@ public sealed class ReverseProxyHopTests
         catch
         {
             // Abbruch durch den Testlauf: aufräumen, nicht umdeuten.
-            await container.DisposeAsync();
+            await DisposeQuietlyAsync(container);
             throw;
         }
         finally
@@ -254,36 +253,105 @@ public sealed class ReverseProxyHopTests
     }
 
     /// <summary>
-    /// Die Adresse, unter der ein Container den Rechner über <c>host-gateway</c> erreicht — nur unter
-    /// Linux nötig. Dort ist es das Gateway des Docker-Standardnetzes, an dem der Test zusätzlich zu
-    /// <c>127.0.0.1</c> lauscht. Nicht <c>0.0.0.0</c>: Damit wäre der Gateway mit
-    /// <c>BIFROST_TRUSTED_PROXIES=any</c> für die Dauer des Tests aus dem ganzen Netz erreichbar, und
-    /// jeder Absender könnte sich per <c>X-Forwarded-For</c> als Loopback ausgeben. Docker Desktop
-    /// leitet <c>host-gateway</c> dagegen auf die Loopback-Adresse des Rechners weiter.
+    /// Aufräumen, ohne den eigentlichen Fehler zu verdecken: Ist Docker im selben Moment weg, wäre
+    /// sonst die Ausnahme des Aufräumens die einzige, die jemand zu sehen bekommt.
     /// </summary>
-    private static async Task<IReadOnlyList<IPAddress>> ContainerFacingAddressesAsync(CancellationToken ct)
+    private async Task DisposeQuietlyAsync(IContainer container)
+    {
+        try
+        {
+            await container.DisposeAsync();
+        }
+#pragma warning disable CA1031 // Der Startfehler ist die Auskunft; das Aufräumen wird nur vermerkt.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            _output.WriteLine($"nginx-Container liess sich nicht aufräumen: {exception.Message}");
+        }
+    }
+
+    /// <summary>Wie der Testgateway für einen Container erreichbar ist und wem er Forwarded-Header glaubt.</summary>
+    private sealed record ContainerBridge(IReadOnlyList<IPAddress> ListenAddresses, string TrustedProxies);
+
+    /// <summary>
+    /// Unter Linux: das IPv4-Gateway des Docker-Netzes <c>bridge</c> — dorthin zeigt
+    /// <c>host-gateway</c> —, an dem der Test zusätzlich zu <c>127.0.0.1</c> lauscht, und dessen
+    /// Subnetz als einzige vertrauenswürdige Proxy-Quelle.
+    /// <para>
+    /// <b>Was das abgrenzt und was nicht.</b> Erreichbar ist der Testgateway damit vom Rechner selbst
+    /// und aus Containern im Netz <c>bridge</c>. Linux nimmt Pakete für jede eigene Adresse auf jeder
+    /// Schnittstelle an; ein Nachbar mit einer Route auf das Docker-Subnetz käme also ebenfalls an.
+    /// Deshalb glaubt der Gateway Forwarded-Header nur Absendern aus dem Docker-Subnetz statt
+    /// <c>any</c> — ein solcher Nachbar kann sich nicht als Loopback ausgeben. Den Zugang selbst
+    /// schützt weiter der zur Laufzeit erzeugte API-Schlüssel.
+    /// </para>
+    /// <para>
+    /// Docker Desktop (Windows, macOS) leitet <c>host-gateway</c> auf die Loopback-Adresse des
+    /// Rechners weiter. Dort lauscht der Gateway nur auf <c>127.0.0.1</c>; erreichen können ihn nur
+    /// Prozesse dieses Rechners, und <c>any</c> glaubt damit nur ihnen.
+    /// </para>
+    /// </summary>
+    private static async Task<ContainerBridge> ContainerBridgeAsync(CancellationToken ct)
     {
         if (!OperatingSystem.IsLinux())
         {
-            return [];
+            return new ContainerBridge([], "any");
         }
 
         var start = new System.Diagnostics.ProcessStartInfo(
-            "docker", ["network", "inspect", "bridge", "--format", "{{(index .IPAM.Config 0).Gateway}}"])
+            "docker",
+            ["network", "inspect", "bridge", "--format", "{{range .IPAM.Config}}{{.Subnet}}|{{.Gateway}}\n{{end}}"])
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        using var process = System.Diagnostics.Process.Start(start)
-            ?? throw new InvalidOperationException("docker liess sich nicht starten.");
-        var output = (await process.StandardOutput.ReadToEndAsync(ct)).Trim();
-        var error = await process.StandardError.ReadToEndAsync(ct);
-        await process.WaitForExitAsync(ct);
 
-        return process.ExitCode == 0 && IPAddress.TryParse(output, out var gateway)
-            ? [gateway]
-            : throw new InvalidOperationException(
-                $"Das Gateway des Docker-Netzes 'bridge' liess sich nicht ermitteln (Exit {process.ExitCode}): "
+        System.Diagnostics.Process process;
+        try
+        {
+            process = System.Diagnostics.Process.Start(start)
+                ?? throw new InvalidOperationException("docker liess sich nicht starten.");
+        }
+        catch (System.ComponentModel.Win32Exception exception)
+        {
+            // Kein docker-Programm (etwa Podman ohne Kompatibilitätsbefehl): wie eine fehlende
+            // Runtime behandeln — übersprungen, es sei denn, ein Container ist Pflicht.
+            Assert.SkipUnless(ContainerRequired, $"docker-Befehl nicht verfügbar: {exception.Message}");
+            throw;
+        }
+
+        using (process)
+        {
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            limit.CancelAfter(TimeSpan.FromSeconds(30));
+
+            // Beide Ströme zugleich lesen: Ein voller stderr-Puffer hielte sonst den Prozess auf.
+            var outputTask = process.StandardOutput.ReadToEndAsync(limit.Token);
+            var errorTask = process.StandardError.ReadToEndAsync(limit.Token);
+            await process.WaitForExitAsync(limit.Token);
+            var output = await outputTask;
+            var error = await errorTask;
+
+            // IPv4, denn darauf zeigt host-gateway; mit eingeschaltetem IPv6 kann der erste Eintrag
+            // das v6-Subnetz sein.
+            foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var parts = line.Split('|');
+                if (parts.Length == 2
+                    && IPAddress.TryParse(parts[1], out var gateway)
+                    && gateway.AddressFamily is System.Net.Sockets.AddressFamily.InterNetwork
+                    && parts[0].Contains('/', StringComparison.Ordinal))
+                {
+                    return new ContainerBridge([gateway], parts[0]);
+                }
+            }
+
+            throw new InvalidOperationException(
+                $"Das IPv4-Gateway des Docker-Netzes 'bridge' liess sich nicht ermitteln (Exit {process.ExitCode}): "
                 + $"{output} {error}");
+        }
     }
+
+    private static bool ContainerRequired
+        => Environment.GetEnvironmentVariable("BIFROST_REQUIRE_CONTAINER") is "1" or "true";
 }
