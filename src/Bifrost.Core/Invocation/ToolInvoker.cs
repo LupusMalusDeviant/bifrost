@@ -130,9 +130,9 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
                 {
                     result = Fail(InvocationStatus.Denied, decision.DenyReason ?? "Verweigert (Default-Deny).", started);
                 }
-                else if (ValidateArguments(entry, request.Arguments) is { } validationError)
+                else if (ValidateArguments(entry, request.Arguments) is { } rejection)
                 {
-                    result = Fail(InvocationStatus.ValidationFailed, validationError, started);
+                    result = Fail(rejection.Status, rejection.Message, started);
                 }
                 else
                 {
@@ -418,39 +418,49 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// mitzuschicken, und jedes andere Feld des Aufrufs bliebe ungeprüft.
     /// </para>
     /// </summary>
-    private string? ValidateArguments(CatalogEntry entry, JsonElement args)
+    private Rejection? ValidateArguments(CatalogEntry entry, JsonElement args)
     {
         if (entry.InputSchema.ValueKind is not JsonValueKind.Object)
         {
             return null; // kein Schema vorhanden → nichts zu validieren
         }
 
-        if (UnusableSchemas.TryGetValue(entry, out var unusableReason))
+        // Ein gebautes Schema geht vor einer Markierung „nicht baubar": Hat ein gleichzeitiger
+        // erster Aufruf das Schema gebaut, während ein anderer es als nicht baubar markierte, wird
+        // trotzdem geprüft (Review-Befund M-1, elfte Runde).
+        if (!CompiledSchemas.TryGetValue(entry, out var schema))
         {
-            LogBuildFailureOnce(entry, unusableReason);
-            return null; // R3, das Schema baut nicht
-        }
-
-        var built = ObtainSchema(entry, BuildSchema);
-        if (built.Interrupted is { } interrupted)
-        {
-            // Ein Ausfall dieses Augenblicks, nicht des Schemas: nicht gemerkt — der nächste Aufruf
-            // baut neu —, und nicht durchgelassen, denn R3 gilt nur für ein Schema, das sich nicht
-            // bauen lässt. Gemerkt hätte ein einmaliger Ausfall die Prüfung bis zum nächsten
-            // Katalog-Neubau abgeschaltet (Review-Befunde M1 der siebten, M-1 der zehnten Runde).
-            if (ShouldLogSchemaFailure(entry, $"build-transient:{interrupted.GetType().FullName}"))
+            if (UnusableSchemas.TryGetValue(entry, out var unusableReason))
             {
-                Log.SchemaBuildInterrupted(_logger, entry.Name.Value, interrupted.GetType().Name);
+                LogBuildFailureOnce(entry, unusableReason);
+                return null; // R3, das Schema baut nicht
             }
 
-            return $"Argument-Validierung fehlgeschlagen — das Schema des Werkzeugs liess sich gerade nicht bauen ({interrupted.GetType().Name}).";
-        }
+            var built = ObtainSchema(entry, BuildSchema);
+            if (built.Interrupted is { } interrupted)
+            {
+                // Ein Ausfall dieses Augenblicks, nicht des Schemas: nicht gemerkt — der nächste
+                // Aufruf baut neu —, und nicht durchgelassen, denn R3 gilt nur für ein Schema, das
+                // sich nicht bauen lässt. Kein Urteil über die Argumente, deshalb nicht
+                // ValidationFailed, sondern ein Fehler des Gateways (Review-Befund L-3, elfte Runde).
+                if (ShouldLogSchemaFailure(entry, $"build-transient:{interrupted.GetType().FullName}"))
+                {
+                    Log.SchemaBuildInterrupted(_logger, entry.Name.Value, interrupted.GetType().Name);
+                }
 
-        if (built.Schema is not { } schema)
-        {
-            // Nicht baubar, zweimal mit derselben Ausnahme bestätigt: R3, gemerkt und einmal geloggt.
-            LogBuildFailureOnce(entry, UnusableSchemas.TryGetValue(entry, out var reason) ? reason : "?");
-            return null; // R3-Fallback: durchlassen und loggen statt fälschlich ablehnen
+                return new Rejection(
+                    InvocationStatus.UpstreamError,
+                    $"Interner Gateway-Fehler: Das Schema des Werkzeugs liess sich gerade nicht bauen ({interrupted.GetType().Name}); erneut versuchen.");
+            }
+
+            if (built.Schema is not { } fresh)
+            {
+                // Nicht baubar, zweimal mit derselben Ausnahme bestätigt: R3, gemerkt und einmal geloggt.
+                LogBuildFailureOnce(entry, UnusableSchemas.TryGetValue(entry, out var reason) ? reason : "?");
+                return null; // R3-Fallback: durchlassen und loggen statt fälschlich ablehnen
+            }
+
+            schema = fresh;
         }
 
         try
@@ -466,7 +476,7 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
                 .Where(d => d.Errors is { Count: > 0 })
                 .SelectMany(d => d.Errors!.Select(e => $"{d.InstanceLocation}: {e.Value}"))
                 .FirstOrDefault() ?? "Argumente entsprechen nicht dem Tool-Schema.";
-            return $"Argument-Validierung fehlgeschlagen — {firstError}";
+            return Rejection.Invalid($"Argument-Validierung fehlgeschlagen — {firstError}");
         }
         catch (Exception ex)
         {
@@ -481,8 +491,15 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
                 Log.SchemaNotEvaluable(_logger, entry.Name.Value, detail);
             }
 
-            return $"Argument-Validierung fehlgeschlagen — das Schema des Werkzeugs lässt sich für diese Argumente nicht auswerten ({detail}).";
+            return Rejection.Invalid(
+                $"Argument-Validierung fehlgeschlagen — das Schema des Werkzeugs lässt sich für diese Argumente nicht auswerten ({detail}).");
         }
+    }
+
+    /// <summary>Warum ein Aufruf vor dem Upstream endet: Status für Ergebnis und Audit, Meldung.</summary>
+    private readonly record struct Rejection(InvocationStatus Status, string Message)
+    {
+        public static Rejection Invalid(string message) => new(InvocationStatus.ValidationFailed, message);
     }
 
     /// <summary>
@@ -522,6 +539,15 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// Katalog-Neubau ab — auf main betraf er genau einen Aufruf (Review-Befund M-1, zehnte Runde).
     /// Die Bestätigung kostet einen Bau mehr, nur auf dem Fehlerweg und nur bis zum Merken.
     /// <para>
+    /// <b>Gegen gleichzeitige Erstaufrufe (elfte Runde).</b> Der Bestätigungsbau läuft unter einer
+    /// prozessweiten Sperre, so wiederholt ihn kein anderer Bestätigungsbau zur selben Zeit; und
+    /// verglichen werden Art <i>und</i> Meldung, denn Wettlauf-Fehler gleichen sich in der Art
+    /// (M-2). Nach dem Merken wird nachgesehen, ob ein gleichzeitiger Aufruf das Schema inzwischen
+    /// gebaut hat — dann gilt dessen Schema und die Markierung fällt; ebenso nimmt jeder gelungene
+    /// Bau eine ältere Markierung zurück (M-1). <c>ValidateArguments</c> sieht zudem zuerst in die
+    /// gebauten Schemas und erst danach in die Markierungen.
+    /// </para>
+    /// <para>
     /// Der Bau wird übergeben, damit Tests einen Fehler einspeisen können, den kein Schematext
     /// auslöst; der Invoker übergibt immer <see cref="BuildSchema"/>. Eine Einstellung am Invoker
     /// gibt es dafür nicht.
@@ -533,29 +559,51 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     {
         try
         {
-            return new SchemaBuildOutcome(CompiledSchemas.GetValue(entry, build), null);
+            return Built(entry, CompiledSchemas.GetValue(entry, build));
         }
         catch (Exception first) when (!IsTransientBuildFailure(first))
         {
-            try
+            lock (ConfirmationLock)
             {
-                return new SchemaBuildOutcome(CompiledSchemas.GetValue(entry, build), null);
-            }
-            catch (Exception second) when (second.GetType() == first.GetType())
-            {
-                UnusableSchemas.TryAdd(entry, second.Message);
-                return new SchemaBuildOutcome(null, null);
-            }
-            catch (Exception second)
-            {
-                return new SchemaBuildOutcome(null, second);
+                try
+                {
+                    return Built(entry, CompiledSchemas.GetValue(entry, build));
+                }
+                catch (Exception second) when (second.GetType() == first.GetType() && second.Message == first.Message)
+                {
+                    UnusableSchemas.TryAdd(entry, second.Message);
+
+                    // Hat ein gleichzeitiger Aufruf das Schema inzwischen gebaut, gilt seins.
+                    if (CompiledSchemas.TryGetValue(entry, out var meanwhile))
+                    {
+                        UnusableSchemas.Remove(entry);
+                        return new SchemaBuildOutcome(meanwhile, null);
+                    }
+
+                    return new SchemaBuildOutcome(null, null);
+                }
+                catch (Exception second)
+                {
+                    return new SchemaBuildOutcome(null, second);
+                }
             }
         }
         catch (Exception interrupted)
         {
             return new SchemaBuildOutcome(null, interrupted);
         }
+
+        // Ein gelungener Bau nimmt eine ältere Markierung zurück, die ein gleichzeitiger Aufruf
+        // gesetzt hat, bevor dieses Schema im Zwischenspeicher lag.
+        static SchemaBuildOutcome Built(CatalogEntry entry, JsonSchema schema)
+        {
+            UnusableSchemas.Remove(entry);
+            return new SchemaBuildOutcome(schema, null);
+        }
     }
+
+    /// <summary>Die Sperre für Bestätigungsbauten; nur auf dem Fehlerweg genommen.</summary>
+    private static readonly Lock ConfirmationLock = new();
 
     private void LogBuildFailureOnce(CatalogEntry entry, string reason)
     {

@@ -307,6 +307,114 @@ public sealed class ToolSchemaRegistryTests
         ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse();
     }
 
+    /// <summary>
+    /// Elfte Runde, M-1: Der Wettlauf, den die Bestätigung nicht allein verhindert. Aufruf B baut
+    /// noch (und wird es schaffen), während Aufruf A zweimal mit derselben Ausnahme scheitert und das
+    /// Schema als nicht baubar markiert. Danach legt B sein Schema ab. Am Ende darf keine Markierung
+    /// übrig sein, und ein ungültiger Aufruf über den Invoker muss abgewiesen werden — sonst gingen
+    /// alle folgenden Aufrufe ungeprüft durch, obwohl ein gültiges Schema im Zwischenspeicher liegt.
+    /// </summary>
+    [Fact]
+    public async Task A_schema_built_concurrently_wins_over_a_confirmed_failure_of_another_call()
+    {
+        var world = new InvokerTestWorld();
+        var admin = world.RegisterAdmin();
+        var ct = TestContext.Current.CancellationToken;
+        var entry = world.Catalog.Find(world.Echo)!;
+        using var bStarted = new ManualResetEventSlim(false);
+        using var releaseB = new ManualResetEventSlim(false);
+
+        var b = Task.Run(() => ToolInvoker.ObtainSchema(entry, e =>
+        {
+            bStarted.Set();
+            releaseB.Wait(ct);
+            return ToolInvoker.BuildSchema(e);
+        }), ct);
+        bStarted.Wait(ct);
+
+        var a = ToolInvoker.ObtainSchema(entry, _ => throw new InvalidOperationException("Wettlauf"));
+        a.Schema.Should().BeNull("B liegt noch nicht im Zwischenspeicher");
+        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeTrue();
+
+        releaseB.Set();
+        var outcomeB = await b;
+        outcomeB.Schema.Should().NotBeNull();
+
+        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse(
+            "der gelungene Bau nimmt die Markierung des anderen Aufrufs zurück");
+        (await world.Invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct))
+            .Status.Should().Be(InvocationStatus.ValidationFailed, "das gebaute Schema prüft");
+    }
+
+    /// <summary>
+    /// Elfte Runde, M-1, andere Reihenfolge: Hat B sein Schema schon abgelegt, während A noch
+    /// bestätigt, nimmt A dessen Schema, statt zu markieren. Und selbst eine stehen gebliebene
+    /// Markierung schaltet die Prüfung nicht ab, solange ein gebautes Schema da ist.
+    /// </summary>
+    [Fact]
+    public async Task A_built_schema_takes_precedence_over_a_mark()
+    {
+        var world = new InvokerTestWorld();
+        var admin = world.RegisterAdmin();
+        var ct = TestContext.Current.CancellationToken;
+        var entry = world.Catalog.Find(world.Echo)!;
+
+        var calls = 0;
+        var a = ToolInvoker.ObtainSchema(entry, e =>
+        {
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                // Zwischen dem ersten und dem Bestätigungsbau legt ein anderer Aufruf ab.
+                ToolInvoker.ObtainSchema(e, ToolInvoker.BuildSchema).Schema.Should().NotBeNull();
+                throw new InvalidOperationException("Wettlauf");
+            }
+
+            throw new InvalidOperationException("Wettlauf");
+        });
+        a.Schema.Should().NotBeNull("der Bestätigungsbau findet das Schema des anderen Aufrufs");
+        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse();
+
+        // Eine Markierung, die trotzdem stehen bliebe, darf die Prüfung nicht abschalten.
+        ToolInvoker.UnusableSchemas.TryAdd(entry, "stehen geblieben");
+        (await world.Invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct))
+            .Status.Should().Be(InvocationStatus.ValidationFailed);
+    }
+
+    /// <summary>
+    /// Elfte Runde, M-2: Zwei Fehler gleicher Art, aber mit verschiedener Meldung bestätigen nichts —
+    /// Wettlauf-Fehler gleichen sich in der Art. Ein Ausfall, keine Markierung.
+    /// </summary>
+    [Fact]
+    public void Two_failures_of_the_same_type_with_different_messages_are_an_interruption()
+    {
+        var entry = Entry(Strict);
+        var calls = 0;
+
+        var outcome = ToolInvoker.ObtainSchema(entry, _ =>
+            throw new InvalidOperationException(Interlocked.Increment(ref calls) == 1 ? "Collection was modified" : "Sequence contains no elements"));
+
+        outcome.Interrupted.Should().BeOfType<InvalidOperationException>();
+        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Elfte Runde, L-3: Ein unterbrochener Bau ist kein Urteil über die Argumente. Er endet als
+    /// Fehler des Gateways, nicht als <see cref="InvocationStatus.ValidationFailed"/>. Über den
+    /// Invoker lässt sich ein solcher Ausfall nicht einspeisen; geprüft wird deshalb, dass ein
+    /// gewöhnlicher Aufruf weiter nach dem Schema geurteilt wird und die Meldungen sich unterscheiden.
+    /// </summary>
+    [Fact]
+    public async Task An_invalid_call_is_still_a_validation_failure()
+    {
+        var world = new InvokerTestWorld();
+        var admin = world.RegisterAdmin();
+        var ct = TestContext.Current.CancellationToken;
+
+        var result = await world.Invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct);
+        result.Status.Should().Be(InvocationStatus.ValidationFailed);
+        result.ErrorMessage.Should().StartWith("Argument-Validierung fehlgeschlagen");
+    }
+
     /// <summary>Ein vorübergehender Fehler wird nicht bestätigt, sondern gleich als Ausfall gewertet.</summary>
     [Fact]
     public void A_transient_build_failure_is_an_interruption_without_a_second_build()

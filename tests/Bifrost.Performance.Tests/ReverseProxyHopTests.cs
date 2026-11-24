@@ -198,6 +198,18 @@ public sealed class ReverseProxyHopTests
 
         var container = builder
             .WithPortBinding(80, assignRandomHostPort: true)
+            // Nur auf Loopback veröffentlichen, nicht auf allen Schnittstellen des Rechners: Unter
+            // Docker Desktop glaubt der Gateway Forwarded-Header von überall ("any"), und nginx
+            // wäre sonst für die Dauer des Tests aus dem LAN erreichbar (Review-Befund L-1, elfte
+            // Runde). Der Lastlauf spricht nginx ohnehin über Loopback an.
+            .WithCreateParameterModifier(parameters =>
+            {
+                var bindings = parameters.HostConfig?.PortBindings?.Values ?? [];
+                foreach (var binding in bindings.SelectMany(list => list))
+                {
+                    binding.HostIP = "127.0.0.1";
+                }
+            })
             .WithWaitStrategy(Wait.ForUnixContainer().UntilHttpRequestIsSucceeded(
                 request => request.ForPath("/healthz").ForPort(80),
                 // Ohne Schranke wartet Testcontainers, bis der Testlauf nach einer Stunde abbricht —
@@ -340,21 +352,56 @@ public sealed class ReverseProxyHopTests
     /// Das Netz über den Namen entfernen, am Docker-Befehl vorbei an Testcontainers. Für den Abbruch
     /// mitten im Anlegen: Dann kann das Netz beim Daemon schon stehen, ohne dass Testcontainers es
     /// kennt — sein <c>DisposeAsync</c> täte nichts, und ohne Ryuk bliebe das Netz stehen
-    /// (Review-Befund L-2, zehnte Runde). Leise und mit Schranke; „gibt es nicht" ist hier Erfolg.
+    /// (Review-Befund L-2, zehnte Runde). Leise und mit Schranke.
+    /// <para>
+    /// Der Ausgang zählt (Review-Befund L-2, elfte Runde): Ein echter Fehler („active endpoints")
+    /// steht mit seiner Meldung im Protokoll. „Gibt es nicht" kann heissen, dass der abgebrochene
+    /// Anlege-Auftrag beim Daemon noch läuft; dann wird nach einer kurzen Pause ein zweites Mal
+    /// entfernt. Ein Netz, das danach erst entsteht, kann nur Ryuk abräumen — das Protokoll nennt
+    /// den Namen.
+    /// </para>
     /// </summary>
     private static async Task RemoveNetworkByNameAsync(string name, Action<string> log)
     {
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            var (exitCode, error) = await RunDockerAsync(["network", "rm", name], log);
+            if (exitCode == 0)
+            {
+                return;
+            }
+
+            var notFound = error.Contains("not found", StringComparison.OrdinalIgnoreCase)
+                || error.Contains("No such network", StringComparison.OrdinalIgnoreCase);
+            if (!notFound)
+            {
+                log($"'docker network rm {name}' scheiterte (Exit {exitCode}): {error.Trim()} — von Hand entfernen.");
+                return;
+            }
+
+            if (attempt == 1)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2));
+            }
+        }
+
+        log($"Docker-Netz {name} war nicht (mehr) vorhanden. Entsteht es nach dem Abbruch noch, räumt es "
+            + $"nur Ryuk ab; ohne Ryuk von Hand: docker network rm {name}");
+    }
+
+    /// <summary>Ein docker-Befehl mit Schranke (30 s); Ausgang und stderr, wirft nie.</summary>
+    private static async Task<(int ExitCode, string Error)> RunDockerAsync(string[] arguments, Action<string> log)
+    {
         try
         {
-            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-                "docker", ["network", "rm", name])
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("docker", arguments)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             });
             if (process is null)
             {
-                return;
+                return (-1, "docker liess sich nicht starten");
             }
 
             var output = process.StandardOutput.ReadToEndAsync();
@@ -367,16 +414,19 @@ public sealed class ReverseProxyHopTests
             catch (OperationCanceledException)
             {
                 process.Kill(entireProcessTree: true);
-                log($"'docker network rm {name}' antwortete nicht binnen 30 s; von Hand entfernen.");
+                await ((Task)Task.WhenAll(output, error)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                return (-1, $"'docker {string.Join(' ', arguments)}' antwortete nicht binnen 30 s");
             }
 
             await ((Task)Task.WhenAll(output, error)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            return (process.ExitCode, error.IsCompletedSuccessfully ? error.Result : string.Empty);
         }
-#pragma warning disable CA1031 // Aufräumen nach einem Abbruch; der Abbruch ist die Auskunft.
+#pragma warning disable CA1031 // Aufräumen; der eigentliche Befund steht anderswo.
         catch (Exception exception)
 #pragma warning restore CA1031
         {
-            log($"Docker-Netz {name} liess sich nicht entfernen ({exception.Message}); von Hand: docker network rm {name}");
+            log($"'docker {string.Join(' ', arguments)}' liess sich nicht ausführen: {exception.Message}");
+            return (-1, exception.Message);
         }
     }
 
