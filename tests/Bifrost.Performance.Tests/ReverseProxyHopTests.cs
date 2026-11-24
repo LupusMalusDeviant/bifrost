@@ -256,13 +256,14 @@ public sealed class ReverseProxyHopTests
 
     /// <summary>
     /// Aufräumen, ohne den eigentlichen Fehler zu verdecken: Ist Docker im selben Moment weg, wäre
-    /// sonst die Ausnahme des Aufräumens die einzige, die jemand zu sehen bekommt.
+    /// sonst die Ausnahme des Aufräumens die einzige, die jemand zu sehen bekommt. Mit Schranke: Ein
+    /// hängender Daemon soll den Bericht des Startfehlers nicht wieder unbegrenzt aufhalten.
     /// </summary>
     private async Task DisposeQuietlyAsync(IContainer container)
     {
         try
         {
-            await container.DisposeAsync();
+            await container.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(30));
         }
 #pragma warning disable CA1031 // Der Startfehler ist die Auskunft; das Aufräumen wird nur vermerkt.
         catch (Exception exception)
@@ -345,13 +346,20 @@ public sealed class ReverseProxyHopTests
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                // Ein hängender Docker-Daemon: den Befehl beenden, die Lesevorgänge abwarten (sonst
-                // melden sie sich später als unbeobachtete Ausnahme) und sagen, was hing.
-                process.Kill(entireProcessTree: true);
-                await ((Task)Task.WhenAll(outputTask, errorTask)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
                 throw new InvalidOperationException(
                     $"'docker network inspect bridge' antwortete nicht binnen {timeout.TotalSeconds:F0} s — "
                     + "der Docker-Daemon hängt oder ist nicht erreichbar.");
+            }
+            finally
+            {
+                // Schranke oder Testabbruch: den Befehl beenden und die Lesevorgänge abwarten — sonst
+                // läuft docker weiter und die Lesevorgänge melden sich später als unbeobachtete
+                // Ausnahme. Auf beiden Abbruchwegen gleich.
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                    await ((Task)Task.WhenAll(outputTask, errorTask)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                }
             }
 
             var output = await outputTask;

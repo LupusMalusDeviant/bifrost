@@ -331,15 +331,29 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         CompiledSchemas = new();
 
     /// <summary>
-    /// Einträge, deren Schema sich nicht bauen oder nicht auswerten lässt, mit dem Grund. Beides ist
-    /// je Eintrag beständig: Ein Schema, das einmal nicht baut oder einen Verweis nicht auflöst, tut
-    /// es beim nächsten Aufruf wieder. Ohne diese Ablage warf jeder Aufruf eine Ausnahme und schrieb
-    /// eine Warnung — ein Upstream konnte so mit einem Verweis ins Leere das Log fluten. Jetzt
-    /// steht die Ursache einmal je Eintrag im Log, und jeder weitere Aufruf geht ohne Bauen und ohne
-    /// Ausnahme denselben R3-Weg.
+    /// Einträge, deren Schema sich nicht <b>bauen</b> lässt, mit dem Grund. Das hängt allein am
+    /// Schematext und ist damit je Eintrag beständig: Ein Schema, das einmal nicht baut, baut auch
+    /// beim nächsten Aufruf nicht. Die Ursache steht einmal im Log, jeder weitere Aufruf geht ohne
+    /// erneutes Bauen denselben R3-Weg.
+    /// <para>
+    /// <b>Auswertungsfehler gehören ausdrücklich nicht hierher.</b> Ob ein unauflösbarer
+    /// <c>$ref</c> überhaupt erreicht wird, hängt an den Argumenten (<c>properties</c>,
+    /// <c>anyOf</c>, <c>if/then</c> werten nur aus, was die Instanz berührt). Gemerkt, schaltete ein
+    /// einziger Aufruf mit dem passenden Feld die Prüfung für alle Aufrufer ab (Review-Befund H1);
+    /// ausgewertet wird deshalb bei jedem Aufruf, nur die Logzeile entsteht einmal
+    /// (<see cref="LoggedEvaluationFailures"/>).
+    /// </para>
     /// </summary>
     internal static readonly System.Runtime.CompilerServices.ConditionalWeakTable<CatalogEntry, string>
         UnusableSchemas = new();
+
+    /// <summary>
+    /// Welche Art Auswertungsfehler je Eintrag schon im Log steht. Gegen das Fluten des Logs durch
+    /// einen Upstream, dessen Schema bei jeder Auswertung wirft — ohne an der Prüfung selbst etwas zu
+    /// ändern.
+    /// </summary>
+    internal static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        CatalogEntry, System.Collections.Concurrent.ConcurrentDictionary<Type, byte>> LoggedEvaluationFailures = new();
 
     /// <summary>Ein leeres Argumentobjekt, einmal geparst statt je Aufruf ohne Argumente.</summary>
     private static readonly JsonElement EmptyArguments = ParseEmptyObject();
@@ -362,8 +376,10 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// auf das <c>$id</c> eines <i>anderen</i> Werkzeugs löst nicht mehr auf — früher gelang das nur,
     /// wenn jenes zufällig schon aufgerufen worden war, und nur, solange nichts im Produkt Schemata
     /// global ablegt. Gebaut wird ein solches Schema noch; erst die Auswertung wirft
-    /// <c>RefResolutionException</c>. Das fällt in den R3-Ausweichweg: Der Aufruf läuft ungeprüft
-    /// durch, die Ursache steht einmal je Katalogeintrag im Log (<see cref="UnusableSchemas"/>).
+    /// <c>RefResolutionException</c>, und nur, wenn die Argumente den Verweis erreichen. Das fällt
+    /// für diesen einen Aufruf in den R3-Ausweichweg: Er läuft ungeprüft durch, die Ursache steht
+    /// einmal je Katalogeintrag im Log. Aufrufe, die den Verweis nicht erreichen, werden weiter
+    /// geprüft und abgewiesen.
     /// Dafür überschreiben sich zwei Werkzeuge mit demselben <c>$id</c> nicht mehr gegenseitig.
     /// </para>
     /// </summary>
@@ -411,16 +427,16 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
                 .FirstOrDefault() ?? "Argumente entsprechen nicht dem Tool-Schema.";
             return $"Argument-Validierung fehlgeschlagen — {firstError}";
         }
-        catch (RefResolutionException ex)
-        {
-            // Ein Verweis, der jetzt nicht auflöst, löst auch beim nächsten Aufruf nicht auf.
-            MarkUnusable(entry, ex);
-            return null;
-        }
         catch (Exception ex)
         {
-            // Alles andere kann an diesen Argumenten liegen; nicht als beständig merken.
-            Log.SchemaUnparseable(_logger, entry.Name.Value, ex.Message);
+            // R3 für diesen Aufruf. Nicht gemerkt: Ob die Auswertung wirft, hängt an den Argumenten
+            // (ein $ref, den nur ein bestimmtes Feld erreicht). Nur die Logzeile kommt einmal je
+            // Eintrag und Fehlerart.
+            if (LoggedEvaluationFailures.GetOrCreateValue(entry).TryAdd(ex.GetType(), 0))
+            {
+                Log.SchemaUnparseable(_logger, entry.Name.Value, ex.Message);
+            }
+
             return null;
         }
     }

@@ -178,7 +178,7 @@ internal sealed class GatewayProcess : IAsyncDisposable
         (string Username, string Password)? uiAdmin =
             options.WithUiAdmin ? await CreateUiAdminAsync(executable, environment, ct) : null;
 
-        var port = FreeTcpPort();
+        var port = FreeTcpPort(options.AdditionalListenAddresses ?? []);
         var scheme = options.Transport == GatewayTransport.Https ? "https" : "http";
         var baseAddress = new Uri($"{scheme}://127.0.0.1:{port}/");
         environment["ASPNETCORE_URLS"] = string.Join(
@@ -449,13 +449,43 @@ internal sealed class GatewayProcess : IAsyncDisposable
             DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
     }
 
-    private static int FreeTcpPort()
+    /// <summary>
+    /// Ein Port, der auf Loopback und auf jeder zusätzlichen Adresse frei ist. Belegt ihn auf einer
+    /// zusätzlichen Adresse schon jemand, wird ein neuer gezogen — sonst bräche der Gateway erst
+    /// beim Start mit einem Bindungsfehler ab.
+    /// </summary>
+    private static int FreeTcpPort(IReadOnlyList<IPAddress> additional)
     {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
+        for (var attempt = 0; ; attempt++)
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            listener.Stop();
+
+            if (additional.All(address => IsFree(address, port)) || attempt >= 20)
+            {
+                return port;
+            }
+        }
+
+        static bool IsFree(IPAddress address, int port)
+        {
+            var probe = new TcpListener(address, port);
+            try
+            {
+                probe.Start();
+                return true;
+            }
+            catch (SocketException)
+            {
+                return false;
+            }
+            finally
+            {
+                probe.Stop();
+            }
+        }
     }
 
     public async ValueTask DisposeAsync()

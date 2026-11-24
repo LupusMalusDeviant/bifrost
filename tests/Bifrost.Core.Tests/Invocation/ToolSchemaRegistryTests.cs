@@ -174,7 +174,74 @@ public sealed class ToolSchemaRegistryTests
         // Review-Befund (dritte Runde): Grund und Werkzeug stehen im Log — einmal, nicht je Aufruf.
         log.Lines.Should().ContainSingle()
             .Which.Should().Contain("echo").And.Contain("https://example.invalid/common");
-        ToolInvoker.UnusableSchemas.TryGetValue(world.Catalog.Find(world.Echo)!, out _).Should().BeTrue();
+
+        // Review-Befund H1 (vierte Runde): Ein Auswertungsfehler wird nicht als beständig gemerkt.
+        ToolInvoker.UnusableSchemas.TryGetValue(world.Catalog.Find(world.Echo)!, out _).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Review-Befund H1 (vierte Runde): Ob ein unauflösbarer Verweis erreicht wird, hängt an den
+    /// Argumenten. Ein Aufruf, der ihn erreicht, darf die Prüfung nicht für alle folgenden Aufrufe
+    /// abschalten — sonst genügte einem Aufrufer ein passendes Feld, und danach liefe jeder
+    /// fehlerhafte Aufruf ungeprüft zum Upstream.
+    /// </summary>
+    [Fact]
+    public async Task A_call_that_reaches_an_unresolvable_reference_does_not_switch_off_validation()
+    {
+        const string schema =
+            """{"type":"object","required":["id"],"properties":{"id":{"type":"integer"},"extra":{"$ref":"https://other.invalid/x"}}}""";
+        var world = new InvokerTestWorld(echoSchema: schema);
+        var admin = world.RegisterAdmin();
+        var log = new CapturingLogger();
+        var invoker = world.WithLogger(log);
+        var ct = TestContext.Current.CancellationToken;
+
+        for (var call = 0; call < 5; call++)
+        {
+            var reaching = await invoker.InvokeAsync(
+                InvokerTestWorld.Request(admin, world.Echo, new { id = 1, extra = 1 }), ct);
+            reaching.Status.Should().Be(InvocationStatus.Success, "R3 für den Aufruf, der den Verweis erreicht");
+
+            var invalid = await invoker.InvokeAsync(
+                InvokerTestWorld.Request(admin, world.Echo, new { id = "abc" }), ct);
+            invalid.Status.Should().Be(InvocationStatus.ValidationFailed,
+                "ein Aufruf, der den Verweis nicht erreicht, wird weiter geprüft");
+        }
+
+        log.Lines.Should().ContainSingle("der Grund steht einmal im Log, nicht je Aufruf");
+    }
+
+    /// <summary>
+    /// Review-Befund M1 (vierte Runde): Nach einem Katalog-Neubau gilt das neue Schema. Ein kaputtes
+    /// Schema des alten Eintrags darf am neuen, strengen Eintrag nichts mehr durchlassen.
+    /// </summary>
+    [Fact]
+    public async Task After_a_catalog_rebuild_the_new_schema_applies()
+    {
+        var world = new InvokerTestWorld(echoSchema: """{"type":12345}""");
+        var admin = world.RegisterAdmin();
+        var ct = TestContext.Current.CancellationToken;
+
+        var before = await world.Invoker.InvokeAsync(
+            InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct);
+        before.Status.Should().Be(InvocationStatus.Success, "R3: das alte Schema baut nicht");
+
+        world.Supervisor.SetServer(world.Server, world.Slug, new UpstreamInventory(
+            [
+                new ToolDescriptor(
+                    "echo",
+                    "Echoes a message back.",
+                    JsonDocument.Parse("""{"type":"object","properties":{"message":{"type":"string"}},"required":["message"]}""")
+                        .RootElement.Clone(),
+                    CapabilityRisk.Read,
+                    false),
+            ],
+            [], []));
+        world.Supervisor.RaiseChanged(world.Server, UpstreamChangeKind.InventoryChanged);
+
+        var after = await world.Invoker.InvokeAsync(
+            InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct);
+        after.Status.Should().Be(InvocationStatus.ValidationFailed, "der neue Eintrag hat ein strenges Schema");
     }
 
     /// <summary>
