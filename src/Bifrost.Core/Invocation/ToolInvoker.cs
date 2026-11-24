@@ -431,33 +431,25 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
             return null; // R3, das Schema baut nicht
         }
 
-        JsonSchema schema;
-        try
-        {
-            schema = CompiledSchemas.GetValue(entry, BuildSchema);
-        }
-        catch (Exception ex) when (IsTransientBuildFailure(ex))
+        var built = ObtainSchema(entry, BuildSchema);
+        if (built.Interrupted is { } interrupted)
         {
             // Ein Ausfall dieses Augenblicks, nicht des Schemas: nicht gemerkt — der nächste Aufruf
             // baut neu —, und nicht durchgelassen, denn R3 gilt nur für ein Schema, das sich nicht
             // bauen lässt. Gemerkt hätte ein einmaliger Ausfall die Prüfung bis zum nächsten
-            // Katalog-Neubau abgeschaltet (Review-Befund M1, siebte Runde).
-            if (ShouldLogSchemaFailure(entry, $"build-transient:{ex.GetType().FullName}"))
+            // Katalog-Neubau abgeschaltet (Review-Befunde M1 der siebten, M-1 der zehnten Runde).
+            if (ShouldLogSchemaFailure(entry, $"build-transient:{interrupted.GetType().FullName}"))
             {
-                Log.SchemaBuildInterrupted(_logger, entry.Name.Value, ex.GetType().Name);
+                Log.SchemaBuildInterrupted(_logger, entry.Name.Value, interrupted.GetType().Name);
             }
 
-            return $"Argument-Validierung fehlgeschlagen — das Schema des Werkzeugs liess sich gerade nicht bauen ({ex.GetType().Name}).";
+            return $"Argument-Validierung fehlgeschlagen — das Schema des Werkzeugs liess sich gerade nicht bauen ({interrupted.GetType().Name}).";
         }
-        catch (Exception ex)
+
+        if (built.Schema is not { } schema)
         {
-            // Jeder andere Baufehler kehrt bei jedem Bauen wieder: R3, gemerkt und einmal geloggt.
-            // Die Bibliothek wirft dabei nicht nur JsonSchemaException — „einzelne Schlüsselwörter
-            // können verschiedene Ausnahmen werfen" (etwa UriFormatException bei einem kaputten
-            // $id). Eine Liste erlaubter Arten hätte solche Werkzeuge dauerhaft gesperrt und je
-            // Aufruf neu gebaut (Review-Befund M-A, achte Runde).
-            UnusableSchemas.TryAdd(entry, ex.Message);
-            LogBuildFailureOnce(entry, UnusableSchemas.TryGetValue(entry, out var reason) ? reason : ex.Message);
+            // Nicht baubar, zweimal mit derselben Ausnahme bestätigt: R3, gemerkt und einmal geloggt.
+            LogBuildFailureOnce(entry, UnusableSchemas.TryGetValue(entry, out var reason) ? reason : "?");
             return null; // R3-Fallback: durchlassen und loggen statt fälschlich ablehnen
         }
 
@@ -511,6 +503,60 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
             or OperationCanceledException
             or ThreadInterruptedException;
 
+    /// <summary>Ergebnis des Bauens: ein Schema, „nicht baubar" (beides null) oder ein Ausfall.</summary>
+    internal readonly record struct SchemaBuildOutcome(JsonSchema? Schema, Exception? Interrupted);
+
+    /// <summary>
+    /// Baut das Schema eines Eintrags über den Zwischenspeicher und entscheidet, was ein Baufehler
+    /// bedeutet.
+    /// <list type="bullet">
+    /// <item>Ein vorübergehender Fehler (<see cref="IsTransientBuildFailure"/>) ist ein Ausfall:
+    /// nicht gemerkt, der Aufruf wird abgewiesen.</item>
+    /// <item>Jeder andere Fehler wird <b>bestätigt</b>, bevor er gilt: Ein zweiter Bau läuft.
+    /// Gelingt er, zählt sein Schema. Wirft er dieselbe Art Ausnahme, ist das Schema nicht baubar —
+    /// gemerkt in <see cref="UnusableSchemas"/>, R3. Wirft er eine andere Art, war es kein Fehler
+    /// des Schematexts, sondern einer des Augenblicks (etwa ein Wettlauf in den globalen
+    /// Registern der Bibliothek bei gleichzeitigen ersten Aufrufen): ein Ausfall.</item>
+    /// </list>
+    /// Ohne die Bestätigung schaltete ein einziger solcher Fehler die Prüfung bis zum nächsten
+    /// Katalog-Neubau ab — auf main betraf er genau einen Aufruf (Review-Befund M-1, zehnte Runde).
+    /// Die Bestätigung kostet einen Bau mehr, nur auf dem Fehlerweg und nur bis zum Merken.
+    /// <para>
+    /// Der Bau wird übergeben, damit Tests einen Fehler einspeisen können, den kein Schematext
+    /// auslöst; der Invoker übergibt immer <see cref="BuildSchema"/>. Eine Einstellung am Invoker
+    /// gibt es dafür nicht.
+    /// </para>
+    /// </summary>
+    internal static SchemaBuildOutcome ObtainSchema(
+        CatalogEntry entry,
+        System.Runtime.CompilerServices.ConditionalWeakTable<CatalogEntry, JsonSchema>.CreateValueCallback build)
+    {
+        try
+        {
+            return new SchemaBuildOutcome(CompiledSchemas.GetValue(entry, build), null);
+        }
+        catch (Exception first) when (!IsTransientBuildFailure(first))
+        {
+            try
+            {
+                return new SchemaBuildOutcome(CompiledSchemas.GetValue(entry, build), null);
+            }
+            catch (Exception second) when (second.GetType() == first.GetType())
+            {
+                UnusableSchemas.TryAdd(entry, second.Message);
+                return new SchemaBuildOutcome(null, null);
+            }
+            catch (Exception second)
+            {
+                return new SchemaBuildOutcome(null, second);
+            }
+        }
+        catch (Exception interrupted)
+        {
+            return new SchemaBuildOutcome(null, interrupted);
+        }
+    }
+
     private void LogBuildFailureOnce(CatalogEntry entry, string reason)
     {
         if (ShouldLogSchemaFailure(entry, "build"))
@@ -519,11 +565,18 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         }
     }
 
-    /// <summary>Ob dieser Invoker den Fehler zum ersten Mal sieht — mit Obergrenze je Eintrag.</summary>
+    /// <summary>
+    /// Ob dieser Invoker den Fehler zum ersten Mal sieht — mit fester Obergrenze je Eintrag. Unter
+    /// einer Sperre je Eintrag, damit gleichzeitige Aufrufe die Grenze nicht überschreiten
+    /// (Review-Befund L-5, zehnte Runde); gesperrt wird nur auf dem Fehlerweg.
+    /// </summary>
     private bool ShouldLogSchemaFailure(CatalogEntry entry, string key)
     {
         var logged = _loggedSchemaFailures.GetOrCreateValue(entry);
-        return logged.Count < MaxLoggedSchemaFailuresPerEntry && logged.TryAdd(key, 0);
+        lock (logged)
+        {
+            return logged.Count < MaxLoggedSchemaFailuresPerEntry && logged.TryAdd(key, 0);
+        }
     }
 
     /// <summary>

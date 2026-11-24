@@ -295,6 +295,7 @@ public sealed class ReverseProxyHopTests
         IReadOnlyList<IPAddress> ListenAddresses,
         string TrustedProxies,
         INetwork? Network,
+        string? NetworkName,
         string GatewayHost,
         Action<string> Log) : IAsyncDisposable
     {
@@ -302,7 +303,7 @@ public sealed class ReverseProxyHopTests
         {
             if (Network is not null)
             {
-                await DisposeNetworkQuietlyAsync(Network, Log);
+                await DisposeNetworkQuietlyAsync(Network, NetworkName!, Log);
             }
         }
     }
@@ -314,8 +315,13 @@ public sealed class ReverseProxyHopTests
     /// fehlgeschlagene Prüfung. Hängt nginx noch im Netz („active endpoints") oder hängt der Daemon,
     /// steht der Befehl zum Entfernen im Protokoll; Ryuk räumt das Netz sonst über das
     /// Sitzungs-Label ab.
+    /// <para>
+    /// Der Name wird übergeben, nicht vom Netzobjekt gelesen: Gibt es das Netz für Testcontainers
+    /// nicht, wirft schon das Lesen von <c>Name</c> — und verdeckte im catch wieder den
+    /// eigentlichen Fehler (Review-Befund L-1, zehnte Runde).
+    /// </para>
     /// </summary>
-    private static async Task DisposeNetworkQuietlyAsync(INetwork network, Action<string> log)
+    private static async Task DisposeNetworkQuietlyAsync(INetwork network, string name, Action<string> log)
     {
         try
         {
@@ -325,8 +331,52 @@ public sealed class ReverseProxyHopTests
         catch (Exception exception)
 #pragma warning restore CA1031
         {
-            log($"Docker-Netz {network.Name} liess sich nicht entfernen ({exception.GetType().Name}: "
-                + $"{exception.Message}); von Hand entfernen: docker network rm {network.Name}");
+            log($"Docker-Netz {name} liess sich nicht entfernen ({exception.GetType().Name}: "
+                + $"{exception.Message}); von Hand entfernen: docker network rm {name}");
+        }
+    }
+
+    /// <summary>
+    /// Das Netz über den Namen entfernen, am Docker-Befehl vorbei an Testcontainers. Für den Abbruch
+    /// mitten im Anlegen: Dann kann das Netz beim Daemon schon stehen, ohne dass Testcontainers es
+    /// kennt — sein <c>DisposeAsync</c> täte nichts, und ohne Ryuk bliebe das Netz stehen
+    /// (Review-Befund L-2, zehnte Runde). Leise und mit Schranke; „gibt es nicht" ist hier Erfolg.
+    /// </summary>
+    private static async Task RemoveNetworkByNameAsync(string name, Action<string> log)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                "docker", ["network", "rm", name])
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            });
+            if (process is null)
+            {
+                return;
+            }
+
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            try
+            {
+                await process.WaitForExitAsync(limit.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                process.Kill(entireProcessTree: true);
+                log($"'docker network rm {name}' antwortete nicht binnen 30 s; von Hand entfernen.");
+            }
+
+            await ((Task)Task.WhenAll(output, error)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+#pragma warning disable CA1031 // Aufräumen nach einem Abbruch; der Abbruch ist die Auskunft.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            log($"Docker-Netz {name} liess sich nicht entfernen ({exception.Message}); von Hand: docker network rm {name}");
         }
     }
 
@@ -340,7 +390,17 @@ public sealed class ReverseProxyHopTests
     /// sich damit als Loopback ausgeben (Review-Befund L-4, achte Runde). Linux nimmt Pakete für
     /// jede eigene Adresse auf jeder Schnittstelle an; ein Nachbar mit einer Route auf das Subnetz
     /// käme an die Adresse heran, gilt aber nicht als Proxy. Den Zugang selbst schützt weiter der
-    /// zur Laufzeit erzeugte API-Schlüssel.
+    /// zur Laufzeit erzeugte API-Schlüssel. Dasselbe gilt für Container anderer Netze auf dem
+    /// Runner: Dockers Trennung der Netze wirkt nur auf weitergeleiteten Verkehr, nicht auf Pakete an
+    /// den Rechner selbst — sie erreichen die Adresse, aber mit einer Quelle ausserhalb des
+    /// vertrauten Subnetzes.
+    /// </para>
+    /// <para>
+    /// <b>Bewusst kein <c>internal</c>-Netz</b> (Review-Befund L-4, zehnte Runde, optional): Ein
+    /// internes Netz hätte keinen Weg nach aussen, nginx braucht aber genau den Weg zum Gateway auf
+    /// dem Rechner. Ob ein internes Netz die Gateway-Adresse auf dem Rechner überhaupt erhält, hängt
+    /// an der Docker-Fassung; der Test liefe dann wieder in die Bereitschafts-Schranke. Der Gewinn —
+    /// fremde Container erreichten die Adresse nicht mehr — ändert am Vertrauen nichts.
     /// </para>
     /// <para>
     /// Docker Desktop (Windows, macOS) leitet <c>host-gateway</c> auf die Loopback-Adresse des
@@ -355,7 +415,7 @@ public sealed class ReverseProxyHopTests
 
         if (!OperatingSystem.IsLinux())
         {
-            return new ContainerBridge([], "any", null, "host-gateway", Log);
+            return new ContainerBridge([], "any", null, null, "host-gateway", Log);
         }
 
         var name = $"bifrost-bench-{Guid.NewGuid():N}";
@@ -364,27 +424,32 @@ public sealed class ReverseProxyHopTests
         {
             await network.CreateAsync(ct);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (!ct.IsCancellationRequested)
         {
-            await DisposeNetworkQuietlyAsync(network, Log);
+            // Nach dem Token, nicht nach der Ausnahmeart: Docker.DotNet meldet eine Zeitüberschreitung
+            // des Clients als TaskCanceledException, ohne dass der Test abgebrochen wurde
+            // (Review-Befund L-3, zehnte Runde). Auch das ist „Docker nicht nutzbar".
+            await DisposeNetworkQuietlyAsync(network, name, Log);
+            await RemoveNetworkByNameAsync(name, Log);
             Assert.SkipUnless(ContainerRequired, $"Docker-Netz liess sich nicht anlegen: {exception.Message}");
             throw;
         }
-        catch (OperationCanceledException)
+        catch
         {
-            // Abbruch mitten im Anlegen: Das Netz kann schon stehen (Review-Befund L-2, neunte Runde).
-            await DisposeNetworkQuietlyAsync(network, Log);
+            // Abbruch des Tests mitten im Anlegen: Das Netz kann beim Daemon schon stehen.
+            await DisposeNetworkQuietlyAsync(network, name, Log);
+            await RemoveNetworkByNameAsync(name, Log);
             throw;
         }
 
         try
         {
             var (gateway, subnet) = await InspectNetworkAsync(name, ct);
-            return new ContainerBridge([gateway], subnet, network, gateway.ToString(), Log);
+            return new ContainerBridge([gateway], subnet, network, name, gateway.ToString(), Log);
         }
         catch
         {
-            await DisposeNetworkQuietlyAsync(network, Log);
+            await DisposeNetworkQuietlyAsync(network, name, Log);
             throw;
         }
     }

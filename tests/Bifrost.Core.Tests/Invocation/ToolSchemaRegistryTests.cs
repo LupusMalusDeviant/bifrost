@@ -244,6 +244,162 @@ public sealed class ToolSchemaRegistryTests
         ToolInvoker.IsTransientBuildFailure(new NotSupportedException()).Should().BeFalse();
     }
 
+    private const string Strict =
+        """{"type":"object","required":["message"],"properties":{"message":{"type":"string"}}}""";
+
+    /// <summary>
+    /// Zehnte Runde, M-1: Ein einzelner Baufehler, der nicht wiederkehrt (etwa ein Wettlauf in der
+    /// Bibliothek), macht das Schema nicht „nicht baubar". Der zweite Bau gelingt, sein Schema zählt,
+    /// nichts wird gemerkt.
+    /// </summary>
+    [Fact]
+    public void A_build_failure_that_does_not_repeat_is_not_remembered()
+    {
+        var entry = Entry(Strict);
+        var calls = 0;
+
+        var outcome = ToolInvoker.ObtainSchema(entry, e => Interlocked.Increment(ref calls) == 1
+            ? throw new InvalidOperationException("Wettlauf")
+            : ToolInvoker.BuildSchema(e));
+
+        outcome.Schema.Should().NotBeNull();
+        outcome.Interrupted.Should().BeNull();
+        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse();
+        outcome.Schema!.Evaluate(JsonDocument.Parse("""{"message":1}""").RootElement).IsValid.Should().BeFalse();
+    }
+
+    /// <summary>Zehnte Runde, M-1: Dieselbe Ausnahme zweimal — bestätigt, nicht baubar, R3.</summary>
+    [Fact]
+    public void A_build_failure_that_repeats_marks_the_schema_unusable()
+    {
+        var entry = Entry(Strict);
+        var calls = 0;
+
+        var outcome = ToolInvoker.ObtainSchema(entry, _ =>
+        {
+            Interlocked.Increment(ref calls);
+            throw new UriFormatException("kaputtes $id");
+        });
+
+        outcome.Schema.Should().BeNull();
+        outcome.Interrupted.Should().BeNull("R3, kein Ausfall");
+        calls.Should().Be(2, "ein Bau zur Bestätigung, nicht mehr");
+        ToolInvoker.UnusableSchemas.TryGetValue(entry, out var reason).Should().BeTrue();
+        reason.Should().Be("kaputtes $id");
+    }
+
+    /// <summary>
+    /// Zehnte Runde, M-1: Zwei verschiedene Ausnahmen — kein Fehler des Schematexts, sondern einer
+    /// des Augenblicks. Abgewiesen, nicht gemerkt.
+    /// </summary>
+    [Fact]
+    public void Two_different_build_failures_are_an_interruption()
+    {
+        var entry = Entry(Strict);
+        var calls = 0;
+
+        var outcome = ToolInvoker.ObtainSchema(entry, _ => Interlocked.Increment(ref calls) == 1
+            ? throw new InvalidOperationException("erst das")
+            : throw new KeyNotFoundException("dann das"));
+
+        outcome.Schema.Should().BeNull();
+        outcome.Interrupted.Should().BeOfType<KeyNotFoundException>();
+        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse();
+    }
+
+    /// <summary>Ein vorübergehender Fehler wird nicht bestätigt, sondern gleich als Ausfall gewertet.</summary>
+    [Fact]
+    public void A_transient_build_failure_is_an_interruption_without_a_second_build()
+    {
+        var entry = Entry(Strict);
+        var calls = 0;
+
+        var outcome = ToolInvoker.ObtainSchema(entry, _ =>
+        {
+            Interlocked.Increment(ref calls);
+            throw new InsufficientExecutionStackException();
+        });
+
+        outcome.Interrupted.Should().BeOfType<InsufficientExecutionStackException>();
+        calls.Should().Be(1);
+        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Zehnte Runde, Testlücke 1: Gleichzeitige <i>erste</i> Aufrufe über den Invoker. Dort lässt
+    /// <c>ConditionalWeakTable.GetValue</c> den Bau mehrfach laufen. Jedes Urteil muss stimmen,
+    /// danach liegt genau ein Schema im Zwischenspeicher, und nichts ist als nicht baubar gemerkt.
+    /// Mehrere Runden mit frischer Welt, damit der Wettlauf tatsächlich beim ersten Bau stattfindet.
+    /// </summary>
+    [Fact]
+    public async Task Concurrent_first_calls_are_judged_correctly()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        for (var round = 0; round < 10; round++)
+        {
+            var world = new InvokerTestWorld();
+            var admin = world.RegisterAdmin();
+            using var start = new ManualResetEventSlim(false);
+
+            var calls = Enumerable.Range(0, 16).Select(i => Task.Run(async () =>
+            {
+                start.Wait(ct);
+                var valid = i % 2 == 0;
+                var result = await world.Invoker.InvokeAsync(
+                    InvokerTestWorld.Request(admin, world.Echo, valid ? new { message = (object)"hi" } : new { message = (object)1 }), ct);
+                return (valid, result.Status);
+            }, ct)).ToList();
+            start.Set();
+
+            foreach (var (valid, status) in await Task.WhenAll(calls))
+            {
+                status.Should().Be(valid ? InvocationStatus.Success : InvocationStatus.ValidationFailed);
+            }
+
+            var entry = world.Catalog.Find(world.Echo)!;
+            ToolInvoker.CompiledSchemas.TryGetValue(entry, out _).Should().BeTrue();
+            ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse();
+        }
+    }
+
+    /// <summary>
+    /// Zehnte Runde, Testlücke 2: Parallele Auswertung eines geteilten Schemas mit
+    /// <c>unevaluatedProperties</c> — einem Schlüsselwort, das an Annotationen anderer Teilschemata
+    /// hängt — und <c>pattern</c>. Jedes Urteil muss stimmen.
+    /// </summary>
+    [Fact]
+    public void A_shared_schema_with_unevaluated_properties_judges_correctly_under_concurrent_evaluation()
+    {
+        var schema = ToolInvoker.BuildSchema(Entry("""
+            {
+              "type": "object",
+              "allOf": [ { "properties": { "code": { "type": "string", "pattern": "^[A-Z]{3}$" } } } ],
+              "properties": { "n": { "type": "integer" } },
+              "unevaluatedProperties": false
+            }
+            """));
+        var valid = JsonDocument.Parse("""{"code":"ABC","n":1}""").RootElement;
+        var extra = JsonDocument.Parse("""{"code":"ABC","n":1,"x":true}""").RootElement;
+        var badPattern = JsonDocument.Parse("""{"code":"abc","n":1}""").RootElement;
+
+        var wrong = 0;
+        Parallel.For(0, 9_000, new ParallelOptions { MaxDegreeOfParallelism = 16 }, i =>
+        {
+            var (instance, expected) = (i % 3) switch
+            {
+                0 => (valid, true),
+                1 => (extra, false),
+                _ => (badPattern, false),
+            };
+            if (schema.Evaluate(instance).IsValid != expected)
+            {
+                Interlocked.Increment(ref wrong);
+            }
+        });
+
+        wrong.Should().Be(0);
+    }
+
     /// <summary>
     /// Neunte Runde, L-5: Ein fehlender <i>lokaler</i> Zeiger (<c>#/$defs/missing</c>). JsonSchema.Net
     /// 9.3 baut das Schema und wirft erst beim Auswerten — der Aufruf, der den Zeiger erreicht, wird
