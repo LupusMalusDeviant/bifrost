@@ -333,8 +333,8 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// <summary>
     /// Einträge, deren Schema sich nicht <b>bauen</b> lässt, mit dem Grund. Das hängt allein am
     /// Schematext und ist damit je Eintrag beständig: Ein Schema, das einmal nicht baut, baut auch
-    /// beim nächsten Aufruf nicht. Die Ursache steht einmal im Log, jeder weitere Aufruf geht ohne
-    /// erneutes Bauen denselben R3-Weg.
+    /// beim nächsten Aufruf nicht. Jeder weitere Aufruf geht ohne erneutes Bauen denselben R3-Weg;
+    /// die Ursache steht je Invoker einmal im Log (<see cref="_loggedSchemaFailures"/>).
     /// <para>
     /// <b>Auswertungsfehler gehören ausdrücklich nicht hierher.</b> Ob ein unauflösbarer
     /// <c>$ref</c> überhaupt erreicht wird, hängt an den Argumenten (<c>properties</c>,
@@ -347,14 +347,23 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         UnusableSchemas = new();
 
     /// <summary>
-    /// Welche Auswertungsfehler (Art und Meldung) je Eintrag dieser Invoker schon geloggt hat. Gegen
-    /// das Fluten des Logs durch einen Upstream, dessen Schema bei jeder Auswertung wirft. Die
-    /// Meldung gehört zum Schlüssel, damit zwei verschiedene unauflösbare Verweise beide im Log
-    /// stehen; sie nennt den Verweis aus dem Schematext und bleibt damit je Eintrag endlich. Je
-    /// Instanz, damit ein zweiter Invoker mit eigenem Logger seine Zeile selbst schreibt.
+    /// Welche Schemafehler dieser Invoker je Eintrag schon geloggt hat — Bau- wie Auswertungsfehler.
+    /// Gegen das Fluten des Logs durch einen Upstream, dessen Schema bei jedem Aufruf scheitert. Je
+    /// Instanz, damit ein zweiter Invoker mit eigenem Logger seine Zeilen selbst schreibt; ob ein
+    /// Schema baut, merkt sich dagegen prozessweit <see cref="UnusableSchemas"/>.
+    /// <para>
+    /// Der Schlüssel ist die Art des Fehlers, bei <c>RefResolutionException</c> zusätzlich ihre
+    /// Meldung: Sie nennt den Verweis aus dem Schematext, so stehen zwei verschiedene unauflösbare
+    /// Verweise beide im Log. Meldungen anderer Fehlerarten gehören nicht in den Schlüssel — eine
+    /// künftige Fassung der Bibliothek könnte Werte des Aufrufers hineinschreiben, und die Tabelle
+    /// wüchse mit jedem Aufruf. Als zweite Sicherung nimmt sie je Eintrag höchstens
+    /// <see cref="MaxLoggedSchemaFailuresPerEntry"/> Schlüssel auf; darüber wird nicht mehr geloggt.
+    /// </para>
     /// </summary>
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<
-        CatalogEntry, System.Collections.Concurrent.ConcurrentDictionary<string, byte>> _loggedEvaluationFailures = new();
+        CatalogEntry, System.Collections.Concurrent.ConcurrentDictionary<string, byte>> _loggedSchemaFailures = new();
+
+    internal const int MaxLoggedSchemaFailuresPerEntry = 16;
 
     /// <summary>Ein leeres Argumentobjekt, einmal geparst statt je Aufruf ohne Argumente.</summary>
     private static readonly JsonElement EmptyArguments = ParseEmptyObject();
@@ -406,9 +415,10 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
             return null; // kein Schema vorhanden → nichts zu validieren
         }
 
-        if (UnusableSchemas.TryGetValue(entry, out _))
+        if (UnusableSchemas.TryGetValue(entry, out var unusableReason))
         {
-            return null; // R3, schon einmal begründet und geloggt
+            LogBuildFailureOnce(entry, unusableReason);
+            return null; // R3, das Schema baut nicht
         }
 
         JsonSchema schema;
@@ -418,7 +428,8 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         }
         catch (Exception ex)
         {
-            MarkUnusable(entry, ex);
+            UnusableSchemas.TryAdd(entry, ex.Message);
+            LogBuildFailureOnce(entry, UnusableSchemas.TryGetValue(entry, out var reason) ? reason : ex.Message);
             return null; // R3-Fallback: durchlassen und loggen statt fälschlich ablehnen
         }
 
@@ -440,22 +451,33 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         catch (Exception ex)
         {
             // Abweisen statt durchlassen, und nicht gemerkt: Ob die Auswertung wirft, hängt an den
-            // Argumenten. Die Logzeile kommt einmal je Eintrag, Fehlerart und Meldung.
-            if (_loggedEvaluationFailures.GetOrCreateValue(entry).TryAdd($"{ex.GetType().FullName}: {ex.Message}", 0))
+            // Argumenten. Den Wortlaut nur bei einem unauflösbaren Verweis weitergeben — er nennt
+            // den Verweis aus dem Schema, das der Aufrufer über describe_tool ohnehin sieht. Die
+            // Meldung jeder anderen Ausnahme kann Interna tragen; Aufrufer, Audit und Log bekommen
+            // dann nur ihre Art (wie die äussere Fehlerbehandlung der Pipeline).
+            var detail = ex is RefResolutionException ? ex.Message : ex.GetType().Name;
+            if (ShouldLogSchemaFailure(entry, $"eval:{ex.GetType().FullName}:{(ex is RefResolutionException ? ex.Message : string.Empty)}"))
             {
-                Log.SchemaNotEvaluable(_logger, entry.Name.Value, ex.Message);
+                Log.SchemaNotEvaluable(_logger, entry.Name.Value, detail);
             }
 
-            return $"Argument-Validierung fehlgeschlagen — das Schema des Werkzeugs lässt sich für diese Argumente nicht auswerten ({ex.Message}).";
+            return $"Argument-Validierung fehlgeschlagen — das Schema des Werkzeugs lässt sich für diese Argumente nicht auswerten ({detail}).";
         }
     }
 
-    private void MarkUnusable(CatalogEntry entry, Exception exception)
+    private void LogBuildFailureOnce(CatalogEntry entry, string reason)
     {
-        if (UnusableSchemas.TryAdd(entry, exception.Message))
+        if (ShouldLogSchemaFailure(entry, "build"))
         {
-            Log.SchemaUnparseable(_logger, entry.Name.Value, exception.Message);
+            Log.SchemaUnparseable(_logger, entry.Name.Value, reason);
         }
+    }
+
+    /// <summary>Ob dieser Invoker den Fehler zum ersten Mal sieht — mit Obergrenze je Eintrag.</summary>
+    private bool ShouldLogSchemaFailure(CatalogEntry entry, string key)
+    {
+        var logged = _loggedSchemaFailures.GetOrCreateValue(entry);
+        return logged.Count < MaxLoggedSchemaFailuresPerEntry && logged.TryAdd(key, 0);
     }
 
     /// <summary>

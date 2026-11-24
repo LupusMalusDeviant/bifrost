@@ -116,8 +116,8 @@ public sealed class ReverseProxyHopTests
 
     /// <summary>
     /// Ohne Container-Runtime gibt es keinen Proxy und damit keinen Sprung. Übersprungen wird das
-    /// mit Begründung — es sei denn, jemand hat <c>BIFROST_REQUIRE_CONTAINER</c> gesetzt: Dort, wo
-    /// Docker da sein muss, ist ein Skip ein stiller Ausfall des Nachweises.
+    /// mit Begründung — es sei denn, ein Container ist Pflicht (<see cref="ContainerRequired"/>): Dort,
+    /// wo Docker da sein muss, ist ein Skip ein stiller Ausfall des Nachweises.
     /// </summary>
     private static async Task RequireRuntimeAsync()
     {
@@ -132,7 +132,8 @@ public sealed class ReverseProxyHopTests
             Assert.SkipUnless(required,
                 "Keine Container-Runtime erreichbar — Docker starten oder BIFROST_REQUIRE_CONTAINER setzen.");
             Assert.Fail(
-                "BIFROST_REQUIRE_CONTAINER ist gesetzt, aber keine Container-Runtime erreichbar: "
+                "Ein Container ist Pflicht (BIFROST_REQUIRE_CONTAINER oder Benchmark auf GitHub Actions unter Linux), "
+                + "aber keine Container-Runtime erreichbar: "
                 + exception.Message);
         }
     }
@@ -405,8 +406,16 @@ public sealed class ReverseProxyHopTests
         }
     }
 
+    /// <summary>
+    /// Ob ein fehlender oder unpassender Container den Test scheitern lässt statt ihn zu überspringen.
+    /// Ausdrücklich über <c>BIFROST_REQUIRE_CONTAINER</c> — und immer im Benchmark-Lauf auf einem
+    /// Linux-Runner von GitHub Actions: Dort ist Docker vorhanden, und ein Überspringen färbte den
+    /// Lauf grün, ohne den Proxy-Sprung gemessen zu haben. Ein Schalter nur im Testgerüst, nicht im
+    /// Produkt.
+    /// </summary>
     private static bool ContainerRequired
-        => Environment.GetEnvironmentVariable("BIFROST_REQUIRE_CONTAINER") is "1" or "true";
+        => Environment.GetEnvironmentVariable("BIFROST_REQUIRE_CONTAINER") is "1" or "true"
+            || (Enabled && OperatingSystem.IsLinux() && Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true");
 
     private static bool IsLocalAddress(IPAddress address)
         => System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()

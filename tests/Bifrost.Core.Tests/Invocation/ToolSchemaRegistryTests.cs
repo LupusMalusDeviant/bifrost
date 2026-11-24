@@ -222,6 +222,58 @@ public sealed class ToolSchemaRegistryTests
     }
 
     /// <summary>
+    /// Sechste Runde, Befund 3: Ein Verweis auf oberster Ebene wird von jedem Aufruf erreicht. Das
+    /// Werkzeug ist dann nicht nutzbar — gewollt, denn sein Schema lässt sich nie auswerten —, und
+    /// das Log nennt den Grund einmal statt je Aufruf.
+    /// </summary>
+    [Fact]
+    public async Task A_reference_every_call_reaches_rejects_every_call_and_logs_once()
+    {
+        var world = new InvokerTestWorld(echoSchema: """{"$ref":"https://other.invalid/root"}""");
+        var admin = world.RegisterAdmin();
+        var log = new CapturingLogger();
+        var invoker = world.WithLogger(log);
+        var ct = TestContext.Current.CancellationToken;
+
+        for (var call = 0; call < 10; call++)
+        {
+            var result = await invoker.InvokeAsync(
+                InvokerTestWorld.Request(admin, world.Echo, call % 2 == 0 ? new { message = "hi" } : null), ct);
+            result.Status.Should().Be(InvocationStatus.ValidationFailed);
+            result.ErrorMessage.Should().Contain("https://other.invalid/root", "der Aufrufer erfährt, welcher Verweis fehlt");
+        }
+
+        log.Lines.Should().ContainSingle().Which.Should().Contain("https://other.invalid/root");
+    }
+
+    /// <summary>
+    /// Sechste Runde, Befunde 3 und 4: Jeder Invoker schreibt seine eigene Zeile — für den
+    /// Auswertungsfehler wie für das Schema, das sich nicht bauen lässt. Vorher sah ein zweiter
+    /// Invoker den Baufehler nie, weil der erste ihn prozessweit schon geloggt hatte.
+    /// </summary>
+    [Fact]
+    public async Task Each_invoker_logs_schema_failures_with_its_own_logger()
+    {
+        var world = new InvokerTestWorld(echoSchema: """{"$ref":"https://other.invalid/root"}""");
+        var admin = world.RegisterAdmin();
+        var ct = TestContext.Current.CancellationToken;
+
+        foreach (var log in new[] { new CapturingLogger(), new CapturingLogger() })
+        {
+            var invoker = world.WithLogger(log);
+            for (var call = 0; call < 3; call++)
+            {
+                await invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = "hi" }), ct);
+                await invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Free, new { }), ct);
+            }
+
+            log.Lines.Should().HaveCount(2);
+            log.Lines.Should().ContainSingle(line => line.Contains("echo"));
+            log.Lines.Should().ContainSingle(line => line.Contains("free"));
+        }
+    }
+
+    /// <summary>
     /// Review-Befund L1 (fünfte Runde): Zwei verschiedene unauflösbare Verweise im selben Schema
     /// stehen beide im Log — je einmal.
     /// </summary>
