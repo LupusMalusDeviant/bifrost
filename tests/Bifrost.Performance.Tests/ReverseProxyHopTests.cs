@@ -70,7 +70,8 @@ public sealed class ReverseProxyHopTests
         await gateway.AddStdioUpstreamAsync("slow", "SlowServer", ct);
 
         var port = gateway.BaseAddress.Port;
-        await using var proxy = await StartNginxAsync(port, ct);
+        var listening = string.Join(", ", bridge.ListenAddresses.Select(a => a.ToString()).Prepend("127.0.0.1"));
+        await using var proxy = await StartNginxAsync(port, listening, ct);
         var proxyAddress = new Uri($"http://{proxy.Hostname}:{proxy.GetMappedPublicPort(80)}/");
         _output.WriteLine($"Gateway: {gateway.BaseAddress} · Proxy: {proxyAddress}");
 
@@ -152,7 +153,7 @@ public sealed class ReverseProxyHopTests
     /// aus, als hinge er.
     /// </para>
     /// </summary>
-    private async Task<IContainer> StartNginxAsync(int gatewayPort, CancellationToken ct)
+    private async Task<IContainer> StartNginxAsync(int gatewayPort, string listening, CancellationToken ct)
     {
         var configuration = $$"""
             events {}
@@ -210,7 +211,8 @@ public sealed class ReverseProxyHopTests
             await DisposeQuietlyAsync(container);
             throw new InvalidOperationException(
                 $"nginx kam nicht in Betrieb ({exception.GetType().Name}: {exception.Message}). Erwartet: "
-                + $"/healthz bis zum Gateway auf {HostAlias}:{gatewayPort} binnen {ReadinessTimeout.TotalSeconds:F0} s, "
+                + $"/healthz bis zum Gateway auf {HostAlias}:{gatewayPort} (der Gateway lauscht an {listening}) "
+                + $"binnen {ReadinessTimeout.TotalSeconds:F0} s, "
                 + $"Start samt Ziehen des Bildes binnen {StartTimeout.TotalMinutes:F0} min. nginx-Log:\n{log}",
                 exception);
         }
@@ -282,8 +284,16 @@ public sealed class ReverseProxyHopTests
     /// und aus Containern im Netz <c>bridge</c>. Linux nimmt Pakete für jede eigene Adresse auf jeder
     /// Schnittstelle an; ein Nachbar mit einer Route auf das Docker-Subnetz käme also ebenfalls an.
     /// Deshalb glaubt der Gateway Forwarded-Header nur Absendern aus dem Docker-Subnetz statt
-    /// <c>any</c> — ein solcher Nachbar kann sich nicht als Loopback ausgeben. Den Zugang selbst
-    /// schützt weiter der zur Laufzeit erzeugte API-Schlüssel.
+    /// <c>any</c> — ein solcher Nachbar kann sich nicht als Loopback ausgeben. Vertraut wird damit
+    /// allerdings <b>jedem</b> Container im Netz <c>bridge</c>, nicht nur nginx; auf einem geteilten
+    /// Runner könnte ein anderer Container sich als Loopback ausgeben. Das betrifft nur die Wege,
+    /// die an Loopback hängen (die Setup-Vorschau, die zusätzlich ein Token verlangt). Den Zugang
+    /// selbst schützt weiter der zur Laufzeit erzeugte API-Schlüssel.
+    /// </para>
+    /// <para>
+    /// <b>Annahme:</b> <c>host-gateway</c> ist das Gateway von <c>bridge</c>. Ein Daemon mit
+    /// eigenem <c>host-gateway-ip</c> bricht sie; dann wird nginx nicht bereit, und die Meldung nennt
+    /// die Adresse, an der der Gateway lauscht.
     /// </para>
     /// <para>
     /// Docker Desktop (Windows, macOS) leitet <c>host-gateway</c> auf die Loopback-Adresse des
@@ -322,27 +332,50 @@ public sealed class ReverseProxyHopTests
 
         using (process)
         {
+            var timeout = TimeSpan.FromSeconds(30);
             using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            limit.CancelAfter(TimeSpan.FromSeconds(30));
+            limit.CancelAfter(timeout);
 
             // Beide Ströme zugleich lesen: Ein voller stderr-Puffer hielte sonst den Prozess auf.
             var outputTask = process.StandardOutput.ReadToEndAsync(limit.Token);
             var errorTask = process.StandardError.ReadToEndAsync(limit.Token);
-            await process.WaitForExitAsync(limit.Token);
+            try
+            {
+                await process.WaitForExitAsync(limit.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // Ein hängender Docker-Daemon: den Befehl beenden, die Lesevorgänge abwarten (sonst
+                // melden sie sich später als unbeobachtete Ausnahme) und sagen, was hing.
+                process.Kill(entireProcessTree: true);
+                await ((Task)Task.WhenAll(outputTask, errorTask)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                throw new InvalidOperationException(
+                    $"'docker network inspect bridge' antwortete nicht binnen {timeout.TotalSeconds:F0} s — "
+                    + "der Docker-Daemon hängt oder ist nicht erreichbar.");
+            }
+
             var output = await outputTask;
             var error = await errorTask;
 
             // IPv4, denn darauf zeigt host-gateway; mit eingeschaltetem IPv6 kann der erste Eintrag
-            // das v6-Subnetz sein.
+            // das v6-Subnetz sein. Das Subnetz wird so gelesen, wie der Gateway es liest
+            // (IPNetwork.TryParse), und muss das Gateway enthalten — sonst bräche der Gateway erst beim
+            // Start mit einer Meldung ab, die das Subnetz nicht nennt.
             foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 var parts = line.Split('|');
                 if (parts.Length == 2
                     && IPAddress.TryParse(parts[1], out var gateway)
-                    && gateway.AddressFamily is System.Net.Sockets.AddressFamily.InterNetwork
-                    && parts[0].Contains('/', StringComparison.Ordinal))
+                    && gateway.AddressFamily is System.Net.Sockets.AddressFamily.InterNetwork)
                 {
-                    return new ContainerBridge([gateway], parts[0]);
+                    if (!IPNetwork.TryParse(parts[0], out var subnet) || !subnet.Contains(gateway))
+                    {
+                        throw new InvalidOperationException(
+                            $"Docker meldet für 'bridge' das Subnetz '{parts[0]}' mit Gateway {gateway}; das ist kein "
+                            + "kanonisches Subnetz, das dieses Gateway enthält.");
+                    }
+
+                    return new ContainerBridge([gateway], subnet.ToString());
                 }
             }
 

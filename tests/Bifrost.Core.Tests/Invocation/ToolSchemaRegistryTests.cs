@@ -160,9 +160,67 @@ public sealed class ToolSchemaRegistryTests
 
         var world = new InvokerTestWorld(echoSchema: referencing);
         var admin = world.RegisterAdmin();
-        var result = await world.Invoker.InvokeAsync(
-            InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), TestContext.Current.CancellationToken);
-        result.Status.Should().Be(InvocationStatus.Success, "R3: nicht auswertbar heißt durchlassen und loggen");
+        var log = new CapturingLogger();
+        var invoker = world.WithLogger(log);
+        var ct = TestContext.Current.CancellationToken;
+
+        for (var call = 0; call < 20; call++)
+        {
+            var result = await invoker.InvokeAsync(
+                InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct);
+            result.Status.Should().Be(InvocationStatus.Success, "R3: nicht auswertbar heißt durchlassen und loggen");
+        }
+
+        // Review-Befund (dritte Runde): Grund und Werkzeug stehen im Log — einmal, nicht je Aufruf.
+        log.Lines.Should().ContainSingle()
+            .Which.Should().Contain("echo").And.Contain("https://example.invalid/common");
+        ToolInvoker.UnusableSchemas.TryGetValue(world.Catalog.Find(world.Echo)!, out _).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Review-Befund (dritte Runde): Ein Schema, das sich nicht bauen lässt, wird nicht bei jedem
+    /// Aufruf neu gebaut. Das bewiese der Speicher nur über Stunden; hier zählt die Logzeile: Sie
+    /// entsteht beim Bauen, und es gibt sie genau einmal. Der Aufruf geht weiter über R3 durch.
+    /// </summary>
+    [Fact]
+    public async Task An_unbuildable_schema_is_built_and_logged_once()
+    {
+        var world = new InvokerTestWorld();
+        var admin = world.RegisterAdmin();
+        var log = new CapturingLogger();
+        var invoker = world.WithLogger(log);
+        var ct = TestContext.Current.CancellationToken;
+
+        for (var call = 0; call < 20; call++)
+        {
+            var result = await invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Free, new { }), ct);
+            result.Status.Should().Be(InvocationStatus.Success);
+        }
+
+        log.Lines.Should().ContainSingle().Which.Should().Contain("free");
+        var entry = world.Catalog.Find(world.Free)!;
+        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeTrue();
+        ToolInvoker.CompiledSchemas.TryGetValue(entry, out _).Should().BeFalse();
+    }
+
+    private sealed class CapturingLogger : Microsoft.Extensions.Logging.ILogger<ToolInvoker>
+    {
+        private readonly System.Collections.Concurrent.ConcurrentQueue<string> _lines = new();
+
+        public IReadOnlyList<string> Lines => [.. _lines];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            Microsoft.Extensions.Logging.LogLevel logLevel,
+            Microsoft.Extensions.Logging.EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => _lines.Enqueue(formatter(state, exception));
     }
 
     /// <summary>

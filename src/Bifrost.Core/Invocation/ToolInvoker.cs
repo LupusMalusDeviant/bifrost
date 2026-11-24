@@ -307,7 +307,6 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         return result;
     }
 
-    /// <summary>Serverseitige Argument-Validierung — Pflicht für den Lazy-Pfad ohne Client-Schema (ADR-0003).</summary>
     /// <summary>
     /// Der Grund eines gescheiterten Aufrufs: über die echte Verbindung des Supervisors mit deren
     /// Konfiguration und vorgelegtem Token bereinigt, sonst ohne Antwortkörper (Plan 0005 C7, D1).
@@ -332,6 +331,26 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         CompiledSchemas = new();
 
     /// <summary>
+    /// Einträge, deren Schema sich nicht bauen oder nicht auswerten lässt, mit dem Grund. Beides ist
+    /// je Eintrag beständig: Ein Schema, das einmal nicht baut oder einen Verweis nicht auflöst, tut
+    /// es beim nächsten Aufruf wieder. Ohne diese Ablage warf jeder Aufruf eine Ausnahme und schrieb
+    /// eine Warnung — ein Upstream konnte so mit einem Verweis ins Leere das Log fluten. Jetzt
+    /// steht die Ursache einmal je Eintrag im Log, und jeder weitere Aufruf geht ohne Bauen und ohne
+    /// Ausnahme denselben R3-Weg.
+    /// </summary>
+    internal static readonly System.Runtime.CompilerServices.ConditionalWeakTable<CatalogEntry, string>
+        UnusableSchemas = new();
+
+    /// <summary>Ein leeres Argumentobjekt, einmal geparst statt je Aufruf ohne Argumente.</summary>
+    private static readonly JsonElement EmptyArguments = ParseEmptyObject();
+
+    private static JsonElement ParseEmptyObject()
+    {
+        using var document = JsonDocument.Parse("{}");
+        return document.RootElement.Clone();
+    }
+
+    /// <summary>
     /// Baut ein Schema mit einer <b>eigenen</b> Registry. Mit den Vorgaben legt JsonSchema.Net jedes
     /// gebaute Schema in <c>SchemaRegistry.Global</c> ab und gibt es nie wieder frei. Gebaut wurde bis
     /// hierher bei jedem Werkzeugaufruf — das war das Speicherwachstum des Soak-Nachtlaufs: rund
@@ -344,23 +363,26 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// wenn jenes zufällig schon aufgerufen worden war, und nur, solange nichts im Produkt Schemata
     /// global ablegt. Gebaut wird ein solches Schema noch; erst die Auswertung wirft
     /// <c>RefResolutionException</c>. Das fällt in den R3-Ausweichweg: Der Aufruf läuft ungeprüft
-    /// durch, die Ursache steht bei jedem Aufruf im Log. Dafür überschreiben sich zwei Werkzeuge mit
-    /// demselben <c>$id</c> nicht mehr gegenseitig.
+    /// durch, die Ursache steht einmal je Katalogeintrag im Log (<see cref="UnusableSchemas"/>).
+    /// Dafür überschreiben sich zwei Werkzeuge mit demselben <c>$id</c> nicht mehr gegenseitig.
     /// </para>
     /// </summary>
-    /// <summary>Ein leeres Argumentobjekt, einmal geparst statt je Aufruf ohne Argumente.</summary>
-    private static readonly JsonElement EmptyArguments = JsonDocument.Parse("{}").RootElement.Clone();
-
     internal static JsonSchema BuildSchema(CatalogEntry entry)
         => JsonSchema.FromText(
             entry.InputSchema.GetRawText(),
             new BuildOptions { SchemaRegistry = new SchemaRegistry() });
 
+    /// <summary>Serverseitige Argument-Validierung — Pflicht für den Lazy-Pfad ohne Client-Schema (ADR-0003).</summary>
     private string? ValidateArguments(CatalogEntry entry, JsonElement args)
     {
         if (entry.InputSchema.ValueKind is not JsonValueKind.Object)
         {
             return null; // kein Schema vorhanden → nichts zu validieren
+        }
+
+        if (UnusableSchemas.TryGetValue(entry, out _))
+        {
+            return null; // R3, schon einmal begründet und geloggt
         }
 
         JsonSchema schema;
@@ -370,7 +392,7 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         }
         catch (Exception ex)
         {
-            Log.SchemaUnparseable(_logger, entry.Name.Value, ex.Message);
+            MarkUnusable(entry, ex);
             return null; // R3-Fallback: durchlassen und loggen statt fälschlich ablehnen
         }
 
@@ -389,10 +411,25 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
                 .FirstOrDefault() ?? "Argumente entsprechen nicht dem Tool-Schema.";
             return $"Argument-Validierung fehlgeschlagen — {firstError}";
         }
+        catch (RefResolutionException ex)
+        {
+            // Ein Verweis, der jetzt nicht auflöst, löst auch beim nächsten Aufruf nicht auf.
+            MarkUnusable(entry, ex);
+            return null;
+        }
         catch (Exception ex)
         {
+            // Alles andere kann an diesen Argumenten liegen; nicht als beständig merken.
             Log.SchemaUnparseable(_logger, entry.Name.Value, ex.Message);
             return null;
+        }
+    }
+
+    private void MarkUnusable(CatalogEntry entry, Exception exception)
+    {
+        if (UnusableSchemas.TryAdd(entry, exception.Message))
+        {
+            Log.SchemaUnparseable(_logger, entry.Name.Value, exception.Message);
         }
     }
 

@@ -120,6 +120,10 @@ internal sealed class InvokerTestWorld
     public ToolInvoker WithAuditOptions(AuditOptions options)
         => new(Authorization, RateLimiter, Catalog, Supervisor, Audit, Redaction, Time, logger: null, options);
 
+    /// <summary>Zweiter Invoker auf derselben Welt, dessen Logzeilen der Test lesen kann.</summary>
+    public ToolInvoker WithLogger(Microsoft.Extensions.Logging.ILogger<ToolInvoker> logger)
+        => new(Authorization, RateLimiter, Catalog, Supervisor, Audit, Redaction, Time, logger);
+
     /// <summary>Invoker mit aktiver Inhaltsprüfung (ADR-0011).</summary>
     public ToolInvoker WithGuard(IContentGuard guard, GuardOptions? options = null)
         => new(Authorization, RateLimiter, Catalog, Supervisor, Audit, Redaction, Time,
