@@ -295,14 +295,38 @@ public sealed class ReverseProxyHopTests
         IReadOnlyList<IPAddress> ListenAddresses,
         string TrustedProxies,
         INetwork? Network,
-        string GatewayHost) : IAsyncDisposable
+        string GatewayHost,
+        Action<string> Log) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()
         {
             if (Network is not null)
             {
-                await Network.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(30));
+                await DisposeNetworkQuietlyAsync(Network, Log);
             }
+        }
+    }
+
+    /// <summary>
+    /// Das Testnetz entfernen, ohne je zu werfen und ohne unbegrenzt zu warten (Review-Befunde M-1
+    /// und L-1, neunte Runde). Es wird zuletzt entsorgt; eine Ausnahme hier ersetzte bei
+    /// <c>await using</c> die des Testrumpfs — den Startfehler von nginx samt Log, eine
+    /// fehlgeschlagene Prüfung. Hängt nginx noch im Netz („active endpoints") oder hängt der Daemon,
+    /// steht der Befehl zum Entfernen im Protokoll; Ryuk räumt das Netz sonst über das
+    /// Sitzungs-Label ab.
+    /// </summary>
+    private static async Task DisposeNetworkQuietlyAsync(INetwork network, Action<string> log)
+    {
+        try
+        {
+            await network.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(30));
+        }
+#pragma warning disable CA1031 // Das Aufräumen darf den eigentlichen Befund nicht verdecken.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            log($"Docker-Netz {network.Name} liess sich nicht entfernen ({exception.GetType().Name}: "
+                + $"{exception.Message}); von Hand entfernen: docker network rm {network.Name}");
         }
     }
 
@@ -325,11 +349,13 @@ public sealed class ReverseProxyHopTests
     /// ihnen.
     /// </para>
     /// </summary>
-    private static async Task<ContainerBridge> ContainerBridgeAsync(CancellationToken ct)
+    private async Task<ContainerBridge> ContainerBridgeAsync(CancellationToken ct)
     {
+        void Log(string line) => _output.WriteLine(line);
+
         if (!OperatingSystem.IsLinux())
         {
-            return new ContainerBridge([], "any", null, "host-gateway");
+            return new ContainerBridge([], "any", null, "host-gateway", Log);
         }
 
         var name = $"bifrost-bench-{Guid.NewGuid():N}";
@@ -340,18 +366,25 @@ public sealed class ReverseProxyHopTests
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            await DisposeNetworkQuietlyAsync(network, Log);
             Assert.SkipUnless(ContainerRequired, $"Docker-Netz liess sich nicht anlegen: {exception.Message}");
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            // Abbruch mitten im Anlegen: Das Netz kann schon stehen (Review-Befund L-2, neunte Runde).
+            await DisposeNetworkQuietlyAsync(network, Log);
             throw;
         }
 
         try
         {
             var (gateway, subnet) = await InspectNetworkAsync(name, ct);
-            return new ContainerBridge([gateway], subnet, network, gateway.ToString());
+            return new ContainerBridge([gateway], subnet, network, gateway.ToString(), Log);
         }
         catch
         {
-            await network.DisposeAsync();
+            await DisposeNetworkQuietlyAsync(network, Log);
             throw;
         }
     }

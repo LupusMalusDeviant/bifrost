@@ -333,7 +333,9 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// <summary>
     /// Einträge, deren Schema sich wegen seines Texts nicht <b>bauen</b> lässt, mit dem Grund. Das
     /// ist je Eintrag beständig: Ein Schema, das einmal nicht baut, baut auch beim nächsten Aufruf
-    /// nicht. Ein Ausfall des Augenblicks (<see cref="IsTransientBuildFailure"/>) wird nicht gemerkt.
+    /// nicht. Jeder weitere Aufruf geht ohne erneutes Bauen denselben R3-Weg; die Ursache steht je
+    /// Invoker einmal im Log (<see cref="_loggedSchemaFailures"/>). Ein Ausfall des Augenblicks
+    /// (<see cref="IsTransientBuildFailure"/>) wird nicht gemerkt.
     /// <para>
     /// <b>Grenze:</b> Auch Verweise löst die Bibliothek teils schon beim Bauen auf, und die eigene
     /// Registry fällt dabei auf <c>SchemaRegistry.Global</c> zurück. Ein Verweis, der beim Bauen
@@ -342,8 +344,7 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// nichts global (nur die Meta-Schemata der Drafts, die die Bibliothek selbst mitbringt); das
     /// Urteil hängt damit nicht an der Startreihenfolge. Käme eine globale Registrierung hinzu,
     /// müsste dieser Zwischenspeicher sie berücksichtigen.
-    /// </para> Jeder weitere Aufruf geht ohne erneutes Bauen denselben R3-Weg;
-    /// die Ursache steht je Invoker einmal im Log (<see cref="_loggedSchemaFailures"/>).
+    /// </para>
     /// <para>
     /// <b>Auswertungsfehler gehören ausdrücklich nicht hierher.</b> Ob ein unauflösbarer
     /// <c>$ref</c> überhaupt erreicht wird, hängt an den Argumenten (<c>properties</c>,
@@ -496,6 +497,13 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// Ob ein Baufehler vorübergehend ist — an Speicher, Stack oder einem Abbruch dieses
     /// Augenblicks, nicht am Schema. Nur diese Arten gelten so; jede andere kehrt beim nächsten
     /// Bauen wieder und nimmt den R3-Weg.
+    /// <para>
+    /// <b>Grenzfall Stack:</b> Würfe die Bibliothek <see cref="InsufficientExecutionStackException"/>
+    /// für ein bestimmtes, sehr tief verschachteltes Schema jedes Mal, bliebe das Werkzeug
+    /// abgewiesen und würde je Aufruf neu gebaut, statt R3 zu nehmen — sicher, aber teurer. Praktisch
+    /// kommt es nicht dazu: Das Parsen bricht bei einer Tiefe über 64 vorher mit
+    /// <see cref="JsonException"/> ab, und die nimmt R3.
+    /// </para>
     /// </summary>
     internal static bool IsTransientBuildFailure(Exception exception)
         => exception is OutOfMemoryException

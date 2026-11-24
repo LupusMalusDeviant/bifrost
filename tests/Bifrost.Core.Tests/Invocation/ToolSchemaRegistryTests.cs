@@ -245,6 +245,33 @@ public sealed class ToolSchemaRegistryTests
     }
 
     /// <summary>
+    /// Neunte Runde, L-5: Ein fehlender <i>lokaler</i> Zeiger (<c>#/$defs/missing</c>). JsonSchema.Net
+    /// 9.3 baut das Schema und wirft erst beim Auswerten — der Aufruf, der den Zeiger erreicht, wird
+    /// abgewiesen, einer ohne ihn geprüft. Verschöbe eine künftige Fassung das Auflösen ins Bauen,
+    /// nähme das ganze Werkzeug den R3-Weg; dieser Test fiele dann auf.
+    /// </summary>
+    [Fact]
+    public async Task A_missing_local_pointer_is_resolved_at_evaluation_and_rejects_the_call()
+    {
+        const string schema =
+            """{"type":"object","required":["id"],"properties":{"id":{"type":"integer"},"n":{"$ref":"#/$defs/missing"}}}""";
+        var world = new InvokerTestWorld(echoSchema: schema);
+        var admin = world.RegisterAdmin();
+        var ct = TestContext.Current.CancellationToken;
+
+        var build = () => ToolInvoker.BuildSchema(world.Catalog.Find(world.Echo)!);
+        build.Should().NotThrow("der fehlende Zeiger fällt erst beim Auswerten auf");
+
+        (await world.Invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { id = 1, n = 1 }), ct))
+            .Status.Should().Be(InvocationStatus.ValidationFailed);
+        (await world.Invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { id = "abc" }), ct))
+            .Status.Should().Be(InvocationStatus.ValidationFailed);
+        (await world.Invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { id = 1 }), ct))
+            .Status.Should().Be(InvocationStatus.Success);
+        ToolInvoker.UnusableSchemas.TryGetValue(world.Catalog.Find(world.Echo)!, out _).Should().BeFalse();
+    }
+
+    /// <summary>
     /// Achte Runde, M-A: Ein kaputtes <c>$id</c> lässt das Schema nicht bauen. Gleich welche
     /// Ausnahme die Bibliothek dafür wirft — das Werkzeug wird nicht dauerhaft gesperrt und nicht
     /// je Aufruf neu gebaut, sondern geht wie jedes nicht baubare Schema über R3.
