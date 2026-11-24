@@ -222,36 +222,55 @@ public sealed class ToolSchemaRegistryTests
     }
 
     /// <summary>
-    /// Siebte Runde, M1: Ein Baufehler, der nicht am Schematext liegt (hier ein zu tiefer Stack),
-    /// wird nicht gemerkt und lässt den Aufruf nicht durch. Der nächste Aufruf baut neu und prüft.
-    /// Gemerkt, hätte ein einmaliger Ausfall die Prüfung bis zum nächsten Katalog-Neubau abgeschaltet.
+    /// Siebte Runde M1, achte Runde M-A: Nur Ausfälle des Augenblicks gelten als vorübergehend und
+    /// werden nicht gemerkt; jeder andere Baufehler — auch eine Art, die die Bibliothek nicht als
+    /// <see cref="JsonSchemaException"/> meldet — kehrt wieder und nimmt den R3-Weg. Geprüft an der
+    /// Einstufung selbst: Einen echten Stack- oder Speicherausfall löst kein Schematext aus, und eine
+    /// Einspeisestelle nur für Tests gehört nicht ins Produkt (achte Runde, M-B).
     /// </summary>
     [Fact]
-    public async Task A_transient_build_failure_is_not_remembered_and_does_not_let_the_call_through()
+    public void Only_failures_of_the_moment_count_as_transient()
     {
-        var world = new InvokerTestWorld();
+        ToolInvoker.IsTransientBuildFailure(new InsufficientExecutionStackException()).Should().BeTrue();
+        ToolInvoker.IsTransientBuildFailure(new InsufficientMemoryException()).Should().BeTrue("abgeleitet von OutOfMemoryException");
+        ToolInvoker.IsTransientBuildFailure(new OperationCanceledException()).Should().BeTrue();
+        ToolInvoker.IsTransientBuildFailure(new TaskCanceledException()).Should().BeTrue();
+        ToolInvoker.IsTransientBuildFailure(new ThreadInterruptedException()).Should().BeTrue();
+
+        ToolInvoker.IsTransientBuildFailure(new JsonSchemaException("kaputt")).Should().BeFalse();
+        ToolInvoker.IsTransientBuildFailure(new UriFormatException()).Should().BeFalse();
+        ToolInvoker.IsTransientBuildFailure(new InvalidOperationException()).Should().BeFalse();
+        ToolInvoker.IsTransientBuildFailure(new KeyNotFoundException()).Should().BeFalse();
+        ToolInvoker.IsTransientBuildFailure(new NotSupportedException()).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Achte Runde, M-A: Ein kaputtes <c>$id</c> lässt das Schema nicht bauen. Gleich welche
+    /// Ausnahme die Bibliothek dafür wirft — das Werkzeug wird nicht dauerhaft gesperrt und nicht
+    /// je Aufruf neu gebaut, sondern geht wie jedes nicht baubare Schema über R3.
+    /// </summary>
+    [Fact]
+    public async Task A_schema_with_a_broken_id_takes_the_R3_path()
+    {
+        var world = new InvokerTestWorld(
+            echoSchema: """{"$id":"http://[::1","type":"object","required":["message"],"properties":{"message":{"type":"string"}}}""");
         var admin = world.RegisterAdmin();
+        var log = new CapturingLogger();
+        var invoker = world.WithLogger(log);
         var ct = TestContext.Current.CancellationToken;
-        var failures = 1;
-        var invoker = new ToolInvoker(
-            world.Authorization, world.RateLimiter, world.Catalog, world.Supervisor, world.Audit, world.Redaction, world.Time)
+
+        var thrown = () => ToolInvoker.BuildSchema(world.Catalog.Find(world.Echo)!);
+        thrown.Should().Throw<Exception>("sonst bewiese der Test nichts über Baufehler")
+            .Which.Should().Match<Exception>(e => !ToolInvoker.IsTransientBuildFailure(e));
+
+        for (var call = 0; call < 5; call++)
         {
-            SchemaBuilder = entry => Interlocked.Decrement(ref failures) >= 0
-                ? throw new InsufficientExecutionStackException()
-                : ToolInvoker.BuildSchema(entry),
-        };
+            (await invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct))
+                .Status.Should().Be(InvocationStatus.Success, "R3: ein Schema, das nicht baut, lässt durch");
+        }
 
-        var first = await invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = "hi" }), ct);
-        first.Status.Should().Be(InvocationStatus.ValidationFailed, "ohne gebautes Schema kein ungeprüfter Durchlass");
-        first.ErrorMessage.Should().Contain(nameof(InsufficientExecutionStackException));
-
-        var entry = world.Catalog.Find(world.Echo)!;
-        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse("ein Ausfall des Augenblicks wird nicht gemerkt");
-
-        var invalid = await invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct);
-        invalid.Status.Should().Be(InvocationStatus.ValidationFailed, "der zweite Aufruf baut neu und prüft");
-        var valid = await invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = "hi" }), ct);
-        valid.Status.Should().Be(InvocationStatus.Success);
+        log.Lines.Should().ContainSingle();
+        ToolInvoker.UnusableSchemas.TryGetValue(world.Catalog.Find(world.Echo)!, out _).Should().BeTrue();
     }
 
     /// <summary>
@@ -296,7 +315,9 @@ public sealed class ToolSchemaRegistryTests
         var admin = world.RegisterAdmin();
         var ct = TestContext.Current.CancellationToken;
 
-        var oldSchema = await BuildThroughInvokerAsync(world, admin, ct);
+        (await world.Invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = "hi" }), ct))
+            .Status.Should().Be(InvocationStatus.Success);
+        var oldSchema = WeakSchemaOf(world);
 
         world.Supervisor.SetServer(world.Server, world.Slug, new UpstreamInventory(
             [
@@ -321,11 +342,14 @@ public sealed class ToolSchemaRegistryTests
         oldSchema.IsAlive.Should().BeFalse("das Schema des alten Katalogeintrags darf nicht festgehalten werden");
     }
 
+    /// <summary>
+    /// Synchron und nicht eingebettet (Review-Befund L-3, achte Runde): Weder der Katalogeintrag
+    /// noch das Schema dürfen als Feld einer async-Zustandsmaschine überleben, sonst hielte der
+    /// Test selbst fest, was er freigegeben sehen will.
+    /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static async Task<WeakReference> BuildThroughInvokerAsync(InvokerTestWorld world, IdentityId admin, CancellationToken ct)
+    private static WeakReference WeakSchemaOf(InvokerTestWorld world)
     {
-        (await world.Invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = "hi" }), ct))
-            .Status.Should().Be(InvocationStatus.Success);
         ToolInvoker.CompiledSchemas.TryGetValue(world.Catalog.Find(world.Echo)!, out var schema).Should().BeTrue();
         return new WeakReference(schema);
     }

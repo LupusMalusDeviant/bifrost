@@ -4,6 +4,7 @@ using AwesomeAssertions;
 using Bifrost.Performance.Tests.Harness;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
+using DotNet.Testcontainers.Networks;
 using Xunit;
 
 namespace Bifrost.Performance.Tests;
@@ -31,8 +32,9 @@ public sealed class ReverseProxyHopTests
     private static bool Enabled => Environment.GetEnvironmentVariable("BIFROST_RUN_BENCHMARK") == "1";
 
     /// <summary>
-    /// Auf Linux erreicht ein Container den Host nicht von allein. Testcontainers legt dafür einen
-    /// Namen an; unter Docker Desktop existiert er ohnehin.
+    /// Der Name, unter dem nginx den Gateway erreicht. Unter Docker Desktop zeigt er auf
+    /// <c>host-gateway</c>, unter Linux auf das Gateway des eigenen Testnetzes
+    /// (<see cref="ContainerBridgeAsync"/>).
     /// </summary>
     private const string HostAlias = "host.docker.internal";
 
@@ -53,7 +55,8 @@ public sealed class ReverseProxyHopTests
         await RequireRuntimeAsync();
 
         var ct = TestContext.Current.CancellationToken;
-        var bridge = await ContainerBridgeAsync(ct);
+        // Zuerst angelegt, zuletzt entfernt: nginx muss das Netz vor ihm verlassen haben.
+        await using var bridge = await ContainerBridgeAsync(ct);
 
         await using var gateway = await GatewayProcess.StartAsync(
             new GatewayProcessOptions(
@@ -71,7 +74,7 @@ public sealed class ReverseProxyHopTests
 
         var port = gateway.BaseAddress.Port;
         var listening = string.Join(", ", bridge.ListenAddresses.Select(a => a.ToString()).Prepend("127.0.0.1"));
-        await using var proxy = await StartNginxAsync(port, listening, ct);
+        await using var proxy = await StartNginxAsync(port, listening, bridge, ct);
         var proxyAddress = new Uri($"http://{proxy.Hostname}:{proxy.GetMappedPublicPort(80)}/");
         _output.WriteLine($"Gateway: {gateway.BaseAddress} · Proxy: {proxyAddress}");
 
@@ -154,7 +157,7 @@ public sealed class ReverseProxyHopTests
     /// aus, als hinge er.
     /// </para>
     /// </summary>
-    private async Task<IContainer> StartNginxAsync(int gatewayPort, string listening, CancellationToken ct)
+    private async Task<IContainer> StartNginxAsync(int gatewayPort, string listening, ContainerBridge bridge, CancellationToken ct)
     {
         var configuration = $$"""
             events {}
@@ -185,9 +188,15 @@ public sealed class ReverseProxyHopTests
         var file = Path.Combine(directory, "nginx.conf");
         await File.WriteAllTextAsync(file, configuration, ct);
 
-        var container = new ContainerBuilder("nginx:1.27-alpine")
+        var builder = new ContainerBuilder("nginx:1.27-alpine")
             .WithResourceMapping(new FileInfo(file), "/etc/nginx/")
-            .WithExtraHost(HostAlias, "host-gateway")
+            .WithExtraHost(HostAlias, bridge.GatewayHost);
+        if (bridge.Network is not null)
+        {
+            builder = builder.WithNetwork(bridge.Network);
+        }
+
+        var container = builder
             .WithPortBinding(80, assignRandomHostPort: true)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilHttpRequestIsSucceeded(
                 request => request.ForPath("/healthz").ForPort(80),
@@ -270,49 +279,92 @@ public sealed class ReverseProxyHopTests
         catch (Exception exception)
 #pragma warning restore CA1031
         {
-            _output.WriteLine($"nginx-Container liess sich nicht aufräumen: {exception.Message}");
+            // Mit ID: Ohne Ryuk (TESTCONTAINERS_RYUK_DISABLED) bleibt der Container sonst unauffindbar
+            // stehen (Review-Befund L-5, achte Runde).
+            _output.WriteLine(
+                $"nginx-Container {container.Id} liess sich nicht aufräumen ({exception.Message}); "
+                + $"von Hand entfernen: docker rm -f {container.Id}");
         }
     }
 
-    /// <summary>Wie der Testgateway für einen Container erreichbar ist und wem er Forwarded-Header glaubt.</summary>
-    private sealed record ContainerBridge(IReadOnlyList<IPAddress> ListenAddresses, string TrustedProxies);
+    /// <summary>
+    /// Wie der Testgateway für nginx erreichbar ist und wem er Forwarded-Header glaubt. Unter Linux
+    /// mit einem eigenen Docker-Netz nur für diesen Test, das am Ende wieder entfernt wird.
+    /// </summary>
+    private sealed record ContainerBridge(
+        IReadOnlyList<IPAddress> ListenAddresses,
+        string TrustedProxies,
+        INetwork? Network,
+        string GatewayHost) : IAsyncDisposable
+    {
+        public async ValueTask DisposeAsync()
+        {
+            if (Network is not null)
+            {
+                await Network.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(30));
+            }
+        }
+    }
 
     /// <summary>
-    /// Unter Linux: das IPv4-Gateway des Docker-Netzes <c>bridge</c> — dorthin zeigt
-    /// <c>host-gateway</c> —, an dem der Test zusätzlich zu <c>127.0.0.1</c> lauscht, und dessen
-    /// Subnetz als einzige vertrauenswürdige Proxy-Quelle.
+    /// Unter Linux: ein <b>eigenes</b> Docker-Netz nur für nginx. Der Gateway lauscht zusätzlich zu
+    /// <c>127.0.0.1</c> an dessen IPv4-Gateway, nginx erreicht ihn dort direkt (ohne
+    /// <c>host-gateway</c>), und nur dessen Subnetz gilt als vertrauenswürdige Proxy-Quelle.
     /// <para>
-    /// <b>Was das abgrenzt und was nicht.</b> Erreichbar ist der Testgateway damit vom Rechner selbst
-    /// und aus Containern im Netz <c>bridge</c>. Linux nimmt Pakete für jede eigene Adresse auf jeder
-    /// Schnittstelle an; ein Nachbar mit einer Route auf das Docker-Subnetz käme also ebenfalls an.
-    /// Deshalb glaubt der Gateway Forwarded-Header nur Absendern aus dem Docker-Subnetz statt
-    /// <c>any</c> — ein solcher Nachbar kann sich nicht als Loopback ausgeben. Vertraut wird damit
-    /// allerdings <b>jedem</b> Container im Netz <c>bridge</c>, nicht nur nginx; auf einem geteilten
-    /// Runner könnte ein anderer Container sich als Loopback ausgeben. Das betrifft nur die Wege,
-    /// die an Loopback hängen (die Setup-Vorschau, die zusätzlich ein Token verlangt). Den Zugang
-    /// selbst schützt weiter der zur Laufzeit erzeugte API-Schlüssel.
-    /// </para>
-    /// <para>
-    /// <b>Annahme:</b> <c>host-gateway</c> ist das Gateway von <c>bridge</c>. Ein Daemon mit
-    /// eigenem <c>host-gateway-ip</c> bricht sie; dann wird nginx nicht bereit, und die Meldung nennt
-    /// die Adresse, an der der Gateway lauscht.
+    /// <b>Was das abgrenzt und was nicht.</b> Im eigenen Netz steht nur nginx — nicht Ryuk, keine
+    /// Service-Container des Jobs, nichts sonst aus dem Standardnetz <c>bridge</c>. Nur nginx kann
+    /// sich damit als Loopback ausgeben (Review-Befund L-4, achte Runde). Linux nimmt Pakete für
+    /// jede eigene Adresse auf jeder Schnittstelle an; ein Nachbar mit einer Route auf das Subnetz
+    /// käme an die Adresse heran, gilt aber nicht als Proxy. Den Zugang selbst schützt weiter der
+    /// zur Laufzeit erzeugte API-Schlüssel.
     /// </para>
     /// <para>
     /// Docker Desktop (Windows, macOS) leitet <c>host-gateway</c> auf die Loopback-Adresse des
-    /// Rechners weiter. Dort lauscht der Gateway nur auf <c>127.0.0.1</c>; erreichen können ihn nur
-    /// Prozesse dieses Rechners, und <c>any</c> glaubt damit nur ihnen.
+    /// Rechners weiter. Dort lauscht der Gateway nur auf <c>127.0.0.1</c>, ein eigenes Netz braucht
+    /// es nicht; erreichen können ihn nur Prozesse dieses Rechners, und <c>any</c> glaubt damit nur
+    /// ihnen.
     /// </para>
     /// </summary>
     private static async Task<ContainerBridge> ContainerBridgeAsync(CancellationToken ct)
     {
         if (!OperatingSystem.IsLinux())
         {
-            return new ContainerBridge([], "any");
+            return new ContainerBridge([], "any", null, "host-gateway");
         }
 
+        var name = $"bifrost-bench-{Guid.NewGuid():N}";
+        var network = new NetworkBuilder().WithName(name).Build();
+        try
+        {
+            await network.CreateAsync(ct);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            Assert.SkipUnless(ContainerRequired, $"Docker-Netz liess sich nicht anlegen: {exception.Message}");
+            throw;
+        }
+
+        try
+        {
+            var (gateway, subnet) = await InspectNetworkAsync(name, ct);
+            return new ContainerBridge([gateway], subnet, network, gateway.ToString());
+        }
+        catch
+        {
+            await network.DisposeAsync();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// IPv4-Gateway und Subnetz eines Docker-Netzes, gelesen über <c>docker network inspect</c> —
+    /// mit Schranke, und so geprüft, wie der Gateway das Subnetz später liest.
+    /// </summary>
+    private static async Task<(IPAddress Gateway, string Subnet)> InspectNetworkAsync(string networkName, CancellationToken ct)
+    {
         var start = new System.Diagnostics.ProcessStartInfo(
             "docker",
-            ["network", "inspect", "bridge", "--format", "{{range .IPAM.Config}}{{.Subnet}}|{{.Gateway}}\n{{end}}"])
+            ["network", "inspect", networkName, "--format", "{{range .IPAM.Config}}{{.Subnet}}|{{.Gateway}}\n{{end}}"])
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -348,7 +400,7 @@ public sealed class ReverseProxyHopTests
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 throw new InvalidOperationException(
-                    $"'docker network inspect bridge' antwortete nicht binnen {timeout.TotalSeconds:F0} s — "
+                    $"'docker network inspect {networkName}' antwortete nicht binnen {timeout.TotalSeconds:F0} s — "
                     + "der Docker-Daemon hängt oder ist nicht erreichbar.");
             }
             finally
@@ -366,8 +418,8 @@ public sealed class ReverseProxyHopTests
             var output = await outputTask;
             var error = await errorTask;
 
-            // IPv4, denn darauf zeigt host-gateway; mit eingeschaltetem IPv6 kann der erste Eintrag
-            // das v6-Subnetz sein. Das Subnetz wird so gelesen, wie der Gateway es liest
+            // IPv4, denn daran lauscht der Gateway für nginx; mit eingeschaltetem IPv6 kann der erste
+            // Eintrag das v6-Subnetz sein. Das Subnetz wird so gelesen, wie der Gateway es liest
             // (IPNetwork.TryParse), und muss das Gateway enthalten — sonst bräche der Gateway erst beim
             // Start mit einer Meldung ab, die das Subnetz nicht nennt.
             foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
@@ -380,7 +432,7 @@ public sealed class ReverseProxyHopTests
                     if (!IPNetwork.TryParse(parts[0], out var subnet) || !subnet.Contains(gateway))
                     {
                         throw new InvalidOperationException(
-                            $"Docker meldet für 'bridge' das Subnetz '{parts[0]}' mit Gateway {gateway}; das ist kein "
+                            $"Docker meldet für '{networkName}' das Subnetz '{parts[0]}' mit Gateway {gateway}; das ist kein "
                             + "kanonisches Subnetz, das dieses Gateway enthält.");
                     }
 
@@ -390,20 +442,20 @@ public sealed class ReverseProxyHopTests
                     if (!IsLocalAddress(gateway))
                     {
                         var reason =
-                            $"Das Gateway {gateway} des Docker-Netzes 'bridge' ist keine Adresse dieses Rechners — "
+                            $"Das Gateway {gateway} des Docker-Netzes '{networkName}' ist keine Adresse dieses Rechners — "
                             + "docker spricht vermutlich mit einem entfernten oder rootless Daemon (DOCKER_HOST, docker context).";
                         Assert.SkipUnless(ContainerRequired, reason);
                         throw new InvalidOperationException(reason);
                     }
 
-                    return new ContainerBridge([gateway], subnet.ToString());
+                    return (gateway, subnet.ToString());
                 }
             }
 
-            // Kein Netz 'bridge' oder keines mit IPv4 (etwa Podman mit docker-Befehl): wie eine
+            // Kein solches Netz oder keines mit IPv4 (etwa Podman mit docker-Befehl): wie eine
             // fehlende Runtime — übersprungen, es sei denn, ein Container ist Pflicht.
             var missing =
-                $"Das IPv4-Gateway des Docker-Netzes 'bridge' liess sich nicht ermitteln (Exit {process.ExitCode}): "
+                $"Das IPv4-Gateway des Docker-Netzes '{networkName}' liess sich nicht ermitteln (Exit {process.ExitCode}): "
                 + $"{output} {error}";
             Assert.SkipUnless(ContainerRequired, missing);
             throw new InvalidOperationException(missing);
