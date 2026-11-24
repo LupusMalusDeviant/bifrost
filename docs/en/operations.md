@@ -933,8 +933,12 @@ Every tool call is measured (FR-26) under the meter `Bifrost.Gateway`:
 
 | Instrument | Meaning | Dimensions |
 |---|---|---|
-| `bifrost.tool_calls` | Counter of all calls — gives calls/s and error rate | `server`, `tool`, `status`, `origin` |
+| `bifrost.tool_calls` | Counter of all calls — gives calls/s and error rate | `server`, `tool`, `status`, `origin`, `fault` |
 | `bifrost.tool_call_duration` | Latency histogram (ms) — gives percentiles | `server`, `tool`, `status` |
+
+`fault` is `gateway` when a call failed because of an error in the gateway itself (an internal pipeline error, an
+interrupted schema build), otherwise `none`. Both show up with `status=UpstreamError`; to compute an error rate per
+upstream, filter on `fault="none"` so that a gateway error is not blamed on the server.
 
 Export is **off** until a target is configured:
 

@@ -196,20 +196,39 @@ public sealed class ReverseProxyHopTests
             builder = builder.WithNetwork(bridge.Network);
         }
 
-        var container = builder
-            .WithPortBinding(80, assignRandomHostPort: true)
-            // Nur auf Loopback veröffentlichen, nicht auf allen Schnittstellen des Rechners: Unter
-            // Docker Desktop glaubt der Gateway Forwarded-Header von überall ("any"), und nginx
-            // wäre sonst für die Dauer des Tests aus dem LAN erreichbar (Review-Befund L-1, elfte
-            // Runde). Der Lastlauf spricht nginx ohnehin über Loopback an.
-            .WithCreateParameterModifier(parameters =>
+        builder = builder.WithPortBinding(80, assignRandomHostPort: true);
+
+        // Nur auf Loopback veröffentlichen, nicht auf allen Schnittstellen des Rechners: Unter
+        // Docker Desktop glaubt der Gateway Forwarded-Header von überall ("any"), und nginx wäre
+        // sonst für die Dauer des Tests aus dem LAN erreichbar (Review-Befund L-1, elfte Runde). Der
+        // Lastlauf spricht nginx ohnehin über Loopback an.
+        // Nur bei einem Daemon auf diesem Rechner (zwölfte Runde, L-4): Mit einem entfernten
+        // DOCKER_HOST ist proxy.Hostname der entfernte Rechner, und dort wäre nginx an Loopback
+        // gebunden unerreichbar. Ein entfernter Host aus ~/.testcontainers.properties wird hier
+        // nicht erkannt; dann scheitert die Bereitschaft mit der Meldung, die den Proxy nennt.
+        if (DockerDaemonIsLocal)
+        {
+            builder = builder.WithCreateParameterModifier(parameters =>
             {
-                var bindings = parameters.HostConfig?.PortBindings?.Values ?? [];
-                foreach (var binding in bindings.SelectMany(list => list))
+                var rewritten = 0;
+                foreach (var binding in (parameters.HostConfig?.PortBindings?.Values ?? []).SelectMany(list => list))
                 {
                     binding.HostIP = "127.0.0.1";
+                    rewritten++;
                 }
-            })
+
+                // Setzte eine künftige Testcontainers-Fassung die Bindungen erst nach diesem Schritt,
+                // liefe das still ins Leere und nginx lauschte wieder überall.
+                if (rewritten == 0)
+                {
+                    throw new InvalidOperationException(
+                        "Keine Portbindung zum Umschreiben auf 127.0.0.1 gefunden — Testcontainers setzt die "
+                        + "Bindungen offenbar erst nach dem Create-Parameter-Modifier.");
+                }
+            });
+        }
+
+        var container = builder
             .WithWaitStrategy(Wait.ForUnixContainer().UntilHttpRequestIsSucceeded(
                 request => request.ForPath("/healthz").ForPort(80),
                 // Ohne Schranke wartet Testcontainers, bis der Testlauf nach einer Stunde abbricht —
@@ -313,9 +332,9 @@ public sealed class ReverseProxyHopTests
     {
         public async ValueTask DisposeAsync()
         {
-            if (Network is not null)
+            if (Network is not null && !await DisposeNetworkQuietlyAsync(Network, NetworkName!, Log))
             {
-                await DisposeNetworkQuietlyAsync(Network, NetworkName!, Log);
+                await RemoveNetworkByNameAsync(NetworkName!, Log);
             }
         }
     }
@@ -333,18 +352,21 @@ public sealed class ReverseProxyHopTests
     /// eigentlichen Fehler (Review-Befund L-1, zehnte Runde).
     /// </para>
     /// </summary>
-    private static async Task DisposeNetworkQuietlyAsync(INetwork network, string name, Action<string> log)
+    /// <returns>Ob Testcontainers das Netz entfernt hat; sonst versucht der Aufrufer es per Name.</returns>
+    private static async Task<bool> DisposeNetworkQuietlyAsync(INetwork network, string name, Action<string> log)
     {
         try
         {
             await network.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(30));
+            return true;
         }
 #pragma warning disable CA1031 // Das Aufräumen darf den eigentlichen Befund nicht verdecken.
         catch (Exception exception)
 #pragma warning restore CA1031
         {
-            log($"Docker-Netz {name} liess sich nicht entfernen ({exception.GetType().Name}: "
-                + $"{exception.Message}); von Hand entfernen: docker network rm {name}");
+            log($"Docker-Netz {name} liess sich über Testcontainers nicht entfernen ({exception.GetType().Name}: "
+                + $"{exception.Message}); neuer Versuch über 'docker network rm'.");
+            return false;
         }
     }
 
@@ -359,6 +381,13 @@ public sealed class ReverseProxyHopTests
     /// Anlege-Auftrag beim Daemon noch läuft; dann wird nach einer kurzen Pause ein zweites Mal
     /// entfernt. Ein Netz, das danach erst entsteht, kann nur Ryuk abräumen — das Protokoll nennt
     /// den Namen.
+    /// </para>
+    /// <para>
+    /// Aufgerufen nur, wo Testcontainers das Netz nicht entfernt hat oder es nie kannte (zwölfte
+    /// Runde, L-5) — nicht nach jedem sauberen Aufräumen, das sonst 2 s Pause und eine irreführende
+    /// Zeile kostete. „Nicht gefunden" heisst dann meist: Das Anlegen ist wirklich gescheitert; die
+    /// Zeile dazu ist entsprechend neutral. Erkannt wird es am englischen Text der Docker-CLI, die
+    /// ihre Meldungen nicht übersetzt.
     /// </para>
     /// </summary>
     private static async Task RemoveNetworkByNameAsync(string name, Action<string> log)
@@ -385,8 +414,8 @@ public sealed class ReverseProxyHopTests
             }
         }
 
-        log($"Docker-Netz {name} war nicht (mehr) vorhanden. Entsteht es nach dem Abbruch noch, räumt es "
-            + $"nur Ryuk ab; ohne Ryuk von Hand: docker network rm {name}");
+        log($"Docker-Netz {name}: beim Daemon nicht vorhanden, nichts zu entfernen. (Entstünde es nach einem "
+            + "Abbruch noch nachträglich, räumte es Ryuk ab.)");
     }
 
     /// <summary>Ein docker-Befehl mit Schranke (30 s); Ausgang und stderr, wirft nie.</summary>
@@ -413,7 +442,15 @@ public sealed class ReverseProxyHopTests
             }
             catch (OperationCanceledException)
             {
-                process.Kill(entireProcessTree: true);
+                // Endet der Prozess genau jetzt, wirft Kill; das ist kein Fehler des Befehls.
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch (InvalidOperationException)
+                {
+                }
+
                 await ((Task)Task.WhenAll(output, error)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
                 return (-1, $"'docker {string.Join(' ', arguments)}' antwortete nicht binnen 30 s");
             }
@@ -479,7 +516,8 @@ public sealed class ReverseProxyHopTests
             // Nach dem Token, nicht nach der Ausnahmeart: Docker.DotNet meldet eine Zeitüberschreitung
             // des Clients als TaskCanceledException, ohne dass der Test abgebrochen wurde
             // (Review-Befund L-3, zehnte Runde). Auch das ist „Docker nicht nutzbar".
-            await DisposeNetworkQuietlyAsync(network, name, Log);
+            // Testcontainers kennt das Netz hier nicht (kein Anlegen abgeschlossen); entfernt wird
+            // es deshalb nur über den Namen, falls der Daemon es doch angelegt hat.
             await RemoveNetworkByNameAsync(name, Log);
             Assert.SkipUnless(ContainerRequired, $"Docker-Netz liess sich nicht anlegen: {exception.Message}");
             throw;
@@ -487,7 +525,6 @@ public sealed class ReverseProxyHopTests
         catch
         {
             // Abbruch des Tests mitten im Anlegen: Das Netz kann beim Daemon schon stehen.
-            await DisposeNetworkQuietlyAsync(network, name, Log);
             await RemoveNetworkByNameAsync(name, Log);
             throw;
         }
@@ -499,7 +536,11 @@ public sealed class ReverseProxyHopTests
         }
         catch
         {
-            await DisposeNetworkQuietlyAsync(network, name, Log);
+            if (!await DisposeNetworkQuietlyAsync(network, name, Log))
+            {
+                await RemoveNetworkByNameAsync(name, Log);
+            }
+
             throw;
         }
     }
@@ -620,6 +661,12 @@ public sealed class ReverseProxyHopTests
     private static bool ContainerRequired
         => Environment.GetEnvironmentVariable("BIFROST_REQUIRE_CONTAINER") is "1" or "true"
             || (Enabled && OperatingSystem.IsLinux() && Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true");
+
+    /// <summary>Ob der Docker-Daemon auf diesem Rechner läuft (Socket oder Named Pipe, kein TCP).</summary>
+    private static bool DockerDaemonIsLocal
+        => Environment.GetEnvironmentVariable("DOCKER_HOST") is not { Length: > 0 } host
+            || host.StartsWith("unix://", StringComparison.OrdinalIgnoreCase)
+            || host.StartsWith("npipe://", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsLocalAddress(IPAddress address)
         => System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()

@@ -104,6 +104,11 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         CatalogEntry? entry = null;
         ToolInvocationResult result;
 
+        // UpstreamError heisst im Vertrag auch "interner Fehler". Die Dimension fault trennt beides,
+        // damit eine Fehlerquote je Upstream keinen Gateway-Fehler dem Server anlastet
+        // (Review-Befund L-6, zwölfte Runde).
+        var gatewayFault = false;
+
         // Ein Span je Aufruf. Er umfasst die ganze Pipeline; der Upstream-Aufruf bekommt darin einen
         // eigenen Kind-Span, sodass sich Gateway-Anteil und Fremdanteil trennen lassen — genau die
         // Frage, die NFR-01 stellt.
@@ -133,6 +138,7 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
                 else if (ValidateArguments(entry, request.Arguments) is { } rejection)
                 {
                     result = Fail(rejection.Status, rejection.Message, started);
+                    gatewayFault = rejection.GatewayFault;
                 }
                 else
                 {
@@ -146,6 +152,7 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
             Log.UnexpectedPipelineError(_logger, UpstreamFailure.TypeChain(ex), request.Tool.Value);
             result = Fail(InvocationStatus.UpstreamError,
                 $"Interner Gateway-Fehler: {UpstreamFailure.DescribeWithoutConfig(ex)}", started);
+            gatewayFault = true;
         }
 
         Audit(request, entry, result);
@@ -157,6 +164,7 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         {
             activity.SetTag("bifrost.server", server);
             activity.SetTag("bifrost.status", result.Status.ToString());
+            activity.SetTag("bifrost.fault", gatewayFault ? "gateway" : "none");
             // Nur Erfolg ist Ok. Ein Deny oder ein Guard-Treffer ist kein Serverfehler, aber auch
             // kein gelungener Aufruf — als Error markiert taucht er in jeder Fehlersuche auf, und
             // genau dort will man ihn haben. Die Beschreibung ist die Fehlermeldung des Invokers,
@@ -170,7 +178,8 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
             new KeyValuePair<string, object?>("server", server),
             new KeyValuePair<string, object?>("tool", request.Tool.Value),
             new KeyValuePair<string, object?>("status", result.Status.ToString()),
-            new KeyValuePair<string, object?>("origin", request.Origin.ToString()));
+            new KeyValuePair<string, object?>("origin", request.Origin.ToString()),
+            new KeyValuePair<string, object?>("fault", gatewayFault ? "gateway" : "none"));
         _duration.Record(result.Duration.TotalMilliseconds,
             new KeyValuePair<string, object?>("server", server),
             new KeyValuePair<string, object?>("tool", request.Tool.Value),
@@ -333,9 +342,16 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// <summary>
     /// Einträge, deren Schema sich wegen seines Texts nicht <b>bauen</b> lässt, mit dem Grund. Das
     /// ist je Eintrag beständig: Ein Schema, das einmal nicht baut, baut auch beim nächsten Aufruf
-    /// nicht. Jeder weitere Aufruf geht ohne erneutes Bauen denselben R3-Weg; die Ursache steht je
-    /// Invoker einmal im Log (<see cref="_loggedSchemaFailures"/>). Ein Ausfall des Augenblicks
+    /// nicht. Weitere Aufrufe gehen denselben R3-Weg; die Ursache steht je Invoker einmal im Log
+    /// (<see cref="_loggedSchemaFailures"/>). Ein Ausfall des Augenblicks
     /// (<see cref="IsTransientBuildFailure"/>) wird nicht gemerkt.
+    /// <para>
+    /// <b>Eine Markierung ist nicht endgültig</b> (Review-Befund L-1, zwölfte Runde): Höchstens alle
+    /// <see cref="UnusableRetryInterval"/> baut ein Aufruf das Schema erneut. Hat eine Markierung
+    /// einen Fehler des Augenblicks festgehalten, der zweimal gleich ausfiel, heilt sie sich so
+    /// selbst, statt die Prüfung bis zum nächsten Katalog-Neubau abzuschalten. Ein wirklich nicht
+    /// baubares Schema kostet dafür zwei Bauten je Intervall.
+    /// </para>
     /// <para>
     /// <b>Grenze:</b> Auch Verweise löst die Bibliothek teils schon beim Bauen auf, und die eigene
     /// Registry fällt dabei auf <c>SchemaRegistry.Global</c> zurück. Ein Verweis, der beim Bauen
@@ -353,8 +369,41 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// Ein Aufruf, dessen Auswertung wirft, wird abgewiesen; siehe <see cref="ValidateArguments"/>.
     /// </para>
     /// </summary>
-    internal static readonly System.Runtime.CompilerServices.ConditionalWeakTable<CatalogEntry, string>
+    internal static readonly System.Runtime.CompilerServices.ConditionalWeakTable<CatalogEntry, UnusableMark>
         UnusableSchemas = new();
+
+    /// <summary>Wie oft ein als nicht baubar markiertes Schema höchstens erneut gebaut wird.</summary>
+    internal static readonly TimeSpan UnusableRetryInterval = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Die Markierung „nicht baubar": der Grund und wann frühestens erneut gebaut wird. Die Zeit
+    /// beginnt beim ersten Aufruf, der die Markierung sieht — gesetzt wird sie im statischen
+    /// <see cref="ObtainSchema"/>, das keine Uhr kennt.
+    /// </summary>
+    internal sealed class UnusableMark(string reason)
+    {
+        private long _retryAtTicks;
+
+        public string Reason { get; } = reason;
+
+        /// <summary>
+        /// Ob dieser Aufruf den nächsten Bauversuch übernimmt. Genau einer je Intervall bekommt
+        /// <c>true</c>; der erste Blick startet nur die Uhr.
+        /// </summary>
+        public bool TryClaimRetry(DateTimeOffset now, TimeSpan interval)
+        {
+            var current = Interlocked.Read(ref _retryAtTicks);
+            var next = (now + interval).UtcTicks;
+            if (current == 0)
+            {
+                Interlocked.CompareExchange(ref _retryAtTicks, next, 0);
+                return false;
+            }
+
+            return now.UtcTicks >= current
+                && Interlocked.CompareExchange(ref _retryAtTicks, next, current) == current;
+        }
+    }
 
     /// <summary>
     /// Welche Schemafehler dieser Invoker je Eintrag schon geloggt hat — Bau- wie Auswertungsfehler.
@@ -419,6 +468,17 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// </para>
     /// </summary>
     private Rejection? ValidateArguments(CatalogEntry entry, JsonElement args)
+        => ValidateArguments(entry, args, BuildSchema);
+
+    /// <summary>
+    /// Wie oben, mit übergebenem Bau — nach demselben Muster wie <see cref="ObtainSchema"/>: Der
+    /// Invoker übergibt immer <see cref="BuildSchema"/>; Tests speisen hier einen Ausfall ein, den
+    /// kein Schematext auslöst, und prüfen den Status, den der Aufruf damit bekommt.
+    /// </summary>
+    internal Rejection? ValidateArguments(
+        CatalogEntry entry,
+        JsonElement args,
+        System.Runtime.CompilerServices.ConditionalWeakTable<CatalogEntry, JsonSchema>.CreateValueCallback build)
     {
         if (entry.InputSchema.ValueKind is not JsonValueKind.Object)
         {
@@ -430,13 +490,17 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         // trotzdem geprüft (Review-Befund M-1, elfte Runde).
         if (!CompiledSchemas.TryGetValue(entry, out var schema))
         {
-            if (UnusableSchemas.TryGetValue(entry, out var unusableReason))
+            if (UnusableSchemas.TryGetValue(entry, out var mark)
+                && !mark.TryClaimRetry(_time.GetUtcNow(), UnusableRetryInterval))
             {
-                LogBuildFailureOnce(entry, unusableReason);
+                LogBuildFailureOnce(entry, mark.Reason);
                 return null; // R3, das Schema baut nicht
             }
 
-            var built = ObtainSchema(entry, BuildSchema);
+            // Kein Schema und keine Markierung — oder dieser Aufruf hat den erneuten Bauversuch einer
+            // Markierung übernommen (L-1, zwölfte Runde). Gelingt er, nimmt ObtainSchema die
+            // Markierung zurück.
+            var built = ObtainSchema(entry, build);
             if (built.Interrupted is { } interrupted)
             {
                 // Ein Ausfall dieses Augenblicks, nicht des Schemas: nicht gemerkt — der nächste
@@ -450,13 +514,14 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
 
                 return new Rejection(
                     InvocationStatus.UpstreamError,
-                    $"Interner Gateway-Fehler: Das Schema des Werkzeugs liess sich gerade nicht bauen ({interrupted.GetType().Name}); erneut versuchen.");
+                    $"Interner Gateway-Fehler: Das Schema des Werkzeugs liess sich gerade nicht bauen ({interrupted.GetType().Name}); erneut versuchen.",
+                    GatewayFault: true);
             }
 
             if (built.Schema is not { } fresh)
             {
                 // Nicht baubar, zweimal mit derselben Ausnahme bestätigt: R3, gemerkt und einmal geloggt.
-                LogBuildFailureOnce(entry, UnusableSchemas.TryGetValue(entry, out var reason) ? reason : "?");
+                LogBuildFailureOnce(entry, UnusableSchemas.TryGetValue(entry, out var confirmed) ? confirmed.Reason : "?");
                 return null; // R3-Fallback: durchlassen und loggen statt fälschlich ablehnen
             }
 
@@ -496,8 +561,11 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         }
     }
 
-    /// <summary>Warum ein Aufruf vor dem Upstream endet: Status für Ergebnis und Audit, Meldung.</summary>
-    private readonly record struct Rejection(InvocationStatus Status, string Message)
+    /// <summary>
+    /// Warum ein Aufruf vor dem Upstream endet: Status für Ergebnis und Audit, Meldung, und ob der
+    /// Fehler im Gateway liegt statt beim Upstream (Metrik-Dimension <c>fault</c>).
+    /// </summary>
+    internal readonly record struct Rejection(InvocationStatus Status, string Message, bool GatewayFault = false)
     {
         public static Rejection Invalid(string message) => new(InvocationStatus.ValidationFailed, message);
     }
@@ -540,9 +608,8 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// Die Bestätigung kostet einen Bau mehr, nur auf dem Fehlerweg und nur bis zum Merken.
     /// <para>
     /// <b>Gegen gleichzeitige Erstaufrufe (elfte Runde).</b> Der Bestätigungsbau läuft unter einer
-    /// prozessweiten Sperre, so wiederholt ihn kein anderer Bestätigungsbau zur selben Zeit; und
-    /// verglichen werden Art <i>und</i> Meldung, denn Wettlauf-Fehler gleichen sich in der Art
-    /// (M-2). Nach dem Merken wird nachgesehen, ob ein gleichzeitiger Aufruf das Schema inzwischen
+    /// prozessweiten Sperre, so wiederholt ihn kein anderer Bestätigungsbau zur selben Zeit (M-2);
+    /// verglichen wird nur die Art der Ausnahme (zwölfte Runde, M-1). Nach dem Merken wird nachgesehen, ob ein gleichzeitiger Aufruf das Schema inzwischen
     /// gebaut hat — dann gilt dessen Schema und die Markierung fällt; ebenso nimmt jeder gelungene
     /// Bau eine ältere Markierung zurück (M-1). <c>ValidateArguments</c> sieht zudem zuerst in die
     /// gebauten Schemas und erst danach in die Markierungen.
@@ -569,9 +636,14 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
                 {
                     return Built(entry, CompiledSchemas.GetValue(entry, build));
                 }
-                catch (Exception second) when (second.GetType() == first.GetType() && second.Message == first.Message)
+                // Nur die Art, nicht die Meldung: Die Bibliothek kann je Bau eine andere Meldung
+                // liefern (etwa mit der zufälligen Basis-Adresse eines Schemas ohne $id); ein nicht
+                // baubares Schema galte sonst als Ausfall und wäre dauerhaft gesperrt (Review-Befund
+                // M-1, zwölfte Runde). Gegen Wettläufe schützt die Sperre, gegen eine stehen
+                // gebliebene Markierung der erneute Bauversuch (UnusableRetryInterval).
+                catch (Exception second) when (second.GetType() == first.GetType())
                 {
-                    UnusableSchemas.TryAdd(entry, second.Message);
+                    UnusableSchemas.TryAdd(entry, new UnusableMark(second.Message));
 
                     // Hat ein gleichzeitiger Aufruf das Schema inzwischen gebaut, gilt seins.
                     if (CompiledSchemas.TryGetValue(entry, out var meanwhile))

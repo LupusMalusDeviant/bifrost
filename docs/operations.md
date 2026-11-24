@@ -1931,8 +1931,13 @@ Der Gateway misst jeden Tool-Call (FR-26) unter dem Meter `Bifrost.Gateway`:
 
 | Instrument | Bedeutung | Dimensionen |
 |---|---|---|
-| `bifrost.tool_calls` | Zähler aller Calls — daraus ergeben sich Calls/s und Fehlerquote | `server`, `tool`, `status`, `origin` |
+| `bifrost.tool_calls` | Zähler aller Calls — daraus ergeben sich Calls/s und Fehlerquote | `server`, `tool`, `status`, `origin`, `fault` |
 | `bifrost.tool_call_duration` | Latenz-Histogramm (ms) — daraus Perzentile | `server`, `tool`, `status` |
+
+`fault` ist `gateway`, wenn ein Call an einem Fehler im Gateway selbst scheiterte (ein interner Fehler der
+Pipeline, ein unterbrochener Schemabau), sonst `none`. Beide erscheinen mit `status=UpstreamError`; wer eine
+Fehlerquote je Upstream bildet, filtert auf `fault="none"`, damit ein Gateway-Fehler nicht dem Server angelastet
+wird.
 
 Der Export ist **aus**, solange kein Ziel konfiguriert ist (sonst würde der Exporter dauerhaft ins Leere laufen):
 

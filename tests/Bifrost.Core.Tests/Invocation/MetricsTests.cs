@@ -76,6 +76,7 @@ public class MetricsTests
         call.Tags["tool"].Should().Be(world.Echo.Value);
         call.Tags["status"].Should().Be(nameof(InvocationStatus.Success));
         call.Tags["origin"].Should().Be(nameof(CallOrigin.Mcp));
+        call.Tags["fault"].Should().Be("none", "ein gewöhnlicher Aufruf ist kein Gateway-Fehler");
 
         var duration = measurements.Should().ContainSingle(m => m.Instrument == "bifrost.tool_call_duration").Subject;
         duration.Tags["server"].Should().Be(world.Slug);

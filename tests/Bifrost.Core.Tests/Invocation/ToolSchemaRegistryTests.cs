@@ -285,7 +285,7 @@ public sealed class ToolSchemaRegistryTests
         outcome.Interrupted.Should().BeNull("R3, kein Ausfall");
         calls.Should().Be(2, "ein Bau zur Bestätigung, nicht mehr");
         ToolInvoker.UnusableSchemas.TryGetValue(entry, out var reason).Should().BeTrue();
-        reason.Should().Be("kaputtes $id");
+        reason!.Reason.Should().Be("kaputtes $id");
     }
 
     /// <summary>
@@ -371,38 +371,128 @@ public sealed class ToolSchemaRegistryTests
 
             throw new InvalidOperationException("Wettlauf");
         });
-        a.Schema.Should().NotBeNull("der Bestätigungsbau findet das Schema des anderen Aufrufs");
+        a.Schema.Should().NotBeNull("der Bestätigungsbau bekommt das Schema des anderen Aufrufs aus dem Zwischenspeicher");
         ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse();
 
         // Eine Markierung, die trotzdem stehen bliebe, darf die Prüfung nicht abschalten.
-        ToolInvoker.UnusableSchemas.TryAdd(entry, "stehen geblieben");
+        ToolInvoker.UnusableSchemas.TryAdd(entry, new ToolInvoker.UnusableMark("stehen geblieben"));
         (await world.Invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct))
             .Status.Should().Be(InvocationStatus.ValidationFailed);
     }
 
     /// <summary>
-    /// Elfte Runde, M-2: Zwei Fehler gleicher Art, aber mit verschiedener Meldung bestätigen nichts —
-    /// Wettlauf-Fehler gleichen sich in der Art. Ein Ausfall, keine Markierung.
+    /// Zwölfte Runde, L-2: Der Weg nach dem Markieren. Während des <i>Bestätigungs</i>baus legt ein
+    /// anderer Aufruf das Schema ab, und der Bestätigungsbau wirft trotzdem dieselbe Art. Dann wird
+    /// markiert, sofort danach das abgelegte Schema gefunden, die Markierung zurückgenommen und
+    /// dessen Schema genommen. Ohne diesen Weg bliebe die Markierung stehen.
     /// </summary>
     [Fact]
-    public void Two_failures_of_the_same_type_with_different_messages_are_an_interruption()
+    public void A_schema_stored_during_the_confirmation_build_is_found_after_marking()
+    {
+        var entry = Entry(Strict);
+        var calls = 0;
+
+        var outcome = ToolInvoker.ObtainSchema(entry, e =>
+        {
+            if (Interlocked.Increment(ref calls) == 2)
+            {
+                // Im Bestätigungsbau: ein anderer Aufruf legt ab — dieser Bau wirft dennoch.
+                ToolInvoker.CompiledSchemas.GetValue(e, ToolInvoker.BuildSchema);
+            }
+
+            throw new InvalidOperationException("Wettlauf");
+        });
+
+        calls.Should().Be(2);
+        outcome.Schema.Should().NotBeNull();
+        outcome.Schema.Should().BeSameAs(ToolInvoker.CompiledSchemas.TryGetValue(entry, out var stored) ? stored : null);
+        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Zwölfte Runde, M-1: Zweimal dieselbe Art mit verschiedener Meldung ist bestätigt nicht
+    /// baubar. Die Bibliothek kann je Bau eine andere Meldung liefern; verglichen mit Meldung
+    /// galte ein nicht baubares Schema als Ausfall und wäre dauerhaft gesperrt.
+    /// </summary>
+    [Fact]
+    public void Two_failures_of_the_same_type_with_different_messages_confirm_an_unusable_schema()
     {
         var entry = Entry(Strict);
         var calls = 0;
 
         var outcome = ToolInvoker.ObtainSchema(entry, _ =>
-            throw new InvalidOperationException(Interlocked.Increment(ref calls) == 1 ? "Collection was modified" : "Sequence contains no elements"));
+            throw new JsonSchemaException($"Basis-Adresse https://json-everything.lib/{Interlocked.Increment(ref calls)}"));
 
-        outcome.Interrupted.Should().BeOfType<InvalidOperationException>();
-        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse();
+        outcome.Schema.Should().BeNull();
+        outcome.Interrupted.Should().BeNull("R3, kein Ausfall");
+        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeTrue();
     }
 
     /// <summary>
-    /// Elfte Runde, L-3: Ein unterbrochener Bau ist kein Urteil über die Argumente. Er endet als
-    /// Fehler des Gateways, nicht als <see cref="InvocationStatus.ValidationFailed"/>. Über den
-    /// Invoker lässt sich ein solcher Ausfall nicht einspeisen; geprüft wird deshalb, dass ein
-    /// gewöhnlicher Aufruf weiter nach dem Schema geurteilt wird und die Meldungen sich unterscheiden.
+    /// Zwölfte Runde, L-1: Eine Markierung heilt sich selbst. Steht sie auf einem Schema, das sich
+    /// sehr wohl bauen lässt (ein zweimal gleich ausgefallener Fehler des Augenblicks), gilt R3 nur
+    /// bis zum nächsten erneuten Bauversuch; danach wird wieder geprüft und die Markierung fällt.
     /// </summary>
+    [Fact]
+    public async Task A_mark_on_a_buildable_schema_heals_after_the_retry_interval()
+    {
+        var world = new InvokerTestWorld();
+        var admin = world.RegisterAdmin();
+        var ct = TestContext.Current.CancellationToken;
+        var entry = world.Catalog.Find(world.Echo)!;
+        ToolInvoker.UnusableSchemas.TryAdd(entry, new ToolInvoker.UnusableMark("zweimal derselbe Wettlauf"));
+
+        (await world.Invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct))
+            .Status.Should().Be(InvocationStatus.Success, "R3, solange die Markierung gilt");
+
+        world.Time.Advance(ToolInvoker.UnusableRetryInterval - TimeSpan.FromSeconds(1));
+        (await world.Invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct))
+            .Status.Should().Be(InvocationStatus.Success, "vor Ablauf des Intervalls wird nicht neu gebaut");
+
+        world.Time.Advance(TimeSpan.FromSeconds(2));
+        (await world.Invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct))
+            .Status.Should().Be(InvocationStatus.ValidationFailed, "der erneute Bau gelingt, das Schema prüft");
+        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse();
+    }
+
+    /// <summary>Zwölfte Runde, L-1: Nur ein Aufruf je Intervall übernimmt den erneuten Bauversuch.</summary>
+    [Fact]
+    public void Only_one_caller_per_interval_claims_the_retry()
+    {
+        var mark = new ToolInvoker.UnusableMark("x");
+        var start = DateTimeOffset.UnixEpoch;
+        var interval = TimeSpan.FromSeconds(30);
+
+        mark.TryClaimRetry(start, interval).Should().BeFalse("der erste Blick startet nur die Uhr");
+        mark.TryClaimRetry(start + TimeSpan.FromSeconds(29), interval).Should().BeFalse();
+
+        var later = start + TimeSpan.FromSeconds(31);
+        var claims = Enumerable.Range(0, 64).AsParallel().Count(_ => mark.TryClaimRetry(later, interval));
+        claims.Should().Be(1);
+    }
+
+    /// <summary>
+    /// Elfte Runde L-3, zwölfte Runde L-3: Ein unterbrochener Bau ist kein Urteil über die
+    /// Argumente. Er endet als Fehler des Gateways (<see cref="InvocationStatus.UpstreamError"/>,
+    /// <c>fault=gateway</c>), nicht als <see cref="InvocationStatus.ValidationFailed"/> — und
+    /// nicht als Durchlass. Eingespeist über den Bau, den <c>ValidateArguments</c> übergeben bekommt.
+    /// </summary>
+    [Fact]
+    public void An_interrupted_build_is_a_gateway_fault_and_not_a_pass()
+    {
+        var world = new InvokerTestWorld();
+        var entry = world.Catalog.Find(world.Echo)!;
+        var args = JsonDocument.Parse("""{"message":"hi"}""").RootElement;
+
+        var rejection = world.Invoker.ValidateArguments(entry, args, _ => throw new InsufficientExecutionStackException());
+
+        rejection.Should().NotBeNull("ein unterbrochener Bau darf den Aufruf nicht ungeprüft durchlassen");
+        rejection!.Value.Status.Should().Be(InvocationStatus.UpstreamError);
+        rejection.Value.GatewayFault.Should().BeTrue();
+        rejection.Value.Message.Should().Contain(nameof(InsufficientExecutionStackException));
+        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse();
+    }
+
     [Fact]
     public async Task An_invalid_call_is_still_a_validation_failure()
     {
