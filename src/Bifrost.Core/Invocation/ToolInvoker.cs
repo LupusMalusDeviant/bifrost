@@ -321,16 +321,29 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// Das gebaute Eingabeschema je Katalogeintrag. Der Eintrag ist der Schlüssel, nicht der Text:
     /// Ändert sich der Katalog, gibt es neue Einträge, und die alten fallen mit ihnen weg — eine
     /// Obergrenze oder ein Aufräumen braucht es nicht.
+    /// <para>
+    /// Ein Schema wird von gleichzeitigen Aufrufen geteilt. Dass die Auswertung dabei richtig bleibt,
+    /// hält ein Test mit rekursivem <c>$ref</c> unter vielen gleichzeitigen Aufrufen fest
+    /// (<c>ToolSchemaRegistryTests</c>); ein Fehler dort liesse einen Aufruf über den Ausweichweg
+    /// ungeprüft durch.
+    /// </para>
     /// </summary>
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<CatalogEntry, JsonSchema>
+    internal static readonly System.Runtime.CompilerServices.ConditionalWeakTable<CatalogEntry, JsonSchema>
         CompiledSchemas = new();
 
     /// <summary>
     /// Baut ein Schema mit einer <b>eigenen</b> Registry. Mit den Vorgaben legt JsonSchema.Net jedes
     /// gebaute Schema in <c>SchemaRegistry.Global</c> ab und gibt es nie wieder frei. Gebaut wurde bis
     /// hierher bei jedem Werkzeugaufruf — das war das Speicherwachstum des Soak-Nachtlaufs: rund
-    /// 700 Bytes je Aufruf, 269 → 3768 MB in vier Stunden. Die eigene Registry lebt so lange wie das
-    /// Schema; Verweise auf andere Schemata löst sie wie bisher über die globale auf.
+    /// 700 Bytes je Aufruf, 269 → 3768 MB in vier Stunden.
+    /// <para>
+    /// <b>Folge für Verweise:</b> Verweise innerhalb des Schemas (<c>#/$defs/…</c>, ein eigenes
+    /// <c>$id</c>) lösen wie bisher auf. Ein <c>$ref</c> auf das <c>$id</c> eines <i>anderen</i>
+    /// Werkzeugs löst nicht mehr auf — früher gelang das nur, wenn jenes zufällig schon aufgerufen
+    /// worden war. Ein solches Schema lässt sich nicht bauen und fällt in den R3-Ausweichweg: Der
+    /// Aufruf läuft ungeprüft durch, die Ursache steht im Log. Dafür überschreiben sich zwei
+    /// Werkzeuge mit demselben <c>$id</c> nicht mehr gegenseitig.
+    /// </para>
     /// </summary>
     internal static JsonSchema BuildSchema(CatalogEntry entry)
         => JsonSchema.FromText(

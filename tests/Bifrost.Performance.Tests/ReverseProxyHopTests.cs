@@ -39,6 +39,9 @@ public sealed class ReverseProxyHopTests
     /// <summary>Wie lange nginx bereit werden darf; ein Bild ziehen und starten dauert Sekunden.</summary>
     private static readonly TimeSpan ReadinessTimeout = TimeSpan.FromMinutes(2);
 
+    /// <summary>Der ganze Start samt Ziehen des Bildes; ein hängender Pull endet sonst erst mit dem Lauf.</summary>
+    private static readonly TimeSpan StartTimeout = TimeSpan.FromMinutes(10);
+
     private readonly ITestOutputHelper _output;
 
     public ReverseProxyHopTests(ITestOutputHelper output) => _output = output;
@@ -62,7 +65,7 @@ public sealed class ReverseProxyHopTests
                 },
                 // Der Container muss den Gateway erreichen; auf Loopback allein geht das unter Linux
                 // nicht (seit Oktober jeden Montag eine Stunde Hänger im geplanten ci-Lauf).
-                ListenOnAllInterfaces: true),
+                AdditionalListenAddresses: await ContainerFacingAddressesAsync(TestContext.Current.CancellationToken)),
             ct);
 
         await gateway.AddStdioUpstreamAsync("slow", "SlowServer", ct);
@@ -192,20 +195,95 @@ public sealed class ReverseProxyHopTests
                 wait => wait.WithTimeout(ReadinessTimeout)))
             .Build();
 
+        // Das Ziehen des Bildes deckt die Wartezeit oben nicht ab; diese Schranke deckt den ganzen Start.
+        using var startLimit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        startLimit.CancelAfter(StartTimeout);
         try
         {
-            await container.StartAsync(ct);
+            await container.StartAsync(startLimit.Token);
+            return container;
         }
-        catch (TimeoutException exception)
+        catch (Exception exception) when (!ct.IsCancellationRequested)
         {
-            var (stdout, stderr) = await container.GetLogsAsync(ct: CancellationToken.None);
+            // Jeder Startfehler, nicht nur die Zeitüberschreitung: nginx kann auch sofort enden
+            // ("host not found in upstream"). Das Log ist dann die einzige Auskunft.
+            var log = await ReadLogAsync(container);
             await container.DisposeAsync();
-            throw new TimeoutException(
-                $"nginx wurde in {ReadinessTimeout.TotalSeconds:F0} s nicht bereit: /healthz kam nicht durch "
-                + $"bis zum Gateway auf {HostAlias}:{gatewayPort}. nginx-Log:\n{stdout}\n{stderr}",
+            throw new InvalidOperationException(
+                $"nginx kam nicht in Betrieb ({exception.GetType().Name}: {exception.Message}). Erwartet: "
+                + $"/healthz bis zum Gateway auf {HostAlias}:{gatewayPort} binnen {ReadinessTimeout.TotalSeconds:F0} s, "
+                + $"Start samt Ziehen des Bildes binnen {StartTimeout.TotalMinutes:F0} min. nginx-Log:\n{log}",
                 exception);
         }
+        catch
+        {
+            // Abbruch durch den Testlauf: aufräumen, nicht umdeuten.
+            await container.DisposeAsync();
+            throw;
+        }
+        finally
+        {
+            // Die Datei ist beim Start in den Container kopiert; das Verzeichnis braucht niemand mehr.
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+    }
 
-        return container;
+    private static async Task<string> ReadLogAsync(IContainer container)
+    {
+        try
+        {
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var (stdout, stderr) = await container.GetLogsAsync(ct: limit.Token);
+            return $"{stdout}\n{stderr}";
+        }
+#pragma warning disable CA1031 // Ein unlesbares Log darf den eigentlichen Startfehler nicht verdecken.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            return $"(Log nicht lesbar: {exception.Message})";
+        }
+    }
+
+    /// <summary>
+    /// Die Adresse, unter der ein Container den Rechner über <c>host-gateway</c> erreicht — nur unter
+    /// Linux nötig. Dort ist es das Gateway des Docker-Standardnetzes, an dem der Test zusätzlich zu
+    /// <c>127.0.0.1</c> lauscht. Nicht <c>0.0.0.0</c>: Damit wäre der Gateway mit
+    /// <c>BIFROST_TRUSTED_PROXIES=any</c> für die Dauer des Tests aus dem ganzen Netz erreichbar, und
+    /// jeder Absender könnte sich per <c>X-Forwarded-For</c> als Loopback ausgeben. Docker Desktop
+    /// leitet <c>host-gateway</c> dagegen auf die Loopback-Adresse des Rechners weiter.
+    /// </summary>
+    private static async Task<IReadOnlyList<IPAddress>> ContainerFacingAddressesAsync(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return [];
+        }
+
+        var start = new System.Diagnostics.ProcessStartInfo(
+            "docker", ["network", "inspect", "bridge", "--format", "{{(index .IPAM.Config 0).Gateway}}"])
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        using var process = System.Diagnostics.Process.Start(start)
+            ?? throw new InvalidOperationException("docker liess sich nicht starten.");
+        var output = (await process.StandardOutput.ReadToEndAsync(ct)).Trim();
+        var error = await process.StandardError.ReadToEndAsync(ct);
+        await process.WaitForExitAsync(ct);
+
+        return process.ExitCode == 0 && IPAddress.TryParse(output, out var gateway)
+            ? [gateway]
+            : throw new InvalidOperationException(
+                $"Das Gateway des Docker-Netzes 'bridge' liess sich nicht ermitteln (Exit {process.ExitCode}): "
+                + $"{output} {error}");
     }
 }
