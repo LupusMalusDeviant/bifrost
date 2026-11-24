@@ -331,9 +331,10 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         CompiledSchemas = new();
 
     /// <summary>
-    /// Einträge, deren Schema sich nicht <b>bauen</b> lässt, mit dem Grund. Das hängt allein am
-    /// Schematext und ist damit je Eintrag beständig: Ein Schema, das einmal nicht baut, baut auch
-    /// beim nächsten Aufruf nicht. Jeder weitere Aufruf geht ohne erneutes Bauen denselben R3-Weg;
+    /// Einträge, deren Schema sich wegen seines Texts nicht <b>bauen</b> lässt, mit dem Grund. Das
+    /// ist je Eintrag beständig: Ein Schema, das einmal nicht baut, baut auch beim nächsten Aufruf
+    /// nicht. Nur solche Fehler landen hier (<see cref="IsSchemaTextError"/>); ein Ausfall des
+    /// Augenblicks wird nicht gemerkt. Jeder weitere Aufruf geht ohne erneutes Bauen denselben R3-Weg;
     /// die Ursache steht je Invoker einmal im Log (<see cref="_loggedSchemaFailures"/>).
     /// <para>
     /// <b>Auswertungsfehler gehören ausdrücklich nicht hierher.</b> Ob ein unauflösbarer
@@ -398,6 +399,13 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
             new BuildOptions { SchemaRegistry = new SchemaRegistry() });
 
     /// <summary>
+    /// Wie dieser Invoker ein Schema baut — im Produkt immer <see cref="BuildSchema"/>. Nur Tests
+    /// setzen es, um einen Baufehler des Augenblicks nachzustellen, den kein Schematext auslöst.
+    /// </summary>
+    internal System.Runtime.CompilerServices.ConditionalWeakTable<CatalogEntry, JsonSchema>.CreateValueCallback SchemaBuilder
+    { get; init; } = BuildSchema;
+
+    /// <summary>
     /// Serverseitige Argument-Validierung — Pflicht für den Lazy-Pfad ohne Client-Schema (ADR-0003).
     /// <para>
     /// <b>Zwei Ausweichwege, verschieden entschieden (2026-11-24).</b> Ein Schema, das sich nicht
@@ -424,13 +432,27 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         JsonSchema schema;
         try
         {
-            schema = CompiledSchemas.GetValue(entry, BuildSchema);
+            schema = CompiledSchemas.GetValue(entry, SchemaBuilder);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsSchemaTextError(ex))
         {
             UnusableSchemas.TryAdd(entry, ex.Message);
             LogBuildFailureOnce(entry, UnusableSchemas.TryGetValue(entry, out var reason) ? reason : ex.Message);
             return null; // R3-Fallback: durchlassen und loggen statt fälschlich ablehnen
+        }
+        catch (Exception ex)
+        {
+            // Kein Fehler des Schematexts, sondern einer dieses Augenblicks (etwa ein zu tiefer
+            // Stack) oder der Bibliothek: nicht gemerkt — der nächste Aufruf baut neu —, und auch
+            // nicht durchgelassen, denn R3 gilt nur für ein Schema, das sich nachweislich nicht bauen
+            // lässt. Gemerkt hätte ein einmaliger Ausfall die Prüfung bis zum nächsten Katalog-Neubau
+            // abgeschaltet (Review-Befund M1, siebte Runde).
+            if (ShouldLogSchemaFailure(entry, $"build-transient:{ex.GetType().FullName}"))
+            {
+                Log.SchemaNotEvaluable(_logger, entry.Name.Value, ex.GetType().Name);
+            }
+
+            return $"Argument-Validierung fehlgeschlagen — das Schema des Werkzeugs liess sich gerade nicht bauen ({ex.GetType().Name}).";
         }
 
         try
@@ -464,6 +486,15 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
             return $"Argument-Validierung fehlgeschlagen — das Schema des Werkzeugs lässt sich für diese Argumente nicht auswerten ({detail}).";
         }
     }
+
+    /// <summary>
+    /// Ob ein Baufehler am Schematext liegt und damit bei jedem Bauen wiederkehrt. JsonSchema.Net
+    /// meldet ein ungültiges Schlüsselwort (<c>{"type":12345}</c>) und einen unbekannten Dialekt
+    /// (draft-04, ein erfundenes <c>$schema</c>) als <see cref="JsonSchemaException"/>; dazu
+    /// kommen ungültiges JSON und unzulässige Argumente beim Bauen.
+    /// </summary>
+    private static bool IsSchemaTextError(Exception exception)
+        => exception is JsonSchemaException or JsonException or RefResolutionException or ArgumentException;
 
     private void LogBuildFailureOnce(CatalogEntry entry, string reason)
     {

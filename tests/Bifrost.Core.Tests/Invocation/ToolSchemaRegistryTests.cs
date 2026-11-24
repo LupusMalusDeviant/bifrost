@@ -222,6 +222,115 @@ public sealed class ToolSchemaRegistryTests
     }
 
     /// <summary>
+    /// Siebte Runde, M1: Ein Baufehler, der nicht am Schematext liegt (hier ein zu tiefer Stack),
+    /// wird nicht gemerkt und lässt den Aufruf nicht durch. Der nächste Aufruf baut neu und prüft.
+    /// Gemerkt, hätte ein einmaliger Ausfall die Prüfung bis zum nächsten Katalog-Neubau abgeschaltet.
+    /// </summary>
+    [Fact]
+    public async Task A_transient_build_failure_is_not_remembered_and_does_not_let_the_call_through()
+    {
+        var world = new InvokerTestWorld();
+        var admin = world.RegisterAdmin();
+        var ct = TestContext.Current.CancellationToken;
+        var failures = 1;
+        var invoker = new ToolInvoker(
+            world.Authorization, world.RateLimiter, world.Catalog, world.Supervisor, world.Audit, world.Redaction, world.Time)
+        {
+            SchemaBuilder = entry => Interlocked.Decrement(ref failures) >= 0
+                ? throw new InsufficientExecutionStackException()
+                : ToolInvoker.BuildSchema(entry),
+        };
+
+        var first = await invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = "hi" }), ct);
+        first.Status.Should().Be(InvocationStatus.ValidationFailed, "ohne gebautes Schema kein ungeprüfter Durchlass");
+        first.ErrorMessage.Should().Contain(nameof(InsufficientExecutionStackException));
+
+        var entry = world.Catalog.Find(world.Echo)!;
+        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse("ein Ausfall des Augenblicks wird nicht gemerkt");
+
+        var invalid = await invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct);
+        invalid.Status.Should().Be(InvocationStatus.ValidationFailed, "der zweite Aufruf baut neu und prüft");
+        var valid = await invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = "hi" }), ct);
+        valid.Status.Should().Be(InvocationStatus.Success);
+    }
+
+    /// <summary>
+    /// Siebte Runde, M2: Dialekte, die JsonSchema.Net nicht kennt — draft-04, den viele Upstreams
+    /// senden, und ein erfundenes <c>$schema</c>. Die Bibliothek scheitert daran schon beim
+    /// <i>Bauen</i> (<see cref="JsonSchemaException"/>, „Cannot find dialect"). Das ist der
+    /// R3-Weg wie auf main: durchgelassen, einmal geloggt, als nicht baubar gemerkt — und nicht etwa
+    /// eine Prüfung, die draft-04-Schlüsselwörter falsch läse.
+    /// </summary>
+    [Theory]
+    [InlineData("http://json-schema.org/draft-04/schema#")]
+    [InlineData("https://example.invalid/my-dialect")]
+    public async Task An_unknown_dialect_takes_the_R3_path_and_is_logged_once(string dialect)
+    {
+        var schema = "{\"$schema\":\"" + dialect + "\",\"type\":\"object\",\"required\":[\"message\"],"
+            + "\"properties\":{\"message\":{\"type\":\"string\"}}}";
+        var world = new InvokerTestWorld(echoSchema: schema);
+        var admin = world.RegisterAdmin();
+        var log = new CapturingLogger();
+        var invoker = world.WithLogger(log);
+        var ct = TestContext.Current.CancellationToken;
+
+        for (var call = 0; call < 5; call++)
+        {
+            var result = await invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct);
+            result.Status.Should().Be(InvocationStatus.Success, "R3: ein Schema, das nicht baut, lässt durch");
+        }
+
+        log.Lines.Should().ContainSingle().Which.Should().Contain(dialect);
+        ToolInvoker.UnusableSchemas.TryGetValue(world.Catalog.Find(world.Echo)!, out _).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Siebte Runde, M3: Nach einem Katalog-Neubau wird das alte gebaute Schema freigegeben — samt
+    /// seiner eigenen Registry. Hielte die Bibliothek oder der Invoker es irgendwo statisch fest,
+    /// wüchse der Speicher je Neubau; im Soak-Chaos (Upstream-Neustarts) geschieht das ständig.
+    /// </summary>
+    [Fact]
+    public async Task After_a_catalog_rebuild_the_old_schema_is_collected()
+    {
+        var world = new InvokerTestWorld();
+        var admin = world.RegisterAdmin();
+        var ct = TestContext.Current.CancellationToken;
+
+        var oldSchema = await BuildThroughInvokerAsync(world, admin, ct);
+
+        world.Supervisor.SetServer(world.Server, world.Slug, new UpstreamInventory(
+            [
+                new ToolDescriptor(
+                    "echo",
+                    "Echoes a message back.",
+                    JsonDocument.Parse("""{"type":"object","properties":{"message":{"type":"string"}}}""").RootElement.Clone(),
+                    CapabilityRisk.Read,
+                    false),
+            ],
+            [], []));
+        world.Supervisor.RaiseChanged(world.Server, UpstreamChangeKind.InventoryChanged);
+        (await world.Invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = "hi" }), ct))
+            .Status.Should().Be(InvocationStatus.Success);
+
+        for (var round = 0; round < 3 && oldSchema.IsAlive; round++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+
+        oldSchema.IsAlive.Should().BeFalse("das Schema des alten Katalogeintrags darf nicht festgehalten werden");
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static async Task<WeakReference> BuildThroughInvokerAsync(InvokerTestWorld world, IdentityId admin, CancellationToken ct)
+    {
+        (await world.Invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = "hi" }), ct))
+            .Status.Should().Be(InvocationStatus.Success);
+        ToolInvoker.CompiledSchemas.TryGetValue(world.Catalog.Find(world.Echo)!, out var schema).Should().BeTrue();
+        return new WeakReference(schema);
+    }
+
+    /// <summary>
     /// Sechste Runde, Befund 3: Ein Verweis auf oberster Ebene wird von jedem Aufruf erreicht. Das
     /// Werkzeug ist dann nicht nutzbar — gewollt, denn sein Schema lässt sich nie auswerten —, und
     /// das Log nennt den Grund einmal statt je Aufruf.

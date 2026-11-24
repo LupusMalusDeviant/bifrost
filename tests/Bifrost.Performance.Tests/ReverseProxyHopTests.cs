@@ -400,9 +400,13 @@ public sealed class ReverseProxyHopTests
                 }
             }
 
-            throw new InvalidOperationException(
+            // Kein Netz 'bridge' oder keines mit IPv4 (etwa Podman mit docker-Befehl): wie eine
+            // fehlende Runtime — übersprungen, es sei denn, ein Container ist Pflicht.
+            var missing =
                 $"Das IPv4-Gateway des Docker-Netzes 'bridge' liess sich nicht ermitteln (Exit {process.ExitCode}): "
-                + $"{output} {error}");
+                + $"{output} {error}";
+            Assert.SkipUnless(ContainerRequired, missing);
+            throw new InvalidOperationException(missing);
         }
     }
 
