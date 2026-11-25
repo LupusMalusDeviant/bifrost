@@ -1,0 +1,57 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Faolan.Abstractions/Faolan.Abstractions.csproj" />
+    <Project Path="src/Faolan.Cli/Faolan.Cli.csproj" />
+    <Project Path="src/Faolan.ConnectorKit/Faolan.ConnectorKit.csproj" />
+    <Project Path="src/Faolan.Core/Faolan.Core.csproj" />
+    <Project Path="src/Faolan.Persistence.Migrations.Postgres/Faolan.Persistence.Migrations.Postgres.csproj" />
+    <Project Path="src/Faolan.Persistence.Migrations.Sqlite/Faolan.Persistence.Migrations.Sqlite.csproj" />
+    <Project Path="src/Faolan.Persistence/Faolan.Persistence.csproj" />
+    <Project Path="src/Faolan.Server/Faolan.Server.csproj" />
+    <Project Path="src/Faolan.Upstream/Faolan.Upstream.csproj" />
+    <Project Path="src/Faolan.Web/Faolan.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Faolan.Cli.Tests/Faolan.Cli.Tests.csproj" />
+    <Project Path="tests/Faolan.ConnectorKit.Tests/Faolan.ConnectorKit.Tests.csproj" />
+    <Project Path="tests/Faolan.Core.Tests/Faolan.Core.Tests.csproj" />
+    <Project Path="tests/Faolan.Integration.Tests/Faolan.Integration.Tests.csproj" />
+    <Project Path="tests/Faolan.Security.Tests/Faolan.Security.Tests.csproj" />
+    <Project Path="tests/Faolan.Upgrade.Tests/Faolan.Upgrade.Tests.csproj" />
+    <Project Path="tests/Faolan.Performance.Tests/Faolan.Performance.Tests.csproj" />
+    <Project Path="tests/Faolan.Governance.Tests/Faolan.Governance.Tests.csproj" />
+    <Project Path="tests/Faolan.Ui.E2E/Faolan.Ui.E2E.Tests.csproj" />
+    <Project Path="tests/Faolan.Upstream.Tests/Faolan.Upstream.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/compatibility/">
+    <Project Path="tests/compatibility/Faolan.Compatibility.Tests/Faolan.Compatibility.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/soak/">
+    <Project Path="tests/soak/Faolan.Soak.Tests/Faolan.Soak.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Faolan.TestServers/" />
+  <Folder Name="/tests/Faolan.TestServers/WasiHostStub/">
+    <Project Path="tests/Faolan.TestServers/WasiHostStub/Faolan.TestServers.WasiHostStub.csproj" />
+  </Folder>
+  <Folder Name="/tests/Faolan.TestServers/CliProbe/">
+    <Project Path="tests/Faolan.TestServers/CliProbe/Faolan.TestServers.CliProbe.csproj" />
+  </Folder>
+  <Folder Name="/tests/Faolan.TestServers/BulkServer/">
+    <Project Path="tests/Faolan.TestServers/BulkServer/Faolan.TestServers.BulkServer.csproj" />
+  </Folder>
+  <Folder Name="/tests/Faolan.TestServers/CrashServer/">
+    <Project Path="tests/Faolan.TestServers/CrashServer/Faolan.TestServers.CrashServer.csproj" />
+  </Folder>
+  <Folder Name="/tests/Faolan.TestServers/EchoServer/">
+    <Project Path="tests/Faolan.TestServers/EchoServer/Faolan.TestServers.EchoServer.csproj" />
+  </Folder>
+  <Folder Name="/tests/Faolan.TestServers/OrphanHost/">
+    <Project Path="tests/Faolan.TestServers/OrphanHost/Faolan.TestServers.OrphanHost.csproj" />
+  </Folder>
+  <Folder Name="/tests/Faolan.TestServers/HttpServer/">
+    <Project Path="tests/Faolan.TestServers/HttpServer/Faolan.TestServers.HttpServer.csproj" />
+  </Folder>
+  <Folder Name="/tests/Faolan.TestServers/SlowServer/">
+    <Project Path="tests/Faolan.TestServers/SlowServer/Faolan.TestServers.SlowServer.csproj" />
+  </Folder>
+</Solution>

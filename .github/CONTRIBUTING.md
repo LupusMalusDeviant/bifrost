@@ -1,4 +1,4 @@
-# Contributing to B.I.F.R.O.S.T
+# Contributing to Faolan
 
 Thanks for looking. This page is written in English and is the **authoritative** version — there is
 no German translation of it (see [`docs/i18n.md`](../docs/i18n.md)).
@@ -40,14 +40,14 @@ Requires the **.NET 10 SDK**. Rust (stable) additionally, if you touch the WASI 
 `spikes/wasi-component-runtime`.
 
 ```bash
-dotnet build Bifrost.slnx
-dotnet test  Bifrost.slnx
+dotnet build Faolan.slnx
+dotnet test  Faolan.slnx
 ```
 
 Running from source:
 
 ```bash
-ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/Bifrost.Server
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/Faolan.Server
 ```
 
 > **Keep `Development`.** Outside it, ASP.NET does not load the static web assets:
@@ -71,25 +71,25 @@ Some proofs need infrastructure and **skip** without it — deliberately, so a m
 or Rust does not fail the build. Set the matching variable to turn a skip into a failure, which is
 what CI does:
 
-There are two kinds. **`BIFROST_REQUIRE_*`** turns an existing skip into a failure — use it where
-the infrastructure *must* be there, which is what CI does. **`BIFROST_RUN_*`** switches on a proof
+There are two kinds. **`FAOLAN_REQUIRE_*`** turns an existing skip into a failure — use it where
+the infrastructure *must* be there, which is what CI does. **`FAOLAN_RUN_*`** switches on a proof
 that does not run by default because it is slow, needs a browser, or wants a machine nobody else is
 using.
 
 | Variable | Turns on | Needs |
 |---|---|---|
-| `BIFROST_REQUIRE_POSTGRES=1` | PostgreSQL persistence tests | Docker (Testcontainers) |
-| `BIFROST_REQUIRE_CONTAINER=1` | container isolation and the reverse-proxy hop against a live runtime | Docker in **Linux**-container mode |
-| `BIFROST_REQUIRE_WASI_HOST=1` | WASI tests against the real Rust host | `cargo build --release` in `spikes/wasi-component-runtime` |
-| `BIFROST_REQUIRE_KEYCLOAK=1` | upstream OAuth against a real authorization server | Docker (Testcontainers) |
-| `BIFROST_RUN_E2E=1` | the 18 browser journeys against a **published** instance over TLS | Playwright browsers installed |
-| `BIFROST_RUN_BENCHMARK=1` | the load measurement and the reverse-proxy hop | a machine nobody else is using; Docker for the proxy |
-| `BIFROST_RUN_SOAK=1` | the soak and chaos run | time, and patience |
-| `BIFROST_RUN_COMPAT=1` | the SDK client probe of the compatibility matrix | – |
-| `BIFROST_RUN_AUDIT_SCALE=1` | the million-entry audit export proof | ~2 GB of disk, ~30 s |
+| `FAOLAN_REQUIRE_POSTGRES=1` | PostgreSQL persistence tests | Docker (Testcontainers) |
+| `FAOLAN_REQUIRE_CONTAINER=1` | container isolation and the reverse-proxy hop against a live runtime | Docker in **Linux**-container mode |
+| `FAOLAN_REQUIRE_WASI_HOST=1` | WASI tests against the real Rust host | `cargo build --release` in `spikes/wasi-component-runtime` |
+| `FAOLAN_REQUIRE_KEYCLOAK=1` | upstream OAuth against a real authorization server | Docker (Testcontainers) |
+| `FAOLAN_RUN_E2E=1` | the 18 browser journeys against a **published** instance over TLS | Playwright browsers installed |
+| `FAOLAN_RUN_BENCHMARK=1` | the load measurement and the reverse-proxy hop | a machine nobody else is using; Docker for the proxy |
+| `FAOLAN_RUN_SOAK=1` | the soak and chaos run | time, and patience |
+| `FAOLAN_RUN_COMPAT=1` | the SDK client probe of the compatibility matrix | – |
+| `FAOLAN_RUN_AUDIT_SCALE=1` | the million-entry audit export proof | ~2 GB of disk, ~30 s |
 
 Every one of these is set by a CI job. That is not a courtesy — a gate nobody sets is a proof
-nobody runs, and `Bifrost.Governance.Tests` fails the build if a new one appears without a job and
+nobody runs, and `Faolan.Governance.Tests` fails the build if a new one appears without a job and
 without a line in this table.
 
 > **Build the Rust release binary before running the .NET tests that need it.** The real-host tests
@@ -112,11 +112,11 @@ stopped answering — and the dump does not tell you which one that was. The wat
 at fifteen and uploads all three.
 
 ```bash
-dotnet test Bifrost.slnx --blame-hang --blame-hang-timeout 15m --blame-hang-dump-type full
-BIFROST_HANG_TIMEOUT_SECONDS=60 dotnet test …   # shorten the watchdog while debugging one
+dotnet test Faolan.slnx --blame-hang --blame-hang-timeout 15m --blame-hang-dump-type full
+FAOLAN_HANG_TIMEOUT_SECONDS=60 dotnet test …   # shorten the watchdog while debugging one
 ```
 
-The integration tests spawn reference MCP servers (`tests/Bifrost.TestServers/*`) as real stdio and
+The integration tests spawn reference MCP servers (`tests/Faolan.TestServers/*`) as real stdio and
 HTTP processes. If a run is killed hard, one may survive and hold its port and its own executable —
 the next build then fails with "used by another process" for a reason two runs old. Check for stray
 processes before assuming the build is broken.
@@ -181,7 +181,7 @@ implementation.
 - Findings from the secret guardrail never contain the found value.
 
 There are four identifiers that feed the DataProtection key derivation
-(`src/Bifrost.Persistence/CryptographicNames.cs`). Renaming one makes **every stored ciphertext on
+(`src/Faolan.Persistence/CryptographicNames.cs`). Renaming one makes **every stored ciphertext on
 every existing installation unreadable, with no error at start**. A test pins them against their
 values. If you make that test red, you have two options: revert, or write a migration that decrypts
 and re-encrypts everything. Adjusting the test is not a third option, and the test says so.
@@ -247,7 +247,7 @@ change sent back when they are missing: what changed, **what proves it**, what y
 not do, and whether operator-visible behaviour changed.
 
 - Branch from `main`.
-- Run `./build.sh verify-dotnet` (or `dotnet test Bifrost.slnx`) before pushing.
+- Run `./build.sh verify-dotnet` (or `dotnet test Faolan.slnx`) before pushing.
 - CI runs CodeQL, dependency scans for NuGet and Cargo, Trivy against the image and the working
   tree, and gitleaks. **Critical/High blocks.** No gate is softened with `continue-on-error`, and
   there is no environment variable that relaxes one.

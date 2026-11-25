@@ -1,7 +1,7 @@
 # Importmatrix — was je Client übernommen wird, und was nicht
 
 Stand: WP4.3 (M4). Gegenstand sind die vier Clientparser unter
-`src/Bifrost.Core/Importing/Providers/` und der generische Parser aus WP4.1.
+`src/Faolan.Core/Importing/Providers/` und der generische Parser aus WP4.1.
 
 Diese Matrix nennt **auch die Felder, die nicht unterstützt werden**. Eine Matrix, die nur die
 unterstützten Felder aufzählt, beantwortet die einzige Frage nicht, die vor einem Import zählt:
@@ -268,7 +268,7 @@ die Codex nicht lädt; er sähe nur so aus, als hätte er geholfen.
 
 ## 7. Herkunft der Beispielkonfigurationen
 
-Unter `tests/Bifrost.Core.Tests/Importing/Fixtures/<client>/`. Jede Datei trägt im Kopf, woher ihr
+Unter `tests/Faolan.Core.Tests/Importing/Fixtures/<client>/`. Jede Datei trägt im Kopf, woher ihr
 Aufbau stammt und was daran nachgebildet ist.
 
 | Client | belegt | nachgebildet |

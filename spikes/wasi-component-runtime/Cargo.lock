@@ -59,25 +59,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
-name = "bifrost-wasi-component-spike"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "ed25519-dalek",
- "getrandom 0.4.3",
- "hmac",
- "serde",
- "serde_json",
- "sha2",
- "wasmtime",
- "wasmtime-wasi",
- "wat",
- "wit-component",
- "wit-parser",
-]
-
-[[package]]
 name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -483,6 +464,25 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "faolan-wasi-component-spike"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "ed25519-dalek",
+ "getrandom 0.4.3",
+ "hmac",
+ "serde",
+ "serde_json",
+ "sha2",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wat",
+ "wit-component",
+ "wit-parser",
 ]
 
 [[package]]

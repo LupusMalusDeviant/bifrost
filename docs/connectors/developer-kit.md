@@ -4,26 +4,26 @@ Ein Connector ist eine Datei: `<name>-<version>.mcpkg`. Sie enthält ein signier
 Nutzlast und deren Prüfsummen. **Es gibt keine Registry** — wer einen Connector weitergibt, gibt
 eine Datei weiter.
 
-Gebaut, signiert und geprüft wird mit `bifrost-connector` **auf dem eigenen Rechner**. Das Gateway
+Gebaut, signiert und geprüft wird mit `faolan-connector` **auf dem eigenen Rechner**. Das Gateway
 sieht dabei nichts; es bekommt am Ende nur das fertige Paket zu sehen und prüft es mit demselben
 Code, mit dem dieses Werkzeug es baut.
 
 ```bash
-dotnet tool install -g Bifrost.ConnectorKit   # oder: dotnet run --project src/Bifrost.ConnectorKit --
+dotnet tool install -g Faolan.ConnectorKit   # oder: dotnet run --project src/Faolan.ConnectorKit --
 ```
 
 ## Der ganze Weg in vier Befehlen
 
 ```bash
-bifrost-connector init mein-connector --id mein-connector
+faolan-connector init mein-connector --id mein-connector
 # → legt connector.json, payload/ und einen Herausgeberschlüssel an
 
 cp meine-component.wasm mein-connector/payload/connector.wasm
 
-bifrost-connector build mein-connector --key mein-connector/publisher.key.json
+faolan-connector build mein-connector --key mein-connector/publisher.key.json
 # → out/mein-connector-0.1.0.mcpkg
 
-bifrost-connector test mein-connector/out/mein-connector-0.1.0.mcpkg \
+faolan-connector test mein-connector/out/mein-connector-0.1.0.mcpkg \
     --publisher mein-connector/publisher.key.json
 ```
 
@@ -63,7 +63,7 @@ Der **Kennwert** (`KeyId`) ist der SHA-256-Fingerprint des öffentlichen Schlüs
 den ein Betreiber in seinen Trust-Store einträgt:
 
 ```bash
-bifrost publishers add --key-id <keyid> --public-key <base64> --label "…" --trust ThirdParty
+faolan publishers add --key-id <keyid> --public-key <base64> --label "…" --trust ThirdParty
 ```
 
 Der private Schlüssel gehört nicht ins Versionsverwaltungssystem. `init` schreibt ihn deshalb neben
@@ -78,8 +78,8 @@ Netz, kein Dateizugriff.
 cp spikes/wasi-component-runtime/fixtures/counter.component.wasm \
    samples/counter-connector/payload/connector.wasm     # liegt dort bereits
 
-bifrost-connector build samples/counter-connector --key /tmp/beispiel.key.json
-bifrost-connector test samples/counter-connector/out/counter-connector-0.1.0.mcpkg \
+faolan-connector build samples/counter-connector --key /tmp/beispiel.key.json
+faolan-connector test samples/counter-connector/out/counter-connector-0.1.0.mcpkg \
     --publisher /tmp/beispiel.key.json
 ```
 

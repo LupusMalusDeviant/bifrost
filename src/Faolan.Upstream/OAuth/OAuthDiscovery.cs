@@ -1,0 +1,373 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text.Json;
+using Faolan.Upstream.Http;
+
+namespace Faolan.Upstream.OAuth;
+
+/// <summary>Was ein Upstream über seine Autorisierung preisgibt (RFC 9728).</summary>
+public sealed record ProtectedResourceMetadata(
+    string Resource,
+    IReadOnlyList<Uri> AuthorizationServers,
+    IReadOnlyList<string> ScopesSupported);
+
+/// <summary>Die Endpunkte eines Authorization Servers (RFC 8414 bzw. OIDC Discovery).</summary>
+public sealed record AuthorizationServerMetadata(
+    string Issuer,
+    Uri AuthorizationEndpoint,
+    Uri TokenEndpoint,
+    IReadOnlyList<string> CodeChallengeMethodsSupported,
+    IReadOnlyList<string> ScopesSupported,
+    bool IssuerParameterSupported);
+
+/// <summary>
+/// Findet heraus, wie ein HTTP-Upstream autorisiert werden will.
+/// <para>
+/// Der Ablauf ist der des Standards: unautorisiert anfragen → <c>401</c> mit
+/// <c>WWW-Authenticate: Bearer resource_metadata="…"</c> → Protected Resource Metadata lesen →
+/// daraus den Authorization Server bestimmen → dessen Metadaten holen.
+/// </para>
+/// <para>
+/// <b>Jede dieser Adressen kommt vom Gegenüber.</b> Ein bösartiger oder übernommener Upstream kann
+/// als Authorization Server auf einen internen Dienst zeigen und den Gateway so zum Abrufen fremder
+/// Endpunkte bringen. Deshalb läuft jeder Abruf durch dieselbe Zielprüfung wie die Schemaimporte
+/// (<see cref="RemoteSpecFetcher"/>) — dort wurde genau dieser Weg schon einmal geschlossen.
+/// </para>
+/// </summary>
+public static class OAuthDiscovery
+{
+    /// <summary>Nur HTTPS. Ein Token über Klartext auszutauschen macht die ganze Übung sinnlos.</summary>
+    private static void EnsureSecure(Uri uri, bool allowPrivateTargets)
+    {
+        if (uri.Scheme is not "https"
+            && !(allowPrivateTargets && uri.IsLoopback))
+        {
+            throw new OAuthDiscoveryException(
+                $"'{uri}' ist kein HTTPS. Autorisierungs-Endpunkte über Klartext sind nicht "
+                + "verwendbar; für lokale Entwicklung greift AllowPrivateTargets auf Loopback.");
+        }
+    }
+
+    /// <summary>
+    /// Liest die <c>resource_metadata</c>-Adresse aus einer <c>401</c>-Antwort. Fehlt sie, spricht
+    /// der Upstream diese Autorisierung nicht — dann ist ein Rateversuch auf einen
+    /// Well-Known-Pfad die falsche Antwort, weil er eine fremde Adresse errät.
+    /// </summary>
+    public static Uri? ReadResourceMetadataUrl(HttpResponseMessage response)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        foreach (var header in response.Headers.WwwAuthenticate)
+        {
+            if (!string.Equals(header.Scheme, "Bearer", StringComparison.OrdinalIgnoreCase)
+                || header.Parameter is not { Length: > 0 } parameter)
+            {
+                continue;
+            }
+
+            foreach (var part in parameter.Split(','))
+            {
+                var trimmed = part.Trim();
+                if (!trimmed.StartsWith("resource_metadata=", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var value = trimmed["resource_metadata=".Length..].Trim().Trim('"');
+                if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+                {
+                    return uri;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Die vom Server geforderten Scopes aus der Aufforderung (RFC 6750, Abschnitt 3).</summary>
+    public static IReadOnlyList<string> ReadChallengedScopes(HttpResponseMessage response)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        foreach (var header in response.Headers.WwwAuthenticate)
+        {
+            if (header.Parameter is not { Length: > 0 } parameter)
+            {
+                continue;
+            }
+
+            foreach (var part in parameter.Split(','))
+            {
+                var trimmed = part.Trim();
+                if (trimmed.StartsWith("scope=", StringComparison.OrdinalIgnoreCase))
+                {
+                    return [.. trimmed["scope=".Length..].Trim().Trim('"')
+                        .Split(' ', StringSplitOptions.RemoveEmptyEntries)];
+                }
+            }
+        }
+
+        return [];
+    }
+
+    /// <summary>
+    /// Prüft ein Ziel, bevor es abgerufen wird — der Zugang zur zentralen Adressprüfung für
+    /// Aufrufer außerhalb von <c>Faolan.Upstream</c>.
+    /// <para>
+    /// <b>Warum es diesen Zugang gibt:</b> <c>RemoteSpecFetcher</c> ist <c>internal</c>, also konnte
+    /// <c>Faolan.Server</c> die zentrale Prüfung gar nicht benutzen. Eine zentrale Prüfung, die man
+    /// nicht erreichen kann, ist keine — der OAuth-Verbindungsendpunkt hat deshalb gegen die vom
+    /// Betreiber genannte Adresse gesondet, <b>bevor</b> irgendetwas sie geprüft hatte, und drei
+    /// Zeilen später denselben Schalter an jede Discovery-Anfrage weitergereicht.
+    /// </para>
+    /// </summary>
+    public static Task EnsureTargetAllowedAsync(
+        Uri target, bool allowPrivateTargets, CancellationToken ct)
+        => RemoteSpecFetcher.EnsureTargetAllowedAsync(
+            target,
+            allowPrivateTargets,
+            message => new OAuthDiscoveryException(message),
+            ct);
+
+    public static async Task<ProtectedResourceMetadata> FetchResourceMetadataAsync(
+        Uri metadataUrl, bool allowPrivateTargets, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(metadataUrl);
+        EnsureSecure(metadataUrl, allowPrivateTargets);
+        var json = await FetchJsonAsync(metadataUrl, allowPrivateTargets, ct).ConfigureAwait(false);
+
+        var servers = ReadUriArray(json, "authorization_servers");
+        if (servers.Count == 0)
+        {
+            throw new OAuthDiscoveryException(
+                $"Die Protected Resource Metadata unter '{metadataUrl}' nennt keinen "
+                + "Authorization Server (RFC 9728 verlangt mindestens einen).");
+        }
+
+        foreach (var server in servers)
+        {
+            EnsureSecure(server, allowPrivateTargets);
+        }
+
+        return new ProtectedResourceMetadata(
+            ReadString(json, "resource") ?? string.Empty,
+            servers,
+            ReadStringArray(json, "scopes_supported"));
+    }
+
+    /// <summary>
+    /// Holt die Metadaten des Authorization Servers. Probiert die beiden Wege des Standards in
+    /// Reihenfolge: RFC 8414 und OpenID Connect Discovery — Clients müssen beide unterstützen.
+    /// </summary>
+    public static async Task<AuthorizationServerMetadata> FetchAuthorizationServerMetadataAsync(
+        Uri issuer, bool allowPrivateTargets, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(issuer);
+        EnsureSecure(issuer, allowPrivateTargets);
+
+        var basePath = issuer.AbsolutePath.TrimEnd('/');
+        var candidates = new[]
+        {
+            new Uri(issuer, $"/.well-known/oauth-authorization-server{basePath}"),
+            new Uri(issuer, $"/.well-known/openid-configuration{basePath}"),
+            new Uri(issuer, $"{basePath}/.well-known/openid-configuration"),
+        };
+
+        var failures = new List<OAuthDiscoveryException>(candidates.Length);
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                var json = await FetchJsonAsync(candidate, allowPrivateTargets, ct).ConfigureAwait(false);
+                return ReadServerMetadata(json, issuer, allowPrivateTargets);
+            }
+            catch (OAuthDiscoveryException exception)
+            {
+                failures.Add(exception);
+            }
+        }
+
+        // Ausschlaggebend ist nicht der letzte Fehlschlag, sondern der aussagekräftigste (Plan 0005
+        // F12): Ist ein Weg nur gestört (5xx, 429, Netzfehler), kann er gleich wieder antworten — das
+        // geht vor. Sonst geht eine Ablehnung (401/403) vor einem schlichten „gibt es hier nicht"
+        // (404), weil sie sagt, dass der Server da ist und uns nicht lässt.
+        var decisive = failures.FirstOrDefault(IsTransient)
+            ?? failures.FirstOrDefault(f => f.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            ?? failures[^1];
+        throw new OAuthDiscoveryException(
+            $"Keine Authorization-Server-Metadaten unter '{issuer}' gefunden. "
+            + $"Ausschlaggebend: {decisive.Message}",
+            decisive)
+        {
+            StatusCode = decisive.StatusCode,
+        };
+    }
+
+    /// <summary>
+    /// Wird das von selbst besser — ein gestörter (5xx), überlasteter (429) oder gar nicht
+    /// erreichter Server? Dann ist es eine Unerreichbarkeit, keine Ablehnung (Plan 0005 F12).
+    /// </summary>
+    public static bool IsTransient(OAuthDiscoveryException exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        return exception.StatusCode is { } status
+            ? (int)status >= 500 || status == HttpStatusCode.TooManyRequests
+            : exception.InnerException is HttpRequestException { StatusCode: null }
+                    or System.Net.Sockets.SocketException
+                || (exception.InnerException is OAuthDiscoveryException inner && IsTransient(inner));
+    }
+
+    private static AuthorizationServerMetadata ReadServerMetadata(
+        JsonElement json, Uri issuer, bool allowPrivateTargets)
+    {
+        // Die Form ist schon in FetchJsonAsync geprüft (ein Objekt); ein 'issuer', der keine
+        // Zeichenkette ist, zählt wie ein fehlender (Plan 0005 G3) — sonst warf GetString() eine
+        // InvalidOperationException, die die übrigen Well-known-Pfade übersprang.
+        var declaredIssuer = ReadString(json, "issuer");
+        if (string.IsNullOrEmpty(declaredIssuer))
+        {
+            throw new OAuthDiscoveryException("Metadaten ohne 'issuer' als Zeichenkette.");
+        }
+
+        // Der Issuer im Dokument muss der sein, den wir angefragt haben. Weicht er ab, beschreibt
+        // das Dokument einen anderen Server — und die spätere iss-Prüfung liefe gegen einen Wert,
+        // den wir uns von der Gegenseite haben vorgeben lassen.
+        if (!string.Equals(declaredIssuer.TrimEnd('/'), issuer.ToString().TrimEnd('/'), StringComparison.Ordinal))
+        {
+            throw new OAuthDiscoveryException(
+                $"Die Metadaten nennen den Issuer '{declaredIssuer}', angefragt war '{issuer}'.");
+        }
+
+        var authorization = ReadUri(json, "authorization_endpoint")
+            ?? throw new OAuthDiscoveryException("Metadaten ohne 'authorization_endpoint'.");
+        var token = ReadUri(json, "token_endpoint")
+            ?? throw new OAuthDiscoveryException("Metadaten ohne 'token_endpoint'.");
+        EnsureSecure(authorization, allowPrivateTargets);
+        EnsureSecure(token, allowPrivateTargets);
+
+        var methods = ReadStringArray(json, "code_challenge_methods_supported");
+
+        // Der Standard ist hier ausdrücklich: Fehlt die Angabe oder fehlt S256, MUSS der Client
+        // abbrechen. Ohne PKCE ist der Autorisierungscode abfangbar, und ein stiller Verzicht
+        // wäre genau die Art Rückfall, die niemand bemerkt.
+        if (!methods.Contains("S256", StringComparer.Ordinal))
+        {
+            throw new OAuthDiscoveryException(
+                $"Der Authorization Server '{declaredIssuer}' weist PKCE mit S256 nicht aus "
+                + "(code_challenge_methods_supported). Ohne PKCE wird nicht autorisiert.");
+        }
+
+        return new AuthorizationServerMetadata(
+            declaredIssuer,
+            authorization,
+            token,
+            methods,
+            ReadStringArray(json, "scopes_supported"),
+            json.TryGetProperty("authorization_response_iss_parameter_supported", out var supported)
+                && supported.ValueKind is JsonValueKind.True);
+    }
+
+    private static async Task<JsonElement> FetchJsonAsync(
+        Uri url, bool allowPrivateTargets, CancellationToken ct)
+    {
+        string body;
+        try
+        {
+            // Dieselbe Zielprüfung wie bei den Schemaimporten: Auflösung aller Adressen, Abweisung
+            // von Loopback/privat/Link-Local, Weiterleitungen einzeln geprüft.
+            body = await RemoteSpecFetcher.FetchAsync(
+                    url, allowPrivateTargets, TimeSpan.FromSeconds(15), Fail, Unresolvable, ct)
+                .ConfigureAwait(false);
+        }
+        catch (HttpRequestException exception)
+        {
+            // **Befund aus WP5.2.** Der Fetcher meldet einen HTTP-Fehlerstatus als
+            // HttpRequestException, die Kandidatenschleife in
+            // FetchAuthorizationServerMetadataAsync fing aber nur OAuthDiscoveryException. Damit
+            // brach die Suche beim ERSTEN 404 ab, und die beiden Ausweichpfade des Standards waren
+            // toter Code — gegen jeden Server, der die Metadaten nur unter
+            // '{issuer}/.well-known/openid-configuration' ausliefert (Keycloak unter anderen),
+            // scheiterte die Anbindung. Gefunden hat es der erste Lauf gegen ein echtes Keycloak.
+            //
+            // Der Status reist mit (Plan 0005 F12): Ein 401/403 der Metadaten ist eine abgelehnte
+            // Anmeldung, ein 5xx/429 eine Störung — ohne ihn war beides dasselbe. Ein Netzfehler
+            // (kein Status) bleibt als innere Ausnahme erkennbar.
+            throw new OAuthDiscoveryException($"'{url}' war nicht abrufbar: {exception.Message}", exception)
+            {
+                StatusCode = exception.StatusCode,
+            };
+        }
+
+        JsonElement root;
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            root = document.RootElement.Clone();
+        }
+        catch (JsonException exception)
+        {
+            throw new OAuthDiscoveryException($"'{url}' lieferte kein gültiges JSON: {exception.Message}");
+        }
+
+        // Erst die Form, dann die Felder (Plan 0005 G3): Auf einem Array oder einer Zahl wirft
+        // TryGetProperty eine InvalidOperationException — die fing die Kandidatenschleife nicht, und
+        // ein Unsinnsdokument auf dem ersten Pfad verdeckte ein gültiges auf dem zweiten.
+        if (root.ValueKind is not JsonValueKind.Object)
+        {
+            throw new OAuthDiscoveryException($"'{url}' lieferte kein JSON-Objekt.");
+        }
+
+        return root;
+    }
+
+    private static Exception Fail(string message) => new OAuthDiscoveryException(message);
+
+    /// <summary>
+    /// Ein Name, der sich bei der Zielprüfung nicht auflösen ließ, ist ein Netzfehler wie jeder
+    /// andere (Plan 0005 G3) — die <see cref="System.Net.Sockets.SocketException"/> reist mit, damit
+    /// <see cref="IsTransient"/> ihn als Unerreichbarkeit erkennt und nicht als Ablehnung.
+    /// </summary>
+    internal static Exception Unresolvable(string message, Exception inner) => new OAuthDiscoveryException(message, inner);
+
+    private static string? ReadString(JsonElement json, string name)
+        => json.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private static Uri? ReadUri(JsonElement json, string name)
+        => json.TryGetProperty(name, out var value)
+            && value.ValueKind is JsonValueKind.String
+            && Uri.TryCreate(value.GetString(), UriKind.Absolute, out var uri)
+                ? uri
+                : null;
+
+    private static IReadOnlyList<Uri> ReadUriArray(JsonElement json, string name)
+        => !json.TryGetProperty(name, out var array) || array.ValueKind is not JsonValueKind.Array
+            ? []
+            : [.. array.EnumerateArray()
+                .Where(e => e.ValueKind is JsonValueKind.String)
+                .Select(e => e.GetString())
+                .Where(s => Uri.TryCreate(s, UriKind.Absolute, out _))
+                .Select(s => new Uri(s!))];
+
+    private static IReadOnlyList<string> ReadStringArray(JsonElement json, string name)
+        => !json.TryGetProperty(name, out var array) || array.ValueKind is not JsonValueKind.Array
+            ? []
+            : [.. array.EnumerateArray().Where(e => e.ValueKind is JsonValueKind.String).Select(e => e.GetString()).Where(s => !string.IsNullOrEmpty(s)).Select(s => s!)];
+}
+
+/// <summary>Die Autorisierung eines Upstreams ließ sich nicht ermitteln oder ist nicht verwendbar.</summary>
+public sealed class OAuthDiscoveryException : Exception
+{
+    public OAuthDiscoveryException(string message) : base(message) { }
+
+    public OAuthDiscoveryException() { }
+
+    public OAuthDiscoveryException(string message, Exception innerException)
+        : base(message, innerException) { }
+
+    /// <summary>
+    /// Der Statuscode, mit dem ein Token-Endpunkt oder ein Metadaten-Abruf abgelehnt hat —
+    /// <c>null</c>, wenn die Ablehnung nicht aus einer HTTP-Antwort stammt. Trennt „abgelehnt" (4xx)
+    /// von „gerade gestört" (5xx, 429).
+    /// </summary>
+    public System.Net.HttpStatusCode? StatusCode { get; init; }
+}

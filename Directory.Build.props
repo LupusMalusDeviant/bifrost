@@ -8,8 +8,8 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <Authors>B.I.F.R.O.S.T Project</Authors>
-    <Product>B.I.F.R.O.S.T</Product>
+    <Authors>Faolan Project</Authors>
+    <Product>Faolan</Product>
     <VersionPrefix>0.12.0</VersionPrefix>
     <Version>$(VersionPrefix)</Version>
     <PackageVersion>$(VersionPrefix)</PackageVersion>

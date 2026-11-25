@@ -42,6 +42,11 @@ Ein Architecture Decision Record dokumentiert eine einzelne, wichtige Architektu
 | [0021-EM](./0021-entscheidungsmaterial-skills-im-paket.md) | Entscheidungsmaterial: Skills im Paket — vier Optionen, fünf Fragen | Material | 2026-07-28 | Grundlage für [0021](./0021-skills-in-paketen.md) |
 | [0022](./0022-schaerfe-und-durchsetzung-trennen.md) | Schärfe und Durchsetzung trennen — zweite Tür `invoke_sensitive_tool` | Akzeptiert | 2026-07-30 | ergänzt [0012](./0012-approval-flows-asynchron.md) |
 | [0023](./0023-stateless-kern-und-mrtr.md) | Sessionloser Kern als Vorgabe (Spec-Revision 2026-07-28), Rückfrage über MRTR | Akzeptiert | 2026-07-31 | ergänzt [0012](./0012-approval-flows-asynchron.md) und [0022](./0022-schaerfe-und-durchsetzung-trennen.md); präzisiert [0009](./0009-sse-legacy-transport.md) und [0010](./0010-sampling-elicitation-nicht-durchreichen.md) |
+| [0024](./0024-backup-restore-und-migrationssicherheit.md) | Backup, Restore und Migrationssicherheit | Akzeptiert | 2026-07-31 | baut auf [0007](./0007-ef-core-mit-sqlite-default-postgres-optional.md) auf |
+| [0025](./0025-host-ausfuehrung-verbieten-und-bestehende-instanzen-migrieren.md) | Host-Ausführung verbieten — und was mit bestehenden Instanzen geschieht | Akzeptiert | 2026-07-31 | betrifft [0014](./0014-cli-programme-als-upstream-transport.md) und [0018](./0018-native-prozess-und-container-isolation.md) |
+| [0026](./0026-umbenennung-auf-faolan.md) | Umbenennung auf Faolan — Markennamen wechseln, abgelegte Bezeichner nicht | Akzeptiert | 2026-11-16 | — |
+| [0027](./0027-rueckkanal-projektion-im-invoker.md) | Antworten deterministisch formen — je Werkzeug, an einer Stelle im Invoker | Akzeptiert | 2026-11-16 | — |
+| [0028](./0028-maskieren-als-dritter-guard-modus.md) | Maskieren als dritter Modus der Guard-Regeln | Akzeptiert | 2026-11-16 | ergänzt [0011](./0011-secret-erkennung-als-guardrail.md) |
 
 ## Beitragen
 

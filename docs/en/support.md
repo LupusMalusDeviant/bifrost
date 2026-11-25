@@ -9,7 +9,7 @@
 
 ## Support matrix
 
-B.I.F.R.O.S.T is **pre-1.0**, and that is the whole statement: the code is feature-complete for its
+Faolan is **pre-1.0**, and that is the whole statement: the code is feature-complete for its
 scope and covered by tests against SQLite *and* real PostgreSQL, but it has very little operational
 uptime behind it. 1.0 follows from running it over time, not from adding features.
 
@@ -17,7 +17,7 @@ uptime behind it. 1.0 follows from running it over time, not from adding feature
 |---|---|---|
 | `main` | ✅ best effort | Security fixes land here first |
 | `v0.12.0` | ✅ best effort | Current release (2026-08-01). First release produced by the release pipeline |
-| `v0.11.0` | ⚠️ superseded | First release under the name B.I.F.R.O.S.T; protocol revision `2026-07-28` |
+| `v0.11.0` | ⚠️ superseded | First release under the name Faolan; protocol revision `2026-07-28` |
 | `v0.5.0` … `v0.10.0` | ⚠️ superseded | Tags exist; no maintained changelog entries, and some have no GitHub release |
 | early `1.x` builds | ❌ withdrawn | Removed entirely — never a valid release. **If you ran one, act:** see the [advisory](../../SECURITY.md#advisory-for-anyone-who-ran-an-early-1x-build) |
 
@@ -31,7 +31,7 @@ fix lands on `main` and reaches you in the next release.
 | **Deployment shape** | Self-hosted, single operator ([ADR-0001](../adr/0001-zentraler-proxy-gateway-statt-direktanbindung.md)). Docker on Linux (amd64 and arm64), or `dotnet run` from source |
 | **Database** | SQLite (default) and PostgreSQL — with the [PostgreSQL gaps](operations.md#known-limitations) stated plainly |
 | **Runtime** | .NET 10. The container image runs non-root |
-| **MCP revisions** | `2026-07-28` (default, stateless) and `2025-11-25` (session mode via `BIFROST_MCP_STATELESS=0`) |
+| **MCP revisions** | `2026-07-28` (default, stateless) and `2025-11-25` (session mode via `FAOLAN_MCP_STATELESS=0`) |
 | **Client side** | The gateway speaks **Streamable HTTP only** as a server. Agents that can only do the legacy SSE transport cannot connect. *Upstream* servers may still use SSE — the gateway falls back automatically, switchable per server |
 
 ### What is not supported, and is not pretending to be
@@ -60,7 +60,7 @@ fix lands on `main` and reaches you in the next release.
 
 ### Container image
 
-`ghcr.io/lupusmalusdeviant/bifrost`, tagged:
+`ghcr.io/lupusmalusdeviant/faolan`, tagged:
 
 | Tag form | Example | Use |
 |---|---|---|
@@ -81,11 +81,11 @@ Every release carries one archive per platform plus a shared `checksums.txt`:
 
 | Platform | Archive |
 |---|---|
-| Windows x64 | `bifrost-cli-<version>-win-x64.zip` |
-| Linux x64 | `bifrost-cli-<version>-linux-x64.tar.gz` |
-| Linux arm64 | `bifrost-cli-<version>-linux-arm64.tar.gz` |
-| macOS Intel | `bifrost-cli-<version>-osx-x64.tar.gz` |
-| macOS Apple Silicon | `bifrost-cli-<version>-osx-arm64.tar.gz` |
+| Windows x64 | `faolan-cli-<version>-win-x64.zip` |
+| Linux x64 | `faolan-cli-<version>-linux-x64.tar.gz` |
+| Linux arm64 | `faolan-cli-<version>-linux-arm64.tar.gz` |
+| macOS Intel | `faolan-cli-<version>-osx-x64.tar.gz` |
+| macOS Apple Silicon | `faolan-cli-<version>-osx-arm64.tar.gz` |
 
 Each archive contains exactly two files: the program and `LICENSE`. The runtime is bundled, so the
 target machine needs neither SDK nor runtime. Installation details:
@@ -155,7 +155,7 @@ Full policy, including the security model you should read before deploying:
 ### Bugs and feature requests
 
 GitHub issues, using the templates. The bug template asks for version, database provider, deployment
-shape and `bifrost doctor` output up front — those four answer most questions before anyone replies,
+shape and `faolan doctor` output up front — those four answer most questions before anyone replies,
 and a `doctor` report is safe to paste: it never names the location of key material and never shows
 a password.
 

@@ -50,32 +50,32 @@ verify_rust() {
 
 verify_fast() {
   step 'dotnet build (Release, warnings=errors)' \
-    dotnet build "$REPO/Bifrost.slnx" --configuration Release
+    dotnet build "$REPO/Faolan.slnx" --configuration Release
   # Die Integrationssuite startet echte Prozesse und braucht Minuten — sie gehoert in
   # verify-dotnet, nicht in den schnellen Durchgang.
   step 'dotnet test (Core, Upstream, CLI)' \
-    dotnet test "$REPO/Bifrost.slnx" --configuration Release --no-build \
+    dotnet test "$REPO/Faolan.slnx" --configuration Release --no-build \
       --filter 'FullyQualifiedName!~Integration.Tests&FullyQualifiedName!~WasiRealHost'
 }
 
 verify_dotnet() {
   step 'dotnet build (Release, warnings=errors)' \
-    dotnet build "$REPO/Bifrost.slnx" --configuration Release
+    dotnet build "$REPO/Faolan.slnx" --configuration Release
   # WasiRealHost ist ausgenommen wie in der CI: Diese Tests brauchen das gebaute Rust-Binary und
   # laufen im eigenen Job. Ohne das Binary ueberspringen sie sich selbst — siehe WasiHostPaths.
   step 'dotnet test (vollstaendig, ohne WasiRealHost)' \
-    dotnet test "$REPO/Bifrost.slnx" --configuration Release --no-build \
+    dotnet test "$REPO/Faolan.slnx" --configuration Release --no-build \
       --filter 'FullyQualifiedName!~WasiRealHost'
 }
 
 verify_container() {
   have docker 'Container-Gate laeuft dann nur in der CI.' || return 0
-  step 'docker build' docker build -t bifrost:verify "$REPO"
+  step 'docker build' docker build -t faolan:verify "$REPO"
   step 'compose-Beispiele sind gueltig' bash -c \
     "docker compose -f '$REPO/docker-compose.yml' config --quiet && \
      docker compose -f '$REPO/docker-compose.yml' -f '$REPO/docker-compose.postgres.yml' config --quiet"
   step 'non-root im Image' bash -c \
-    '[ "$(docker run --rm --entrypoint sh bifrost:verify -c "id -u")" != "0" ] || { echo "Image laeuft als root."; exit 1; }'
+    '[ "$(docker run --rm --entrypoint sh faolan:verify -c "id -u")" != "0" ] || { echo "Image laeuft als root."; exit 1; }'
 }
 
 case "$MODE" in

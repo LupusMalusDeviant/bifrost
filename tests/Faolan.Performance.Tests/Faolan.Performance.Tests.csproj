@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- xUnit v3: Testprojekte sind eigenstaendige Executables, der Runner laeuft im selben Prozess. -->
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Faolan.Performance.Tests</RootNamespace>
+    <Description>WP5.3: Lastmessung. Die netzrealistische Messung startet den Gateway als eigenen
+      Prozess hinter Kestrel (TCP, optional TLS), faehrt Dauerlast gegen einen Upstream mit
+      definierter Antwortzeit und trennt Gateway- von Fremdanteil. Die aeltere In-Process-Messung
+      (NFR-01/02) bleibt als Vergleichsgroesse daneben stehen.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Faolan.Server wird gebraucht, weil der Harness die gebaute Server-Executable startet —
+         und wegen der Typen fuer die Upstream-Anlage ueber die REST-API. -->
+    <ProjectReference Include="..\..\src\Faolan.Server\Faolan.Server.csproj" />
+    <ProjectReference Include="..\..\src\Faolan.Persistence.Migrations.Sqlite\Faolan.Persistence.Migrations.Sqlite.csproj" />
+    <!-- Nur Build-Reihenfolge: die TestServer werden als externe Prozesse gestartet. -->
+    <ProjectReference Include="..\Faolan.TestServers\SlowServer\Faolan.TestServers.SlowServer.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Faolan.TestServers\BulkServer\Faolan.TestServers.BulkServer.csproj" ReferenceOutputAssembly="false" />
+
+    <!-- Der In-Process-Harness der NFR-01/02-Messung wird verlinkt, nicht nachgebaut: Eine zweite
+         Fassung von GatewayFixture waere eine zweite Wahrheit darueber, wie ein Client sich
+         anmeldet. Dieselbe Begruendung wie in Faolan.Compatibility.Tests. -->
+    <Compile Include="..\Faolan.Integration.Tests\Gateway\GatewayFixture.cs" Link="Harness\GatewayFixture.cs" />
+    <Compile Include="..\Faolan.Integration.Tests\Gateway\CapturedLog.cs" Link="Harness\CapturedLog.cs" />
+    <Compile Include="..\Faolan.Integration.Tests\IntegrationSupport.cs" Link="Harness\IntegrationSupport.cs" />
+    <Compile Include="..\Faolan.Integration.Tests\TestPaths.cs" Link="Harness\TestPaths.cs" />
+
+    <!-- WP5.3, Reverse-Proxy-Sprung: nginx als echter Prozess vor dem Gateway. Ein In-Process-Proxy
+         waere kein Sprung — es ginge kein Paket ueber eine zweite Verbindung. -->
+    <!-- FR-P056: Haengt ein Lauf, entsteht ein Bericht mit Sequenz und aktiven
+         Kindprozessen. Verlinkt statt nachgebaut — vier Projekte starten echte Prozesse,
+         und vier Fassungen davon waeren vier Wahrheiten. -->
+    <Compile Include="..\Faolan.TestServers\Common\HangReport.cs" Link="Harness\HangReport.cs" />
+    <Compile Include="..\Faolan.TestServers\Common\HangWatchdog.cs" Link="Harness\HangWatchdog.cs" />
+    <Compile Include="..\Faolan.TestServers\Common\UpstreamProcessLookup.cs" Link="Harness\UpstreamProcessLookup.cs" />
+    <PackageReference Include="Testcontainers" />
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+  </ItemGroup>
+
+</Project>

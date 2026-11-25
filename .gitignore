@@ -133,8 +133,8 @@ ipch/
 # Visual Studio Trace Files
 *.e2e
 # ...aber nicht das Browser-Testprojekt: unter Windows (core.ignorecase) trifft `*.e2e` den
-# Ordner `Bifrost.Ui.E2E`, und er wurde deshalb nie committet, obwohl die Solution ihn baut.
-!tests/Bifrost.Ui.E2E/
+# Ordner `Faolan.Ui.E2E`, und er wurde deshalb nie committet, obwohl die Solution ihn baut.
+!tests/Faolan.Ui.E2E/
 
 # TFS 2012 Local Workspace
 $tf/
@@ -490,7 +490,7 @@ $RECYCLE.BIN/
 *.swp
 
 # Lokale Laufzeitdaten eines "dotnet run" (SQLite-DB + DataProtection-Key-Ring)
-src/Bifrost.Server/data/
+src/Faolan.Server/data/
 
 # Externe Planungsdokumente zur Produktreife (Lasten-/Pflichtenheft, Runbook).
 # Bewusst NICHT versioniert: Sie kommen von aussen, werden dort gepflegt und sind
@@ -498,8 +498,8 @@ src/Bifrost.Server/data/
 docs/produktreife/
 
 # Die Visual-Studio-Vorlagenregel "Backup*/" (oben) verschluckt jedes Verzeichnis, das "Backup"
-# heisst — und damit auch die Quellcodezone src/Bifrost.Persistence/Backup/, die der M2-Vertrag
+# heisst — und damit auch die Quellcodezone src/Faolan.Persistence/Backup/, die der M2-Vertrag
 # (Abschnitt 5) genau so vorschreibt. Hier stehen keine Sicherungsdateien von Visual Studio,
 # sondern der Backup-/Restore-Dienst selbst. Also ausdruecklich zurueckgeholt:
-!src/Bifrost.Persistence/Backup/
-!tests/Bifrost.Core.Tests/Backup/
+!src/Faolan.Persistence/Backup/
+!tests/Faolan.Core.Tests/Backup/

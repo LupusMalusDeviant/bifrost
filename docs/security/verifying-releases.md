@@ -8,7 +8,7 @@ Stand: 2026-08-05 · gilt ab dem ersten Release, das der Job `supply-chain` erze
 > [`docs/acceptance/release-verification-0.12.0.md`](../acceptance/release-verification-0.12.0.md).
 > Dabei ist genau ein Fehler aufgefallen, und er stand in dieser Datei; er ist behoben.
 
-Jedes veröffentlichte Artefakt von B.I.F.R.O.S.T ist signiert und trägt eine Herkunftsbescheinigung.
+Jedes veröffentlichte Artefakt von Faolan ist signiert und trägt eine Herkunftsbescheinigung.
 Sie brauchen dafür **keinen Schlüssel von uns** — die Prüfung läuft gegen die öffentliche
 Sigstore-Infrastruktur und gegen GitHub.
 
@@ -30,22 +30,27 @@ Sigstore-Infrastruktur und gegen GitHub.
 Zwei Werte tauchen in jedem Befehl auf. Setzen Sie sie einmal:
 
 ```bash
-IMAGE=ghcr.io/lupusmalusdeviant/bifrost
+IMAGE=ghcr.io/lupusmalusdeviant/faolan
 VERSION=0.12.0          # die Version, die Sie prüfen wollen
 
 # Die Herkunft, gegen die geprueft wird. Genau diese Zeichenkette steht auch im
 # Release-Workflow des Projekts — sie bindet die Signatur an Repository, Workflow-Datei
 # und Tag. Bitte NICHT lockern (z.B. auf ".*"): dann prueft der Befehl nichts mehr.
-IDENTITY='^https://github\.com/LupusMalusDeviant/bifrost/\.github/workflows/release\.yml@refs/tags/v'
+IDENTITY='^https://github\.com/LupusMalusDeviant/(bifrost|faolan)/\.github/workflows/release\.yml@refs/tags/v'
 ISSUER=https://token.actions.githubusercontent.com
 ```
+
+> **Releases bis 0.12.0** stammen aus dem Repository `bifrost` und liegen im Image
+> `ghcr.io/lupusmalusdeviant/bifrost`. Die Identität oben nimmt beide Repository-Namen an; für
+> diese Releases `IMAGE` auf das alte Image setzen und bei `gh attestation verify` in `--repo` und
+> `--signer-workflow` `bifrost` statt `faolan` schreiben.
 
 PowerShell-Fassung:
 
 ```powershell
-$IMAGE   = "ghcr.io/lupusmalusdeviant/bifrost"
+$IMAGE   = "ghcr.io/lupusmalusdeviant/faolan"
 $VERSION = "0.12.0"
-$IDENTITY = '^https://github\.com/LupusMalusDeviant/bifrost/\.github/workflows/release\.yml@refs/tags/v'
+$IDENTITY = '^https://github\.com/LupusMalusDeviant/(bifrost|faolan)/\.github/workflows/release\.yml@refs/tags/v'
 $ISSUER  = "https://token.actions.githubusercontent.com"
 ```
 
@@ -99,8 +104,8 @@ an denselben Digest gebunden:
 
 ```bash
 gh attestation verify "oci://$IMAGE@$DIGEST" \
-  --repo LupusMalusDeviant/bifrost \
-  --signer-workflow LupusMalusDeviant/bifrost/.github/workflows/release.yml \
+  --repo LupusMalusDeviant/faolan \
+  --signer-workflow LupusMalusDeviant/faolan/.github/workflows/release.yml \
   --format json \
 | jq -r '[.[].verificationResult.statement
           | select(.predicateType == "https://slsa.dev/provenance/v1")][0]
@@ -124,8 +129,8 @@ Commit: 71e4acfb007beb2aba39c4fa1e509f199cdee101
 
 ```bash
 gh attestation verify "oci://$IMAGE@$DIGEST" \
-  --repo LupusMalusDeviant/bifrost \
-  --signer-workflow LupusMalusDeviant/bifrost/.github/workflows/release.yml
+  --repo LupusMalusDeviant/faolan \
+  --signer-workflow LupusMalusDeviant/faolan/.github/workflows/release.yml
 ```
 
 `--signer-workflow` ist der strengere Weg: er verlangt, dass die Bescheinigung aus *genau dieser*
@@ -137,13 +142,13 @@ Workflow-Datei stammt, nicht bloß aus irgendeinem Workflow des Repositorys. Neh
 
 ### 2.3 Stückliste (SBOM)
 
-Die SBOM liegt als Release-Asset (`bifrost-<version>-image.cdx.json`, CycloneDX 1.7) **und** als
+Die SBOM liegt als Release-Asset (`faolan-<version>-image.cdx.json`, CycloneDX 1.7) **und** als
 Attestation am Image. Die Attestation ist der belastbare Weg — sie bindet die Stückliste an den
 Digest:
 
 ```bash
 gh attestation verify "oci://$IMAGE@$DIGEST" \
-  --repo LupusMalusDeviant/bifrost \
+  --repo LupusMalusDeviant/faolan \
   --format json \
 | jq -r '.[].verificationResult.statement.predicateType'
 ```
@@ -152,16 +157,16 @@ Suchen Sie in der Ausgabe den CycloneDX-Prädikat-Typ. Die SBOM selbst holen Sie
 
 ```bash
 gh attestation verify "oci://$IMAGE@$DIGEST" \
-  --repo LupusMalusDeviant/bifrost \
+  --repo LupusMalusDeviant/faolan \
   --format json \
 | jq '[.[].verificationResult.statement | select(.predicateType | test("cyclonedx"; "i")) | .predicate][0]' \
-> bifrost-image.cdx.json
+> faolan-image.cdx.json
 ```
 
 Prüfen, ob ein bestimmtes Paket enthalten ist:
 
 ```bash
-jq -r '.components[] | select(.name | test("openssl"; "i")) | "\(.name) \(.version)"' bifrost-image.cdx.json
+jq -r '.components[] | select(.name | test("openssl"; "i")) | "\(.name) \(.version)"' faolan-image.cdx.json
 ```
 
 ### 2.4 Erst danach ziehen
@@ -179,8 +184,8 @@ wie heute — und nur dann gilt die Signatur, die Sie eben geprüft haben.
 
 Laden Sie vom GitHub-Release herunter:
 
-- das gewünschte Archiv, z. B. `bifrost-cli-0.12.0-linux-x64.tar.gz`
-  (Windows: `bifrost-cli-0.12.0-win-x64.zip`),
+- das gewünschte Archiv, z. B. `faolan-cli-0.12.0-linux-x64.tar.gz`
+  (Windows: `faolan-cli-0.12.0-win-x64.zip`),
 - `checksums.txt`,
 - `checksums.txt.cosign.bundle`.
 
@@ -204,7 +209,7 @@ Erwartete Ausgabe: `Verified OK`, Exit-Code 0.
 
 ```bash
 sha256sum --check --ignore-missing checksums.txt
-# -> bifrost-cli-0.12.0-linux-x64.tar.gz: OK
+# -> faolan-cli-0.12.0-linux-x64.tar.gz: OK
 ```
 
 `--ignore-missing` sorgt dafür, dass die Datei auch dann durchläuft, wenn Sie nur eines der fünf
@@ -213,24 +218,24 @@ Archive heruntergeladen haben.
 Windows (PowerShell):
 
 ```powershell
-$erwartet = (Select-String -Path checksums.txt -Pattern "bifrost-cli-$VERSION-win-x64.zip").Line.Split()[0]
-$ist      = (Get-FileHash "bifrost-cli-$VERSION-win-x64.zip" -Algorithm SHA256).Hash.ToLower()
+$erwartet = (Select-String -Path checksums.txt -Pattern "faolan-cli-$VERSION-win-x64.zip").Line.Split()[0]
+$ist      = (Get-FileHash "faolan-cli-$VERSION-win-x64.zip" -Algorithm SHA256).Hash.ToLower()
 if ($erwartet -eq $ist) { "OK" } else { "ABWEICHUNG — nicht verwenden" }
 ```
 
 ### Schritt 3 — Herkunft des Archivs
 
 ```bash
-gh attestation verify "bifrost-cli-$VERSION-linux-x64.tar.gz" \
-  --repo LupusMalusDeviant/bifrost \
-  --signer-workflow LupusMalusDeviant/bifrost/.github/workflows/release.yml
+gh attestation verify "faolan-cli-$VERSION-linux-x64.tar.gz" \
+  --repo LupusMalusDeviant/faolan \
+  --signer-workflow LupusMalusDeviant/faolan/.github/workflows/release.yml
 ```
 
 ### Schritt 4 — Version gegenprüfen
 
 ```bash
-tar -xzf "bifrost-cli-$VERSION-linux-x64.tar.gz"
-./bifrost --version
+tar -xzf "faolan-cli-$VERSION-linux-x64.tar.gz"
+./faolan --version
 # nennt SemVer UND Commit-SHA.
 ```
 
@@ -243,7 +248,7 @@ docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.
 # -> 71e4acfb007beb2aba39c4fa1e509f199cdee101
 ```
 
-Beide Wege müssen denselben Commit nennen wie `bifrost --version`. Tun sie es nicht, gehören CLI und
+Beide Wege müssen denselben Commit nennen wie `faolan --version`. Tun sie es nicht, gehören CLI und
 Image nicht zusammen.
 
 ---
@@ -256,10 +261,10 @@ Zum Kopieren — bricht beim ersten Fehler ab:
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE=ghcr.io/lupusmalusdeviant/bifrost
+IMAGE=ghcr.io/lupusmalusdeviant/faolan
 VERSION="${1:?Aufruf: $0 <version>, z.B. 0.12.0}"
-REPO=LupusMalusDeviant/bifrost
-IDENTITY='^https://github\.com/LupusMalusDeviant/bifrost/\.github/workflows/release\.yml@refs/tags/v'
+REPO=LupusMalusDeviant/faolan
+IDENTITY='^https://github\.com/LupusMalusDeviant/(bifrost|faolan)/\.github/workflows/release\.yml@refs/tags/v'
 ISSUER=https://token.actions.githubusercontent.com
 
 DIGEST=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{ .Manifest.Digest }}')
@@ -308,7 +313,7 @@ Richtiges Image, richtiger Digest — aber wir behaupten, es käme aus einem and
 
 ```bash
 cosign verify \
-  --certificate-identity-regexp '^https://github\.com/example-org/nicht-bifrost/' \
+  --certificate-identity-regexp '^https://github\.com/example-org/nicht-faolan/' \
   --certificate-oidc-issuer "$ISSUER" \
   "$IMAGE@$DIGEST"
 echo "Exit-Code: $?"
@@ -345,15 +350,15 @@ Abschnitt 1.
 
 ```bash
 mkdir -p /tmp/negativprobe && cd /tmp/negativprobe
-cp ~/Downloads/"bifrost-cli-$VERSION-linux-x64.tar.gz" .
+cp ~/Downloads/"faolan-cli-$VERSION-linux-x64.tar.gz" .
 cp ~/Downloads/checksums.txt .
-printf 'ein einziges zusaetzliches Byte' >> "bifrost-cli-$VERSION-linux-x64.tar.gz"
+printf 'ein einziges zusaetzliches Byte' >> "faolan-cli-$VERSION-linux-x64.tar.gz"
 
 sha256sum --check --ignore-missing checksums.txt
 echo "Exit-Code: $?"
 ```
 
-**Erwartet:** `bifrost-cli-…tar.gz: FAILED` und `WARNING: 1 computed checksum did NOT match`,
+**Erwartet:** `faolan-cli-…tar.gz: FAILED` und `WARNING: 1 computed checksum did NOT match`,
 Exit-Code ungleich 0.
 **Belegt:** Die Prüfung hängt am Inhalt, nicht am Dateinamen.
 
@@ -370,7 +375,7 @@ Exit-Code ungleich 0.
 | `no signatures found` | Sie prüfen gegen ein Untermanifest oder einen anderen Digest | Digest nach Abschnitt 1 neu ermitteln |
 | `none of the given identities matched` | Tippfehler in `$IDENTITY`, oder das Artefakt stammt nicht von uns | Zeichenkette aus Abschnitt 0 kopieren, nicht abtippen; danach melden |
 | `MANIFEST_UNKNOWN` | Digest existiert nicht in dieser Registry | Version/Registry prüfen |
-| `no attestations found` | Artefakt nicht aus einem Release-Lauf, oder falsches `--repo` | `--repo LupusMalusDeviant/bifrost` prüfen |
+| `no attestations found` | Artefakt nicht aus einem Release-Lauf, oder falsches `--repo` | `--repo LupusMalusDeviant/faolan` prüfen |
 | `sha256sum: … FAILED` | Download unvollständig oder verändert | Neu laden. Bleibt es dabei: **nicht verwenden** und melden |
 
 **Meldung:** Wenn Signatur oder Herkunft eines echten Release-Artefakts nicht verifizierbar sind,

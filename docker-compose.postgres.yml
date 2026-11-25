@@ -7,23 +7,23 @@
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml \
 #                  -f docker-compose.postgres.yml up -d --build
 #
-# Das Passwort steht NICHT mehr in dieser Datei, sondern in .env (POSTGRES_PASSWORD) —
+# Das Passwort steht NICHT mehr in dieser Datei, sondern in .env (POSTGRES_PASSWORD) â
 # einmal gesetzt, an beiden Stellen wirksam. Fehlt es, kommt die Datenbank mit einer
 # eindeutigen Meldung nicht hoch ("Database is uninitialized and superuser password is not
 # specified"). Das ist Absicht: Ein Vorgabepasswort in einer versionierten Datei wird
 # uebernommen und nie geaendert.
 #
-# Achtung: Das Datenverzeichnis des Gateways bleibt auch hier noetig — der
+# Achtung: Das Datenverzeichnis des Gateways bleibt auch hier noetig â der
 # DataProtection-Key-Ring unter /data/keys entschluesselt die Upstream-Zugangsdaten und
 # liegt NICHT in der Datenbank.
 
 services:
-  bifrost:
+  faolan:
     environment:
-      BIFROST_DB_PROVIDER: postgres
+      FAOLAN_DB_PROVIDER: postgres
       # 'environment' schlaegt 'env_file'; die veraenderlichen Teile kommen deshalb ueber
       # Compose-Interpolation aus .env herein statt als fester Text.
-      BIFROST_DB_CONNECTION: "Host=db;Database=${POSTGRES_DB:-bifrost};Username=${POSTGRES_USER:-bifrost};Password=${POSTGRES_PASSWORD:-}"
+      FAOLAN_DB_CONNECTION: "Host=db;Database=${POSTGRES_DB:-bifrost};Username=${POSTGRES_USER:-bifrost};Password=${POSTGRES_PASSWORD:-}"
     depends_on:
       db:
         # Auf den Healthcheck warten, nicht nur auf den Start: der Gateway legt beim Hochfahren
@@ -39,13 +39,13 @@ services:
       # Alternative ohne Umgebungsvariable: Das Postgres-Image liest das Passwort auch aus
       # einer Datei. Dazu POSTGRES_PASSWORD oben entfernen, hier und im secrets-Block unten
       # einkommentieren und ./secrets/postgres-password anlegen (ein deklariertes, aber
-      # fehlendes Secret bricht 'up' ab). Der Gateway selbst kann das noch nicht — sein
+      # fehlendes Secret bricht 'up' ab). Der Gateway selbst kann das noch nicht â sein
       # Connection-String braucht den Wert weiterhin in der Umgebung.
       # POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
     # secrets:
     #   - postgres-password
     volumes:
-      - bifrost-pgdata:/var/lib/postgresql/data
+      - faolan-pgdata:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bifrost} -d ${POSTGRES_DB:-bifrost}"]
@@ -58,6 +58,13 @@ services:
 #     file: ./secrets/postgres-password
 
 volumes:
-  # Auch hier gilt die Praefix-Regel aus docker-compose.yml: der wirksame Name ist
-  # <projekt>_bifrost-pgdata. Umbenennen heisst leere Datenbank.
-  bifrost-pgdata:
+  # Wie in docker-compose.yml: Der Name kommt aus FAOLAN_PGDATA_VOLUME, Vorgabe
+  # 'faolan-pgdata'. Eine Bestandsinstallation (bis 0.12.0) setzt den bisherigen Namen
+  # '<projekt>_bifrost-pgdata' — sonst startet PostgreSQL leer, und der Gateway richtet
+  # sich darin still eine neue Instanz ein.
+  #
+  # Die Vorgaben fuer POSTGRES_DB und POSTGRES_USER bleiben 'bifrost': Sie stehen in jeder
+  # bestehenden Datenbank, und mit gesetztem Volume passt ein Bestand ohne weitere Angabe
+  # (Vertrag umbenennung-faolan §3).
+  faolan-pgdata:
+    name: ${FAOLAN_PGDATA_VOLUME:-faolan-pgdata}

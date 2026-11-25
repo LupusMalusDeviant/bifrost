@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- xUnit v3: Testprojekte sind eigenstaendige Executables, der Runner laeuft im selben Prozess. -->
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Faolan.Upstream\Faolan.Upstream.csproj" />
+    <ProjectReference Include="..\Faolan.TestServers\CliProbe\Faolan.TestServers.CliProbe.csproj" />
+    <ProjectReference Include="..\Faolan.TestServers\WasiHostStub\Faolan.TestServers.WasiHostStub.csproj" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+  </ItemGroup>
+
+</Project>

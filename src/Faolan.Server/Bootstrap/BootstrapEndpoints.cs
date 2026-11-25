@@ -1,0 +1,78 @@
+using System.Security.Claims;
+
+using Faolan.Abstractions;
+using Faolan.Web;
+
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+
+namespace Faolan.Server.Bootstrap;
+
+/// <summary>
+/// Der Einlösepfad als nativer Form-POST — dasselbe Muster wie die Anmeldung (WP6.1): Ein
+/// Blazor-Circuit kann kein Cookie setzen, und am Ende dieses Vorgangs soll genau das passieren.
+/// <para>
+/// <b>Warum das der einzige anonyme Schreibweg bleiben darf.</b> Er tut nur dann etwas, wenn ein
+/// Token vorliegt, das zum gespeicherten Hash passt, noch gilt und noch nicht verbraucht ist.
+/// Fehlt eine dieser Bedingungen, ist die Antwort eine Umleitung mit einem Grund — und ein
+/// Auditeintrag. Es gibt hier keinen Weg, ein Token <i>anzufordern</i>: Der entsteht ausschließlich
+/// lokal (siehe <see cref="BootstrapOrigin"/>).
+/// </para>
+/// </summary>
+public static class BootstrapEndpoints
+{
+    /// <summary>Die Adresse der Setup-Oberfläche.</summary>
+    public const string SetupPath = "/setup";
+
+    public static void MapBootstrapEndpoints(this WebApplication app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+
+        app.MapPost("/auth/setup", async (
+            HttpContext ctx, IBootstrapService bootstrap, CancellationToken ct) =>
+        {
+            var form = await ctx.Request.ReadFormAsync(ct);
+
+            // Wohin danach. Der gefuehrte Erstaufbau (WP4.4) schickt den Nutzer in seinen Schritt 2
+            // und will ihn danach dort weitermachen lassen; ohne diese Angabe landete er auf dem
+            // Dashboard und muesste den Wizard von Hand wiederfinden.
+            //
+            // Geprueft wird mit DERSELBEN Funktion wie beim Login: Ein Ziel, das nicht auf diese
+            // Anwendung zeigt, waere ein offener Umleitungspunkt — und ausgerechnet dieser Pfad
+            // laeuft unauthentifiziert.
+            var returnUrl = form["returnUrl"].ToString();
+            var target = AuthEndpoints.IsLocal(returnUrl) ? returnUrl : "/";
+
+            var result = await bootstrap.RedeemAsync(
+                form["token"].ToString().Trim(),
+                form["username"].ToString().Trim(),
+                form["password"].ToString(),
+                ct);
+
+            if (result.Outcome is not BootstrapOutcome.Redeemed)
+            {
+                // Der Grund reist als Code, nicht als Fließtext: Ein Fließtext in der Adresszeile
+                // ist ein offener Weg für fremde Inhalte in die eigene Seite.
+                var failedOn = AuthEndpoints.IsLocal(returnUrl) ? returnUrl : SetupPath;
+                var separator = failedOn.Contains('?', StringComparison.Ordinal) ? '&' : '?';
+                return Results.Redirect($"{failedOn}{separator}failed={result.Outcome}");
+            }
+
+            // Direkt angemeldet weiterschicken: Wer gerade Benutzername und Passwort gesetzt hat,
+            // soll sie nicht sofort noch einmal eintippen — und ein zweiter Weg durch die Anmeldung
+            // wäre ein zweiter Weg, an dem etwas schiefgehen kann.
+            var claims = new List<Claim>
+            {
+                new(ClaimTypes.Name, result.Username!),
+                new(ClaimTypes.NameIdentifier, result.UserId!.Value.ToString()),
+                new(UiPolicies.RoleClaim, nameof(UiRole.Admin)),
+            };
+            await ctx.SignInAsync(
+                CookieAuthenticationDefaults.AuthenticationScheme,
+                new ClaimsPrincipal(new ClaimsIdentity(
+                    claims, CookieAuthenticationDefaults.AuthenticationScheme)));
+
+            return Results.Redirect(target);
+        }).DisableAntiforgery(); // Wie bei der Anmeldung: vor dem Zugang gibt es kein gültiges Token.
+    }
+}

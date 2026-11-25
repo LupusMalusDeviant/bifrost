@@ -1,0 +1,466 @@
+using AwesomeAssertions;
+
+using Faolan.Persistence;
+using Faolan.Persistence.Startup;
+
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+
+using Xunit;
+
+namespace Faolan.Integration.Tests.Persistence;
+
+/// <summary>
+/// WP2.3: Migrationssicherheit und Startkoordination (ADR-0024 E7).
+///
+/// <para>
+/// Gefahren wird gegen SQLite, weil dort beide Hälften des Verfahrens sichtbar werden — Dateilock
+/// und Journal — und weil SQLite der Zero-Setup-Default ist. Das PostgreSQL-Gegenstück
+/// (<c>pg_try_advisory_lock</c>) steht in <see cref="MigrationLock"/> und läuft in der
+/// Provider-Suite mit; ein echter Mehrknotenbetrieb ist hier nicht prüfbar (M2-Vertrag §7).
+/// </para>
+/// </summary>
+public sealed class MigrationSafetyTests : IAsyncLifetime
+{
+    private readonly string _directory = Path.Combine(
+        Path.GetTempPath(), $"faolan-migsafe-{Guid.NewGuid():N}");
+
+    public ValueTask InitializeAsync()
+    {
+        Directory.CreateDirectory(_directory);
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        SqliteConnection.ClearAllPools();
+        try
+        {
+            Directory.Delete(_directory, recursive: true);
+        }
+        catch (IOException)
+        {
+            // Aufräumen ist kein Testergebnis.
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    // ── Pflichttest 1: leere Datenbank ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Empty_database_is_initialised_and_journalled()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (factory, _) = NewDatabase("leer");
+
+        var outcome = await new DatabaseInitializer(factory).InitializeAsync(ct);
+
+        outcome.Should().Be(DatabaseInitOutcome.CreatedFromMigrations);
+
+        await using var db = await factory.CreateDbContextAsync(ct);
+        (await db.Database.GetPendingMigrationsAsync(ct)).Should().BeEmpty();
+        (await db.Identities.CountAsync(ct)).Should().Be(0, "das Schema ist nutzbar");
+
+        var journal = await MigrationJournal.ReadAllAsync(db, ct);
+        journal.Should().ContainSingle("genau ein Migrationslauf hat stattgefunden");
+        journal[0].State.Should().Be(MigrationRunState.Completed);
+        journal[0].FromMigration.Should().BeNull("vorher war nichts angewendet");
+        journal[0].FinishedAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Second_start_without_pending_migrations_writes_no_journal_entry()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (factory, _) = NewDatabase("idempotent");
+
+        await new DatabaseInitializer(factory).InitializeAsync(ct);
+        var second = await new DatabaseInitializer(factory).InitializeAsync(ct);
+
+        second.Should().Be(DatabaseInitOutcome.Migrated, "Initialisierung ist idempotent");
+
+        await using var db = await factory.CreateDbContextAsync(ct);
+        (await MigrationJournal.ReadAllAsync(db, ct))
+            .Should().ContainSingle("ohne ausstehende Migration wird nichts vermerkt");
+    }
+
+    // ── Pflichttest 2: zwei parallele Starts ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Two_parallel_starts_migrate_exactly_once()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (factory, _) = NewDatabase("parallel");
+
+        var options = new MigrationSafetyOptions
+        {
+            LockTimeout = TimeSpan.FromSeconds(30),
+            LockPollInterval = TimeSpan.FromMilliseconds(20),
+        };
+
+        var first = Task.Run(() => new DatabaseInitializer(factory, options: options).InitializeAsync(ct), ct);
+        var second = Task.Run(() => new DatabaseInitializer(factory, options: options).InitializeAsync(ct), ct);
+
+        var outcomes = await Task.WhenAll(first, second);
+
+        outcomes.Count(o => o is DatabaseInitOutcome.CreatedFromMigrations)
+            .Should().Be(1, "genau eine Instanz legt das Schema an");
+        outcomes.Count(o => o is DatabaseInitOutcome.Migrated)
+            .Should().Be(1, "die andere findet nichts mehr zu tun — sie hat gewartet, nicht mitmigriert");
+
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var journal = await MigrationJournal.ReadAllAsync(db, ct);
+        journal.Should().ContainSingle("das Journal belegt genau EINEN Migrationslauf");
+        journal[0].State.Should().Be(MigrationRunState.Completed);
+        (await db.Database.GetPendingMigrationsAsync(ct)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Start_against_a_held_lock_fails_explainably()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (factory, path) = NewDatabase("gehalten");
+
+        // Der Lock wird von außen gehalten — genau das, was eine zweite Instanz vorfindet.
+        var lockFile = path + MigrationLock.SqliteLockFileSuffix;
+        await using var holder = new FileStream(
+            lockFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
+        var initializer = new DatabaseInitializer(factory, options: new MigrationSafetyOptions
+        {
+            LockTimeout = TimeSpan.FromMilliseconds(300),
+            LockPollInterval = TimeSpan.FromMilliseconds(50),
+        });
+
+        var error = await Assert.ThrowsAsync<DatabaseInitializationException>(
+            () => initializer.InitializeAsync(ct));
+
+        error.Code.Should().Be("BFR-DB-0100");
+        error.Remediation.Should().NotBeNullOrWhiteSpace("ein Abbruch ohne nächste Handlung ist kein Abbruch, sondern ein Rätsel");
+        error.SafeDetails.Should().ContainKey("mechanism");
+        error.ToCheck().Status.Should().Be(Faolan.Abstractions.Operations.CheckStatus.Fail);
+    }
+
+    /// <summary>
+    /// Der Lock hält auch, seit die Datenbank im WAL-Modus läuft.
+    /// <para>
+    /// WAL ändert, <i>wie</i> SQLite Schreibvorgänge sperrt — das Verfahren aus ADR-0024 E7 hängt
+    /// aber an keiner dieser Sperren: Die eine Hälfte ist ein Dateilock neben der Datenbank, die das
+    /// Betriebssystem verwaltet, die andere ein <c>BEGIN IMMEDIATE</c>, das es unter WAL genauso
+    /// gibt. Dieser Test hält das fest, statt es zu behaupten — er prüft den WAL-Zustand der Datei
+    /// ausdrücklich mit, damit er nicht eines Tages stillschweigend gegen DELETE läuft.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Migration_lock_still_holds_with_wal_active()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (factory, path) = NewDatabase("wal-lock");
+
+        // Erst einmal migrieren, damit die Datei existiert und wirklich auf WAL steht.
+        (await new DatabaseInitializer(factory).InitializeAsync(ct))
+            .Should().Be(DatabaseInitOutcome.CreatedFromMigrations);
+        SqliteConnection.ClearAllPools();
+        JournalModeOf(path).Should().Be("wal", "sonst prüft dieser Test etwas anderes als er behauptet");
+
+        // Und jetzt dasselbe wie in Start_against_a_held_lock_fails_explainably — mit WAL.
+        var lockFile = path + MigrationLock.SqliteLockFileSuffix;
+        await using var holder = new FileStream(
+            lockFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
+        var error = await Assert.ThrowsAsync<DatabaseInitializationException>(
+            () => new DatabaseInitializer(factory, options: new MigrationSafetyOptions
+            {
+                LockTimeout = TimeSpan.FromMilliseconds(300),
+                LockPollInterval = TimeSpan.FromMilliseconds(50),
+            }).InitializeAsync(ct));
+
+        error.Code.Should().Be("BFR-DB-0100", "der Dateilock hält unabhängig vom Journalverfahren");
+
+        // Das Journal — die zweite Hälfte des Verfahrens, BEGIN IMMEDIATE — ist unter WAL weiterhin
+        // schreibbar und lesbar.
+        await using var db = await factory.CreateDbContextAsync(ct);
+        (await MigrationJournal.ReadAllAsync(db, ct)).Should().ContainSingle();
+        JournalModeOf(path).Should().Be("wal", "und die Datei ist dabei WAL geblieben");
+    }
+
+    private static string JournalModeOf(string path)
+    {
+        using var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ConnectionString);
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA journal_mode;";
+        return (string)command.ExecuteScalar()!;
+    }
+
+    // ── Pflichttest 3: Abbruch mitten in der Migration ──────────────────────────────────────────
+
+    [Fact]
+    public async Task Interrupted_migration_is_detected_and_write_access_is_refused()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (factory, _) = NewDatabase("abbruch");
+
+        // Failpoint NACH dem Journaleintrag, VOR der Migration: stellt den verschwundenen Prozess
+        // nach, der nichts mehr aufräumt.
+        var aborting = new DatabaseInitializer(factory, options: new MigrationSafetyOptions
+        {
+            Failpoint = (point, _) => point is MigrationFailpoint.BeforeMigrate
+                ? throw new MigrationAbortSimulationException()
+                : Task.CompletedTask,
+        });
+
+        await Assert.ThrowsAsync<MigrationAbortSimulationException>(() => aborting.InitializeAsync(ct));
+
+        await using (var db = await factory.CreateDbContextAsync(ct))
+        {
+            var journal = await MigrationJournal.ReadAllAsync(db, ct);
+            journal.Should().ContainSingle();
+            journal[0].State.Should().Be(MigrationRunState.Started, "der Eintrag bleibt offen stehen");
+        }
+
+        // Der nächste Start erkennt den halben Zustand und verweigert — ohne Reparaturversuch.
+        var error = await Assert.ThrowsAsync<DatabaseInitializationException>(
+            () => new DatabaseInitializer(factory).InitializeAsync(ct));
+
+        error.Code.Should().Be("BFR-DB-0101");
+        error.Remediation.Should().Contain("wiederherstellen");
+        error.SafeDetails.Should().ContainKey("journalEntry");
+
+        // Und er verweigert weiter, solange niemand hinschaut: kein stiller Selbstheilungsversuch.
+        (await Assert.ThrowsAsync<DatabaseInitializationException>(
+            () => new DatabaseInitializer(factory).InitializeAsync(ct))).Code.Should().Be("BFR-DB-0101");
+
+        // Der Ausweg ist eine ausdrückliche Handlung des Betreibers, kein Automatismus.
+        await using (var db = await factory.CreateDbContextAsync(ct))
+        {
+            (await MigrationJournal.ClearUnfinishedAsync(db, ct)).Should().Be(1);
+        }
+
+        (await new DatabaseInitializer(factory).InitializeAsync(ct))
+            .Should().Be(DatabaseInitOutcome.CreatedFromMigrations, "nach dem bewussten Lösen läuft der Start normal");
+    }
+
+    [Fact]
+    public async Task Failed_migration_is_journalled_and_blocks_the_next_start()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (factory, path) = NewDatabase("gescheitert");
+
+        // Eine Migration zum Scheitern bringen, ohne EF zu manipulieren: Die Zieltabelle der
+        // Initial-Migration steht bereits, aber ohne Migrationshistorie UND ohne die Fachtabelle,
+        // an der die Baseline-Erkennung hängt. CREATE TABLE läuft dann auf ein vorhandenes Objekt.
+        await using (var connection = new SqliteConnection($"Data Source={path}"))
+        {
+            await connection.OpenAsync(ct);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "CREATE TABLE \"Roles\" (\"Id\" TEXT NOT NULL PRIMARY KEY)";
+            await command.ExecuteNonQueryAsync(ct);
+        }
+
+        var error = await Assert.ThrowsAsync<DatabaseInitializationException>(
+            () => new DatabaseInitializer(factory).InitializeAsync(ct));
+        error.Code.Should().Be("BFR-DB-0103");
+
+        await using (var db = await factory.CreateDbContextAsync(ct))
+        {
+            var journal = await MigrationJournal.ReadAllAsync(db, ct);
+            journal.Should().ContainSingle();
+            journal[0].State.Should().Be(MigrationRunState.Failed);
+            journal[0].Failure.Should().NotBeNullOrWhiteSpace();
+        }
+
+        // Ein gescheiterter Lauf ist kein Zustand, über den der nächste Start hinweggeht.
+        (await Assert.ThrowsAsync<DatabaseInitializationException>(
+            () => new DatabaseInitializer(factory).InitializeAsync(ct))).Code.Should().Be("BFR-DB-0101");
+    }
+
+    // ── Pflichttest 4: neueres, unbekanntes Schema ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task Newer_unknown_schema_is_refused_instead_of_downgraded()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (factory, path) = NewDatabase("neuer");
+
+        await new DatabaseInitializer(factory).InitializeAsync(ct);
+
+        // Eine Migration eintragen, die dieser Build nicht kennt — das ist das Bild einer Datenbank,
+        // die von einer neueren Version angefasst wurde.
+        SqliteConnection.ClearAllPools();
+        await using (var connection = new SqliteConnection($"Data Source={path}"))
+        {
+            await connection.OpenAsync(ct);
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                "INSERT INTO \"__EFMigrationsHistory\" (\"MigrationId\", \"ProductVersion\") "
+                + "VALUES ('99991231235959_ZukunftsSchema', '99.0.0')";
+            await command.ExecuteNonQueryAsync(ct);
+        }
+
+        var error = await Assert.ThrowsAsync<DatabaseInitializationException>(
+            () => new DatabaseInitializer(factory).InitializeAsync(ct));
+
+        error.Code.Should().Be("BFR-DB-0102");
+        error.SafeDetails["unknownMigrations"].Should().Contain("ZukunftsSchema");
+        error.Remediation.Should().Contain("Downgrade");
+
+        // Die Diagnose meldet denselben Befund, ohne den Start zu provozieren.
+        var checks = await new DatabaseInitializer(factory).InspectAsync(ct);
+        checks.Should().Contain(c => c.Code == "BFR-DB-0102"
+            && c.Status == Faolan.Abstractions.Operations.CheckStatus.Fail);
+    }
+
+    // ── Vor-Migrationsbackup: der Haken für WP2.1 ───────────────────────────────────────────────
+
+    /// <summary>
+    /// <b>Der Haken feuert — wenn es etwas zu schützen gibt.</b>
+    /// <para>
+    /// Dieser Test hat bis zum 2026-08-05 eine <em>frische</em> Datenbank benutzt und damit
+    /// festgehalten, dass auch der Erststart sichert. Genau das war <c>BFR-F-0056</c>: Auf einer
+    /// Installation ohne Vorzustand entstand ein Archiv, das nichts schützt — und das den
+    /// DataProtection-Key-Ring unverschlüsselt enthält. Der Test prüft jetzt den Fall, für den der
+    /// Haken da ist: eine Datenbank, die <b>schon da war</b>.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Pre_migration_backup_hook_is_called_before_the_migration()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (factory, path) = NewDatabase("hook");
+
+        // Vorgefunden, nicht selbst angelegt. Der Zweifel geht zugunsten der Sicherung aus: Eine
+        // Datei, die jemand dorthin gelegt hat, wird gesichert — auch wenn sie leer aussieht.
+        await File.WriteAllBytesAsync(path, [], ct);
+
+        var hook = new RecordingBackup(Path.Combine(_directory, "vorher.zip"));
+        var initializer = new DatabaseInitializer(factory, preMigrationBackup: hook,
+            options: new MigrationSafetyOptions { PreMigrationBackup = PreMigrationBackupRequirement.Always });
+
+        await initializer.InitializeAsync(ct);
+
+        hook.Calls.Should().ContainSingle("gesichert wird genau einmal, unter dem Lock");
+        hook.Calls[0].Provider.Should().Be(FaolanDbOptions.Sqlite);
+        hook.Calls[0].DatabaseFilePath.Should().Be(Path.GetFullPath(path));
+        hook.Calls[0].CurrentMigrationId.Should().BeNull();
+        hook.Calls[0].PendingMigrationIds.Should().NotBeEmpty();
+
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var journal = await MigrationJournal.ReadAllAsync(db, ct);
+        journal[0].BackupPath.Should().Be(hook.ArchivePath, "das Journal sagt, wohin der Rückweg führt");
+    }
+
+    /// <summary>
+    /// <b>BFR-F-0056 — und die Gegenprobe dazu.</b> Legt der Start die Datenbank selbst an, gibt es
+    /// keinen vorherigen Zustand; eine Sicherung davon wäre ein schützenswertes Artefakt ohne
+    /// Schutzwert. Sie unterbleibt — und zwar auch dann, wenn sie auf <c>Always</c> steht: Der
+    /// fehlende Vorzustand ist kein fehlender Ausweg.
+    /// </summary>
+    [Fact]
+    public async Task A_database_we_create_ourselves_gets_no_pre_migration_backup()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (factory, path) = NewDatabase("frisch");
+        File.Exists(path).Should().BeFalse("die Datei entsteht erst beim Start");
+
+        var hook = new RecordingBackup(Path.Combine(_directory, "unnoetig.zip"));
+        var initializer = new DatabaseInitializer(factory, preMigrationBackup: hook,
+            options: new MigrationSafetyOptions { PreMigrationBackup = PreMigrationBackupRequirement.Always });
+
+        var outcome = await initializer.InitializeAsync(ct);
+
+        outcome.Should().Be(DatabaseInitOutcome.CreatedFromMigrations);
+        hook.Calls.Should().BeEmpty(
+            "eine Vorsicherung schuetzt einen vorherigen Zustand — hier gibt es keinen");
+
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var journal = await MigrationJournal.ReadAllAsync(db, ct);
+        journal[0].BackupPath.Should().BeNull("das Journal behauptet keinen Rueckweg, den es nicht gibt");
+    }
+
+    /// <summary>
+    /// „Verlangt" heißt verlangt — an einer Datenbank, die schon da war.
+    /// <para>
+    /// Bis zum 2026-08-05 lief dieser Test auf einer frischen Datenbank. Seit <c>BFR-F-0056</c>
+    /// entfällt die Vorsicherung dort, weil es keinen Vorzustand gibt; die Forderung greift also
+    /// nicht mehr, und der Start liefe durch. <b>Das ist die gewollte Folge</b> — sonst käme eine
+    /// neue Installation mit <c>Always</c> und ohne Backupdienst gar nicht erst hoch, obwohl es
+    /// nichts zu sichern gibt. Geprüft wird deshalb der Fall, in dem die Forderung etwas bedeutet.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Required_pre_migration_backup_without_a_service_stops_the_start()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (factory, path) = NewDatabase("kein-hook");
+        await File.WriteAllBytesAsync(path, [], ct);
+
+        var initializer = new DatabaseInitializer(factory,
+            options: new MigrationSafetyOptions { PreMigrationBackup = PreMigrationBackupRequirement.Always });
+
+        var error = await Assert.ThrowsAsync<DatabaseInitializationException>(
+            () => initializer.InitializeAsync(ct));
+
+        error.Code.Should().Be("BFR-DB-0104");
+    }
+
+    [Fact]
+    public async Task Without_a_backup_service_the_default_start_still_runs()
+    {
+        // Solange WP2.1 nicht verdrahtet ist, darf die fehlende Sicherung den Start nicht blockieren
+        // — sie wird protokolliert. Dieser Test hält fest, dass die Zusage aus E7 damit VORBEREITET
+        // und nicht erfüllt ist.
+        var ct = TestContext.Current.CancellationToken;
+        var (factory, _) = NewDatabase("ohne-hook");
+
+        (await new DatabaseInitializer(factory).InitializeAsync(ct))
+            .Should().Be(DatabaseInitOutcome.CreatedFromMigrations);
+    }
+
+    // ── Diagnose ────────────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Inspect_reports_pending_and_up_to_date_without_touching_the_schema()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var (factory, _) = NewDatabase("inspect");
+        var initializer = new DatabaseInitializer(factory);
+
+        var before = await initializer.InspectAsync(ct);
+        before.Should().ContainSingle();
+        before[0].Code.Should().Be("BFR-DB-0112", "vor dem ersten Start gibt es nichts zu beurteilen");
+
+        await initializer.InitializeAsync(ct);
+
+        var after = await initializer.InspectAsync(ct);
+        after.Should().Contain(c => c.Code == "BFR-DB-0110"
+            && c.Status == Faolan.Abstractions.Operations.CheckStatus.Pass);
+    }
+
+    private (IDbContextFactory<FaolanDbContext> Factory, string Path) NewDatabase(string name)
+    {
+        var path = Path.Combine(_directory, $"{name}.db");
+        var options = new DbContextOptionsBuilder<FaolanDbContext>()
+            .UseFaolanDatabase(FaolanDbOptions.Sqlite, $"Data Source={path}")
+            .Options;
+        return (new TestDbContextFactory(options), path);
+    }
+
+    private sealed class RecordingBackup : IPreMigrationBackup
+    {
+        public RecordingBackup(string archivePath) => ArchivePath = archivePath;
+
+        public string ArchivePath { get; }
+
+        public List<PreMigrationBackupContext> Calls { get; } = [];
+
+        public Task<PreMigrationBackupOutcome> CreateAsync(
+            PreMigrationBackupContext context, CancellationToken ct)
+        {
+            Calls.Add(context);
+            return Task.FromResult(new PreMigrationBackupOutcome(Created: true, ArchivePath));
+        }
+    }
+}

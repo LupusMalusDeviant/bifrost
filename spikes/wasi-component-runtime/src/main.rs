@@ -3,13 +3,13 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use bifrost_wasi_component_spike::{
+use ed25519_dalek::{Signer, SigningKey};
+use faolan_wasi_component_spike::{
     compare_with_container, discover_wit, pinned_publisher, run_runtime_probe,
 };
-use ed25519_dalek::{Signer, SigningKey};
 
 const HOST_USAGE: &str =
-    "usage: bifrost-wasi-component-spike host [--cache-dir <pfad>] [--cache-max-bytes <n>]";
+    "usage: faolan-wasi-component-spike host [--cache-dir <pfad>] [--cache-max-bytes <n>]";
 
 fn main() {
     if let Err(error) = run() {
@@ -24,7 +24,7 @@ fn run() -> Result<()> {
         Some("discover") => {
             let path = arguments
                 .next()
-                .context("usage: bifrost-wasi-component-spike discover <wit-path> [world]")?;
+                .context("usage: faolan-wasi-component-spike discover <wit-path> [world]")?;
             let world = arguments.next().unwrap_or_else(|| "connector".to_owned());
             if arguments.next().is_some() {
                 bail!("unexpected extra argument");
@@ -34,13 +34,13 @@ fn run() -> Result<()> {
         }
         Some("probe") => {
             if arguments.next().is_some() {
-                bail!("usage: bifrost-wasi-component-spike probe");
+                bail!("usage: faolan-wasi-component-spike probe");
             }
             println!("{}", serde_json::to_string_pretty(&run_runtime_probe()?)?);
         }
         Some("compare-container") => {
             let image = arguments.next().context(
-                "usage: bifrost-wasi-component-spike compare-container <image> [samples]",
+                "usage: faolan-wasi-component-spike compare-container <image> [samples]",
             )?;
             let samples = arguments
                 .next()
@@ -59,10 +59,10 @@ fn run() -> Result<()> {
         Some("sign") => {
             let path = arguments
                 .next()
-                .context("usage: bifrost-wasi-component-spike sign <component-path> <seed-hex>")?;
+                .context("usage: faolan-wasi-component-spike sign <component-path> <seed-hex>")?;
             let seed_hex = arguments
                 .next()
-                .context("usage: bifrost-wasi-component-spike sign <component-path> <seed-hex>")?;
+                .context("usage: faolan-wasi-component-spike sign <component-path> <seed-hex>")?;
             if arguments.next().is_some() {
                 bail!("unexpected extra argument");
             }
@@ -103,11 +103,11 @@ fn run() -> Result<()> {
             let disk_cache = cache_directory
                 .map(|directory| match cache_max_bytes {
                     Some(budget) => {
-                        bifrost_wasi_component_spike::disk_cache::DiskCache::open_with_budget(
+                        faolan_wasi_component_spike::disk_cache::DiskCache::open_with_budget(
                             directory, budget,
                         )
                     }
-                    None => bifrost_wasi_component_spike::disk_cache::DiskCache::open(directory),
+                    None => faolan_wasi_component_spike::disk_cache::DiskCache::open(directory),
                 })
                 .transpose()?;
             let stdin = std::io::stdin();
@@ -115,11 +115,11 @@ fn run() -> Result<()> {
             // Antworten, und der Lock-Guard ist nicht `Send`. Die Serialisierung übernimmt der
             // Mutex in `serve` — ein Frame geht immer am Stück hinaus.
             let mut stdout = std::io::stdout();
-            bifrost_wasi_component_spike::host::serve(&mut stdin.lock(), &mut stdout, disk_cache)?;
+            faolan_wasi_component_spike::host::serve(&mut stdin.lock(), &mut stdout, disk_cache)?;
         }
         _ => {
             bail!(
-                "usage:\n  bifrost-wasi-component-spike discover <wit-path> [world]\n  bifrost-wasi-component-spike probe\n  bifrost-wasi-component-spike compare-container <image> [samples]\n  bifrost-wasi-component-spike host [--cache-dir <pfad>]\n  bifrost-wasi-component-spike sign <component-path> <seed-hex>"
+                "usage:\n  faolan-wasi-component-spike discover <wit-path> [world]\n  faolan-wasi-component-spike probe\n  faolan-wasi-component-spike compare-container <image> [samples]\n  faolan-wasi-component-spike host [--cache-dir <pfad>]\n  faolan-wasi-component-spike sign <component-path> <seed-hex>"
             );
         }
     }

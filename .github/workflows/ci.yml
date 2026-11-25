@@ -34,7 +34,7 @@ jobs:
 
       # ADR-0024 E2: Die PostgreSQL-Sicherung laeuft ueber pg_dump/pg_restore. Ohne sie ueberspringen
       # sich die Backupfelder der Upgrade-Matrix selbst — und ein uebersprungener Nachweis ist auf
-      # Linux ein stiller Ausfall, kein Ergebnis. Mit BIFROST_REQUIRE_POSTGRES=1 ist er ein
+      # Linux ein stiller Ausfall, kein Ergebnis. Mit FAOLAN_REQUIRE_POSTGRES=1 ist er ein
       # Fehlschlag; deshalb muessen die Werkzeuge hier wirklich da sein.
       #
       # Die Testsuite leitet die Serverversion des Containers aus dem gefundenen Client ab — ein
@@ -53,24 +53,24 @@ jobs:
         env:
           # Auf Linux ist Docker da — ein nicht startbarer Postgres-Container ist dort ein
           # echter Fehler und darf nicht zum stillen Skip werden.
-          BIFROST_REQUIRE_POSTGRES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+          FAOLAN_REQUIRE_POSTGRES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
           # Ebenso fuer die Container-Isolation: Auf Linux ist die Runtime da, ein Skip waere ein
           # stiller Ausfall des Nachweises. Auf Windows fehlen Linux-Container — dort wird
           # uebersprungen, und das Skip-Gate laeuft ohnehin nur auf Linux.
-          BIFROST_REQUIRE_CONTAINER: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+          FAOLAN_REQUIRE_CONTAINER: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
         # Alle WasiRealHost*-Tests brauchen das gebaute Rust-Binary und laufen deshalb im Job
-        # wasi-component-spike (dort mit BIFROST_REQUIRE_WASI_HOST=1, also ohne Skip-Option).
+        # wasi-component-spike (dort mit FAOLAN_REQUIRE_WASI_HOST=1, also ohne Skip-Option).
         # Hier ausgeschlossen statt übersprungen: sonst reißt das Skip-Gate unten.
         #
-        # Dieselbe Begründung für Bifrost.Compatibility.Tests (M5/WP5.1): Der Probelauf hängt an
-        # BIFROST_RUN_COMPAT und würde hier als zweiter Skip das Gate reißen. Er hat einen eigenen
+        # Dieselbe Begründung für Faolan.Compatibility.Tests (M5/WP5.1): Der Probelauf hängt an
+        # FAOLAN_RUN_COMPAT und würde hier als zweiter Skip das Gate reißen. Er hat einen eigenen
         # Workflow (compatibility.yml), der die Variable setzt — genau die Bedingung aus dem
         # M5-Vertrag §1.2, dass jede Gate-Variable von einem Job auch gesetzt wird.
         #
-        # Bifrost.Performance.Tests hängt komplett an Gate-Variablen und läuft in eigenen Jobs:
-        # die Lastmessung an BIFROST_RUN_BENCHMARK im Job 'benchmark', der Grossmengen-
-        # Nachweis des Auditexports an BIFROST_RUN_AUDIT_SCALE im Job 'audit-scale'; die Soak-Läufe hängen an BIFROST_RUN_SOAK und laufen in soak.yml; die
-        # Browserwege hängen an BIFROST_RUN_E2E, brauchen einen installierten Browser und laufen in
+        # Faolan.Performance.Tests hängt komplett an Gate-Variablen und läuft in eigenen Jobs:
+        # die Lastmessung an FAOLAN_RUN_BENCHMARK im Job 'benchmark', der Grossmengen-
+        # Nachweis des Auditexports an FAOLAN_RUN_AUDIT_SCALE im Job 'audit-scale'; die Soak-Läufe hängen an FAOLAN_RUN_SOAK und laufen in soak.yml; die
+        # Browserwege hängen an FAOLAN_RUN_E2E, brauchen einen installierten Browser und laufen in
         # e2e.yml; die OAuth-Wege brauchen einen Keycloak-Container bzw. Zugangsdaten eines externen
         # Anbieters und laufen in oauth.yml. Hier wären es achtzehn weitere Skips.
         #
@@ -81,7 +81,7 @@ jobs:
         # Speicherabzug, statt nach dem Job-Timeout ohne Spur abzubrechen. Die Frist liegt
         # UEBER der des eigenen Waechters (10 min) — der zaehlt vorher die Kindprozesse,
         # und die leben nur, solange der Testhost noch da ist.
-        run: dotnet test --configuration Release --no-build --filter "FullyQualifiedName!~WasiRealHost&FullyQualifiedName!~Bifrost.Compatibility&FullyQualifiedName!~Bifrost.Performance&FullyQualifiedName!~SoakRunTests&FullyQualifiedName!~Bifrost.Ui.E2E&FullyQualifiedName!~Keycloak&FullyQualifiedName!~OAuthSaasSmoke" --collect:"XPlat Code Coverage" --results-directory ./coverage --logger "trx" --blame-hang --blame-hang-timeout 15m --blame-hang-dump-type full
+        run: dotnet test --configuration Release --no-build --filter "FullyQualifiedName!~WasiRealHost&FullyQualifiedName!~Faolan.Compatibility&FullyQualifiedName!~Faolan.Performance&FullyQualifiedName!~SoakRunTests&FullyQualifiedName!~Faolan.Ui.E2E&FullyQualifiedName!~Keycloak&FullyQualifiedName!~OAuthSaasSmoke" --collect:"XPlat Code Coverage" --results-directory ./coverage --logger "trx" --blame-hang --blame-hang-timeout 15m --blame-hang-dump-type full
 
       # Der Postgres-Nachweis läuft über Testcontainers und skippt, wenn kein Docker da ist.
       # Auf Ubuntu ist Docker vorhanden — ein Skip bedeutet dort also einen echten Fehler
@@ -138,16 +138,16 @@ jobs:
         run: |
           BEST=0
           for f in $(find coverage -name 'coverage.cobertura.xml'); do
-            RATE=$(grep -o '<package name="Bifrost.Core" line-rate="[0-9.]*"' "$f" \
+            RATE=$(grep -o '<package name="Faolan.Core" line-rate="[0-9.]*"' "$f" \
                    | grep -o 'line-rate="[0-9.]*"' | grep -o '[0-9.]*' || true)
             if [ -n "$RATE" ]; then
               PCT=$(awk -v r="$RATE" 'BEGIN { printf "%d", r * 10000 }')
               [ "$PCT" -gt "$BEST" ] && BEST=$PCT
             fi
           done
-          echo "Bifrost.Core Zeilenabdeckung: $(awk -v b="$BEST" 'BEGIN { printf "%.2f", b / 100 }') %"
+          echo "Faolan.Core Zeilenabdeckung: $(awk -v b="$BEST" 'BEGIN { printf "%.2f", b / 100 }') %"
           if [ "$BEST" -lt 8000 ]; then
-            echo "::error::Zeilenabdeckung von Bifrost.Core unter der NFR-08-Schwelle von 80 %."
+            echo "::error::Zeilenabdeckung von Faolan.Core unter der NFR-08-Schwelle von 80 %."
             exit 1
           fi
 
@@ -163,7 +163,7 @@ jobs:
     # Referenz-Hardware — gemessen wird gehaltener Speicher, und der ist auf jedem Runner dieselbe
     # Aussage. Deshalb laeuft der Nachweis bei jedem Push und nicht nur nachts.
     #
-    # Und er hat einen eigenen Job, weil BIFROST_RUN_AUDIT_SCALE sonst eine Gate-Variable waere,
+    # Und er hat einen eigenen Job, weil FAOLAN_RUN_AUDIT_SCALE sonst eine Gate-Variable waere,
     # die niemand setzt (M5-Vertrag §1.2).
     runs-on: ubuntu-latest
     steps:
@@ -175,9 +175,9 @@ jobs:
 
       - name: Auditexport gegen eine Million Zeilen
         env:
-          BIFROST_RUN_AUDIT_SCALE: "1"
+          FAOLAN_RUN_AUDIT_SCALE: "1"
         run: >
-          dotnet test tests/Bifrost.Performance.Tests --configuration Release
+          dotnet test tests/Faolan.Performance.Tests --configuration Release
           --filter "FullyQualifiedName~AuditExportScale"
           --logger "console;verbosity=detailed"
 
@@ -199,8 +199,8 @@ jobs:
       # Was in diesem Projekt liegt, ist Messung und soll hier laufen.
       - name: Run load benchmark
         env:
-          BIFROST_RUN_BENCHMARK: "1"
-        run: dotnet test tests/Bifrost.Performance.Tests --configuration Release --logger "console;verbosity=detailed"
+          FAOLAN_RUN_BENCHMARK: "1"
+        run: dotnet test tests/Faolan.Performance.Tests --configuration Release --logger "console;verbosity=detailed"
 
       # Das Ergebnis ist trendfaehiges JSON (M5-Vertrag §4). Ohne Artefakt waere jede Messung nach
       # dem Lauf verschwunden, und "ist es langsamer geworden?" bliebe eine Erinnerungsfrage.
@@ -253,14 +253,14 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           # Das Binary ist hier garantiert da — ein Skip wäre ein stiller Ausfall des Nachweises.
-          BIFROST_REQUIRE_WASI_HOST: "1"
-        run: dotnet test tests/Bifrost.Upstream.Tests --configuration Release --filter "FullyQualifiedName~WasiRealHost" --logger "console;verbosity=normal"
+          FAOLAN_REQUIRE_WASI_HOST: "1"
+        run: dotnet test tests/Faolan.Upstream.Tests --configuration Release --filter "FullyQualifiedName~WasiRealHost" --logger "console;verbosity=normal"
 
       - name: Signiertes Component durch die Governance-Pipeline (M2)
         working-directory: ${{ github.workspace }}
         env:
-          BIFROST_REQUIRE_WASI_HOST: "1"
-        run: dotnet test tests/Bifrost.Integration.Tests --configuration Release --filter "FullyQualifiedName~WasiRealHost" --logger "console;verbosity=normal"
+          FAOLAN_REQUIRE_WASI_HOST: "1"
+        run: dotnet test tests/Faolan.Integration.Tests --configuration Release --filter "FullyQualifiedName~WasiRealHost" --logger "console;verbosity=normal"
 
   isolation-comparison:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -289,7 +289,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Build image
-        run: docker build -t bifrost:ci .
+        run: docker build -t faolan:ci .
 
       # Plan 0003, WP7.1: Der WASI-Host wird MIT ausgeliefert. Ohne diese Prüfung wäre "der
       # Pluginpfad ist deploybar" eine Behauptung — ein fehlendes oder für die falsche
@@ -314,7 +314,7 @@ jobs:
           import json,struct,sys
           msg=json.dumps({'id':1,'type':'hello','protocolVersion':'$VERSION'}).encode()
           sys.stdout.buffer.write(struct.pack('>I',len(msg))+msg)" \
-            | docker run -i --rm --entrypoint /usr/local/bin/bifrost-wasi-host bifrost:ci host \
+            | docker run -i --rm --entrypoint /usr/local/bin/faolan-wasi-host faolan:ci host \
             | tr -d '\0')
           echo "Host-Antwort: $ANSWER"
 
@@ -330,7 +330,7 @@ jobs:
 
       - name: Container läuft non-root (WP7.2)
         run: |
-          CONTAINER_UID=$(docker run --rm --entrypoint id bifrost:ci -u)
+          CONTAINER_UID=$(docker run --rm --entrypoint id faolan:ci -u)
           echo "Container-UID: $CONTAINER_UID"
           if [ "$CONTAINER_UID" = "0" ]; then
             echo "::error::Der Container läuft als root."
@@ -347,7 +347,7 @@ jobs:
       # ein verdoppeltes Image durchzulassen.
       - name: Verify image size < 350 MB (WP7 DoD, angehoben in v0.6.2)
         run: |
-          BYTES=$(docker image inspect bifrost:ci --format '{{.Size}}')
+          BYTES=$(docker image inspect faolan:ci --format '{{.Size}}')
           MB=$((BYTES / 1024 / 1024))
           echo "Image size: ${MB} MB"
           if [ "$MB" -ge 350 ]; then
@@ -362,7 +362,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Verify linux/arm64 image builds
-        run: docker buildx build --platform linux/arm64 -t bifrost:ci-arm64 .
+        run: docker buildx build --platform linux/arm64 -t faolan:ci-arm64 .
 
       - name: Compose-Beispiele sind gültig (SQLite-Default und Postgres-Override)
         run: |
@@ -371,14 +371,14 @@ jobs:
 
       - name: Smoke-test container starts and answers /healthz
         run: |
-          docker run -d --name bifrost-ci -p 8080:8080 bifrost:ci
+          docker run -d --name faolan-ci -p 8080:8080 faolan:ci
           for i in $(seq 1 30); do
-            if docker exec bifrost-ci dotnet Bifrost.Server.dll --healthcheck; then
-              echo "healthy"; docker rm -f bifrost-ci; exit 0
+            if docker exec faolan-ci dotnet Faolan.Server.dll --healthcheck; then
+              echo "healthy"; docker rm -f faolan-ci; exit 0
             fi
             sleep 2
           done
           echo "::error::Container wurde nicht healthy."
-          docker logs bifrost-ci
-          docker rm -f bifrost-ci
+          docker logs faolan-ci
+          docker rm -f faolan-ci
           exit 1

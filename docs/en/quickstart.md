@@ -34,7 +34,7 @@ published image.
 
 ```bash
 git clone https://github.com/LupusMalusDeviant/bifrost.git
-cd bifrost
+cd faolan
 cp .env.example .env
 chmod 600 .env
 ```
@@ -42,7 +42,7 @@ chmod 600 .env
 Now open `.env` and **set the version explicitly**:
 
 ```bash
-BIFROST_VERSION=0.12.0
+FAOLAN_VERSION=0.12.0
 ```
 
 > **Do not skip this.** There is no `latest` tag, on purpose: a moving pointer turns a restart —
@@ -57,13 +57,13 @@ For production, pin the **digest** rather than the tag — a tag can be re-point
 digest cannot:
 
 ```bash
-BIFROST_IMAGE=ghcr.io/lupusmalusdeviant/bifrost@sha256:<64-hex>
+FAOLAN_IMAGE=ghcr.io/lupusmalusdeviant/faolan@sha256:<64-hex>
 ```
 
 The digest is printed in the release output. From an already-pulled image:
 
 ```bash
-docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/lupusmalusdeviant/bifrost:0.12.0
+docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/lupusmalusdeviant/faolan:0.12.0
 ```
 
 Then:
@@ -87,17 +87,17 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml config -q
 And the one line that has cost this project the most:
 
 ```bash
-docker compose config --volumes
+docker compose config | tail -6
 ```
 
-Executed here, it prints `bifrost-data`. The **effective** volume name carries the Compose project
-name as a prefix — `<project>_bifrost-data` — and the project name defaults to the lowercased
-directory name. Rename the directory, move the compose file, or rename the key, and you point at a
-**different** volume: Docker silently creates it empty, the gateway initialises a fresh database
-and reports itself healthy. **The failure looks like a successful start.** Pin it once:
+On a new installation it prints `faolan-data`, the value of `FAOLAN_DATA_VOLUME` or its default.
+Point that variable at a name that does not exist, and Docker silently creates the volume empty;
+the gateway initialises a fresh database and reports itself healthy. **The failure looks like a
+successful start.** Upgrading from Bifrost 0.12.0? Then the variable is **required** — see
+[`docs/upgrade-faolan.md`](../upgrade-faolan.md):
 
 ```bash
-COMPOSE_PROJECT_NAME=bifrost      # in .env, new installations only
+FAOLAN_DATA_VOLUME=myproject_bifrost-data      # in .env, the name from 'docker volume ls'
 ```
 
 ---
@@ -108,14 +108,14 @@ The first start creates **no** account. It issues a single-use, short-lived setu
 it to a file readable only by the service account:
 
 ```bash
-docker compose exec bifrost cat /data/config/bootstrap-token.txt
+docker compose exec faolan cat /data/config/bootstrap-token.txt
 ```
 
 It is **never** printed to the log. A credential in the log is a credential in every support
 ticket, every log aggregator and every backup of the log directory — and it is the one place
 nobody ever rotates.
 
-The token is valid for **one hour** (`BIFROST_BOOTSTRAP_TTL_MINUTES`) and exactly **once**. If it
+The token is valid for **one hour** (`FAOLAN_BOOTSTRAP_TTL_MINUTES`) and exactly **once**. If it
 expires before anyone sets up, the next start issues a new one. Once an account exists, there is
 **no second token over the network** — recovery then goes through the console commands in
 [Operations → Resetting access](operations.md#resetting-access).
@@ -143,13 +143,13 @@ password. Redeeming the token deletes the file.
 | `http://localhost:8080` (including via SSH tunnel) | yes — browsers treat `localhost` as a secure origin |
 | `http://<ip-or-hostname>:8080` | **no** |
 
-Behind a TLS proxy you must **also** set `BIFROST_TRUSTED_PROXIES`, or the gateway only ever sees
+Behind a TLS proxy you must **also** set `FAOLAN_TRUSTED_PROXIES`, or the gateway only ever sees
 HTTP and builds its redirects from that — a logged-out visit to a protected page then bounces from
 `https` to `http` and the proxy answers `400 The plain HTTP request was sent to HTTPS port`.
 
 ```bash
-BIFROST_TRUSTED_PROXIES=any        # only if the gateway is reachable exclusively via the proxy
-BIFROST_TRUSTED_PROXIES=172.17.0.1,10.0.0.0/8
+FAOLAN_TRUSTED_PROXIES=any        # only if the gateway is reachable exclusively via the proxy
+FAOLAN_TRUSTED_PROXIES=172.17.0.1,10.0.0.0/8
 ```
 
 Opt-in is deliberate: if the gateway sits directly on the network, any client could claim
@@ -166,7 +166,7 @@ In the web UI: **RBAC → Keys**. The key is shown **once**, together with a rea
 configuration.
 
 ```bash
-claude mcp add --transport http bifrost http://localhost:8080/mcp \
+claude mcp add --transport http faolan http://localhost:8080/mcp \
   --header "Authorization: Bearer <API-KEY>"
 ```
 
@@ -208,9 +208,9 @@ Two things worth knowing before you add the first one:
 ## Building from source (not an installation path)
 
 ```bash
-dotnet build Bifrost.slnx
-dotnet test Bifrost.slnx
-ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/Bifrost.Server
+dotnet build Faolan.slnx
+dotnet test Faolan.slnx
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/Faolan.Server
 ```
 
 > **Keep `Development` when running from source.** Outside it, ASP.NET does not load the static web
@@ -221,7 +221,7 @@ ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/Bifrost.Server
 > variable has to come from the environment.)
 
 Building the image locally is possible but is explicitly **not** an installation path — the result
-carries neither provenance nor signature, which is why it is named `bifrost-local:dev` and never
+carries neither provenance nor signature, which is why it is named `faolan-local:dev` and never
 what the release image is named:
 
 ```bash

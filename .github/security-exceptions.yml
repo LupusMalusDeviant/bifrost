@@ -69,7 +69,7 @@ exceptions: []
 #     tool: trivy
 #     reason: >-
 #       Nicht erreichbar: die betroffene Funktion (libfoo `parse_remote`) wird von
-#       B.I.F.R.O.S.T nicht aufgerufen; Nachweis in Issue #123. Kein Fix verfuegbar,
+#       Faolan nicht aufgerufen; Nachweis in Issue #123. Kein Fix verfuegbar,
 #       Upstream-Ticket foo/foo#456 verfolgt den Stand.
 #     approved_by: <Name des Product Owners>
 #     approved_at: 2026-07-31
