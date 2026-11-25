@@ -625,9 +625,34 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// <c>fault=gateway</c> in der Metrik und einmal je Invoker im Log — sichtbar, statt still
     /// ungeprüft.
     /// </para>
+    /// <para>
+    /// <b>Ausnahme von der Ausnahme</b> (vierzehnte Runde, Befund M): Ein <c>$schema</c>, das keine
+    /// Zeichenkette ist (<c>{"$schema":123}</c>, an jeder Tiefe), lässt die Bibliothek ein
+    /// JSON-Element als Zeichenkette lesen, bevor sie das Schlüsselwort prüft; das wirft
+    /// <see cref="InvalidOperationException"/> aus <c>System.Text.Json</c>. Erkannt wird genau diese
+    /// Ausnahme an ihrer Herkunft (<see cref="IsJsonElementWrongType"/>), nicht jede
+    /// <see cref="InvalidOperationException"/>: Ein Element vom falschen Typ steht so im
+    /// unveränderlichen Schematext und kehrt bei jedem Bau wieder; ein Wettlauf in den Registern der
+    /// Bibliothek wirft sie nicht. Eine Vorabsuche nach <c>$schema</c> im Text taugte dafür nicht —
+    /// sie hielte auch eine <i>Eigenschaft</i> dieses Namens für das Schlüsselwort und liesse den
+    /// Aufruf dann ungeprüft durch.
+    /// </para>
     /// </summary>
     internal static bool IsSchemaTextFailure(Exception exception)
-        => exception is JsonSchemaException or JsonException or FormatException or RefResolutionException;
+        => exception is JsonSchemaException or JsonException or FormatException or RefResolutionException
+            || IsJsonElementWrongType(exception);
+
+    /// <summary>
+    /// Ob <c>System.Text.Json</c> die Ausnahme geworfen hat, weil ein <see cref="JsonElement"/> als
+    /// anderer Typ gelesen wurde (<c>ThrowHelper.ThrowJsonElementWrongTypeException</c>). Geprüft
+    /// wird die werfende Methode, nicht der Wortlaut — der ist übersetzbar.
+    /// </summary>
+    internal static bool IsJsonElementWrongType(Exception exception)
+        => exception is InvalidOperationException
+        {
+            TargetSite: { Name: "ThrowJsonElementWrongTypeException", DeclaringType: { } thrower },
+        }
+        && thrower.Assembly == typeof(JsonElement).Assembly;
 
     /// <summary>Ergebnis des Bauens: ein Schema, „nicht baubar" (beides null) oder ein Ausfall.</summary>
     internal readonly record struct SchemaBuildOutcome(JsonSchema? Schema, Exception? Interrupted);

@@ -48,6 +48,30 @@ public sealed class ReverseProxyHopTests
 
     public ReverseProxyHopTests(ITestOutputHelper output) => _output = output;
 
+    /// <summary>
+    /// Vierzehnte Runde, Befund L: nginx wird an die Adresse gebunden, die Testcontainers anspricht —
+    /// sonst wartete die Bereitschaft vergeblich, obwohl nginx läuft. Ein entfernter Daemon oder ein
+    /// Override auf eine Nicht-Loopback-Adresse bindet nicht um. Braucht kein Docker.
+    /// </summary>
+    [Theory]
+    [InlineData(null, null, "127.0.0.1")]
+    [InlineData("npipe://./pipe/docker_engine", null, "127.0.0.1")]
+    [InlineData("unix:///var/run/docker.sock", null, "127.0.0.1")]
+    [InlineData("tcp://localhost:2375", null, "127.0.0.1")]
+    [InlineData("tcp://127.0.0.1:2375", null, "127.0.0.1")]
+    [InlineData("tcp://127.0.0.2:2375", null, "127.0.0.2")]
+    [InlineData("tcp://[::1]:2375", null, "::1")]
+    [InlineData("tcp://192.168.178.61:2375", null, null)]
+    [InlineData("tcp://docker.example.invalid:2376", null, null)]
+    [InlineData(null, "127.0.0.3", "127.0.0.3")]
+    [InlineData(null, "localhost", "127.0.0.1")]
+    [InlineData(null, "::1", "::1")]
+    [InlineData(null, "192.168.178.61", null)]
+    [InlineData("tcp://127.0.0.2:2375", "127.0.0.4", "127.0.0.4")]
+    [InlineData("tcp://192.168.178.61:2375", "127.0.0.1", null)]
+    public void Nginx_is_published_on_the_address_testcontainers_probes(string? dockerHost, string? hostOverride, string? expected)
+        => LoopbackPublishAddress(dockerHost, hostOverride).Should().Be(expected);
+
     [Fact]
     public async Task The_hop_through_a_real_reverse_proxy_is_measured_instead_of_assumed()
     {
@@ -206,14 +230,19 @@ public sealed class ReverseProxyHopTests
         // DOCKER_HOST ist proxy.Hostname der entfernte Rechner, und dort wäre nginx an Loopback
         // gebunden unerreichbar. Ein entfernter Host aus ~/.testcontainers.properties wird hier
         // nicht erkannt; dann scheitert die Bereitschaft mit der Meldung, die den Proxy nennt.
-        if (DockerDaemonIsLocal)
+        // Gebunden wird an genau die Loopback-Adresse, die Testcontainers für Bereitschaft und
+        // Lastlauf anspricht (vierzehnte Runde, Befund L): bei DOCKER_HOST=tcp://127.0.0.2 also
+        // 127.0.0.2, nicht 127.0.0.1.
+        if (LoopbackPublishAddress(
+                Environment.GetEnvironmentVariable("DOCKER_HOST"),
+                Environment.GetEnvironmentVariable("TESTCONTAINERS_HOST_OVERRIDE")) is { } publishAddress)
         {
             builder = builder.WithCreateParameterModifier(parameters =>
             {
                 var rewritten = 0;
                 foreach (var binding in (parameters.HostConfig?.PortBindings?.Values ?? []).SelectMany(list => list))
                 {
-                    binding.HostIP = "127.0.0.1";
+                    binding.HostIP = publishAddress;
                     rewritten++;
                 }
 
@@ -222,7 +251,7 @@ public sealed class ReverseProxyHopTests
                 if (rewritten == 0)
                 {
                     throw new InvalidOperationException(
-                        "Keine Portbindung zum Umschreiben auf 127.0.0.1 gefunden — Testcontainers setzt die "
+                        $"Keine Portbindung zum Umschreiben auf {publishAddress} gefunden — Testcontainers setzt die "
                         + "Bindungen offenbar erst nach dem Create-Parameter-Modifier.");
                 }
             });
@@ -663,33 +692,57 @@ public sealed class ReverseProxyHopTests
             || (Enabled && OperatingSystem.IsLinux() && Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true");
 
     /// <summary>
-    /// Ob nginx für diesen Rechner über Loopback erreichbar ist: ein Docker-Daemon auf diesem
-    /// Rechner — Socket, Named Pipe oder TCP auf eine Loopback-Adresse — und kein
-    /// <c>TESTCONTAINERS_HOST_OVERRIDE</c> auf eine andere Adresse (Review-Befund L-4, dreizehnte
-    /// Runde). Ein entfernter Host aus <c>~/.testcontainers.properties</c> oder einem
-    /// <c>docker context</c> wird nicht erkannt; dann scheitert die Bereitschaft, und die Meldung
-    /// nennt die Proxy-Adresse.
+    /// An welche Loopback-Adresse nginx gebunden wird — oder <c>null</c>, wenn nicht umgebunden wird
+    /// und nginx bei der Vorgabe von Testcontainers bleibt.
+    /// <para>
+    /// Umgebunden wird nur bei einem Docker-Daemon auf diesem Rechner (Socket, Named Pipe oder TCP auf
+    /// Loopback; Review-Befund L-4, dreizehnte Runde) und an <b>dieselbe</b> Adresse, unter der
+    /// Testcontainers den Container anspricht (vierzehnte Runde, Befund L): zuerst
+    /// <c>TESTCONTAINERS_HOST_OVERRIDE</c>, sonst der Host aus <c>DOCKER_HOST</c>, bei Socket und
+    /// Pipe <c>127.0.0.1</c>. <c>localhost</c> wird zu <c>127.0.0.1</c>, eine IPv6-Loopback-Adresse
+    /// bleibt <c>::1</c>. Zeigt eins davon nicht auf Loopback, wird nicht umgebunden.
+    /// </para>
+    /// <para>
+    /// Ein entfernter Host aus <c>~/.testcontainers.properties</c> oder einem <c>docker context</c>
+    /// wird nicht erkannt; dann scheitert die Bereitschaft, und die Meldung nennt die Proxy-Adresse.
+    /// </para>
     /// </summary>
-    private static bool DockerDaemonIsLocal
-        => IsLoopbackEndpoint(Environment.GetEnvironmentVariable("DOCKER_HOST"), socketIsLocal: true)
-            && IsLoopbackEndpoint(Environment.GetEnvironmentVariable("TESTCONTAINERS_HOST_OVERRIDE"), socketIsLocal: false);
-
-    private static bool IsLoopbackEndpoint(string? value, bool socketIsLocal)
+    internal static string? LoopbackPublishAddress(string? dockerHost, string? hostOverride)
     {
-        if (string.IsNullOrWhiteSpace(value))
+        string? daemonHost = null;
+        if (!string.IsNullOrWhiteSpace(dockerHost)
+            && !dockerHost.StartsWith("unix://", StringComparison.OrdinalIgnoreCase)
+            && !dockerHost.StartsWith("npipe://", StringComparison.OrdinalIgnoreCase))
         {
-            return true;
+            daemonHost = LoopbackHost(dockerHost);
+            if (daemonHost is null)
+            {
+                return null; // entfernter Daemon
+            }
         }
 
-        if (value.StartsWith("unix://", StringComparison.OrdinalIgnoreCase)
-            || value.StartsWith("npipe://", StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(hostOverride))
         {
-            return socketIsLocal;
+            return LoopbackHost(hostOverride);
         }
 
-        var host = Uri.TryCreate(value, UriKind.Absolute, out var uri) ? uri.Host : value;
-        return host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-            || (IPAddress.TryParse(host.Trim('[', ']'), out var address) && IPAddress.IsLoopback(address));
+        return daemonHost ?? "127.0.0.1";
+    }
+
+    /// <summary>Die Loopback-Adresse eines Endpunkts als Bindeadresse, sonst <c>null</c>.</summary>
+    private static string? LoopbackHost(string value)
+    {
+        var host = Uri.TryCreate(value, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Host)
+            ? uri.Host
+            : value;
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return "127.0.0.1";
+        }
+
+        return IPAddress.TryParse(host.Trim('[', ']'), out var address) && IPAddress.IsLoopback(address)
+            ? address.ToString()
+            : null;
     }
 
     private static bool IsLocalAddress(IPAddress address)

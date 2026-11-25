@@ -567,6 +567,68 @@ public sealed class ToolSchemaRegistryTests
     }
 
     /// <summary>
+    /// Vierzehnte Runde, Befund M: Ein <c>$schema</c>, das keine Zeichenkette ist, wirft beim Bauen
+    /// eine <see cref="InvalidOperationException"/> aus <c>System.Text.Json</c> — am Schematext, nicht
+    /// an einem Wettlauf. Sie zählt als Schematext-Fehler; dieselbe Art aus anderer Quelle nicht.
+    /// </summary>
+    [Fact]
+    public void A_json_element_of_the_wrong_type_counts_as_a_schema_text_failure()
+    {
+        using var document = JsonDocument.Parse("123");
+        var wrongType = Record.Exception(() => document.RootElement.GetString());
+
+        wrongType.Should().BeOfType<InvalidOperationException>();
+        ToolInvoker.IsSchemaTextFailure(wrongType!).Should().BeTrue();
+        ToolInvoker.IsSchemaTextFailure(new InvalidOperationException("Collection was modified")).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Vierzehnte Runde, Befund M, über den ganzen Aufruf: Ein Schema mit <c>$schema</c> als Zahl
+    /// oder Wahrheitswert — oben oder in einem Unterschema — baut nicht und nimmt R3 wie auf main:
+    /// durchgelassen, einmal geloggt, gemerkt. Nicht etwa je Aufruf als Gateway-Fehler abgewiesen.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"$schema":123,"type":"object","required":["message"],"properties":{"message":{"type":"string"}}}""")]
+    [InlineData("""{"type":"object","required":["message"],"properties":{"message":{"$schema":true,"type":"string"}}}""")]
+    public async Task A_non_string_dialect_takes_the_R3_path(string schema)
+    {
+        var world = new InvokerTestWorld(echoSchema: schema);
+        var admin = world.RegisterAdmin();
+        var log = new CapturingLogger();
+        var invoker = world.WithLogger(log);
+        var ct = TestContext.Current.CancellationToken;
+
+        var thrown = () => ToolInvoker.BuildSchema(world.Catalog.Find(world.Echo)!);
+        thrown.Should().Throw<InvalidOperationException>("sonst bewiese der Test nichts über diese Ausnahmeart");
+
+        for (var call = 0; call < 5; call++)
+        {
+            (await invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct))
+                .Status.Should().Be(InvocationStatus.Success, "R3: ein Schema, das nicht baut, lässt durch");
+        }
+
+        log.Lines.Should().ContainSingle();
+        ToolInvoker.UnusableSchemas.TryGetValue(world.Catalog.Find(world.Echo)!, out _).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Gegenprobe zu oben: Eine <i>Eigenschaft</i> namens <c>$schema</c> ist kein Schlüsselwort. Das
+    /// Schema baut und prüft — ein falsches Argument wird abgewiesen, nicht über R3 durchgelassen.
+    /// </summary>
+    [Fact]
+    public async Task A_property_named_schema_is_still_validated()
+    {
+        var world = new InvokerTestWorld(
+            echoSchema: """{"type":"object","required":["message"],"properties":{"message":{"type":"string"},"$schema":{"type":"string"}}}""");
+        var admin = world.RegisterAdmin();
+        var ct = TestContext.Current.CancellationToken;
+
+        (await world.Invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Echo, new { message = 1 }), ct))
+            .Status.Should().Be(InvocationStatus.ValidationFailed);
+        ToolInvoker.UnusableSchemas.TryGetValue(world.Catalog.Find(world.Echo)!, out _).Should().BeFalse();
+    }
+
+    /// <summary>
     /// Elfte Runde L-3, zwölfte Runde L-3: Ein unterbrochener Bau ist kein Urteil über die
     /// Argumente. Er endet als Fehler des Gateways (<see cref="InvocationStatus.UpstreamError"/>,
     /// <c>fault=gateway</c>), nicht als <see cref="InvocationStatus.ValidationFailed"/> — und
