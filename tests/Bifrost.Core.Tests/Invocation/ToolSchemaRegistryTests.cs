@@ -332,7 +332,8 @@ public sealed class ToolSchemaRegistryTests
         }), ct);
         bStarted.Wait(ct);
 
-        var a = ToolInvoker.ObtainSchema(entry, _ => throw new InvalidOperationException("Wettlauf"));
+        // Eine Art, die am Schematext liegen kann — nur sie wird markiert (dreizehnte Runde, L-1).
+        var a = ToolInvoker.ObtainSchema(entry, _ => throw new JsonSchemaException("Wettlauf"));
         a.Schema.Should().BeNull("B liegt noch nicht im Zwischenspeicher");
         ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeTrue();
 
@@ -400,7 +401,7 @@ public sealed class ToolSchemaRegistryTests
                 ToolInvoker.CompiledSchemas.GetValue(e, ToolInvoker.BuildSchema);
             }
 
-            throw new InvalidOperationException("Wettlauf");
+            throw new JsonSchemaException("Wettlauf");
         });
 
         calls.Should().Be(2);
@@ -460,15 +461,109 @@ public sealed class ToolSchemaRegistryTests
     public void Only_one_caller_per_interval_claims_the_retry()
     {
         var mark = new ToolInvoker.UnusableMark("x");
-        var start = DateTimeOffset.UnixEpoch;
+        var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
         var interval = TimeSpan.FromSeconds(30);
 
-        mark.TryClaimRetry(start, interval).Should().BeFalse("der erste Blick startet nur die Uhr");
-        mark.TryClaimRetry(start + TimeSpan.FromSeconds(29), interval).Should().BeFalse();
+        mark.TryClaimRetry(time, interval).Should().BeFalse("der erste Blick startet nur die Uhr");
+        time.Advance(TimeSpan.FromSeconds(29));
+        mark.TryClaimRetry(time, interval).Should().BeFalse();
 
-        var later = start + TimeSpan.FromSeconds(31);
-        var claims = Enumerable.Range(0, 64).AsParallel().Count(_ => mark.TryClaimRetry(later, interval));
+        time.Advance(TimeSpan.FromSeconds(2));
+        var claims = Enumerable.Range(0, 64).AsParallel().Count(_ => mark.TryClaimRetry(time, interval));
         claims.Should().Be(1);
+    }
+
+    /// <summary>
+    /// Dreizehnte Runde, L-2: Das Intervall läuft auf der monotonen Uhr. Wird die Wanduhr um
+    /// Stunden zurückgestellt, ändert das am erneuten Bauversuch nichts.
+    /// </summary>
+    [Fact]
+    public void Setting_the_wall_clock_back_does_not_delay_the_retry()
+    {
+        var mark = new ToolInvoker.UnusableMark("x");
+        var time = new ManualClock();
+        var interval = TimeSpan.FromSeconds(30);
+
+        mark.TryClaimRetry(time, interval).Should().BeFalse();
+        time.WallClock -= TimeSpan.FromHours(5);
+        time.Elapsed += TimeSpan.FromSeconds(31);
+
+        mark.TryClaimRetry(time, interval).Should().BeTrue("massgeblich ist die vergangene Zeit, nicht die Wanduhr");
+    }
+
+    /// <summary>Wanduhr und monotone Uhr getrennt stellbar.</summary>
+    private sealed class ManualClock : TimeProvider
+    {
+        public DateTimeOffset WallClock { get; set; } = new(2026, 11, 25, 12, 0, 0, TimeSpan.Zero);
+
+        public TimeSpan Elapsed { get; set; } = TimeSpan.FromDays(1);
+
+        public override DateTimeOffset GetUtcNow() => WallClock;
+
+        public override long GetTimestamp() => Elapsed.Ticks;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+    }
+
+    /// <summary>
+    /// Dreizehnte Runde, Testlücke: Ein wirklich nicht baubares Schema durch ein Intervall. Genau
+    /// ein Aufruf baut neu, der Bau scheitert wieder, die Markierung bleibt, der Aufruf nimmt R3 —
+    /// ohne zusätzliche Logzeile und ohne Gateway-Fehler.
+    /// </summary>
+    [Fact]
+    public async Task An_unbuildable_schema_stays_marked_across_a_retry_interval()
+    {
+        var world = new InvokerTestWorld();
+        var admin = world.RegisterAdmin();
+        var log = new CapturingLogger();
+        var invoker = world.WithLogger(log);
+        var ct = TestContext.Current.CancellationToken;
+
+        for (var round = 0; round < 3; round++)
+        {
+            for (var call = 0; call < 3; call++)
+            {
+                (await invoker.InvokeAsync(InvokerTestWorld.Request(admin, world.Free, new { }), ct))
+                    .Status.Should().Be(InvocationStatus.Success, "R3, auch im Aufruf, der neu baut");
+            }
+
+            world.Time.Advance(ToolInvoker.UnusableRetryInterval + TimeSpan.FromSeconds(1));
+        }
+
+        log.Lines.Should().ContainSingle("der erneute Bauversuch schreibt keine weitere Zeile");
+        ToolInvoker.UnusableSchemas.TryGetValue(world.Catalog.Find(world.Free)!, out _).Should().BeTrue();
+        ToolInvoker.CompiledSchemas.TryGetValue(world.Catalog.Find(world.Free)!, out _).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Dreizehnte Runde, L-1: Eine Ausnahme, die nicht am Schematext liegen kann, wird auch zweimal
+    /// gleich nicht als „nicht baubar" gemerkt. Sie ist ein Ausfall — sonst liefen Aufrufe ungeprüft
+    /// durch, weil ein Wettlauf in der Bibliothek zweimal dieselbe Art warf.
+    /// </summary>
+    [Fact]
+    public void A_repeated_failure_that_cannot_stem_from_the_schema_text_is_an_interruption()
+    {
+        var entry = Entry(Strict);
+
+        var outcome = ToolInvoker.ObtainSchema(entry, _ => throw new InvalidOperationException("Collection was modified"));
+
+        outcome.Interrupted.Should().BeOfType<InvalidOperationException>();
+        ToolInvoker.UnusableSchemas.TryGetValue(entry, out _).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(typeof(JsonSchemaException), true)]
+    [InlineData(typeof(JsonException), true)]
+    [InlineData(typeof(UriFormatException), true)]
+    [InlineData(typeof(InvalidOperationException), false)]
+    [InlineData(typeof(KeyNotFoundException), false)]
+    public void Only_schema_text_failures_can_mark_a_schema(Type exceptionType, bool canMark)
+    {
+        var exception = exceptionType == typeof(JsonSchemaException)
+            ? new JsonSchemaException("x")
+            : (Exception)Activator.CreateInstance(exceptionType)!;
+
+        ToolInvoker.IsSchemaTextFailure(exception).Should().Be(canMark);
     }
 
     /// <summary>

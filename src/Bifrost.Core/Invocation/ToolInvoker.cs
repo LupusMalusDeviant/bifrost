@@ -135,6 +135,14 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
                 {
                     result = Fail(InvocationStatus.Denied, decision.DenyReason ?? "Verweigert (Default-Deny).", started);
                 }
+                else if (!entry.Name.TrySplit(out _, out _))
+                {
+                    // Ein Katalogeintrag mit kaputtem Namen ist ein Fehler des Gateways, nicht des
+                    // Upstreams (Review-Befund L-3, dreizehnte Runde). Vorher erst in
+                    // CallUpstreamAsync erkannt und als fault=none gezählt.
+                    result = Fail(InvocationStatus.UpstreamError, $"Interner Gateway-Fehler: '{entry.Name}' ist kein gültiger Namespaced-Name.", started);
+                    gatewayFault = true;
+                }
                 else if (ValidateArguments(entry, request.Arguments) is { } rejection)
                 {
                     result = Fail(rejection.Status, rejection.Message, started);
@@ -205,6 +213,7 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
 
         if (!entry.Name.TrySplit(out _, out var upstreamToolName))
         {
+            // Schon in InvokeAsync abgefangen (als Gateway-Fehler); hier nur noch zur Absicherung.
             return Fail(InvocationStatus.UpstreamError, $"'{entry.Name}' ist kein gültiger Namespaced-Name.", started);
         }
 
@@ -379,10 +388,19 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// Die Markierung „nicht baubar": der Grund und wann frühestens erneut gebaut wird. Die Zeit
     /// beginnt beim ersten Aufruf, der die Markierung sieht — gesetzt wird sie im statischen
     /// <see cref="ObtainSchema"/>, das keine Uhr kennt.
+    /// <para>
+    /// <b>Monotone Uhr</b> (Review-Befund L-2, dreizehnte Runde): gemessen mit
+    /// <see cref="TimeProvider.GetTimestamp"/>, nicht mit der Wanduhr. Wird die Systemzeit
+    /// zurückgestellt (NTP, fortgesetzte VM), hielte eine Markierung sonst Stunden statt
+    /// Sekunden. Die Markierung liegt prozessweit, die Uhr kommt vom Invoker: Sinnvoll ist sie nur
+    /// innerhalb einer Zeitquelle. Im Produkt gibt es genau einen Invoker; Tests mit eigener
+    /// <c>FakeTimeProvider</c> haben je Welt eigene Katalogeinträge und damit eigene Markierungen.
+    /// </para>
     /// </summary>
     internal sealed class UnusableMark(string reason)
     {
-        private long _retryAtTicks;
+        private const long NotStarted = long.MinValue;
+        private long _retryAtTimestamp = NotStarted;
 
         public string Reason { get; } = reason;
 
@@ -390,18 +408,19 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         /// Ob dieser Aufruf den nächsten Bauversuch übernimmt. Genau einer je Intervall bekommt
         /// <c>true</c>; der erste Blick startet nur die Uhr.
         /// </summary>
-        public bool TryClaimRetry(DateTimeOffset now, TimeSpan interval)
+        public bool TryClaimRetry(TimeProvider time, TimeSpan interval)
         {
-            var current = Interlocked.Read(ref _retryAtTicks);
-            var next = (now + interval).UtcTicks;
-            if (current == 0)
+            var now = time.GetTimestamp();
+            var next = now + (long)(interval.TotalSeconds * time.TimestampFrequency);
+            var current = Interlocked.Read(ref _retryAtTimestamp);
+            if (current == NotStarted)
             {
-                Interlocked.CompareExchange(ref _retryAtTicks, next, 0);
+                Interlocked.CompareExchange(ref _retryAtTimestamp, next, NotStarted);
                 return false;
             }
 
-            return now.UtcTicks >= current
-                && Interlocked.CompareExchange(ref _retryAtTicks, next, current) == current;
+            return now >= current
+                && Interlocked.CompareExchange(ref _retryAtTimestamp, next, current) == current;
         }
     }
 
@@ -491,7 +510,7 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
         if (!CompiledSchemas.TryGetValue(entry, out var schema))
         {
             if (UnusableSchemas.TryGetValue(entry, out var mark)
-                && !mark.TryClaimRetry(_time.GetUtcNow(), UnusableRetryInterval))
+                && !mark.TryClaimRetry(_time, UnusableRetryInterval))
             {
                 LogBuildFailureOnce(entry, mark.Reason);
                 return null; // R3, das Schema baut nicht
@@ -588,6 +607,28 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
             or OperationCanceledException
             or ThreadInterruptedException;
 
+    /// <summary>
+    /// Ob ein Baufehler am Schematext liegen <i>kann</i> — nur diese Arten führen, zweimal gleich
+    /// bestätigt, zu „nicht baubar" und damit zu R3. Belegt: ein ungültiges Schlüsselwort
+    /// (<c>{"type":12345}</c>) und ein unbekannter Dialekt werfen <see cref="JsonSchemaException"/>,
+    /// ungültiges JSON und eine Tiefe über 64 <see cref="JsonException"/>, ein kaputtes <c>$id</c>
+    /// eine <see cref="FormatException"/> (<see cref="UriFormatException"/>), ein beim Bauen
+    /// unauflösbarer Verweis <see cref="RefResolutionException"/>.
+    /// <para>
+    /// <b>Jede andere Art ist ein Ausfall</b> (Review-Befund L-1, dreizehnte Runde): abgewiesen als
+    /// Gateway-Fehler, nicht gemerkt. Eine solche Ausnahme — <c>InvalidOperationException</c>,
+    /// <c>NullReferenceException</c>, <c>KeyNotFoundException</c> — stammt eher aus einem Wettlauf
+    /// in den globalen Registern der Bibliothek als aus dem Schema; als „nicht baubar" gemerkt,
+    /// liefen Aufrufe ungeprüft durch. Der Preis (achte Runde, M-A): Würfe die Bibliothek eine
+    /// solche Art für ein bestimmtes Schema <i>jedes</i> Mal, bliebe das Werkzeug abgewiesen und
+    /// würde je Aufruf neu gebaut. Das schliesst sicher, steht als
+    /// <c>fault=gateway</c> in der Metrik und einmal je Invoker im Log — sichtbar, statt still
+    /// ungeprüft.
+    /// </para>
+    /// </summary>
+    internal static bool IsSchemaTextFailure(Exception exception)
+        => exception is JsonSchemaException or JsonException or FormatException or RefResolutionException;
+
     /// <summary>Ergebnis des Bauens: ein Schema, „nicht baubar" (beides null) oder ein Ausfall.</summary>
     internal readonly record struct SchemaBuildOutcome(JsonSchema? Schema, Exception? Interrupted);
 
@@ -597,11 +638,12 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// <list type="bullet">
     /// <item>Ein vorübergehender Fehler (<see cref="IsTransientBuildFailure"/>) ist ein Ausfall:
     /// nicht gemerkt, der Aufruf wird abgewiesen.</item>
-    /// <item>Jeder andere Fehler wird <b>bestätigt</b>, bevor er gilt: Ein zweiter Bau läuft.
-    /// Gelingt er, zählt sein Schema. Wirft er dieselbe Art Ausnahme, ist das Schema nicht baubar —
-    /// gemerkt in <see cref="UnusableSchemas"/>, R3. Wirft er eine andere Art, war es kein Fehler
-    /// des Schematexts, sondern einer des Augenblicks (etwa ein Wettlauf in den globalen
-    /// Registern der Bibliothek bei gleichzeitigen ersten Aufrufen): ein Ausfall.</item>
+    /// <item>Jeder andere Fehler bekommt einen zweiten Bau. Gelingt er, zählt sein Schema.</item>
+    /// <item>Scheitert auch er, ist das Schema nur dann nicht baubar — gemerkt in
+    /// <see cref="UnusableSchemas"/>, R3 —, wenn der Fehler am Schematext liegen kann
+    /// (<see cref="IsSchemaTextFailure"/>) und der zweite Bau dieselbe Art wirft. Sonst war es ein
+    /// Fehler des Augenblicks oder der Bibliothek (etwa ein Wettlauf in deren globalen Registern
+    /// bei gleichzeitigen ersten Aufrufen): ein Ausfall.</item>
     /// </list>
     /// Ohne die Bestätigung schaltete ein einziger solcher Fehler die Prüfung bis zum nächsten
     /// Katalog-Neubau ab — auf main betraf er genau einen Aufruf (Review-Befund M-1, zehnte Runde).
@@ -609,8 +651,9 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
     /// <para>
     /// <b>Gegen gleichzeitige Erstaufrufe (elfte Runde).</b> Der Bestätigungsbau läuft unter einer
     /// prozessweiten Sperre, so wiederholt ihn kein anderer Bestätigungsbau zur selben Zeit (M-2);
-    /// verglichen wird nur die Art der Ausnahme (zwölfte Runde, M-1). Nach dem Merken wird nachgesehen, ob ein gleichzeitiger Aufruf das Schema inzwischen
-    /// gebaut hat — dann gilt dessen Schema und die Markierung fällt; ebenso nimmt jeder gelungene
+    /// verglichen wird nur die Art der Ausnahme (zwölfte Runde, M-1), und nur für Arten aus
+    /// <see cref="IsSchemaTextFailure"/> (dreizehnte Runde, L-1). Nach dem Merken wird nachgesehen,
+    /// ob ein gleichzeitiger Aufruf das Schema inzwischen gebaut hat — dann gilt dessen Schema und die Markierung fällt; ebenso nimmt jeder gelungene
     /// Bau eine ältere Markierung zurück (M-1). <c>ValidateArguments</c> sieht zudem zuerst in die
     /// gebauten Schemas und erst danach in die Markierungen.
     /// </para>
@@ -641,7 +684,7 @@ public sealed partial class ToolInvoker : IToolInvoker, IDisposable
                 // baubares Schema galte sonst als Ausfall und wäre dauerhaft gesperrt (Review-Befund
                 // M-1, zwölfte Runde). Gegen Wettläufe schützt die Sperre, gegen eine stehen
                 // gebliebene Markierung der erneute Bauversuch (UnusableRetryInterval).
-                catch (Exception second) when (second.GetType() == first.GetType())
+                catch (Exception second) when (IsSchemaTextFailure(first) && second.GetType() == first.GetType())
                 {
                     UnusableSchemas.TryAdd(entry, new UnusableMark(second.Message));
 

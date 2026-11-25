@@ -83,6 +83,54 @@ public class MetricsTests
         duration.Value.Should().BeGreaterThanOrEqualTo(0);
     }
 
+    /// <summary>
+    /// Review-Befund L-3, dreizehnte Runde: Ein Katalogeintrag mit kaputtem Namen ist ein Fehler des
+    /// Gateways. Er zählt als <c>fault=gateway</c>, nicht <c>none</c> — sonst lastete eine
+    /// Fehlerquote je Upstream ihn dem Server an — und der Upstream wird nicht gerufen.
+    /// </summary>
+    [Fact]
+    public void A_catalog_entry_with_a_broken_name_is_counted_as_a_gateway_fault()
+    {
+        IdentityId admin = default;
+        ToolInvocationResult? result = null;
+        var measurements = Collect(
+            w => admin = w.RegisterAdmin(),
+            async w =>
+            {
+                var invoker = new ToolInvoker(
+                    w.Authorization, w.RateLimiter, new BrokenNameCatalog(w.Catalog), w.Supervisor, w.Audit, w.Redaction, w.Time);
+                result = await invoker.InvokeAsync(
+                    InvokerTestWorld.Request(admin, w.Echo, new { message = "hi" }), TestContext.Current.CancellationToken);
+            },
+            out var world);
+
+        result!.Status.Should().Be(InvocationStatus.UpstreamError);
+        result.ErrorMessage.Should().StartWith("Interner Gateway-Fehler");
+        world.Connection.CallCount.Should().Be(0, "der Upstream wird nicht gerufen");
+        measurements.Should().ContainSingle(m => m.Instrument == "bifrost.tool_calls")
+            .Which.Tags["fault"].Should().Be("gateway");
+    }
+
+    /// <summary>Gibt jeden Eintrag mit einem Namen ohne Trenner zurück — den es regulär nicht gibt.</summary>
+    private sealed class BrokenNameCatalog(IToolCatalog inner) : IToolCatalog
+    {
+        public IReadOnlyList<CatalogEntry> Snapshot => inner.Snapshot;
+
+        public event EventHandler<CatalogChangedEventArgs>? Changed
+        {
+            add => inner.Changed += value;
+            remove => inner.Changed -= value;
+        }
+
+        public ProfileView GetViewFor(IdentityId identity) => inner.GetViewFor(identity);
+
+        public IReadOnlyList<ToolSearchHit> Search(IdentityId identity, string query, int limit)
+            => inner.Search(identity, query, limit);
+
+        public CatalogEntry? Find(NamespacedToolName name)
+            => inner.Find(name) is { } entry ? entry with { Name = new NamespacedToolName("ohnetrenner") } : null;
+    }
+
     [Fact]
     public void Denied_call_is_counted_so_error_rate_is_derivable()
     {

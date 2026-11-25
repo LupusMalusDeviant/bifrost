@@ -662,11 +662,35 @@ public sealed class ReverseProxyHopTests
         => Environment.GetEnvironmentVariable("BIFROST_REQUIRE_CONTAINER") is "1" or "true"
             || (Enabled && OperatingSystem.IsLinux() && Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true");
 
-    /// <summary>Ob der Docker-Daemon auf diesem Rechner läuft (Socket oder Named Pipe, kein TCP).</summary>
+    /// <summary>
+    /// Ob nginx für diesen Rechner über Loopback erreichbar ist: ein Docker-Daemon auf diesem
+    /// Rechner — Socket, Named Pipe oder TCP auf eine Loopback-Adresse — und kein
+    /// <c>TESTCONTAINERS_HOST_OVERRIDE</c> auf eine andere Adresse (Review-Befund L-4, dreizehnte
+    /// Runde). Ein entfernter Host aus <c>~/.testcontainers.properties</c> oder einem
+    /// <c>docker context</c> wird nicht erkannt; dann scheitert die Bereitschaft, und die Meldung
+    /// nennt die Proxy-Adresse.
+    /// </summary>
     private static bool DockerDaemonIsLocal
-        => Environment.GetEnvironmentVariable("DOCKER_HOST") is not { Length: > 0 } host
-            || host.StartsWith("unix://", StringComparison.OrdinalIgnoreCase)
-            || host.StartsWith("npipe://", StringComparison.OrdinalIgnoreCase);
+        => IsLoopbackEndpoint(Environment.GetEnvironmentVariable("DOCKER_HOST"), socketIsLocal: true)
+            && IsLoopbackEndpoint(Environment.GetEnvironmentVariable("TESTCONTAINERS_HOST_OVERRIDE"), socketIsLocal: false);
+
+    private static bool IsLoopbackEndpoint(string? value, bool socketIsLocal)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        if (value.StartsWith("unix://", StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("npipe://", StringComparison.OrdinalIgnoreCase))
+        {
+            return socketIsLocal;
+        }
+
+        var host = Uri.TryCreate(value, UriKind.Absolute, out var uri) ? uri.Host : value;
+        return host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || (IPAddress.TryParse(host.Trim('[', ']'), out var address) && IPAddress.IsLoopback(address));
+    }
 
     private static bool IsLocalAddress(IPAddress address)
         => System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
