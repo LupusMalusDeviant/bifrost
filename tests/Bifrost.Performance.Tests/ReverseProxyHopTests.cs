@@ -72,6 +72,23 @@ public sealed class ReverseProxyHopTests
     public void Nginx_is_published_on_the_address_testcontainers_probes(string? dockerHost, string? hostOverride, string? expected)
         => LoopbackPublishAddress(dockerHost, hostOverride).Should().Be(expected);
 
+    /// <summary>
+    /// Nachbefund zur vierzehnten Runde: Die Proxy-Adresse entsteht auch für einen IPv6-Host ohne
+    /// Klammern, wie Testcontainers ihn aus <c>TESTCONTAINERS_HOST_OVERRIDE=::1</c> liefert.
+    /// </summary>
+    [Theory]
+    [InlineData("127.0.0.1", "http://127.0.0.1:8081/")]
+    [InlineData("localhost", "http://localhost:8081/")]
+    [InlineData("::1", "http://[::1]:8081/")]
+    [InlineData("[::1]", "http://[::1]:8081/")]
+    public void The_proxy_address_is_valid_for_every_loopback_host(string host, string expected)
+    {
+        var address = HttpAddress(host, 8081);
+
+        address.AbsoluteUri.Should().Be(expected);
+        address.Port.Should().Be(8081);
+    }
+
     [Fact]
     public async Task The_hop_through_a_real_reverse_proxy_is_measured_instead_of_assumed()
     {
@@ -99,7 +116,7 @@ public sealed class ReverseProxyHopTests
         var port = gateway.BaseAddress.Port;
         var listening = string.Join(", ", bridge.ListenAddresses.Select(a => a.ToString()).Prepend("127.0.0.1"));
         await using var proxy = await StartNginxAsync(port, listening, bridge, ct);
-        var proxyAddress = new Uri($"http://{proxy.Hostname}:{proxy.GetMappedPublicPort(80)}/");
+        var proxyAddress = HttpAddress(proxy.Hostname, proxy.GetMappedPublicPort(80));
         _output.WriteLine($"Gateway: {gateway.BaseAddress} · Proxy: {proxyAddress}");
 
         // Funktioniert der Weg überhaupt? Erst danach lohnt es, ihn zu messen.
@@ -728,6 +745,14 @@ public sealed class ReverseProxyHopTests
 
         return daemonHost ?? "127.0.0.1";
     }
+
+    /// <summary>
+    /// Die HTTP-Adresse eines Containers. Über <see cref="UriBuilder"/>, nicht per Zeichenkette:
+    /// Testcontainers gibt einen IPv6-Override wie <c>::1</c> ohne Klammern zurück, und
+    /// <c>http://::1:port/</c> wäre keine gültige Adresse (vierzehnte Runde, Nachbefund).
+    /// </summary>
+    internal static Uri HttpAddress(string host, int port)
+        => new UriBuilder(Uri.UriSchemeHttp, host, port, "/").Uri;
 
     /// <summary>Die Loopback-Adresse eines Endpunkts als Bindeadresse, sonst <c>null</c>.</summary>
     private static string? LoopbackHost(string value)
