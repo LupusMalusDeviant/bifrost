@@ -68,8 +68,14 @@ public sealed class UpstreamSupervisorTests : IAsyncDisposable
     {
         var id = await _supervisor.AddAsync(TestData.StdioConfig(), TestContext.Current.CancellationToken);
 
-        await TestData.WaitUntilAsync(() => _supervisor.GetStatus(id)?.State == UpstreamState.Healthy);
+        // Auf das Ereignis warten, nicht auf den Zustand: Der Supervisor setzt erst Healthy und meldet
+        // InventoryChanged danach. Wer auf Healthy wartet und dann die Ereignisse liest, gewinnt das
+        // Rennen nur auf einer unbelasteten Maschine (ci unter Windows, 27. November 2026).
+        await TestData.WaitUntilAsync(
+            () => Events.Any(e => e.Kind == UpstreamChangeKind.InventoryChanged && e.Server == id),
+            because: "nach dem Verbinden meldet der Supervisor das Inventar");
 
+        _supervisor.GetStatus(id)!.State.Should().Be(UpstreamState.Healthy);
         _supervisor.GetStatus(id)!.ToolCount.Should().Be(1);
         _supervisor.GetInventory(id)!.Tools.Should().ContainSingle(t => t.Name == "echo");
         _supervisor.GetConnection(id).Should().NotBeNull();
