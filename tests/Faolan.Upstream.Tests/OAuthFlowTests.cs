@@ -322,7 +322,9 @@ public sealed class OAuthFlowTests
 
         public void Dispose()
         {
-            _listener.Stop();
+            // Nur Close, kein Stop davor: Unter Linux entfernt Stop den Endpunkt bereits, und Close
+            // bindet den Port dann noch einmal, um ihn zu entfernen. Ist er inzwischen vergeben, wirft
+            // das "Address already in use" (ci auf main, 27. November 2026). Close allein beendet auch.
             _listener.Close();
         }
 
