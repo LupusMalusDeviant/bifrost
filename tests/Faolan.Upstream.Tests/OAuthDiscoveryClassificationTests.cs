@@ -154,89 +154,56 @@ public sealed class OAuthDiscoveryClassificationTests
     /// </summary>
     private sealed class MetadataServer : IDisposable
     {
-        private readonly HttpListener _listener = null!;
+        private readonly LoopbackHttpServer _server;
         private int _mcpRequests;
         private int _fallbackRequests;
 
         public MetadataServer(string firstPathBody, bool otherPathsValid, HttpStatusCode otherPathsStatus = HttpStatusCode.OK)
         {
-            for (var attempt = 0; ; attempt++)
+            _server = new LoopbackHttpServer(context =>
             {
-                var port = Random.Shared.Next(20000, 60000);
-                var listener = new HttpListener();
-                listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-                try
+                var issuer = Issuer.ToString().TrimEnd('/');
+                var path = context.Request.Url!.AbsolutePath;
+                if (path.StartsWith("/.well-known/oauth-authorization-server", StringComparison.Ordinal))
                 {
-                    listener.Start();
-                    _listener = listener;
-                    Issuer = new Uri($"http://127.0.0.1:{port}");
-                    break;
+                    Write(context, HttpStatusCode.OK, firstPathBody);
                 }
-                catch (HttpListenerException) when (attempt < 20)
+                else if (path.StartsWith("/.well-known/", StringComparison.Ordinal))
                 {
-                    listener.Close();
+                    Interlocked.Increment(ref _fallbackRequests);
+                    Write(context, otherPathsStatus, otherPathsValid
+                        ? $$"""
+                            {
+                              "issuer": "{{issuer}}",
+                              "authorization_endpoint": "{{issuer}}/authorize",
+                              "token_endpoint": "{{issuer}}/token",
+                              "code_challenge_methods_supported": ["S256"]
+                            }
+                            """
+                        : """{"issuer": ["kein", "string"]}""");
                 }
-            }
+                else if (path.StartsWith("/mcp", StringComparison.Ordinal))
+                {
+                    Interlocked.Increment(ref _mcpRequests);
+                    Write(context, HttpStatusCode.ServiceUnavailable, "{}");
+                }
+                else
+                {
+                    Write(context, HttpStatusCode.OK,
+                        $$"""{"access_token":"at-{{Guid.NewGuid():N}}","refresh_token":"rt-{{Guid.NewGuid():N}}","expires_in":3600}""");
+                }
 
-            _ = Task.Run(async () =>
-            {
-                while (_listener.IsListening)
-                {
-                    HttpListenerContext context;
-                    try
-                    {
-                        context = await _listener.GetContextAsync();
-                    }
-                    catch (Exception exception) when (exception is HttpListenerException or ObjectDisposedException)
-                    {
-                        return;
-                    }
-
-                    var issuer = Issuer.ToString().TrimEnd('/');
-                    var path = context.Request.Url!.AbsolutePath;
-                    if (path.StartsWith("/.well-known/oauth-authorization-server", StringComparison.Ordinal))
-                    {
-                        Write(context, HttpStatusCode.OK, firstPathBody);
-                    }
-                    else if (path.StartsWith("/.well-known/", StringComparison.Ordinal))
-                    {
-                        Interlocked.Increment(ref _fallbackRequests);
-                        Write(context, otherPathsStatus, otherPathsValid
-                            ? $$"""
-                                {
-                                  "issuer": "{{issuer}}",
-                                  "authorization_endpoint": "{{issuer}}/authorize",
-                                  "token_endpoint": "{{issuer}}/token",
-                                  "code_challenge_methods_supported": ["S256"]
-                                }
-                                """
-                            : """{"issuer": ["kein", "string"]}""");
-                    }
-                    else if (path.StartsWith("/mcp", StringComparison.Ordinal))
-                    {
-                        Interlocked.Increment(ref _mcpRequests);
-                        Write(context, HttpStatusCode.ServiceUnavailable, "{}");
-                    }
-                    else
-                    {
-                        Write(context, HttpStatusCode.OK,
-                            $$"""{"access_token":"at-{{Guid.NewGuid():N}}","refresh_token":"rt-{{Guid.NewGuid():N}}","expires_in":3600}""");
-                    }
-                }
+                return Task.CompletedTask;
             });
         }
 
-        public Uri Issuer { get; } = null!;
+        public Uri Issuer => _server.Address;
 
         public int McpRequests => Volatile.Read(ref _mcpRequests);
 
         public int FallbackRequests => Volatile.Read(ref _fallbackRequests);
 
-        public void Dispose()
-        {
-            _listener.Stop();
-            _listener.Close();
-        }
+        public void Dispose() => _server.Dispose();
 
         private static void Write(HttpListenerContext context, HttpStatusCode status, string body)
         {

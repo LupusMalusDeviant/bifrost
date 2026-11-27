@@ -475,84 +475,51 @@ public sealed class OAuthTokenEndpointFailureTests
     /// <summary>Metadaten unter dem Well-Known-Pfad, ein Token-Endpunkt mit festem Fehlerstatus.</summary>
     private sealed class AuthorizationServer : IDisposable
     {
-        private readonly HttpListener _listener = null!;
+        private readonly LoopbackHttpServer _server;
 
         public AuthorizationServer(HttpStatusCode tokenStatus)
         {
-            // Den Port vergibt das Betriebssystem erst beim Binden; ein vorher erfragter freier
-            // Port kann bis dahin belegt sein. Darum: versuchen, bis einer frei bleibt.
-            // Ein HttpListener, dessen Start scheitert, ist danach entsorgt — jeder Versuch braucht
-            // einen neuen (im vollen Testlauf als ObjectDisposedException gemessen).
-            for (var attempt = 0; ; attempt++)
+            _server = new LoopbackHttpServer(context =>
             {
-                var port = Random.Shared.Next(20000, 60000);
-                var listener = new HttpListener();
-                listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-                try
+                var issuer = Issuer.ToString().TrimEnd('/');
+                if (context.Request.Url!.AbsolutePath.StartsWith("/.well-known/", StringComparison.Ordinal)
+                    && MetadataStatus != HttpStatusCode.OK)
                 {
-                    listener.Start();
-                    _listener = listener;
-                    Issuer = new Uri($"http://127.0.0.1:{port}");
-                    break;
+                    Write(context, MetadataStatus, "{}");
                 }
-                catch (HttpListenerException) when (attempt < 20)
+                else if (context.Request.Url!.AbsolutePath.StartsWith("/.well-known/", StringComparison.Ordinal))
                 {
-                    listener.Close();
+                    Write(context, HttpStatusCode.OK, $$"""
+                        {
+                          "issuer": "{{issuer}}",
+                          "authorization_endpoint": "{{issuer}}/authorize",
+                          "token_endpoint": "{{issuer}}/token",
+                          "code_challenge_methods_supported": ["S256"]
+                        }
+                        """);
                 }
-            }
+                else if (context.Request.Url.AbsolutePath.StartsWith("/mcp", StringComparison.Ordinal))
+                {
+                    Interlocked.Increment(ref _mcpRequests);
+                    Write(context, HttpStatusCode.ServiceUnavailable, "{}");
+                }
+                else if (tokenStatus == HttpStatusCode.OK)
+                {
+                    OnTokenRequest?.Invoke();
+                    Write(context, HttpStatusCode.OK, TokenBody is { } body ? body() : OmitRefreshToken
+                        ? $$"""{"access_token":"at-{{Guid.NewGuid():N}}","expires_in":3600}"""
+                        : $$"""{"access_token":"at-{{Guid.NewGuid():N}}","refresh_token":"rt-{{Guid.NewGuid():N}}","expires_in":3600}""");
+                }
+                else
+                {
+                    Write(context, tokenStatus, ErrorBody ?? """{"error":"temporarily_unavailable","error_description":"geheim-aus-dem-token-endpunkt"}""");
+                }
 
-            _ = Task.Run(async () =>
-            {
-                while (_listener.IsListening)
-                {
-                    HttpListenerContext context;
-                    try
-                    {
-                        context = await _listener.GetContextAsync();
-                    }
-                    catch (Exception exception) when (exception is HttpListenerException or ObjectDisposedException)
-                    {
-                        return;
-                    }
-
-                    var issuer = Issuer.ToString().TrimEnd('/');
-                    if (context.Request.Url!.AbsolutePath.StartsWith("/.well-known/", StringComparison.Ordinal)
-                        && MetadataStatus != HttpStatusCode.OK)
-                    {
-                        Write(context, MetadataStatus, "{}");
-                    }
-                    else if (context.Request.Url!.AbsolutePath.StartsWith("/.well-known/", StringComparison.Ordinal))
-                    {
-                        Write(context, HttpStatusCode.OK, $$"""
-                            {
-                              "issuer": "{{issuer}}",
-                              "authorization_endpoint": "{{issuer}}/authorize",
-                              "token_endpoint": "{{issuer}}/token",
-                              "code_challenge_methods_supported": ["S256"]
-                            }
-                            """);
-                    }
-                    else if (context.Request.Url.AbsolutePath.StartsWith("/mcp", StringComparison.Ordinal))
-                    {
-                        Interlocked.Increment(ref _mcpRequests);
-                        Write(context, HttpStatusCode.ServiceUnavailable, "{}");
-                    }
-                    else if (tokenStatus == HttpStatusCode.OK)
-                    {
-                        OnTokenRequest?.Invoke();
-                        Write(context, HttpStatusCode.OK, TokenBody is { } body ? body() : OmitRefreshToken
-                            ? $$"""{"access_token":"at-{{Guid.NewGuid():N}}","expires_in":3600}"""
-                            : $$"""{"access_token":"at-{{Guid.NewGuid():N}}","refresh_token":"rt-{{Guid.NewGuid():N}}","expires_in":3600}""");
-                    }
-                    else
-                    {
-                        Write(context, tokenStatus, ErrorBody ?? """{"error":"temporarily_unavailable","error_description":"geheim-aus-dem-token-endpunkt"}""");
-                    }
-                }
+                return Task.CompletedTask;
             });
         }
 
-        public Uri Issuer { get; } = null!;
+        public Uri Issuer => _server.Address;
 
         private int _mcpRequests;
 
@@ -574,11 +541,7 @@ public sealed class OAuthTokenEndpointFailureTests
         /// <summary>Wenn gesetzt, der Fehlerkörper des Token-Endpunkts bei einem Status ungleich 200.</summary>
         public string? ErrorBody { get; init; }
 
-        public void Dispose()
-        {
-            _listener.Stop();
-            _listener.Close();
-        }
+        public void Dispose() => _server.Dispose();
 
         private static void Write(HttpListenerContext context, HttpStatusCode status, string body)
         {
