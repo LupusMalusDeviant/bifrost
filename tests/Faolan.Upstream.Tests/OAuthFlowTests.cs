@@ -284,57 +284,21 @@ public sealed class OAuthFlowTests
     /// <summary>Ein winziger HTTPS-freier Metadaten-Server auf Loopback für die Discovery-Tests.</summary>
     private sealed class MetadataServer : IDisposable
     {
-        private readonly HttpListener _listener = new();
+        private readonly LoopbackHttpServer _server;
 
         public MetadataServer(Func<string, string> body)
         {
-            var port = FreePort();
-            Issuer = new Uri($"http://127.0.0.1:{port}");
-            _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-            _listener.Start();
-            _ = Task.Run(async () =>
+            _server = new LoopbackHttpServer(async context =>
             {
-                while (_listener.IsListening)
-                {
-                    HttpListenerContext context;
-                    try
-                    {
-                        context = await _listener.GetContextAsync();
-                    }
-                    catch (HttpListenerException)
-                    {
-                        return;
-                    }
-                    catch (ObjectDisposedException)
-                    {
-                        return;
-                    }
-
-                    var payload = System.Text.Encoding.UTF8.GetBytes(body(Issuer.ToString().TrimEnd('/')));
-                    context.Response.ContentType = "application/json";
-                    await context.Response.OutputStream.WriteAsync(payload);
-                    context.Response.Close();
-                }
+                var payload = System.Text.Encoding.UTF8.GetBytes(body(Issuer.ToString().TrimEnd('/')));
+                context.Response.ContentType = "application/json";
+                await context.Response.OutputStream.WriteAsync(payload);
+                context.Response.Close();
             });
         }
 
-        public Uri Issuer { get; }
+        public Uri Issuer => _server.Address;
 
-        public void Dispose()
-        {
-            // Nur Close, kein Stop davor: Unter Linux entfernt Stop den Endpunkt bereits, und Close
-            // bindet den Port dann noch einmal, um ihn zu entfernen. Ist er inzwischen vergeben, wirft
-            // das "Address already in use" (ci auf main, 27. November 2026). Close allein beendet auch.
-            _listener.Close();
-        }
-
-        private static int FreePort()
-        {
-            using var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            return port;
-        }
+        public void Dispose() => _server.Dispose();
     }
 }
