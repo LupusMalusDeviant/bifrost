@@ -1,0 +1,483 @@
+using System.Text.Json;
+using Faolan.Abstractions;
+using ModelContextProtocol;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
+
+namespace Faolan.Upstream;
+
+/// <summary>
+/// Kapselt einen SDK-<see cref="McpClient"/> vollständig hinter <see cref="IUpstreamConnection"/> —
+/// oberhalb dieser Klasse existieren keine SDK-Typen (DON'T Nr. 1). Discovery ist teil-tolerant:
+/// Tools sind Pflicht, Resources/Prompts werden nur gelistet, wenn der Server die Capability meldet.
+/// </summary>
+internal sealed class SdkUpstreamConnection : IUpstreamConnection, IPresentedCredentials
+{
+    private static readonly string[] ForwardedNotifications =
+    [
+        NotificationMethods.ToolListChangedNotification,
+        NotificationMethods.ResourceListChangedNotification,
+        NotificationMethods.PromptListChangedNotification,
+    ];
+
+    /// <summary>Wie viele Namen aus einem offenen Wörterbuch höchstens im Bericht landen.</summary>
+    private const int MaxOpenSetEntries = 16;
+
+    /// <summary>Obergrenze für einen einzelnen Namen aus einem offenen Wörterbuch.</summary>
+    private const int MaxNameLength = 120;
+
+    private readonly McpClient _client;
+    private readonly List<IAsyncDisposable> _registrations = [];
+
+    /// <summary>
+    /// Hatte diese Verbindung beim Aufbau eine Sitzung? Festgehalten, weil die Frage nach dem
+    /// ersten 404 gestellt wird — und dann nicht davon abhängen soll, was ein Client, der sich
+    /// gerade abbaut, über sich sagt.
+    /// </summary>
+    private readonly bool _hadSession;
+
+    /// <summary>Ein 404 auf die Sitzung ist gesehen worden — mit oder ohne MCP-Fehlerkörper.</summary>
+    private bool _notFoundSeen;
+
+    /// <summary>Das OAuth-Token, das diese Verbindung vorlegt — es steht in keiner Konfiguration (Plan 0005 D1).</summary>
+    public IReadOnlyList<string> PresentedCredentials { get; }
+
+    public SdkUpstreamConnection(ServerId id, McpClient client, IReadOnlyList<string>? presented = null)
+    {
+        Id = id;
+        _client = client;
+        _hadSession = client.SessionId is not null;
+        PresentedCredentials = presented ?? [];
+        foreach (var method in ForwardedNotifications)
+        {
+            _registrations.Add(_client.RegisterNotificationHandler(method, (notification, _) =>
+            {
+                NotificationReceived?.Invoke(this, new UpstreamNotificationEventArgs
+                {
+                    Server = Id,
+                    Method = notification.Method,
+                    Params = notification.Params is { } p ? JsonSerializer.SerializeToElement(p, McpJsonUtilities.DefaultOptions) : null,
+                });
+                return default;
+            }));
+        }
+    }
+
+    public ServerId Id { get; }
+
+    /// <summary>
+    /// Auf der Revision 2026-07-28 gibt es keine unaufgeforderten Nachrichten mehr — die
+    /// registrierten Handler oben bleiben dann stumm, und der Supervisor muss turnusmäßig
+    /// nachfragen. Auf älteren Ständen ist alles wie bisher.
+    /// </summary>
+    public bool PushesCatalogChanges => !SpeaksJuly2026OrLater(_client.NegotiatedProtocolVersion);
+
+    /// <summary>
+    /// Die ausgehandelte Fassung und die gemeldeten Fähigkeiten — hier, und nur hier, liegen sie.
+    /// <para>
+    /// Es wird <b>nichts nachgefragt</b>: Beide Werte stehen seit dem Verbindungsaufbau im Client.
+    /// Die Eigenschaft ist damit auch dann beantwortbar, wenn die Gegenstelle gerade nicht
+    /// antwortet — genau der Fall, in dem jemand die Diagnose aufruft.
+    /// </para>
+    /// </summary>
+    public UpstreamProtocolInfo Protocol
+    {
+        get
+        {
+            var negotiated = _client.NegotiatedProtocolVersion;
+            return string.IsNullOrWhiteSpace(negotiated)
+                ? UpstreamProtocolInfo.Unknown(
+                    "Die Verbindung steht, aber das SDK nennt keine ausgehandelte Fassung. Das ist "
+                    + "kein Normalfall — erwartbar ist es nur, solange der Aufbau noch laeuft.")
+                : UpstreamProtocolInfo.Negotiated(negotiated, DescribeCapabilities(_client.ServerCapabilities));
+        }
+    }
+
+    public event EventHandler<UpstreamNotificationEventArgs>? NotificationReceived;
+
+    public Task<UpstreamInventory> DiscoverAsync(CancellationToken ct)
+        => DiscoverAsync(static () => true, ct);
+
+    public Task<UpstreamInventory> DiscoverAsync(Func<bool> mayContinue, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(mayContinue);
+        return WithSessionCheckAsync(() => DiscoverCoreAsync(mayContinue, ct));
+    }
+
+    /// <summary>Plan 0005 I3: Vor jeder Folgeanfrage des Katalogs — im Drain geht keine mehr hinaus.</summary>
+    private static void ThrowUnlessMayContinue(Func<bool> mayContinue)
+    {
+        if (!mayContinue())
+        {
+            throw new UpstreamCatalogWithheldException("Die Katalogabfrage endet vor der nächsten Anfrage (Drain).");
+        }
+    }
+
+    public Task<JsonElement> CallToolAsync(string toolName, JsonElement args, CancellationToken ct)
+        => WithSessionCheckAsync(() => CallToolCoreAsync(toolName, args, ct));
+
+    public Task<JsonElement> ReadResourceAsync(Uri uri, CancellationToken ct)
+        => WithSessionCheckAsync(() => ReadResourceCoreAsync(uri, ct));
+
+    public Task<JsonElement> GetPromptAsync(string promptName, JsonElement? args, CancellationToken ct)
+        => WithSessionCheckAsync(() => GetPromptCoreAsync(promptName, args, ct));
+
+    public Task PingAsync(CancellationToken ct)
+        => WithSessionCheckAsync(async () =>
+        {
+            await PingCoreAsync(ct).ConfigureAwait(false);
+            return true;
+        });
+
+    /// <summary>
+    /// Übersetzt „HTTP 404 auf eine Anfrage, während eine Sitzung besteht" in
+    /// <see cref="UpstreamSessionLostException"/> — den einen Fehler, nach dem ein Aufruf
+    /// wiederholt werden darf.
+    /// <para>
+    /// <b>Beide Bedingungen zählen.</b> Ein 404 ohne Sitzung beweist nichts: Auf der Revision
+    /// 2026-07-28 beantwortet ein Server auch ein unbekanntes Verfahren mit HTTP 404 (gemessen an
+    /// <c>ping</c>). Und nach diesem ersten 404 ist der SDK-Client tot — er baut die Sitzung nicht
+    /// selbst neu auf, jeder weitere Aufruf endet sofort in einer TaskCanceledException. Der
+    /// Neuaufbau ist Sache des Supervisors.
+    /// </para>
+    /// </summary>
+    private async Task<T> WithSessionCheckAsync<T>(Func<Task<T>> call)
+    {
+        // Ist der Client der Sitzung schon beendet, verlässt diese Anfrage das Gateway gar nicht
+        // erst — sie darf über eine neue Sitzung laufen (Vertrag Abschnitt 4, „nach dem 404
+        // begonnen"). Gemessen (Plan 0005 D13): Weist der Upstream die Wiederaufnahme eines
+        // abgerissenen Antwortstroms mit 404 ab, endet der Client, ohne dass ein Aufruf ein 404
+        // sähe; der abgerissene endet mit „completed without a reply", jeder weitere mit einem
+        // nackten Abbruch.
+        // Auch ein 404, das NICHT wiederholt wird (kein MCP-Fehlerkörper), beendet den Client — aber
+        // erst etwas später. Wer in dieser Lücke beginnt, liefe in den sterbenden Client, würde
+        // abgebrochen und als „unterwegs abgebrochen" nicht wiederholt. Darum zählt schon das
+        // gesehene 404: Danach verlässt nichts mehr das Gateway über diesen Client (Abschnitt 4).
+        if ((Volatile.Read(ref _notFoundSeen) || _client.Completion.IsCompleted)
+            && (_hadSession || _client.SessionId is not null))
+        {
+            throw new UpstreamSessionLostException(
+                "Der Client der Sitzung zum Upstream ist beendet; die Anfrage wurde nicht gesendet.");
+        }
+
+        try
+        {
+            return await call().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (IsSessionLost(exception))
+        {
+            throw new UpstreamSessionLostException(
+                "Der Upstream kennt die Sitzung nicht mehr (HTTP 404 auf die Mcp-Session-Id).", exception);
+        }
+    }
+
+    private bool IsSessionLost(Exception exception)
+    {
+        if (!_hadSession && _client.SessionId is null)
+        {
+            return false;
+        }
+
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is HttpRequestException { StatusCode: System.Net.HttpStatusCode.NotFound } notFound)
+            {
+                Volatile.Write(ref _notFoundSeen, true);
+
+                // Nur das 404 des MCP-Servers selbst (Vertrag Abschnitt 4, Plan 0005 E12). Ein
+                // Zwischenglied kann ein 404 auch NACH der Ausführung liefern; das zu wiederholen
+                // hieße, einen Aufruf womöglich doppelt auszuführen.
+                return IsMcpErrorBody(notFound.Message);
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Das SDK hängt den Antwortkörper an die Meldung an („… Response body: {…}").</summary>
+    private const string ResponseBodyMarker = "Response body:";
+
+    /// <summary>
+    /// Ist der an die Meldung angehängte Antwortkörper ein JSON-RPC-Fehler? So antworten die
+    /// MCP-SDKs auf eine unbekannte Sitzung; ein Proxy-404 ist leer oder HTML.
+    /// </summary>
+    internal static bool IsMcpErrorBody(string message)
+    {
+        var at = message.IndexOf(ResponseBodyMarker, StringComparison.Ordinal);
+        if (at < 0)
+        {
+            return false;
+        }
+
+        var body = message[(at + ResponseBodyMarker.Length)..].Trim();
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            return root.ValueKind == JsonValueKind.Object
+                && root.TryGetProperty("jsonrpc", out var version)
+                && version.ValueKind == JsonValueKind.String
+                && version.GetString() == "2.0"
+                && root.TryGetProperty("error", out var error)
+                && IsJsonRpcErrorObject(error);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Ein Fehlerobjekt nach JSON-RPC 2.0 (5.1): ganzzahliges <c>code</c> und <c>message</c> als
+    /// Zeichenkette. Irgendein Objekt unter <c>error</c> (auch <c>{}</c>) beweist nicht, dass der
+    /// MCP-Server antwortet (Plan 0005 F8).
+    /// </summary>
+    private static bool IsJsonRpcErrorObject(JsonElement error)
+        => error.ValueKind == JsonValueKind.Object
+            && error.TryGetProperty("code", out var code)
+            && code.ValueKind == JsonValueKind.Number
+            && code.TryGetInt64(out _)
+            && error.TryGetProperty("message", out var text)
+            && text.ValueKind == JsonValueKind.String;
+
+    private async Task<UpstreamInventory> DiscoverCoreAsync(Func<bool> mayContinue, CancellationToken ct)
+    {
+        IList<McpClientTool> tools;
+        try
+        {
+            tools = await _client.ListToolsAsync(cancellationToken: ct).ConfigureAwait(false);
+        }
+        catch (JsonException exception)
+        {
+            // Seit SDK 2.0 ist 'inputSchema' beim Werkzeug PFLICHT — fehlt es, bricht schon die
+            // Deserialisierung. Vorher lief ein solcher Server durch. Die nackte JsonException
+            // ("The JSON value could not be converted…") stuende dann als Ausfallgrund in der
+            // Oberflaeche, und niemand kaeme von dort auf den eigentlichen Fehler: Der Upstream
+            // haelt sich nicht ans Protokoll. Ein leeres '{}' genuegt ihm.
+            throw new InvalidOperationException(
+                "Der Upstream lieferte eine Werkzeugliste, die sich nicht lesen laesst. Haeufigste "
+                + "Ursache seit der Spec-Revision 2026-07-28: Ein Werkzeug ohne 'inputSchema' — das "
+                + "Feld ist inzwischen Pflicht, ein leeres Schema '{}' reicht aus. "
+                + $"Urspruengliche Meldung: {exception.Message}",
+                exception);
+        }
+
+        var toolDescriptors = tools
+            .Select(t => new ToolDescriptor(t.Name, t.Description, t.JsonSchema.Clone()))
+            .ToList();
+
+        var resources = new List<ResourceDescriptor>();
+        if (_client.ServerCapabilities?.Resources is not null)
+        {
+            ThrowUnlessMayContinue(mayContinue);
+            var listed = await _client.ListResourcesAsync(cancellationToken: ct).ConfigureAwait(false);
+            resources.AddRange(listed.Select(r => new ResourceDescriptor(
+                new Uri(r.Uri, UriKind.RelativeOrAbsolute), r.Name, r.Description, r.MimeType)));
+        }
+
+        var prompts = new List<PromptDescriptor>();
+        if (_client.ServerCapabilities?.Prompts is not null)
+        {
+            ThrowUnlessMayContinue(mayContinue);
+            var listed = await _client.ListPromptsAsync(cancellationToken: ct).ConfigureAwait(false);
+            prompts.AddRange(listed.Select(p => new PromptDescriptor(p.Name, p.Description)));
+        }
+
+        return new UpstreamInventory(toolDescriptors, resources, prompts);
+    }
+
+    private async Task<JsonElement> CallToolCoreAsync(string toolName, JsonElement args, CancellationToken ct)
+    {
+        CallToolResult result;
+        try
+        {
+            result = await _client
+                .CallToolAsync(toolName, JsonArguments.ToDictionary(args), cancellationToken: ct)
+                .ConfigureAwait(false);
+        }
+        catch (InvalidOperationException exception)
+            when (exception.Message.Contains("ElicitationHandler", StringComparison.Ordinal))
+        {
+            // Der Upstream will mitten im Aufruf etwas vom Menschen wissen (MRTR, 'input_required').
+            // Wir beantworten das nicht — ADR-0010: Sampling und Elicitation werden NICHT
+            // durchgereicht. Der Grund hat sich mit der neuen Revision nicht geaendert: Das
+            // Protokoll traegt keine Korrelation, die sagt, WELCHER Mensch hier gemeint ist; der
+            // Gateway steht zwischen vielen Aufrufern und einem Upstream.
+            //
+            // Der Aufruf scheitert also — aber mit einer Aussage. Ohne diesen Zweig stuende dort
+            // "no ElicitationHandler is registered", was nach einem Fehler in der Zusammenstellung
+            // des GATEWAYS klingt und nicht nach einer bewussten Grenze.
+            throw new NotSupportedException(
+                $"Das Werkzeug '{toolName}' verlangt eine Rueckfrage beim Menschen (MRTR). Der "
+                + "Gateway reicht Rueckfragen eines Upstreams nicht durch (ADR-0010) — er koennte "
+                + "nicht sagen, an welchen der vielen Aufrufer sie gehen soll.",
+                exception);
+        }
+
+        return JsonSerializer.SerializeToElement(result, McpJsonUtilities.DefaultOptions);
+    }
+
+    private async Task<JsonElement> ReadResourceCoreAsync(Uri uri, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        var result = await _client.ReadResourceAsync(uri, cancellationToken: ct).ConfigureAwait(false);
+        return JsonSerializer.SerializeToElement(result, McpJsonUtilities.DefaultOptions);
+    }
+
+    private async Task<JsonElement> GetPromptCoreAsync(string promptName, JsonElement? args, CancellationToken ct)
+    {
+        IReadOnlyDictionary<string, object?>? arguments = args is { } a ? JsonArguments.ToDictionary(a) : null;
+        var result = await _client.GetPromptAsync(promptName, arguments, cancellationToken: ct).ConfigureAwait(false);
+        return JsonSerializer.SerializeToElement(result, McpJsonUtilities.DefaultOptions);
+    }
+
+    /// <summary>
+    /// Lebenszeichen des Upstreams — die Grundlage der Gesundheitsanzeige und des Neustarts.
+    /// <para>
+    /// <b><c>ping</c> gibt es ab der Spec-Revision 2026-07-28 nicht mehr</b> („The method 'ping' is
+    /// not available on protocol version '2026-07-28'"). Der Ersatz ist <c>server/discover</c>: die
+    /// Anfrage, mit der ein Client auf dieser Revision ohnehin beginnt — leichtgewichtig, ohne
+    /// Nebenwirkung und beim Server unvermeidlich implementiert.
+    /// </para>
+    /// <para>
+    /// Die Weiche steht hier und nicht in der Konfiguration: Welche Revision gilt, hat die
+    /// Gegenstelle ausgehandelt, nicht der Betreiber. Ein Schalter dafuer waere eine Einladung,
+    /// ihn falsch zu stellen.
+    /// </para>
+    /// </summary>
+    private async Task PingCoreAsync(CancellationToken ct)
+    {
+        if (!SpeaksJuly2026OrLater(_client.NegotiatedProtocolVersion))
+        {
+            await _client.PingAsync(cancellationToken: ct).ConfigureAwait(false);
+            return;
+        }
+
+        await _client.SendRequestAsync<DiscoverRequestParams, DiscoverResult>(
+            RequestMethods.ServerDiscover,
+            new DiscoverRequestParams(),
+            McpJsonUtilities.DefaultOptions,
+            cancellationToken: ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Übersetzt das Capability-Objekt der Gegenstelle in <b>Namen</b>.
+    /// <para>
+    /// <b>Warum nur Namen:</b> <c>experimental</c> und <c>extensions</c> sind offene Wörterbücher —
+    /// die Gegenstelle darf dort alles hineinschreiben, auch Werte, die niemand vorhergesehen hat.
+    /// Ein Wert, den man nicht kennt, ist ein Wert, den man nicht anzeigen sollte; die Namen sagen,
+    /// <em>dass</em> es etwas gibt, und das ist die Frage, um die es hier geht. Die Namen selbst
+    /// kommen ebenfalls von aussen und laufen in der Diagnose durch die Redaktion.
+    /// </para>
+    /// <para>
+    /// <b>Warum gedeckelt:</b> Ein Upstream kann zehntausend Erweiterungsnamen melden. Diese Liste
+    /// landet in einem Diagnosebericht, den ein Mensch liest — sie ist eine Auskunft, kein Abbild.
+    /// Wird gekürzt, steht das als eigener Eintrag da, statt still zu verschwinden.
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<string> DescribeCapabilities(ServerCapabilities? capabilities)
+    {
+        if (capabilities is null)
+        {
+            return [];
+        }
+
+        var names = new List<string>();
+
+        if (capabilities.Tools is { } tools)
+        {
+            names.Add("tools");
+            if (tools.ListChanged is true)
+            {
+                names.Add("tools.listChanged");
+            }
+        }
+
+        if (capabilities.Resources is { } resources)
+        {
+            names.Add("resources");
+            if (resources.Subscribe is true)
+            {
+                names.Add("resources.subscribe");
+            }
+
+            if (resources.ListChanged is true)
+            {
+                names.Add("resources.listChanged");
+            }
+        }
+
+        if (capabilities.Prompts is { } prompts)
+        {
+            names.Add("prompts");
+            if (prompts.ListChanged is true)
+            {
+                names.Add("prompts.listChanged");
+            }
+        }
+
+        // Abgekuendigt seit der Revision 2026-07-28 (SEP-2577) — und gerade deshalb eine Angabe,
+        // die in eine Diagnose gehoert: Meldet eine Gegenstelle sie noch, sagt das etwas ueber
+        // ihren Stand. Hier wird nichts benutzt, nur wiedergegeben, was sie selbst gesagt hat.
+#pragma warning disable MCP9005
+        if (capabilities.Logging is not null)
+        {
+            names.Add("logging");
+        }
+#pragma warning restore MCP9005
+
+        if (capabilities.Completions is not null)
+        {
+            names.Add("completions");
+        }
+
+        AddOpenSet(names, "experimental", capabilities.Experimental?.Keys);
+        AddOpenSet(names, "extensions", capabilities.Extensions?.Keys);
+        return names;
+    }
+
+    /// <summary>Die offenen Wörterbücher: Namen, alphabetisch, gedeckelt — und die Kürzung sichtbar.</summary>
+    private static void AddOpenSet(List<string> names, string prefix, IEnumerable<string>? keys)
+    {
+        if (keys is null)
+        {
+            return;
+        }
+
+        var ordered = keys.OrderBy(key => key, StringComparer.Ordinal).ToList();
+        foreach (var key in ordered.Take(MaxOpenSetEntries))
+        {
+            // Ein einzelner Name kann beliebig lang sein; er steht in einer Tabellenzelle.
+            names.Add($"{prefix}:{(key.Length > MaxNameLength ? key[..MaxNameLength] + "…" : key)}");
+        }
+
+        if (ordered.Count > MaxOpenSetEntries)
+        {
+            names.Add($"{prefix}:… (+{ordered.Count - MaxOpenSetEntries} weitere)");
+        }
+    }
+
+    /// <summary>
+    /// Die Revisionen sind datumssortiert benannt — ein Stringvergleich reicht und bleibt richtig,
+    /// wenn eine weitere dazukommt.
+    /// </summary>
+    internal static bool SpeaksJuly2026OrLater(string? negotiated)
+        => negotiated is not null && string.CompareOrdinal(negotiated, "2026-07-28") >= 0;
+
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var registration in _registrations)
+        {
+            try
+            {
+                await registration.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (ObjectDisposedException)
+            {
+                // Client bereits weg — irrelevant beim Abbau.
+            }
+        }
+
+        await _client.DisposeAsync().ConfigureAwait(false);
+    }
+}

@@ -1,7 +1,7 @@
 # Kompatibilitätsmatrix
 
 <!-- GENERIERT aus tests/compatibility/matrix.json — nicht von Hand ändern.
-     Neu erzeugen: BIFROST_UPDATE_COMPAT_REPORT=1 dotnet test tests/compatibility/Bifrost.Compatibility.Tests -->
+     Neu erzeugen: FAOLAN_UPDATE_COMPAT_REPORT=1 dotnet test tests/compatibility/Faolan.Compatibility.Tests -->
 
 **Stand der Matrix:** 2026-08-02 · **Schema:** v1
 

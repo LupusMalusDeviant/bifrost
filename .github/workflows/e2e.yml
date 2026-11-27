@@ -39,7 +39,7 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Build (warnings are errors)
-        run: dotnet build tests/Bifrost.Ui.E2E --configuration Release
+        run: dotnet build tests/Faolan.Ui.E2E --configuration Release
 
       # Der Browser ist ~180 MB und ändert sich nur mit der Playwright-Version — der Schlüssel hängt
       # deshalb an der Datei, in der diese Version steht.
@@ -49,13 +49,13 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
 
       - name: Browser bereitstellen
-        run: pwsh tests/Bifrost.Ui.E2E/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+        run: pwsh tests/Faolan.Ui.E2E/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
 
       - name: Browserwege
         env:
-          BIFROST_RUN_E2E: "1"
-          BIFROST_E2E_BROWSER: chromium
-        run: dotnet test tests/Bifrost.Ui.E2E --configuration Release --no-build --logger "console;verbosity=detailed"
+          FAOLAN_RUN_E2E: "1"
+          FAOLAN_E2E_BROWSER: chromium
+        run: dotnet test tests/Faolan.Ui.E2E --configuration Release --no-build --logger "console;verbosity=detailed"
 
       # Nur im Fehlerfall entsteht hier etwas: Trace, Video und Bildschirmfoto des gescheiterten
       # Weges. Ein gruener Lauf raeumt sein Verzeichnis selbst wieder ab.
@@ -81,7 +81,7 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Build (warnings are errors)
-        run: dotnet build tests/Bifrost.Ui.E2E --configuration Release
+        run: dotnet build tests/Faolan.Ui.E2E --configuration Release
 
       - uses: actions/cache@v4
         with:
@@ -89,13 +89,13 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
 
       - name: Browser bereitstellen
-        run: pwsh tests/Bifrost.Ui.E2E/bin/Release/net10.0/playwright.ps1 install --with-deps ${{ matrix.browser }}
+        run: pwsh tests/Faolan.Ui.E2E/bin/Release/net10.0/playwright.ps1 install --with-deps ${{ matrix.browser }}
 
       - name: Browserwege
         env:
-          BIFROST_RUN_E2E: "1"
-          BIFROST_E2E_BROWSER: ${{ matrix.browser }}
-        run: dotnet test tests/Bifrost.Ui.E2E --configuration Release --no-build --logger "console;verbosity=detailed"
+          FAOLAN_RUN_E2E: "1"
+          FAOLAN_E2E_BROWSER: ${{ matrix.browser }}
+        run: dotnet test tests/Faolan.Ui.E2E --configuration Release --no-build --logger "console;verbosity=detailed"
 
       - uses: actions/upload-artifact@v7
         if: failure()

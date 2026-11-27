@@ -1,7 +1,7 @@
 # Upgrade-Kompatibilitätsmatrix (WP2.6)
 
 **Stand:** 2026-07-31 (mit Nachträgen vom 2026-08-01) · **Harness:**
-`tests/Bifrost.Upgrade.Tests/**` · **Grundlage:**
+`tests/Faolan.Upgrade.Tests/**` · **Grundlage:**
 [ADR-0024](adr/0024-backup-restore-und-migrationssicherheit.md) E6/E7,
 [M2-Vertrag](plans/m2-recoverability-contract.md) §7
 
@@ -18,12 +18,12 @@ liest sich wie eine Zusage, die sie nicht ist.
 Ausführen (nur dieses Projekt):
 
 ```
-dotnet test tests/Bifrost.Upgrade.Tests -c Release
-BIFROST_REQUIRE_POSTGRES=1 dotnet test tests/Bifrost.Upgrade.Tests -c Release   # PostgreSQL Pflicht
+dotnet test tests/Faolan.Upgrade.Tests -c Release
+FAOLAN_REQUIRE_POSTGRES=1 dotnet test tests/Faolan.Upgrade.Tests -c Release   # PostgreSQL Pflicht
 ```
 
 Ohne erreichbaren Docker-Daemon werden die PostgreSQL-Felder **übersprungen und als übersprungen
-gemeldet**, nicht als bestanden. Mit `BIFROST_REQUIRE_POSTGRES=1` ist ein nicht startbarer Container
+gemeldet**, nicht als bestanden. Mit `FAOLAN_REQUIRE_POSTGRES=1` ist ein nicht startbarer Container
 ein Fehlschlag.
 
 ---
@@ -76,9 +76,9 @@ Nach dem Upgrade wird zweierlei geprüft:
 | 9 | Backup einer Instanz **mit Bestand inkl. Geheimtext** | Restore auf leeres Ziel und mit `--replace` | PostgreSQL | **prüfbar, Nachweis steht aus** (8 Felder, siehe §2.1) | `PostgresBackupRestoreTests.*` |
 | 10 | Upgrade über drei **veröffentlichte Releases** | – | beide | **nicht prüfbar** — es gibt die Artefakte nicht, siehe §4.2 | – |
 
-Gesamt in `tests/Bifrost.Upgrade.Tests`: **50 Testfälle**. Ohne Docker und ohne `pg_dump` laufen
+Gesamt in `tests/Faolan.Upgrade.Tests`: **50 Testfälle**. Ohne Docker und ohne `pg_dump` laufen
 davon **26** (SQLite-Matrix und Archivpfad); die übrigen **24** melden sich als übersprungen
-(16 PostgreSQL-Matrix, 8 PostgreSQL-Backup). Mit `BIFROST_REQUIRE_POSTGRES=1` gibt es diese
+(16 PostgreSQL-Matrix, 8 PostgreSQL-Backup). Mit `FAOLAN_REQUIRE_POSTGRES=1` gibt es diese
 Unterscheidung nicht — dort ist eine fehlende Voraussetzung ein Fehlschlag.
 
 ### 2.1 Feld 9 im Einzelnen (neu, ADR-0024 E2 umgesetzt)
@@ -91,7 +91,7 @@ es herstellbar. Geprüft wird gegen einen **echten** PostgreSQL-Server (Testcont
 > entstanden ist, hatte weder einen erreichbaren Docker-Daemon noch ein installiertes `pg_dump`;
 > alle acht Felder unten wurden **übersprungen**, nicht bestanden. Das steht hier, weil ein
 > Matrixfeld, das „grün" behauptet ohne je gelaufen zu sein, genau der Fehler ist, gegen den dieses
-> Dokument geschrieben wurde. Der erste Lauf mit `BIFROST_REQUIRE_POSTGRES=1` (CI, Linux) ist der
+> Dokument geschrieben wurde. Der erste Lauf mit `FAOLAN_REQUIRE_POSTGRES=1` (CI, Linux) ist der
 > Nachweis — bis dahin gilt Feld 9 als **offen**.
 
 | Was | Test |
@@ -137,7 +137,7 @@ Und einer, der wieder Server **und** Werkzeuge braucht:
 
 - **grün** — geprüft und bestanden.
 - **übersprungen** — die Voraussetzung fehlt (kein Docker-Daemon **oder** kein `pg_dump` auf dem
-  Rechner). Wird als übersprungen gemeldet, nie als bestanden. Mit `BIFROST_REQUIRE_POSTGRES=1` ist
+  Rechner). Wird als übersprungen gemeldet, nie als bestanden. Mit `FAOLAN_REQUIRE_POSTGRES=1` ist
   beides ein Fehlschlag.
 - **nicht prüfbar** — der Fall lässt sich mit dem vorhandenen Code oder den vorhandenen Artefakten
   nicht herstellen. Kein Test tut so, als ob.
@@ -231,7 +231,7 @@ geprüft wurde das für dieses Dokument. Ein solcher Test gehört in ein Paket, 
 bestehenden Testprojekte anfassen darf.
 
 > **Nachtrag 2026-08-01:** Erledigt. Die Bezeichner stehen jetzt als Konstanten in
-> `src/Bifrost.Persistence/CryptographicNames.cs` — inzwischen **vier**, mit
+> `src/Faolan.Persistence/CryptographicNames.cs` — inzwischen **vier**, mit
 > `McpMcp.Webhook.Secret.v1` — und `CryptographicNamesTests` prüft sie gegen ihre Werte;
 > `.github/CODEOWNERS` führt die Datei zusätzlich. **Die Lücke des Harness bleibt davon unberührt:**
 > Der Test nagelt die Namen fest, er schreibt keine Daten in der alten Form. Der Absatz oben zur
@@ -270,7 +270,7 @@ wird. Was weiterhin **nicht** geprüft ist:
   fährt beides gegen denselben Container.
 - **Ein Restore, dessen `pg_dump` älter ist als der Zielserver.** Die Werkzeugversion wird im Test
   bewusst an den Server angeglichen (§2.1); im Betrieb ist die Diskrepanz ein Fehlerfall. Seit dem
-  ersten echten CI-Lauf ist er **kein blinder Fleck mehr**: `bifrost doctor` meldet ihn als
+  ersten echten CI-Lauf ist er **kein blinder Fleck mehr**: `faolan doctor` meldet ihn als
   `BFR-DB-0006`, bevor die erste Sicherung ansteht, und die Vergleichsregel selbst ist ohne Server
   geprüft (`PostgresBackupToolVersionCheckTests`). Nachgestellt wird die Lage *gegen einen echten
   Server* weiterhin nicht — dafür bräuchte es zwei Clientversionen auf demselben Läufer.
@@ -282,7 +282,7 @@ behebbar ist, statt auf eine Ausbaustufe zu warten.
 ### 4.6 Restore auf einem anderen Rechner oder unter einem anderen Benutzer
 
 Der Schlüsselring liegt per `PersistKeysToFileSystem` auf der Platte. Ohne
-`BIFROST_KEYRING_CERT_PATH` schützt ASP.NET Core ihn **plattformabhängig**: unter Windows per DPAPI
+`FAOLAN_KEYRING_CERT_PATH` schützt ASP.NET Core ihn **plattformabhängig**: unter Windows per DPAPI
 gebunden an den ausführenden Benutzer, unter Linux gar nicht (Klartext, mit Warnung).
 
 Der Harness fährt Sicherung und Wiederherstellung im selben Prozess, auf demselben Rechner, unter
@@ -310,7 +310,7 @@ Der M2-Vertrag §7 nennt diese Grenze bereits, und sie gilt hier unverändert:
 `Down`-Migrationen werden weder gefahren noch geprüft. Der Rückweg aus einem missglückten Upgrade
 ist das **Vor-Migrationsbackup** aus ADR-0024 E7, nicht ein Downgrade.
 
-Verdrahtet ist es in `OperationsRegistration.AddBifrostOperations` (aufgerufen in `Program.cs`).
+Verdrahtet ist es in `OperationsRegistration.AddFaolanOperations` (aufgerufen in `Program.cs`).
 `PreMigrationBackupRequirement.Always` gilt
 
 - bei **SQLite**, sobald eine Datei hinter der Verbindung steht;
@@ -349,8 +349,8 @@ Auditzeilen in ein Sperren- oder Zeitproblem läuft, fällt hier nicht auf. Die 
 | „Backup einer älteren Version" auf PostgreSQL | Ein Fixturestand statt einer vollmigrierten Datenbank in `PostgresBackupRestoreTests` (§4.5) |
 | Rückwärts-Tor greift am Schema | Mindestversion beim Sichern aus dem Migrationsstand ableiten (§4.1) |
 | `AuditEvents`/`Assets` im Bestand | Ein Schreibpfad, der gegen ein historisches Schema arbeitet — oder Release-Fixtures (§4.4) |
-| Umzug auf einen anderen Rechner | Ein Zertifikat für den Schlüsselring (`BIFROST_KEYRING_CERT_PATH`) und ein Test, der ihn wechselt (§4.6) |
+| Umzug auf einen anderen Rechner | Ein Zertifikat für den Schlüsselring (`FAOLAN_KEYRING_CERT_PATH`) und ein Test, der ihn wechselt (§4.6) |
 | DataProtection-Bezeichner festgenagelt | Ein Test in einem Paket, das `src/**` und die bestehenden Testprojekte anfassen darf (§4.3) |
 | ~~Vor-Migrationsbackup auf PostgreSQL~~ | **erledigt** — mit erreichbarem `pg_dump` gilt dort `Always` (§4.8) |
 | `postgresql-client` im mitgelieferten Image | Eine Entscheidung zum Image-Gewicht gegen das 350-MB-Gate; bis dahin installiert der Betreiber es selbst (§4.8) |
-| Backuphaken im Serverstart belegt | Ein Test über den echten Serverstart — gehört in `Bifrost.Integration.Tests` (§4.8) |
+| Backuphaken im Serverstart belegt | Ein Test über den echten Serverstart — gehört in `Faolan.Integration.Tests` (§4.8) |

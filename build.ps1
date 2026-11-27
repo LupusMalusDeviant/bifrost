@@ -70,31 +70,31 @@ function Invoke-VerifyRust {
 
 function Invoke-VerifyFast {
     Invoke-Step 'dotnet build (Release, warnings=errors)' {
-        dotnet build $repo/Bifrost.slnx --configuration Release
+        dotnet build $repo/Faolan.slnx --configuration Release
     }
     # Die Integrationssuite startet echte Prozesse und braucht Minuten — sie gehoert in
     # verify-dotnet, nicht in den schnellen Durchgang.
     Invoke-Step 'dotnet test (Core, Upstream, CLI)' {
-        dotnet test $repo/Bifrost.slnx --configuration Release --no-build `
+        dotnet test $repo/Faolan.slnx --configuration Release --no-build `
             --filter 'FullyQualifiedName!~Integration.Tests&FullyQualifiedName!~WasiRealHost'
     }
 }
 
 function Invoke-VerifyDotnet {
     Invoke-Step 'dotnet build (Release, warnings=errors)' {
-        dotnet build $repo/Bifrost.slnx --configuration Release
+        dotnet build $repo/Faolan.slnx --configuration Release
     }
     # WasiRealHost ist ausgenommen wie in der CI: Diese Tests brauchen das gebaute Rust-Binary und
     # laufen im eigenen Job. Ohne das Binary ueberspringen sie sich selbst — siehe WasiHostPaths.
     Invoke-Step 'dotnet test (vollstaendig, ohne WasiRealHost)' {
-        dotnet test $repo/Bifrost.slnx --configuration Release --no-build `
+        dotnet test $repo/Faolan.slnx --configuration Release --no-build `
             --filter 'FullyQualifiedName!~WasiRealHost'
     }
 }
 
 function Invoke-VerifyContainer {
     if (-not (Test-Tool 'docker' 'Container-Gate laeuft dann nur in der CI.')) { return }
-    Invoke-Step 'docker build' { docker build -t bifrost:verify $repo }
+    Invoke-Step 'docker build' { docker build -t faolan:verify $repo }
     Invoke-Step 'compose-Beispiele sind gueltig' {
         docker compose -f $repo/docker-compose.yml config --quiet
         if ($LASTEXITCODE -eq 0) {
@@ -102,7 +102,7 @@ function Invoke-VerifyContainer {
         }
     }
     Invoke-Step 'non-root im Image' {
-        $uid = docker run --rm --entrypoint sh bifrost:verify -c 'id -u'
+        $uid = docker run --rm --entrypoint sh faolan:verify -c 'id -u'
         if ($uid.Trim() -eq '0') { Write-Host 'Image laeuft als root.' -ForegroundColor Red; exit 1 }
         Write-Host "UID im Container: $uid"
     }

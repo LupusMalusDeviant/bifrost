@@ -44,7 +44,7 @@ There are two, and which one applies depends on the client's protocol revision
 | Client revision | Path | What the human sees |
 |---|---|---|
 | `2026-07-28` and newer | **MRTR** — the call ends with `input_required`, the client shows a form, and repeats the call with the answer | A prompt in the agent client, at the moment of the call |
-| `2025-11-25` and older | classic **elicitation** — only in session mode (`BIFROST_MCP_STATELESS=0`) | The same, but only if you run the gateway session-based |
+| `2025-11-25` and older | classic **elicitation** — only in session mode (`FAOLAN_MCP_STATELESS=0`) | The same, but only if you run the gateway session-based |
 | anything that cannot show a form | **the queue** | The *Approvals* page in the web UI |
 
 The queue is always the fallback, and **no call is ever lost**. If the gateway cannot ask, the

@@ -35,7 +35,7 @@
 # Jeder Wert dort geht in die Schlüsselableitung ein. Eine Umbenennung macht auf JEDER
 # bestehenden Installation jeden gespeicherten Geheimtext unlesbar — ohne Fehlermeldung
 # beim Start. Es gibt dazu einen Test; diese Zeile ist die zweite Sicherung.
-/src/Bifrost.Persistence/CryptographicNames.cs   @LupusMalusDeviant
+/src/Faolan.Persistence/CryptographicNames.cs   @LupusMalusDeviant
 
 # ── Entscheidungen ────────────────────────────────────────────────────────────────────────
 # Ein ADR beschreibt nicht nur, was gilt, sondern warum es so entschieden wurde. Wer ihn

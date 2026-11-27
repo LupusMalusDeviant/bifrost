@@ -42,32 +42,32 @@ paths = [
   # den Kommentar "Erfunden, keine echten Zugangsdaten" und sind bewusst so gewaehlt, dass
   # sie keine gemeinsame Teilzeichenfolge haben — sie existieren, damit ein Treffer im
   # Export eindeutig zuzuordnen ist.
-  '''tests/Bifrost\.Core\.Tests/Configuration/ConfigurationFixtures\.cs$''',
+  '''tests/Faolan\.Core\.Tests/Configuration/ConfigurationFixtures\.cs$''',
 
   # Fixtures fuer die Diagnose-Redaktion: Anthropic-Key, Slack-Token, Passphrase und ein
   # PEM-Block, dessen Base64-Rumpf ausgeschrieben "erfundenerschluessel" enthaelt.
-  '''tests/Bifrost\.Core\.Tests/Diagnostics/DiagnosticRedactionTests\.cs$''',
+  '''tests/Faolan\.Core\.Tests/Diagnostics/DiagnosticRedactionTests\.cs$''',
 
   # Ein 32-stelliger Hex-Wert als erfundenes Restore-Token ("0123456789abcdef…"), der
   # gegen die API gehalten wird, um zu belegen, dass ein fremdes Token 409 erzeugt.
-  '''tests/Bifrost\.Integration\.Tests/Operations/OperationsApiTests\.cs$''',
+  '''tests/Faolan\.Integration\.Tests/Operations/OperationsApiTests\.cs$''',
 
   # Der Guardrail-Nachweis: Diese Datei prueft, ob bekannte Credential-FORMEN erkannt
   # werden. Sie muss je ein Muster pro Anbieter enthalten (ghp_…, glpat-…, AIza…, JWT) —
   # ein Erkennungstest ohne die zu erkennenden Formen ist kein Test.
-  '''tests/Bifrost\.Core\.Tests/Guardrails/SecretGuardTests\.cs$''',
+  '''tests/Faolan\.Core\.Tests/Guardrails/SecretGuardTests\.cs$''',
 
   # Webhook-Signaturnachweis: "whsec_testgeheimnis_1234567890".
-  '''tests/Bifrost\.Core\.Tests/Webhooks/WebhookSignatureTests\.cs$''',
+  '''tests/Faolan\.Core\.Tests/Webhooks/WebhookSignatureTests\.cs$''',
 
   # Beleg, dass kein Span Argumente oder Ergebnisse traegt: "sk-streng-geheim-4711".
-  '''tests/Bifrost\.Core\.Tests/Invocation/TracingTests\.cs$''',
+  '''tests/Faolan\.Core\.Tests/Invocation/TracingTests\.cs$''',
 
   # Container-Isolation: "s3hr-geheim-xyz" als API_TOKEN einer Testumgebung.
-  '''tests/Bifrost\.Integration\.Tests/Gateway/ContainerIsolationE2ETests\.cs$''',
+  '''tests/Faolan\.Integration\.Tests/Gateway/ContainerIsolationE2ETests\.cs$''',
 
   # OAuth-Token-Speicher: "at_streng_geheim_4711" / "rt_auch_geheim_0815".
-  '''tests/Bifrost\.Integration\.Tests/Persistence/PersistenceTestsBase\.cs$''',
+  '''tests/Faolan\.Integration\.Tests/Persistence/PersistenceTestsBase\.cs$''',
 ]
 
 # Historische Funde aus der Zeit vor der Umbenennung (`tests/McpMcp.*`) liegen NICHT hier,

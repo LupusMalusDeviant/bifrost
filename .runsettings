@@ -12,7 +12,7 @@
   filtert, filtert dann nur noch die Bildschirmausgabe — die Datei bleibt.
 
   ANWENDUNG:
-    dotnet test Bifrost.slnx mit der Option "settings" auf diese Datei
+    dotnet test Faolan.slnx mit der Option "settings" auf diese Datei
 
   Die CI setzt den trx-Logger ohnehin selbst; diese Datei ist fuer den Lauf auf dem eigenen
   Rechner, wo genau das gern vergessen wird.
